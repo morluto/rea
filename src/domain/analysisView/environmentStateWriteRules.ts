@@ -53,12 +53,13 @@ export type GeneratedRule =
       readonly rule: "identity";
       readonly generator: "sequence" | "uuid" | "token";
     }
-  /** One past the largest value its scope holds, and never below `start`, a value the first create took above them. */
+  /** One past the largest value its scope holds, and never below `start`, a value the first create took above them; with `sent`, the value a call sends instead. */
   | {
       readonly field: string;
       readonly rule: "sequence";
       readonly scope: "collection" | "type";
       readonly start?: number;
+      readonly sent?: true;
     }
   | { readonly field: string; readonly rule: "unique" }
   /** The value kept with each UUID at the pointers (`*` for any array index) replaced by a fresh one, as rewritten child rows are. */
@@ -123,6 +124,8 @@ export type FieldRule =
       readonly member: string;
       readonly type: string;
       readonly fields: string[];
+      /** The member sends a list of ids, and the field holds each named entity in that order. */
+      readonly many?: true;
     }
   | { readonly field: string; readonly rule: "increment" }
   /** An update stores `value` whenever the call sends the member, as the call that showed it did. */
@@ -150,6 +153,11 @@ export type FieldRule =
       readonly field: string;
       readonly rule: "set";
       readonly value: JsonValue;
+    }
+  /** An item action flips a boolean on every call. */
+  | {
+      readonly field: string;
+      readonly rule: "toggle";
     };
 
 /** Clock rules spelled as a trimmed sibling is, since an application spells its clocks alike: fields whose `values`, and every `later` call's, show no fixed width. */
@@ -399,6 +407,23 @@ export interface WriteCall {
   readonly body: JsonObject | undefined;
 }
 
+/** Parameter lookup keys preserve repeated placeholder occurrences by segment position. */
+export const pathParameterKeys = (template: string): Map<number, string> => {
+  const parameters = segmentsOf(template).flatMap((segment, index) =>
+    isParam(segment) ? [[index, segment.slice(1, -1)] as const] : [],
+  );
+  const repeated =
+    new Set(parameters.map(([, name]) => name)).size !== parameters.length;
+  // If any name repeats, encode every key so a literal name cannot collide with
+  // an indexed key. Unique-name templates retain their established lookup keys.
+  return new Map(
+    parameters.map(([index, name]) => [
+      index,
+      repeated ? JSON.stringify([index, name]) : name,
+    ]),
+  );
+};
+
 /** The value each template parameter takes in a concrete path, decoded; undefined when the path does not instantiate it. */
 export const pathValuesOf = (
   template: string,
@@ -408,13 +433,14 @@ export const pathValuesOf = (
   const concrete = segmentsOf(path);
   if (pattern.length !== concrete.length) return undefined;
   const values = new Map<string, string>();
+  const keys = pathParameterKeys(template);
   for (const [index, segment] of pattern.entries()) {
     const value = concrete[index]!;
     if (!isParam(segment)) {
       if (segment !== value) return undefined;
       continue;
     }
-    values.set(segment.slice(1, -1), decodedSegment(value));
+    values.set(keys.get(index)!, decodedSegment(value));
   }
   return values;
 };

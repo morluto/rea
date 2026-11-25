@@ -14,12 +14,13 @@ import {
   type ObservationSearch,
 } from "./environmentStateWriteObserve.js";
 import { singleQueryValues } from "../recordedTransportUrl.js";
-import { queryKey, queryValuesKey } from "./environmentStateCheckedLines.js";
+import { queryKey } from "./environmentStateCheckedLines.js";
 import type { FieldRule } from "./environmentStateWriteRules.js";
 import {
   containsDelimited,
   isUuid,
   readClock,
+  formatClock,
   sequenceNumber,
   spelledLike,
   type ClockFormat,
@@ -130,26 +131,23 @@ export const sameQuery = (
   return key !== undefined && key === queryKey(right);
 };
 
-/**
- * A write call's query as its recording pins it, which may change what the body does: each
- * parameter the recording sent, at the call's value or else the recorded one; an error naming the
- * recorded query when the call sends another value or parameter.
- */
-export const pinnedQuery = (
+/** Allow omitted query arguments and require each supplied value to match the captured write. */
+export const validatePinnedQuery = (
   recorded: string | null | undefined,
   call: ReadonlyMap<string, string>,
-): Result<ReadonlyMap<string, string>, string> => {
+): Result<void, string> => {
   const values = singleQueryValues(recorded ?? undefined);
-  const pinned = new Map([...(values ?? []), ...call]);
+  if (
+    values !== undefined &&
+    [...call].every(([name, value]) => values.get(name) === value)
+  )
+    return ok(undefined);
   const spelled = [...(values ?? [])]
     .map(([name, value]) => `${name}=${value}`)
     .join("&");
-  return values !== undefined &&
-    queryValuesKey(pinned) === queryValuesKey(values)
-    ? ok(pinned)
-    : err(
-        `takes only the query its recording sent (${spelled === "" ? "none" : spelled}).`,
-      );
+  return err(
+    `takes only the query its recording sent (${spelled === "" ? "none" : spelled}).`,
+  );
 };
 
 /** Whether the type's other entities hold the field as objects agreeing with this one but in the members, which hold other clocks. */
@@ -244,6 +242,44 @@ export const createdNestedClock = (
     return ms >= startMs - TRUNCATION_MS && ms <= startMs + NESTED_WINDOW_MS;
   });
   return stamped ? nestedRule(field, value, members, evidence.type) : undefined;
+};
+
+/** Whether an application that answers a clock as `written` stores it as `read` spells it: both ISO, the read at a coarser precision and otherwise alike. Replay and serving respell an update's clocks by this one rule. */
+export const readSpellsCoarser = (
+  written: JsonValue | undefined,
+  read: JsonValue | undefined,
+): boolean => {
+  const [value, stored] = [readClock(written), readClock(read)];
+  return (
+    value?.format.kind === "iso" &&
+    stored?.format.kind === "iso" &&
+    stored.format.fraction < value.format.fraction &&
+    same({ ...stored.format, fraction: 0 }, { ...value.format, fraction: 0 })
+  );
+};
+
+/** An update's fields as its application stores them: each clock at the coarser precision its plan's read-back spelled it. */
+export const readSpelledClocks = (
+  rules: readonly FieldRule[],
+  written: JsonObject,
+  read: JsonObject | undefined,
+): JsonObject => {
+  if (read === undefined) return written;
+  const fields = { ...written };
+  for (const rule of rules) {
+    if (rule.rule !== "clock") continue;
+    const answered = ownMember(written, rule.field);
+    const shown = ownMember(read, rule.field);
+    if (!readSpellsCoarser(answered, shown)) continue;
+    const clock = readClock(answered)!;
+    const spelled = formatClock(
+      clock.ms,
+      readClock(shown)!.format,
+      clock.subMillisecond,
+    );
+    if (spelled !== undefined) setOwnMember(fields, rule.field, spelled);
+  }
+  return fields;
 };
 
 /** Whether a clock is one a request starting at `startMs` stamped, in the given format. */
@@ -666,7 +702,10 @@ export const pinnedEchoes = (
   );
 };
 
-/** An update's fields as stored: each nested clock as the first later read of the entity shows it restamped, else as the call showed it. */
+/**
+ * A write's fields as stored: each nested clock as the first later read of the entity shows it restamped, else as the
+ * call showed it.
+ */
 export const restampedFields = (
   search: ObservationSearch,
   target: Parameters<typeof laterObservation>[1],

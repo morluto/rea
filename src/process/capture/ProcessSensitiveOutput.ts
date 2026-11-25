@@ -1,4 +1,6 @@
+import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { Budget } from "../../domain/budget.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
@@ -78,7 +80,7 @@ const visibleUnits = function* (parts: readonly string[]) {
             ? "csi"
             : code === 0x5d
               ? "osc"
-              : [0x50, 0x58, 0x5e, 0x5f].includes(code)
+              : code === 0x50 || code === 0x58 || code === 0x5e || code === 0x5f
                 ? "string"
                 : code >= 0x20 && code <= 0x2f
                   ? "intermediate"
@@ -101,7 +103,7 @@ const visibleUnits = function* (parts: readonly string[]) {
         state = "osc";
         continue;
       }
-      if ([0x90, 0x98, 0x9e, 0x9f].includes(code)) {
+      if (code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
         state = "string";
         continue;
       }
@@ -118,7 +120,7 @@ const visibleUnits = function* (parts: readonly string[]) {
 /** One run's exact, explicit literals; never shared across captures. */
 export class ProcessSensitiveOutput {
   #index = new Uint32Array(0);
-  #work = 0;
+  readonly #work = new Budget(MAX_PROJECTION_WORK);
   #failure: AnalysisError | undefined;
 
   constructor(private readonly prefixes: readonly Prefix[]) {}
@@ -134,14 +136,18 @@ export class ProcessSensitiveOutput {
   #prefix(index: number): Prefix {
     const value = this.prefixes[index];
     if (value === undefined)
-      throw new Error("Sensitive output matcher lost its prefix identity");
+      throw new ProcessAdmissionError("prefix_identity_lost");
     return value;
   }
 
   #consume(units: number): void {
-    this.#work += units;
-    if (this.#work > MAX_PROJECTION_WORK)
-      throw capacity("projection_work_units", this.#work, MAX_PROJECTION_WORK);
+    this.#work.charge(units, () =>
+      capacity(
+        "projection_work_units",
+        this.#work.used + units,
+        MAX_PROJECTION_WORK,
+      ),
+    );
   }
 
   #advance(state: number, code: number): number {
@@ -342,7 +348,7 @@ export const createProcessSensitiveOutput = (
   const read = (index: number): Prefix => {
     const node = prefixes[index];
     if (node === undefined)
-      throw new Error("Sensitive output prefix is unavailable");
+      throw new ProcessAdmissionError("prefix_unavailable");
     return node;
   };
   try {

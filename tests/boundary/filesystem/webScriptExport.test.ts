@@ -27,13 +27,13 @@ import {
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
-import { DestinationCaseCollisionFailure } from "../../../src/artifacts/ArtifactPaths.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
-import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { publishWebScripts } from "../../../src/application/PublishWebScripts.js";
+import { DestinationCaseCollisionFailure } from "../../../src/resources/ArtifactPaths.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
+import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../../src/domain/browserNetworkEvidence.js";
@@ -47,6 +47,7 @@ import {
   scriptCaptureEvidenceFixture,
   scriptScenarioFixture,
 } from "../../fixtures/webScriptCapture.js";
+import { injectPublishedDirectoryCloseFailure } from "../../support/publishedDirectoryCloseFailure.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -390,78 +391,72 @@ describe("captured script output owner retry", () => {
     });
   });
 
-  it("returns completed output when retry closes a descriptor after commit", async () => {
-    const { input, resources } = await setup();
-    const createTree = SafeOutputTree.create.bind(SafeOutputTree);
-    const create = vi
-      .spyOn(SafeOutputTree, "create")
-      .mockImplementationOnce(async (outputRoot, platform) => {
-        const tree = await createTree(outputRoot, platform);
-        const commit = tree.commit.bind(tree);
-        vi.spyOn(tree, "commit").mockImplementation(async () => {
-          await commit();
-          throw new Error("injected descriptor close failure");
-        });
-        return tree;
-      });
-    try {
-      const result = await exportWebScripts(input, resources);
-      if (!result.ok) throw result.error;
-      const published = webScriptExportResultSchema.parse(
-        result.value.normalized_result,
+  // Windows commit does not open directory descriptors for fsync.
+  it.skipIf(process.platform === "win32")(
+    "returns completed output when retry closes a descriptor after commit",
+    async () => {
+      const { input, resources } = await setup();
+      const failure = await injectPublishedDirectoryCloseFailure(
+        input.output_directory,
       );
-      expect(published.manifest.path).toBe(
-        join(input.output_directory, "manifest.json"),
-      );
-      await expect(access(published.manifest.path)).resolves.toBeUndefined();
-    } finally {
-      create.mockRestore();
-    }
-  });
+      try {
+        const result = await exportWebScripts(input, resources);
+        if (!result.ok) throw result.error;
+        const published = webScriptExportResultSchema.parse(
+          result.value.normalized_result,
+        );
+        expect(published.manifest.path).toBe(
+          join(input.output_directory, "manifest.json"),
+        );
+        expect(failure.wasInjected()).toBe(true);
+        expect(failure.owners).toHaveLength(2);
+        expect(failure.owners[1]).toBe(failure.owners[0]);
+        expect(failure.owners[0]?.handle.fd).toBe(-1);
+        await expect(access(published.manifest.path)).resolves.toBeUndefined();
+      } finally {
+        failure.restore();
+      }
+    },
+  );
 
-  it("retains published output and its result while cleanup remains unresolved", async () => {
-    const { input, resources } = await setup();
-    const createTree = SafeOutputTree.create.bind(SafeOutputTree);
-    let cleanupAttempts = 0;
-    const create = vi
-      .spyOn(SafeOutputTree, "create")
-      .mockImplementationOnce(async (outputRoot, platform) => {
-        const tree = await createTree(outputRoot, platform);
-        const commit = tree.commit.bind(tree);
-        vi.spyOn(tree, "commit").mockImplementation(async () => {
-          await commit();
-          throw new Error("injected descriptor close failure");
+  it.skipIf(process.platform === "win32")(
+    "retains published output and its result while cleanup remains unresolved",
+    async () => {
+      const { input, resources } = await setup();
+      const failure = await injectPublishedDirectoryCloseFailure(
+        input.output_directory,
+        true,
+      );
+      try {
+        const result = await exportWebScripts(input, resources);
+        if (result.ok) throw new Error("Expected unresolved cleanup");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.userMessage).not.toContain("Remove the residual");
+        expect(result.error.partialObservation).toMatchObject({
+          kind: "web-script-export",
+          result: {
+            output_directory: input.output_directory,
+            manifest: { path: join(input.output_directory, "manifest.json") },
+          },
         });
-        const rollback = tree.rollback.bind(tree);
-        vi.spyOn(tree, "rollback").mockImplementation(async () => {
-          cleanupAttempts += 1;
-          if (cleanupAttempts === 1)
-            throw new Error("injected cleanup refusal");
-          return rollback();
-        });
-        return tree;
-      });
-    try {
-      const result = await exportWebScripts(input, resources);
-      if (result.ok) throw new Error("Expected unresolved cleanup");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.userMessage).not.toContain("Remove the residual");
-      expect(result.error.partialObservation).toMatchObject({
-        kind: "web-script-export",
-        result: {
-          output_directory: input.output_directory,
-          manifest: { path: join(input.output_directory, "manifest.json") },
-        },
-      });
-      await expect(
-        access(join(input.output_directory, "manifest.json")),
-      ).resolves.toBeUndefined();
-      await resources.close();
-      expect(cleanupAttempts).toBe(2);
-    } finally {
-      create.mockRestore();
-    }
-  });
+        await expect(
+          access(join(input.output_directory, "manifest.json")),
+        ).resolves.toBeUndefined();
+        expect(failure.wasInjected()).toBe(true);
+        expect(failure.owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+        failure.allowCleanup();
+        await resources.close();
+        expect(failure.owners.length).toBeGreaterThan(1);
+        expect(
+          failure.owners.every((owner) => owner === failure.owners[0]),
+        ).toBe(true);
+        expect(failure.owners[0]?.handle.fd).toBe(-1);
+      } finally {
+        failure.allowCleanup();
+        failure.restore();
+      }
+    },
+  );
 });
 
 describe("captured script publication failures and cleanup", () => {
@@ -800,8 +795,7 @@ describe("captured script path validation", () => {
         {
           path: ["capture_path"],
           reason: "invalid_format",
-          message:
-            "capture_path must be an absolute filesystem path on this host.",
+          expected: "regex",
         },
       ],
     });
@@ -820,8 +814,7 @@ describe("captured script path validation", () => {
         {
           path: ["output_directory"],
           reason: "invalid_format",
-          message:
-            "output_directory must be an absolute filesystem path on this host.",
+          expected: "regex",
         },
       ],
     });
@@ -1041,6 +1034,7 @@ describe("capture read failure provenance", () => {
         new Error("physical capture read failed"),
         { code },
       );
+      const reason = sameReason ? physical : { request: "later cancellation" };
       const closeFailure = new Error("capture close failed");
       let handle: Awaited<ReturnType<typeof actualFs.open>> | undefined;
       let closeCalls = 0;
@@ -1049,9 +1043,7 @@ describe("capture read failure provenance", () => {
         if (String(args[0]) !== input.capture_path) return opened;
         handle = opened;
         vi.spyOn(opened, "read").mockImplementation(async () => {
-          controller.abort(
-            sameReason ? physical : { request: "later cancellation" },
-          );
+          controller.abort(reason);
           throw physical;
         });
         const close = opened.close.bind(opened);
@@ -1085,6 +1077,11 @@ describe("capture read failure provenance", () => {
           errors: [physical, closeFailure],
         });
       else expect(primary.cause).toBe(physical);
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(
+        projectAnalysisError(result.error).details?.secondary_failures,
+      ).toEqual([expect.objectContaining({ code: "cancelled" })]);
       await expect(access(input.output_directory)).rejects.toMatchObject({
         code: "ENOENT",
       });

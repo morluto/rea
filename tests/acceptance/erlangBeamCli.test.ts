@@ -65,22 +65,68 @@ const extendedFirstAtomLength = (): Buffer => {
   return extended;
 };
 
-cliTest("reports BEAM exports through the public CLI", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-beam-cli-");
-  const path = join(root, "app.beam");
-  await writeFile(path, erlangBeamFixture("cli_mod"));
-  const result = await cli.run({
-    arguments: ["inspect-erlang-beam", path, "--json"],
-  });
-  expect(result.exitCode, result.stderr).toBe(0);
-  const evidence = completeBeamEvidenceSchema.parse(result.json);
-  expect(evidence.normalized_result.module).toBe("cli_mod");
-  expect(
-    evidence.normalized_result.exports?.some(
-      (entry) => entry.function === "start" && entry.arity === 0,
-    ),
-  ).toBe(true);
-});
+cliTest(
+  "reports BEAM tables and code for a path relative to the CLI working directory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-beam-cli-");
+    const path = join(root, "app.beam");
+    await writeFile(path, erlangBeamFixture("cli_mod"));
+    const result = await cli.run({
+      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
+      cwd: root,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completeBeamEvidenceSchema.parse(result.json);
+    expect(evidence).toMatchObject({
+      confidence: "observed",
+      subject: { local_path: path, identity: { format: "file" } },
+    });
+    expect(evidence.normalized_result).toMatchObject({
+      atom_encoding: "utf8",
+      module: "cli_mod",
+      atoms: [
+        { name: "cli_mod" },
+        { name: "module_info" },
+        { name: "start" },
+        { name: "erlang" },
+        { name: "get_module_info" },
+      ],
+      lambdas: [
+        expect.objectContaining({
+          function: "start",
+          arity: 1,
+          label: 4,
+          old_unique: 42,
+        }),
+      ],
+      code: {
+        instruction_set: 0,
+        opcode_max: 169,
+        labels: 4,
+        functions: 2,
+        extra_header_bytes: 0,
+        instructions: { bytes: 4 },
+      },
+    });
+    expect(evidence.normalized_result.exports).toEqual([
+      { function_index: 3, function: "start", arity: 0, label: 2 },
+      { function_index: 2, function: "module_info", arity: 0, label: 1 },
+      { function_index: 2, function: "module_info", arity: 1, label: 3 },
+    ]);
+    expect(evidence.normalized_result.imports).toEqual([
+      {
+        module_index: 4,
+        module: "erlang",
+        function_index: 5,
+        function: "get_module_info",
+        arity: 1,
+      },
+    ]);
+    expect(
+      evidence.normalized_result.chunks.map((chunk) => chunk.name),
+    ).toEqual(["AtU8", "Code", "ExpT", "ImpT", "FunT"]);
+  },
+);
 
 cliTest(
   "inspects empty optional BEAM chunks through CLI and MCP without losing source evidence",
@@ -191,8 +237,13 @@ cliTest(
     });
     const atomChunks = report.chunks.filter(({ name }) => name === "AtU8");
     expect(atomChunks).toHaveLength(2);
-    expect(atomChunks[0]?.payload.sha256).not.toBe(
-      atomChunks[1]?.payload.sha256,
+    expect(atomChunks[0]?.payload.sha256).toBe(
+      createHash("sha256").update(decoy.subarray(8, 14)).digest("hex"),
+    );
+    expect(atomChunks[1]?.payload.sha256).toBe(
+      createHash("sha256")
+        .update(original.subarray(20, 20 + original.readUInt32BE(16)))
+        .digest("hex"),
     );
     expect(atomChunks[0]?.payload.location.offset).toBe(20);
     expect(atomChunks[1]?.payload.location.offset).toBe(20 + decoy.length);
@@ -220,6 +271,41 @@ cliTest(
     };
     const control = await inspect(controlPath);
     const extended = await inspect(extendedPath);
+    // Golden facts from beam_lib:chunks/2 on the compiler-produced OTP 29 file.
+    expect(control.normalized_result.module).toBe("rea_beam_fixture");
+    expect(control.normalized_result.atoms?.map((atom) => atom.name)).toEqual([
+      "rea_beam_fixture",
+      "hello",
+      "lists",
+      "reverse",
+      "module_info",
+      "erlang",
+      "get_module_info",
+    ]);
+    expect(control.normalized_result.exports).toEqual([
+      { function_index: 5, function: "module_info", arity: 1, label: 6 },
+      { function_index: 5, function: "module_info", arity: 0, label: 4 },
+      { function_index: 2, function: "hello", arity: 1, label: 2 },
+    ]);
+    expect(
+      control.normalized_result.imports?.map((row) => [
+        row.module,
+        row.function,
+        row.arity,
+      ]),
+    ).toEqual([
+      ["lists", "reverse", 1],
+      ["erlang", "get_module_info", 1],
+      ["erlang", "get_module_info", 2],
+    ]);
+    expect(control.normalized_result.code).toMatchObject({
+      instruction_set: 0,
+      opcode_max: 181,
+      labels: 7,
+      functions: 3,
+      extra_header_bytes: 0,
+      instructions: { bytes: 49 },
+    });
     expect(extended.normalized_result.module).toBe("rea_beam_fixture");
     expect(extended.normalized_result.atoms).toEqual(
       control.normalized_result.atoms,
@@ -236,9 +322,16 @@ cliTest(
     expect(extended.normalized_result.artifact.sha256).not.toBe(
       control.normalized_result.artifact.sha256,
     );
-    expect(extended.normalized_result.chunks[0]?.payload.sha256).not.toBe(
-      control.normalized_result.chunks[0]?.payload.sha256,
-    );
+    for (const [evidence, bytes] of [
+      [control, controlBytes],
+      [extended, extendedBytes],
+    ] as const) {
+      expect(evidence.normalized_result.chunks[0]?.payload.sha256).toBe(
+        createHash("sha256")
+          .update(bytes.subarray(20, 20 + bytes.readUInt32BE(16)))
+          .digest("hex"),
+      );
+    }
   },
 );
 
@@ -270,6 +363,40 @@ cliTest(
     expect(padded.normalized_result.artifact.sha256).not.toBe(
       clean.normalized_result.artifact.sha256,
     );
+  },
+);
+
+cliTest(
+  "reports a selected BEAM table tail through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-beam-table-tail-");
+    const path = join(root, "table-tail.beam");
+    const bytes = oneAtomBeam(0xab);
+    // Move one byte of alignment padding into the AtU8 payload.
+    bytes.writeUInt32BE(7, 16);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-erlang-beam", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = completeBeamEvidenceSchema.parse(
+      result.json,
+    ).normalized_result;
+    expect(report).toMatchObject({
+      module: "m",
+      chunks: [{ name: "AtU8", payload: { location: { bytes: 7 } } }],
+      coverage: { status: "partial", trailing_bytes: 0 },
+    });
+    expect(report.limitations).toContain(
+      "The selected AtU8 table has 1 trailing byte that was not examined.",
+    );
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_erlang_beam", { path });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(
+      completeBeamEvidenceSchema.parse(reply.structuredContent)
+        .normalized_result,
+    ).toEqual(report);
   },
 );
 
@@ -311,6 +438,19 @@ cliTest(
     expect(trailing.normalized_result.form.location.bytes).toBe(
       formBytes.length,
     );
+    // The declared form parses identically, but the surplus bytes are disclosed
+    // rather than silently folded into complete coverage.
+    expect(control.normalized_result.coverage).toMatchObject({
+      status: "complete",
+      trailing_bytes: 0,
+    });
+    expect(trailing.normalized_result.coverage).toMatchObject({
+      status: "partial",
+      trailing_bytes: trailer.length,
+    });
+    expect(trailing.normalized_result.limitations).toContain(
+      `The declared FOR1 form ends at offset ${String(formBytes.length)}; ${String(trailer.length)} trailing bytes were not examined.`,
+    );
   },
 );
 
@@ -327,24 +467,56 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_erlang_beam" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        failure_kind: "malformed",
+        format: "beam",
+      },
     });
   },
 );
 
 cliTest(
-  "resolves a relative BEAM path against the working directory",
+  "checks the BEAM chunk extent before reporting the chunk-count limit",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-beam-cli-rel-");
-    await writeFile(join(root, "app.beam"), erlangBeamFixture());
-    const result = await cli.run({
-      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
-      cwd: root,
+    const root = await createTestTempDirectory("rea-beam-chunk-extent-");
+    const path = join(root, "app.beam");
+    const bytes = erlangBeamFixture();
+    const firstSize = bytes.readUInt32BE(16);
+    const secondHeader = 20 + Math.ceil(firstSize / 4) * 4;
+    await writeFile(path, bytes);
+    const inspect = () =>
+      cli.run({
+        arguments: ["inspect-erlang-beam", path, "--max-chunks", "1", "--json"],
+      });
+    const admitted = await inspect();
+    expect(admitted.exitCode).toBe(1);
+    expect(admitted.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_erlang_beam",
+        resource: "capacity",
+        reported_limits: { max_chunks: 1 },
+      },
     });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = completeBeamEvidenceSchema.parse(result.json);
-    expect(evidence.subject?.local_path).toBe(join(root, "app.beam"));
+
+    // Retain bytes beyond the declared form. They cannot supply the second
+    // chunk's payload even though the complete file contains it.
+    bytes.writeUInt32BE(secondHeader, 4);
+    await writeFile(path, bytes);
+    const refused = await inspect();
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        failure_kind: "malformed",
+        format: "beam",
+        reason: "BEAM chunk payload exceeds the form.",
+      },
+    });
   },
 );
 
@@ -356,18 +528,4 @@ cliTest("rejects an empty BEAM path before reading", async ({ cli }) => {
   });
   expect(result.exitCode, result.stderr).not.toBe(0);
   expect(result.stdout).not.toContain("sha256");
-});
-
-cliTest("reports a truncated BEAM as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-beam-cli-bad-");
-  const path = join(root, "broken.beam");
-  await writeFile(path, Buffer.from("FOR1"));
-  const result = await cli.run({
-    arguments: ["inspect-erlang-beam", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_erlang_beam" },
-  });
 });

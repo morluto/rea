@@ -10,7 +10,7 @@ import {
   partialRelationshipCoverageSchema,
   unknownRelationshipCoverageSchema,
 } from "../relationshipCoverage.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 
 export const nativeObservationOperationSchema = z.enum(
   NATIVE_OBSERVATION_OPERATIONS,
@@ -158,6 +158,7 @@ export const nativeObservationItemsSchemas = {
   procedure_address: addresses,
   procedure_callees: addresses,
   procedure_callers: addresses,
+  xrefs: addresses,
   resolve_containing_procedure: resolutions,
   get_call_graph: nativeGraphViewItemsSchema,
 };

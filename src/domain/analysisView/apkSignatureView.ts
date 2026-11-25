@@ -9,24 +9,29 @@ import {
 import {
   apkSignatureSchemeSchema,
   apkSignatureViewItemsSchema,
-  type apkSignatureViewRequestSchema,
+  apkSignatureViewRequestSchema,
 } from "../apkSignature/apkSignatureQuery.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const identityFields = new Set([
   "id",
@@ -98,12 +103,10 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
   // Parent identity is checked on every read, independently of reusable facts.
+  const subject = evidenceSubjectTarget(parent.subject);
   if (
-    parent.subject != null &&
-    !apkSignatureMatchesSubject(report.artifact, {
-      sha256: parent.subject.digest.sha256,
-      format: parent.subject.format,
-    })
+    subject !== undefined &&
+    !apkSignatureMatchesSubject(report.artifact, subject)
   )
     return err(
       analysisViewInputError([
@@ -193,7 +196,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 function* records(
   report: ApkSignatureResult,
   selection: Selection,
-): Generator<Record<string, JsonValue>> {
+): Generator<Record<string, JsonValue> & { id: string; signer_id?: string }> {
   const wanted =
     selection.schemes === undefined ? undefined : new Set(selection.schemes);
   for (const scheme of schemes) {
@@ -263,19 +266,15 @@ function* records(
 
 export const projectApkSignatureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "apk-signature")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof apkSignatureViewRequestSchema>
+  >(view, "summary", "apk-signature");
   const parsed = read(parent);
   if (!parsed.ok) return parsed;
   const { report, summary } = parsed.value;
@@ -297,11 +296,11 @@ export const projectApkSignatureView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const ids = view.ids === undefined ? undefined : new Set(view.ids);
   const signers =
@@ -313,8 +312,8 @@ export const projectApkSignatureView = (
   const rows =
     ids?.size === 0 || signers?.size === 0 ? [] : records(report, view);
   for (const row of rows) {
-    if (ids !== undefined && !ids.has(String(row.id))) continue;
-    if (signers !== undefined && !signers.has(String(row.signer_id ?? row.id)))
+    if (ids !== undefined && !ids.has(row.id)) continue;
+    if (signers !== undefined && !signers.has(row.signer_id ?? row.id))
       continue;
     if (total++ < view.offset || items.length >= view.limit) continue;
     const item: Record<string, JsonValue> = {};
@@ -324,7 +323,7 @@ export const projectApkSignatureView = (
     items.push(item);
   }
   return ok({
-    kind: "apk-signature",
+    kind: "apk-signature" as const,
     view,
     ...shared,
     source_coverage: summary.source_coverage,

@@ -7,7 +7,11 @@ import {
   nativeMachoTarget,
 } from "../../tests/fixtures/nativeCommands.js";
 import { inspectNativeMacho } from "./NativeMachoInspection.js";
-import { inspectionReader } from "./NativeMachoInspection.fixture.js";
+import {
+  inspectionFatContext,
+  inspectionReader,
+  unreadEncryption,
+} from "./NativeMachoInspection.fixture.js";
 
 const inspect = async (options: {
   readonly diagnostic: string;
@@ -21,8 +25,12 @@ const inspect = async (options: {
       ? { lipo: `Non-fat file: ${path} is architecture: arm64\n` }
       : {},
   );
+  const context = inspectionFatContext();
   return inspectNativeMacho({
-    readCommandNames: inspectionReader(),
+    resolveSlice: context.resolveSlice,
+    readCommandNames:
+      options.format === "thin" ? inspectionReader() : context.readCommandNames,
+    readEncryption: unreadEncryption,
     target: nativeMachoTarget(path),
     run: async (tool, args, _signal, acceptNonZeroIf) => {
       const result = await runner.run(tool, args);
@@ -58,8 +66,12 @@ const refusal = "/usr/bin/vtool error: /fixture/universal file is not mach-o\n";
 it("retains required facts and failed vtool provenance for its universal-container refusal", async () => {
   const result = await inspect({ diagnostic: refusal });
   if (!result.ok) throw result.error;
-  expect(result.value.limitations).toContain(
-    "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.",
+  expect(result.value.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(
+        /vtool.*universal container.*build metadata.*binary load commands/iu,
+      ),
+    ]),
   );
   expect(result.value.result).toMatchObject({
     format: "mach-o-universal",

@@ -1,5 +1,7 @@
-import type { HexRecordsMetadata } from "../artifactFormatMetadata.js";
+import type { HexRecordsMetadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
+import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
+import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
 import {
   COLON,
   CR,
@@ -28,13 +30,6 @@ export const HEX_RECORD_ENCODING_LABELS: Readonly<
   Record<HexRecordEncoding, string>
 > = { "intel-hex": "Intel HEX", srec: "S-record" };
 
-/** A whole-file refusal; no partial regions accompany it. */
-export interface HexRecordFailure {
-  readonly kind: "format" | "limit";
-  readonly message: string;
-  readonly boundary?: "file-size" | "capacity";
-}
-
 /** Decoded bytes for one address-contiguous range; `end` is inclusive. */
 export interface HexRecordRegion {
   readonly start: number;
@@ -51,13 +46,6 @@ export interface HexRecordImage {
   readonly regions: readonly HexRecordRegion[];
   readonly terminated: boolean;
   readonly limitations: readonly string[];
-}
-
-export interface HexRecordDecoder {
-  /** Decode the next file bytes; a line may span chunks. */
-  write(chunk: Uint8Array): Result<void, HexRecordFailure>;
-  /** Decode a final unterminated line, then merge runs into regions. */
-  finish(): Result<HexRecordImage, HexRecordFailure>;
 }
 
 /** Consecutive records whose addresses continue each other. */
@@ -99,7 +87,7 @@ export const detectHexRecordEncoding = (
 export const createHexRecordDecoder = (
   encoding: HexRecordEncoding,
   fileBytes: number,
-): Result<HexRecordDecoder, HexRecordFailure> =>
+): Result<RegionDecoder<HexRecordImage>, RegionDecodeFailure> =>
   Number.isSafeInteger(fileBytes) &&
   fileBytes >= 0 &&
   fileBytes <= HEX_RECORD_MAX_FILE_BYTES
@@ -110,17 +98,18 @@ export const createHexRecordDecoder = (
         message: `file is ${String(fileBytes)} bytes, exceeding the fixed ${String(HEX_RECORD_MAX_FILE_BYTES)}-byte (128 MiB) ceiling`,
       });
 
-const formatFailure = (line: number, detail: string): HexRecordFailure => ({
+const formatFailure = (line: number, detail: string): RegionDecodeFailure => ({
   kind: "format",
   message: `line ${String(line)}: ${detail}`,
 });
 
-class StreamingHexRecordDecoder implements HexRecordDecoder {
+class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   readonly #encoding: HexRecordEncoding;
   readonly #line: Uint8Array;
+  readonly #scratch: Uint8Array;
   readonly #runs: RecordRun[] = [];
   #arena: Uint8Array;
-  #arenaUsed = 0;
+  #arenaWriteOffset = 0;
   #lineLength = 0;
   #lineNumber = 0;
   #recordCount = 0;
@@ -133,17 +122,19 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
   #start: (DeclaredValue<number> & { readonly record: string }) | undefined;
   #startSegment: DeclaredValue<readonly [number, number]> | undefined;
   #header: DeclaredValue<Uint8Array> | undefined;
-  #declaredCount: number | null = null;
+  #declaredCount: DeclaredValue<number> | undefined;
   readonly #dataTypes = new Set<string>();
 
   constructor(encoding: HexRecordEncoding, fileBytes: number) {
     this.#encoding = encoding;
     // One extra byte holds the CR of a CRLF line at the maximum length.
-    this.#line = new Uint8Array(maxLineChars(encoding) + 1);
+    const maxChars = maxLineChars(encoding);
+    this.#line = new Uint8Array(maxChars + 1);
+    this.#scratch = new Uint8Array(Math.ceil(maxChars / 2));
     this.#arena = new Uint8Array(Math.floor(fileBytes / 2));
   }
 
-  write(chunk: Uint8Array): Result<void, HexRecordFailure> {
+  write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
     let from = 0;
     while (from < chunk.length) {
       const lf = chunk.indexOf(LF, from);
@@ -160,7 +151,7 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
     return ok(undefined);
   }
 
-  finish(): Result<HexRecordImage, HexRecordFailure> {
+  finish(): Result<HexRecordImage, RegionDecodeFailure> {
     if (this.#lineLength > 0) {
       const ended = this.#endLine(false);
       if (!ended.ok) return ended;
@@ -177,14 +168,14 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
     });
   }
 
-  #overlong(line: number): HexRecordFailure {
+  #overlong(line: number): RegionDecodeFailure {
     return formatFailure(
       line,
       `line exceeds the ${String(maxLineChars(this.#encoding))}-character ${HEX_RECORD_ENCODING_LABELS[this.#encoding]} maximum`,
     );
   }
 
-  #endLine(lfTerminated: boolean): Result<void, HexRecordFailure> {
+  #endLine(lfTerminated: boolean): Result<void, RegionDecodeFailure> {
     this.#lineNumber += 1;
     let length = this.#lineLength;
     this.#lineLength = 0;
@@ -194,7 +185,11 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
       return err(this.#overlong(this.#lineNumber));
     length = trimTrailingBlanks(this.#line, length);
     if (length === 0) return ok(undefined);
-    const parsed = parseRecord(this.#encoding, this.#line.subarray(0, length));
+    const parsed = parseRecord(
+      this.#encoding,
+      this.#line.subarray(0, length),
+      this.#scratch,
+    );
     if (!parsed.ok) return err(this.#failure(parsed.error));
     if (this.#termination !== undefined)
       return err(
@@ -208,12 +203,11 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
       : this.#applySrec(parsed.value);
   }
 
-  #failure(detail: string): HexRecordFailure {
+  #failure(detail: string): RegionDecodeFailure {
     return formatFailure(this.#lineNumber, detail);
   }
 
-  #applyIntel(record: HexRecord): Result<void, HexRecordFailure> {
-    const value = readBigEndian(record.data);
+  #applyIntel(record: HexRecord): Result<void, RegionDecodeFailure> {
     switch (record.type) {
       case "00":
         return this.#intelData(record);
@@ -221,22 +215,28 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
         this.#termination = { value: record.type, line: this.#lineNumber };
         return ok(undefined);
       case "02":
-      case "04":
+      case "04": {
+        const value = readBigEndian(record.data);
         this.#segmentRecords ||= record.type === "02";
         this.#linearRecords ||= record.type === "04";
         this.#baseFromSegment = record.type === "02";
         this.#base = record.type === "02" ? value * 16 : value * 0x1_0000;
         return ok(undefined);
-      case "03":
+      }
+      case "03": {
+        const value = readBigEndian(record.data);
         return this.#declareStartSegment([value >>> 16, value & 0xffff]);
-      default:
+      }
+      default: {
         // "05": the start linear address.
+        const value = readBigEndian(record.data);
         this.#linearRecords = true;
         return this.#declareStart(value, record.type);
+      }
     }
   }
 
-  #intelData({ address, data }: HexRecord): Result<void, HexRecordFailure> {
+  #intelData({ address, data }: HexRecord): Result<void, RegionDecodeFailure> {
     this.#dataRecordCount += 1;
     // The specification wraps within 64 KiB, but some producers continue
     // linearly, so the address of the wrapped bytes is ambiguous.
@@ -256,7 +256,7 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
     return this.#addData(start, data);
   }
 
-  #applySrec(record: HexRecord): Result<void, HexRecordFailure> {
+  #applySrec(record: HexRecord): Result<void, RegionDecodeFailure> {
     switch (record.type) {
       case "S0":
         if (this.#header !== undefined)
@@ -279,7 +279,7 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
               `record type ${record.type} declares ${String(record.address)} data records, but ${String(this.#dataRecordCount)} precede it`,
             ),
           );
-        this.#declaredCount = record.address;
+        this.#declaredCount = { value: record.address, line: this.#lineNumber };
         return ok(undefined);
       default:
         this.#termination = { value: record.type, line: this.#lineNumber };
@@ -291,7 +291,7 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
     type,
     address,
     data,
-  }: HexRecord): Result<void, HexRecordFailure> {
+  }: HexRecord): Result<void, RegionDecodeFailure> {
     this.#dataRecordCount += 1;
     this.#dataTypes.add(type);
     const limit = SREC_DATA_LIMITS[type] ?? 0;
@@ -304,7 +304,10 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
     return this.#addData(address, data);
   }
 
-  #declareStart(value: number, record: string): Result<void, HexRecordFailure> {
+  #declareStart(
+    value: number,
+    record: string,
+  ): Result<void, RegionDecodeFailure> {
     const existing = this.#start;
     if (existing !== undefined && existing.value !== value)
       return err(
@@ -318,7 +321,7 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
 
   #declareStartSegment(
     value: readonly [number, number],
-  ): Result<void, HexRecordFailure> {
+  ): Result<void, RegionDecodeFailure> {
     this.#segmentRecords = true;
     const existing = this.#startSegment;
     if (
@@ -334,9 +337,12 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
     return ok(undefined);
   }
 
-  #addData(address: number, data: Uint8Array): Result<void, HexRecordFailure> {
+  #addData(
+    address: number,
+    data: Uint8Array,
+  ): Result<void, RegionDecodeFailure> {
     if (data.length === 0) return ok(undefined);
-    if (this.#arenaUsed + data.length > this.#arena.length)
+    if (this.#arenaWriteOffset + data.length > this.#arena.length)
       return err({
         kind: "limit",
         boundary: "file-size",
@@ -356,15 +362,15 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
         });
       this.#runs.push({
         address,
-        offset: this.#arenaUsed,
+        offset: this.#arenaWriteOffset,
         length: data.length,
         recordCount: 1,
         firstLine: this.#lineNumber,
         lastLine: this.#lineNumber,
       });
     }
-    this.#arena.set(data, this.#arenaUsed);
-    this.#arenaUsed += data.length;
+    this.#arena.set(data, this.#arenaWriteOffset);
+    this.#arenaWriteOffset += data.length;
     return ok(undefined);
   }
 
@@ -387,18 +393,28 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
   }
 
   #limitations(): string[] {
-    const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
-    if (this.#termination === undefined)
-      return [`${label} has no termination record; the file may be truncated.`];
-    const termination = this.#termination.value;
-    const mismatched = [...this.#dataTypes].filter(
-      (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
-    );
-    return this.#encoding === "srec" && mismatched.length > 0
-      ? [
+    const limitations: string[] = [];
+    const count = this.#declaredCount;
+    if (count !== undefined && count.value < this.#dataRecordCount)
+      limitations.push(
+        `S-record line ${String(count.line)}: the final count covers ${String(count.value)} of ${String(this.#dataRecordCount)} data records. Data after the count is retained.`,
+      );
+    const termination = this.#termination?.value;
+    if (termination === undefined) {
+      const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
+      limitations.push(
+        `${label} has no termination record; the file may be truncated.`,
+      );
+    } else if (this.#encoding === "srec") {
+      const mismatched = [...this.#dataTypes].filter(
+        (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
+      );
+      if (mismatched.length > 0)
+        limitations.push(
           `S-record termination ${termination} does not match the address width of ${mismatched.sort().join(", ")} data records.`,
-        ]
-      : [];
+        );
+    }
+    return limitations;
   }
 
   #metadata(
@@ -432,7 +448,7 @@ class StreamingHexRecordDecoder implements HexRecordDecoder {
         header?.every((byte) => byte >= 0x20 && byte <= 0x7e) === true
           ? String.fromCharCode(...header)
           : null,
-      declared_data_record_count: this.#declaredCount,
+      declared_data_record_count: this.#declaredCount?.value ?? null,
     };
   }
 }
@@ -455,68 +471,14 @@ const mergeRuns = (
   arena: Uint8Array,
 ): Result<
   { regions: HexRecordRegion[]; duplicateBytes: number },
-  HexRecordFailure
+  RegionDecodeFailure
 > => {
-  const ordered = [...runs].sort((left, right) => left.address - right.address);
-  const regions: HexRecordRegion[] = [];
-  let duplicateBytes = 0;
-  let first = 0;
-  while (first < ordered.length) {
-    let next = first + 1;
-    let end = runEnd(ordered[first]);
-    while (next < ordered.length && (ordered[next]?.address ?? 0) <= end) {
-      end = Math.max(end, runEnd(ordered[next]));
-      next += 1;
-    }
-    const region = mergeRegion(ordered.slice(first, next), end, arena);
-    if (!region.ok) return region;
-    regions.push(region.value.region);
-    duplicateBytes += region.value.duplicateBytes;
-    first = next;
-  }
-  return ok({ regions, duplicateBytes });
-};
-
-const runEnd = (run: RecordRun | undefined): number =>
-  run === undefined ? 0 : run.address + run.length;
-
-/** Copy one contiguous group; written addresses always form [start, written). */
-const mergeRegion = (
-  group: readonly RecordRun[],
-  end: number,
-  arena: Uint8Array,
-): Result<
-  { region: HexRecordRegion; duplicateBytes: number },
-  HexRecordFailure
-> => {
-  const start = group[0]?.address ?? 0;
-  const bytes = new Uint8Array(end - start);
-  let written = start;
-  let duplicateBytes = 0;
-  for (const run of group) {
-    const overlapEnd = Math.min(written, runEnd(run));
-    for (let address = run.address; address < overlapEnd; address += 1) {
-      const existing = bytes[address - start] ?? 0;
-      const incoming = arena[run.offset + address - run.address] ?? 0;
-      if (existing !== incoming)
-        return err(conflict(group, run, address, [existing, incoming]));
-    }
-    duplicateBytes += Math.max(overlapEnd - run.address, 0);
-    if (runEnd(run) > written) {
-      bytes.set(
-        arena.subarray(
-          run.offset + written - run.address,
-          run.offset + run.length,
-        ),
-        written - start,
-      );
-      written = runEnd(run);
-    }
-  }
+  const merged = mergeArenaRuns(runs, arena);
+  if (!merged.ok) return err(conflict(merged.error));
   return ok({
-    region: {
+    regions: merged.value.ranges.map(({ start, bytes, runs: group }) => ({
       start,
-      end: end - 1,
+      end: start + bytes.length - 1,
       bytes,
       recordCount: group.reduce((sum, run) => sum + run.recordCount, 0),
       firstLine: group.reduce(
@@ -524,27 +486,18 @@ const mergeRegion = (
         Number.MAX_SAFE_INTEGER,
       ),
       lastLine: group.reduce((line, run) => Math.max(line, run.lastLine), 0),
-    },
-    duplicateBytes,
+    })),
+    duplicateBytes: merged.value.duplicateBytes,
   });
 };
 
-const conflict = (
-  group: readonly RecordRun[],
-  run: RecordRun,
-  address: number,
-  [existing, incoming]: readonly [number, number],
-): HexRecordFailure => {
-  // The first covering run in address order supplied the retained byte.
-  const writer =
-    group.find(
-      (candidate) =>
-        candidate !== run &&
-        candidate.address <= address &&
-        address < runEnd(candidate),
-    ) ?? run;
-  return {
-    kind: "format",
-    message: `address 0x${hex(address, 8)} written with different values at ${lineSpan(writer)} (0x${hex(existing, 2)}) and ${lineSpan(run)} (0x${hex(incoming, 2)})`,
-  };
-};
+const conflict = ({
+  address,
+  writer,
+  run,
+  existing,
+  incoming,
+}: RunConflict<RecordRun>): RegionDecodeFailure => ({
+  kind: "format",
+  message: `address 0x${hex(address, 8)} written with different values at ${lineSpan(writer)} (0x${hex(existing, 2)}) and ${lineSpan(run)} (0x${hex(incoming, 2)})`,
+});

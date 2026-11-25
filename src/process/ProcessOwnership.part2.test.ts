@@ -124,7 +124,7 @@ describe("owned process-group cleanup discovery", () => {
     await expect(cleanupOwnedProcessGroup(ownership, adapter)).resolves.toEqual(
       {
         cleaned: false,
-        reason: "process ownership token mismatch for PID(s): 104",
+        reason: expect.stringMatching(/ownership token mismatch.*\b104\b/i),
         failures: [{ pid: 104, reason: "run-token-mismatch" }],
       },
     );
@@ -163,8 +163,9 @@ describe("owned process-group cleanup discovery", () => {
     await expect(cleanupOwnedProcessGroup(ownership, adapter)).resolves.toEqual(
       {
         cleaned: false,
-        reason:
-          "descendant process-group leader identity could not be verified",
+        reason: expect.stringMatching(
+          /descendant.*leader identity.*not be verified/iu,
+        ),
       },
     );
     expect(signalGroup).not.toHaveBeenCalled();

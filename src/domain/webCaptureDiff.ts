@@ -173,12 +173,6 @@ const storageDimension = (
     before.storage,
     after.storage,
   );
-  const indexedDbVersionCovered = [before.storage, after.storage].every(
-    (storage) =>
-      storage.content_fingerprints
-        .filter(({ scope }) => scope === "indexed_db_schema")
-        .every(({ projection_version }) => projection_version === 2),
-  );
   return compareDimension(
     storageMap(
       before.storage,
@@ -194,10 +188,9 @@ const storageDimension = (
     ),
     keysComplete &&
       usageComplete &&
-      indexedDbVersionCovered &&
       before.storage.fingerprints_complete &&
       after.storage.fingerprints_complete,
-    "Storage fingerprints, inventories, usage, quota, or IndexedDB schema version coverage were unavailable or truncated in at least one observation.",
+    "Storage fingerprints, inventories, usage, or quota were unavailable or truncated in at least one observation.",
     keysComplete,
   );
 };
@@ -213,9 +206,10 @@ const compareWebCaptureDimensions = (
     resources: compareResources(
       before.resources,
       after.resources,
-      sectionsComplete(before, ["resources"]) &&
-        sectionsComplete(after, ["resources"]),
-      "Resource inventory or content-size evidence was incomplete in at least one observation.",
+      sectionsComplete(before, ["resources"]),
+      sectionsComplete(after, ["resources"]),
+      resourceInventoryReadable(before),
+      resourceInventoryReadable(after),
     ),
     network: networkDimension(before, after),
     metadata: compareAggregate(
@@ -232,12 +226,25 @@ const compareWebCaptureDimensions = (
   };
 };
 
+/** An invalid or unread collection is not a truncated sample of a real inventory. */
+const resourceInventoryReadable = (inspection: WebPageInspection): boolean =>
+  !inspection.completeness.unavailable_sections.includes("resources");
+
 const compareResources = (
   before: WebPageInspection["resources"],
   after: WebPageInspection["resources"],
-  complete: boolean,
-  reason: string,
+  beforeComplete: boolean,
+  afterComplete: boolean,
+  beforeReadable: boolean,
+  afterReadable: boolean,
 ): Dimension => {
+  const reason =
+    "Resource inventory or content-size evidence was incomplete in at least one observation.";
+  // Retained rows from an unavailable collection cannot prove addition,
+  // removal, or equality. Truncation still uses directional coverage.
+  if (!beforeReadable || !afterReadable)
+    return { status: "unknown", total_changes: 0, changes: [], reason };
+  const complete = beforeComplete && afterComplete;
   const left = resourceGroups(before);
   const right = resourceGroups(after);
   const changes: Change[] = [];
@@ -246,12 +253,14 @@ const compareResources = (
     const leftSizes = left.get(identity);
     const rightSizes = right.get(identity);
     if (leftSizes === undefined || rightSizes === undefined) {
-      if (!complete) unresolved = true;
-      else
+      const absenceProven =
+        leftSizes === undefined ? beforeComplete : afterComplete;
+      if (absenceProven)
         changes.push({
           identity,
           change: leftSizes === undefined ? "added" : "removed",
         });
+      else unresolved = true;
       continue;
     }
     // Stable inventories deduplicate identical observations. A null size also
@@ -261,7 +270,12 @@ const compareResources = (
       unresolved = true;
       continue;
     }
-    if (!sameResourceSizes(leftSizes, rightSizes))
+    // A partial set can omit any size variant. Only a complete peer can
+    // contradict a retained variant, including when the other side is partial.
+    if (
+      (beforeComplete && !resourceSizesContained(rightSizes, leftSizes)) ||
+      (afterComplete && !resourceSizesContained(leftSizes, rightSizes))
+    )
       changes.push({ identity, change: "modified" });
   }
   if (changes.length > 0)
@@ -292,11 +306,10 @@ const resourceGroups = (
   return groups;
 };
 
-const sameResourceSizes = (
-  left: ReadonlySet<number | null>,
-  right: ReadonlySet<number | null>,
-): boolean =>
-  left.size === right.size && [...left].every((size) => right.has(size));
+const resourceSizesContained = (
+  observed: ReadonlySet<number | null>,
+  complete: ReadonlySet<number | null>,
+): boolean => [...observed].every((size) => complete.has(size));
 
 type BodyShapeSources = {
   readonly request: boolean;
@@ -414,7 +427,7 @@ const sharedNetworkMetadata = (
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
       retainKnownFields(identity, request, networkResponseFields);
-      for (const [index, redirect] of (request.redirects ?? []).entries())
+      for (const [index, redirect] of request.redirects.entries())
         retainKnownFields(
           redirectNetworkIdentity(identity, index),
           redirect,
@@ -629,7 +642,7 @@ const networkMap = (
     values.push(
       digestCanonicalValue({
         ...response,
-        redirects: (request.redirects ?? []).map(
+        redirects: request.redirects.map(
           (
             {
               request_timestamp: _requestTimestamp,
@@ -776,6 +789,7 @@ const webSocketPayloadMaps = (
       beforeGroup.connections.length !== afterGroup.connections.length
     )
       continue;
+    // optional-fact-default: equal connection counts; with none there are no events to pair.
     const eventCount = beforeGroup.connections[0]?.events.length ?? 0;
     const comparableBytes = new Set<number>();
     const comparableShapes = new Set<number>();
@@ -834,6 +848,7 @@ const webMcpDimension = (
 ): Dimension => {
   const groups = (discovery: WebMcpDiscovery | null) => {
     const result = new Map<string, Tool[]>();
+    // optional-fact-default: null discovery fails webMcpComplete, so its values are unknown.
     for (const tool of discovery?.tools.items ?? []) {
       const identity = `webmcp_${digestCanonicalValue({
         name: tool.name,
@@ -1062,8 +1077,7 @@ const domValueLengthsComparable = (
   after: WebPageInspection["dom"],
 ): boolean =>
   (before.nodes.length === 0 && after.nodes.length === 0) ||
-  (before.node_value_length_unit !== undefined &&
-    before.node_value_length_unit === after.node_value_length_unit);
+  before.node_value_length_unit === after.node_value_length_unit;
 
 /** Compare parsed node facts without serializing or copying the inventories. */
 const domNodesDiffer = (
@@ -1132,6 +1146,180 @@ const domDimension = (
       };
 };
 
+type ScriptMapCandidate<Metadata> = {
+  readonly metadata: Metadata;
+  readonly declaration: string | null;
+};
+type ScriptMapSlot<Metadata> = ScriptMapCandidate<Metadata> & {
+  readonly unknown: boolean;
+};
+
+/** A declaration needs more placements than its exact slots plus every unknown. */
+const declarationCountsExceed = <Metadata>(
+  needed: readonly ScriptMapCandidate<Metadata>[],
+  slots: readonly ScriptMapSlot<Metadata>[],
+): boolean => {
+  if (needed.length > slots.length) return true;
+  let unknown = 0;
+  const exact = new Map<string | null, number>();
+  for (const slot of slots) {
+    if (slot.unknown) {
+      unknown += 1;
+      continue;
+    }
+    exact.set(slot.declaration, (exact.get(slot.declaration) ?? 0) + 1);
+  }
+  const required = new Map<string | null, number>();
+  for (const item of needed)
+    required.set(item.declaration, (required.get(item.declaration) ?? 0) + 1);
+  let surplus = 0;
+  for (const [declaration, count] of required) {
+    const available = exact.get(declaration) ?? 0;
+    if (count > available + unknown) return true;
+    if (count > available) surplus += count - available;
+  }
+  return surplus > unknown;
+};
+
+const metadataEntries = <Metadata>(metadata: Metadata) => {
+  const record = metadata as Record<
+    string,
+    string | number | boolean | undefined
+  >;
+  return Object.keys(record)
+    .sort()
+    .map((key) => [key, record[key]] as const);
+};
+
+type CountedScriptMapGroup<Metadata> = ScriptMapCandidate<Metadata> & {
+  count: number;
+};
+type CountedScriptMapSlot<Metadata> = ScriptMapSlot<Metadata> & {
+  count: number;
+};
+
+const groupScriptMapFacts = <
+  Metadata,
+  Item extends ScriptMapCandidate<Metadata>,
+>(
+  items: readonly Item[],
+  keyFor: (item: Item) => string,
+): Array<Item & { count: number }> => {
+  const groups = new Map<string, Item & { count: number }>();
+  for (const item of items) {
+    const key = keyFor(item);
+    const existing = groups.get(key);
+    if (existing === undefined) groups.set(key, { ...item, count: 1 });
+    else existing.count += 1;
+  }
+  return [...groups.values()];
+};
+
+/** Every declaration can use every slot, so counts already decide the result. */
+const scriptMapMetadataFitsAll = <Metadata>(
+  needed: readonly CountedScriptMapGroup<Metadata>[],
+  slots: readonly CountedScriptMapSlot<Metadata>[],
+  metadataCompatible: (left: Metadata, right: Metadata) => boolean,
+): boolean =>
+  needed.every((item) =>
+    slots.every((slot) => metadataCompatible(item.metadata, slot.metadata)),
+  );
+
+/**
+ * True when identical groups cannot be placed. Flow moves whole counts, so
+ * repeated scripts do not become a dense assignment graph.
+ */
+const scriptMapGroupAssignmentExceeds = <Metadata>(
+  needed: readonly CountedScriptMapGroup<Metadata>[],
+  slots: readonly CountedScriptMapSlot<Metadata>[],
+  metadataCompatible: (left: Metadata, right: Metadata) => boolean,
+): boolean => {
+  const residual = slots.map((slot) => slot.count);
+  const demand = needed.map((item) => item.count);
+  const edges = needed.map((item) =>
+    slots.flatMap((slot, index) =>
+      metadataCompatible(item.metadata, slot.metadata) &&
+      (slot.unknown || slot.declaration === item.declaration)
+        ? [index]
+        : [],
+    ),
+  );
+  const flow = new Map<string, number>();
+  const flowKey = (needIndex: number, slotIndex: number): string =>
+    `${String(needIndex)}:${String(slotIndex)}`;
+  const send = (needIndex: number, seen: Set<number>, cap: number): number => {
+    for (const slotIndex of edges[needIndex] ?? []) {
+      if (seen.has(slotIndex)) continue;
+      const free = residual[slotIndex] ?? 0;
+      if (free <= 0) continue;
+      seen.add(slotIndex);
+      const pushed = Math.min(cap, free);
+      residual[slotIndex] = free - pushed;
+      flow.set(
+        flowKey(needIndex, slotIndex),
+        (flow.get(flowKey(needIndex, slotIndex)) ?? 0) + pushed,
+      );
+      return pushed;
+    }
+    for (const slotIndex of edges[needIndex] ?? []) {
+      if (seen.has(slotIndex)) continue;
+      seen.add(slotIndex);
+      for (let other = 0; other < needed.length; other += 1) {
+        if (other === needIndex) continue;
+        const moved = flow.get(flowKey(other, slotIndex)) ?? 0;
+        if (moved <= 0) continue;
+        const rerouted = send(other, seen, Math.min(cap, moved));
+        if (rerouted <= 0) continue;
+        flow.set(flowKey(other, slotIndex), moved - rerouted);
+        flow.set(
+          flowKey(needIndex, slotIndex),
+          (flow.get(flowKey(needIndex, slotIndex)) ?? 0) + rerouted,
+        );
+        return rerouted;
+      }
+    }
+    return 0;
+  };
+  for (let index = 0; index < needed.length; index += 1)
+    while ((demand[index] ?? 0) > 0) {
+      const pushed = send(index, new Set(), demand[index] ?? 0);
+      if (pushed === 0) return true;
+      demand[index] = (demand[index] ?? 0) - pushed;
+    }
+  return false;
+};
+
+/**
+ * True when observed declarations cannot be placed on the other capture.
+ * Identical scripts share one count, so repeated declarations are not retried
+ * as separate permutations.
+ */
+const scriptMapFactsExceed = <Metadata>(
+  needed: readonly ScriptMapCandidate<Metadata>[],
+  slots: readonly ScriptMapSlot<Metadata>[],
+  metadataCompatible: (left: Metadata, right: Metadata) => boolean,
+): boolean => {
+  if (needed.length === 0) return false;
+  if (declarationCountsExceed(needed, slots)) return true;
+  const needGroups = groupScriptMapFacts(needed, (item) =>
+    compositeKey([metadataEntries(item.metadata), item.declaration]),
+  );
+  const slotGroups = groupScriptMapFacts(slots, (slot) =>
+    compositeKey([
+      metadataEntries(slot.metadata),
+      slot.declaration,
+      slot.unknown,
+    ]),
+  );
+  if (scriptMapMetadataFitsAll(needGroups, slotGroups, metadataCompatible))
+    return false;
+  return scriptMapGroupAssignmentExceeds(
+    needGroups,
+    slotGroups,
+    metadataCompatible,
+  );
+};
+
 const scriptsDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
@@ -1157,6 +1345,25 @@ const scriptsDimension = (
   const afterComplete =
     sectionsComplete(after, ["scripts"]) &&
     after.completeness.dropped_events.scripts === 0;
+  // A null declaration may represent an omitted URL. The capture ledger is
+  // section-wide, so it cannot identify which null script was affected.
+  // Unavailable map bodies alone do not erase an observed declaration.
+  const declarationMayBeOmitted = (inspection: WebPageInspection) =>
+    inspection.completeness.policy_filtered_sections.includes("source_maps") ||
+    inspection.completeness.truncated_sections.includes("source_maps") ||
+    inspection.completeness.excluded.some(
+      (item) =>
+        item.section === "source_maps" &&
+        item.count !== 0 &&
+        [
+          "disallowed_origin",
+          "unsupported_url",
+          "resource_budget_exhausted",
+          "invalid_protocol_value",
+        ].includes(item.reason),
+    );
+  const beforeMayOmitDeclaration = declarationMayBeOmitted(before);
+  const afterMayOmitDeclaration = declarationMayBeOmitted(after);
   const left = new Map<string, string>();
   const right = new Map<string, string>();
   let valuesComplete = true;
@@ -1171,6 +1378,94 @@ const scriptsDimension = (
       prior.length > 0 &&
       later.length > 0 &&
       all.every((script) => script.source.included);
+    const mapComparable =
+      prior.every(
+        (script) => script.source_map_url !== null || !beforeMayOmitDeclaration,
+      ) &&
+      later.every(
+        (script) => script.source_map_url !== null || !afterMayOmitDeclaration,
+      );
+    // Match declarations only within the same fully observed metadata group.
+    // An omitted declaration can explain one value in its own group, not a
+    // declaration associated with a different observed script hash.
+    const metadataFields = [
+      "cdp_hash",
+      "length",
+      "is_module",
+      "language",
+    ] as const;
+    type ScriptMetadata = Partial<
+      Record<
+        (typeof metadataFields)[number] | "source_sha256",
+        string | number | boolean
+      >
+    >;
+    const scriptMetadata = (script: Script): ScriptMetadata => {
+      const metadata: ScriptMetadata = {};
+      for (const field of metadataFields) {
+        const value = script[field];
+        if (value !== null) metadata[field] = value;
+      }
+      if (sourceComparable && script.source.included)
+        metadata.source_sha256 = script.source.artifact.sha256;
+      return metadata;
+    };
+    const metadataCompatible = (
+      left: ScriptMetadata,
+      right: ScriptMetadata,
+    ): boolean =>
+      [...metadataFields, "source_sha256" as const].every(
+        (field) =>
+          left[field] === undefined ||
+          right[field] === undefined ||
+          left[field] === right[field],
+      );
+    // Each script keeps the metadata it actually observed. A null field does
+    // not erase that field for the rest of the URL group, and an omitted
+    // declaration can explain only one compatible script.
+    const mapFactsExceed = (
+      observed: readonly Script[],
+      observedMayOmit: boolean,
+      complete: readonly Script[],
+      completeMayOmit: boolean,
+    ): boolean => {
+      const needed = observed.flatMap((script) =>
+        script.source_map_url === null && observedMayOmit
+          ? []
+          : [
+              {
+                metadata: scriptMetadata(script),
+                declaration: script.source_map_url,
+              },
+            ],
+      );
+      const slots = complete.map((script) => ({
+        metadata: scriptMetadata(script),
+        declaration: script.source_map_url,
+        unknown: script.source_map_url === null && completeMayOmit,
+      }));
+      return scriptMapFactsExceed(needed, slots, metadataCompatible);
+    };
+    const provenMapDifference =
+      !mapComparable &&
+      prior.length > 0 &&
+      later.length > 0 &&
+      ((afterComplete &&
+        mapFactsExceed(
+          prior,
+          beforeMayOmitDeclaration,
+          later,
+          afterMayOmitDeclaration,
+        )) ||
+        (beforeComplete &&
+          mapFactsExceed(
+            later,
+            afterMayOmitDeclaration,
+            prior,
+            beforeMayOmitDeclaration,
+          )));
+    if (prior.length > 0 && later.length > 0 && !mapComparable)
+      valuesComplete = false;
     if (
       prior.length > 0 &&
       later.length > 0 &&
@@ -1186,7 +1481,7 @@ const scriptsDimension = (
       items.map((script) =>
         digestCanonicalValue({
           url: script.url,
-          source_map_url: script.source_map_url,
+          ...(mapComparable ? { source_map_url: script.source_map_url } : {}),
           ...Object.fromEntries(fields.map((field) => [field, script[field]])),
           ...(sourceComparable && script.source.included
             ? { source_sha256: script.source.artifact.sha256 }
@@ -1196,21 +1491,34 @@ const scriptsDimension = (
     const priorSamples = project(prior);
     const laterSamples = project(later);
     if (
+      !provenMapDifference &&
       !(beforeComplete && afterComplete) &&
       !(beforeComplete && !samplesContained(laterSamples, priorSamples)) &&
       !(afterComplete && !samplesContained(priorSamples, laterSamples))
     )
       continue;
     if (prior.length > 0)
-      left.set(identity, digestCanonicalValue(priorSamples.sort()));
+      left.set(
+        identity,
+        digestCanonicalValue({
+          samples: priorSamples.sort(),
+          proof: provenMapDifference ? "before" : null,
+        }),
+      );
     if (later.length > 0)
-      right.set(identity, digestCanonicalValue(laterSamples.sort()));
+      right.set(
+        identity,
+        digestCanonicalValue({
+          samples: laterSamples.sort(),
+          proof: provenMapDifference ? "after" : null,
+        }),
+      );
   }
   return compareDimension(
     left,
     right,
     beforeComplete && afterComplete && valuesComplete,
-    "Script inventory or corresponding source/metadata evidence was incomplete in at least one observation.",
+    "Script inventory, source-map declarations, or corresponding source/metadata evidence was incomplete in at least one observation.",
     true, // Selected map entries already carry their directional absence proof.
   );
 };
@@ -1347,26 +1655,13 @@ const storageFingerprintIdentities = (
   const afterComplete = completeStorageFingerprints(after);
   const bothComplete =
     before.fingerprints_complete && after.fingerprints_complete;
-  const candidates = bothComplete
+  return bothComplete
     ? new Set([...beforeComplete.keys(), ...afterComplete.keys()])
     : new Set(
         [...beforeComplete.keys()].filter((identity) =>
           afterComplete.has(identity),
         ),
       );
-  return new Set(
-    [...candidates].filter((identity) => {
-      const beforeSchema = beforeComplete.get(identity);
-      const afterSchema = afterComplete.get(identity);
-      if ((beforeSchema ?? afterSchema)?.scope !== "indexed_db_schema")
-        return true;
-      return (
-        beforeSchema === undefined ||
-        afterSchema === undefined ||
-        beforeSchema.projection_version === afterSchema.projection_version
-      );
-    }),
-  );
 };
 
 const completeStorageFingerprints = (

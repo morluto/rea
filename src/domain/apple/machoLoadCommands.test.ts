@@ -5,9 +5,12 @@ import {
   parseExecutableHeader,
 } from "../binaryTarget.js";
 import {
+  decodeMachoFixedWordFields,
   readMachoHeaderDeclarations,
+  readMachoLinkeditDataCommand,
   readMachoLoadCommandDeclarations,
   readMachoLoadCommandTableHeader,
+  readMachoSymtabCommand,
 } from "./machoLoadCommands.js";
 
 it.each([
@@ -27,6 +30,7 @@ it.each([
     view.setUint32(12, 0xffffffff, littleEndian);
     view.setUint32(16, 0x80000001, littleEndian);
     view.setUint32(20, 0xffffffff, littleEndian);
+    view.setUint32(24, 0x01200085, littleEndian);
     const expected = {
       headerSize: wide ? 32 : 28,
       wide,
@@ -34,10 +38,11 @@ it.each([
       commandCount: 0x80000001,
       commandBytes: 0xffffffff,
       fileType: 0xffffffff,
+      flags: 0x01200085,
       identity: { cpuType: 0xfedcba98, cpuSubtype: 0x89abcdef },
     };
     const format = { wide, littleEndian, headerSize: wide ? 32 : 28 };
-    for (const length of [0, 3, 4, 11, 12]) {
+    for (const length of [0, 3, 4, 11, 12, 27]) {
       const prefix = bytes.subarray(0, length);
       expect(hasMachoMagic(prefix)).toBe(length >= 4);
       expect(readMachoHeaderPrefixFacts(prefix)).toEqual({
@@ -80,9 +85,6 @@ it.each([
     expect(readMachoLoadCommandTableHeader(complete, 32)).toMatchObject({
       ok: false,
     });
-    expect(
-      readMachoHeaderDeclarations(bytes.subarray(0, 27), 32),
-    ).toMatchObject({ ok: false });
   },
 );
 
@@ -107,3 +109,42 @@ it.each([
     });
   },
 );
+
+it.each([false, true])(
+  "keeps linkedit range fields and rejects incomplete layouts (little-endian=%s)",
+  (littleEndian) => {
+    const body = Buffer.alloc(16);
+    const fields = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    fields.setUint32(8, 0x1234, littleEndian);
+    fields.setUint32(12, 0x56, littleEndian);
+    expect(readMachoLinkeditDataCommand(0x1d, body, littleEndian)).toEqual({
+      dataOffset: 0x1234,
+      dataSize: 0x56,
+    });
+    expect(
+      readMachoLinkeditDataCommand(0x1d, body.subarray(0, 15), littleEndian),
+    ).toBeNull();
+    expect(
+      readMachoLinkeditDataCommand(0x2, Buffer.alloc(24), littleEndian),
+    ).toBeNull();
+  },
+);
+
+it("reads symtab fields through the shared fixed-word decoder", () => {
+  const body = Buffer.alloc(24);
+  body.writeUInt32BE(0x2, 0);
+  body.writeUInt32BE(24, 4);
+  body.writeUInt32BE(0x100, 8);
+  body.writeUInt32BE(3, 12);
+  body.writeUInt32BE(0x200, 16);
+  body.writeUInt32BE(0x40, 20);
+  const fields = { symoff: 0x100, nsyms: 3, stroff: 0x200, strsize: 0x40 };
+  expect(readMachoSymtabCommand(body, false)).toEqual(fields);
+  expect(decodeMachoFixedWordFields(0x2, body.subarray(8), false)).toEqual(
+    fields,
+  );
+  expect(readMachoSymtabCommand(body.subarray(0, 23), false)).toBeNull();
+  expect(decodeMachoFixedWordFields(0x19, body.subarray(8), false)).toBe(
+    undefined,
+  );
+});

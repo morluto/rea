@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import type { CdpEvent } from "../../../src/browser/CdpConnection.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import type { FakeOptions } from "../../fixtures/fakeCdpBrowserTypes.js";
@@ -22,257 +23,324 @@ const inspectNetwork = async (options: FakeOptions) => {
   return { browser, inspection: result.value };
 };
 
-describe("CdpBrowserProvider: redirect errors: redirect response validation", () => {
-  it.each([
-    { label: "missing", url: undefined, reason: "invalid_protocol_value" },
-    { label: "malformed", url: "http://%", reason: "invalid_protocol_value" },
-    {
-      label: "unsupported scheme",
-      url: "file:///private/redirect",
-      reason: "unsupported_url",
-    },
-  ])("classifies $label redirect response URLs", async ({ url, reason }) => {
-    const { inspection } = await inspectNetwork({
-      malformedRedirectResponse: true,
-      ...(url === undefined ? {} : { redirectResponseUrl: url }),
-    });
+interface RedirectCase {
+  readonly id: string;
+  readonly continuation: { readonly redirectResponse?: unknown };
+  readonly lateUrl?: string;
+}
 
-    expect(inspection.network.requests).toEqual([]);
-    expect(inspection.completeness.excluded).toContainEqual({
-      section: "network_requests",
-      reason,
-      count: expect.any(Number),
-    });
-    const section =
-      reason === "unsupported_url"
-        ? inspection.completeness.policy_filtered_sections
-        : inspection.completeness.unavailable_sections;
-    expect(section).toContain("network_requests");
-  });
-
-  it.each([
-    { label: "null", envelope: null },
-    { label: "array", envelope: [] },
-    { label: "scalar", envelope: "malformed redirect" },
-  ])(
-    "preserves prior request for a $label redirect envelope",
-    async ({ envelope }) => {
-      const { browser, inspection } = await inspectNetwork({
-        malformedRedirectResponse: true,
-        redirectResponseEnvelope: envelope,
+const redirectCases = (cases: readonly RedirectCase[]): FakeOptions => ({
+  eventsBeforeReply: ["Network.enable"],
+  commandEvents(command, origin) {
+    if (command.method !== "Network.enable") return undefined;
+    return cases.flatMap(({ id, continuation, lateUrl }) => {
+      const request = (params: object): CdpEvent => ({
+        sessionId: command.sessionId,
+        method: "Network.requestWillBeSent",
+        params: { requestId: id, initiator: { type: "other" }, ...params },
       });
+      const response = (url: string, status: number): CdpEvent => ({
+        sessionId: command.sessionId,
+        method: "Network.responseReceived",
+        params: {
+          requestId: id,
+          response: {
+            url,
+            status,
+            mimeType: "application/json",
+            headers: {
+              "Content-Length": "123",
+              "Content-Encoding": "gzip",
+              "X-Private": "redirect-header-secret",
+            },
+          },
+        },
+      });
+      const first = `${origin}/${id}/first`;
+      const prior = `${origin}/${id}/prior`;
+      const final = `${origin}/${id}/final`;
+      return [
+        request({ request: { url: first, method: "GET" }, timestamp: 7 }),
+        request({
+          request: {
+            url: prior,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            postData: '{"preserved":true}',
+          },
+          redirectResponse: { url: first, status: 307, encodedDataLength: 23 },
+          timestamp: 8,
+        }),
+        response(prior, 201),
+        request({
+          request: { url: final, method: "GET" },
+          timestamp: 9,
+          ...continuation,
+        }),
+        response(lateUrl ?? final, 200),
+        {
+          sessionId: command.sessionId,
+          method: "Network.loadingFinished",
+          params: { requestId: id, encodedDataLength: 777 },
+        },
+      ];
+    });
+  },
+});
 
-      expect(inspection.network.requests).toHaveLength(1);
-      expect(inspection.network.requests[0]).toMatchObject({
-        request_id: "request-1",
-        url: `${browser.allowedOrigin}/malformed-redirect-prior`,
+it.each([
+  {
+    label: "missing and malformed",
+    urls: [{ status: 302 }, { url: "http://%", status: 302 }],
+    reason: "invalid_protocol_value",
+    section: "unavailable_sections",
+  },
+  {
+    label: "unsupported",
+    urls: [{ url: "file:///private/redirect", status: 302 }],
+    reason: "unsupported_url",
+    section: "policy_filtered_sections",
+  },
+] as const)(
+  "keeps $label prior-hop URLs out of redirect chains",
+  async ({ urls, reason, section }) => {
+    const { inspection } = await inspectNetwork(
+      redirectCases(
+        urls.map((redirectResponse, index) => ({
+          id: `bad-url-${String(index)}`,
+          continuation: { redirectResponse },
+        })),
+      ),
+    );
+    expect(inspection.network.requests).toEqual([]);
+    expect(
+      inspection.completeness.excluded.filter(
+        ({ section }) => section === "network_requests",
+      ),
+    ).toEqual([{ section: "network_requests", reason, count: urls.length }]);
+    expect(inspection.completeness[section]).toContain("network_requests");
+  },
+);
+
+it("retains the authorized predecessor when a redirect continuation is malformed", async () => {
+  const cases: RedirectCase[] = [
+    { id: "omitted", continuation: {} },
+    { id: "null", continuation: { redirectResponse: null } },
+    { id: "array", continuation: { redirectResponse: [] } },
+    { id: "scalar", continuation: { redirectResponse: "malformed redirect" } },
+    {
+      id: "denied-late-response",
+      continuation: { redirectResponse: null },
+      lateUrl: "https://private.example.test/late?token=unauthorized-secret",
+    },
+  ];
+  const { browser, inspection } = await inspectNetwork(redirectCases(cases));
+  expect(inspection.network.requests).toEqual(
+    cases.map(({ id }) =>
+      expect.objectContaining({
+        request_id: id,
+        url: `${browser.allowedOrigin}/${id}/prior`,
         status: 201,
         mime_type: "application/json",
         encoded_data_length: null,
         redirects: [
-          {
-            url: `${browser.allowedOrigin}/api?token=network-secret`,
-            response_url: `${browser.allowedOrigin}/api?token=network-secret`,
+          expect.objectContaining({
+            url: `${browser.allowedOrigin}/${id}/first`,
+            response_url: `${browser.allowedOrigin}/${id}/first`,
             request_timestamp: 7,
             redirect_event_timestamp: 8,
-          },
+          }),
         ],
-      });
-      expect(
-        inspection.network.requests[0]?.body_shapes.request,
-      ).not.toBeNull();
-      expect(inspection.network.requests[0]?.body_shapes.response).toBeNull();
-      expect(inspection.network.requests[0]?.body_shapes.status).toBe(
-        "partial",
-      );
-      expect(inspection.metadata.responses).toHaveLength(1);
-      expect(inspection.metadata.responses[0]).toMatchObject({
-        url: `${browser.allowedOrigin}/malformed-redirect-prior`,
+        body_shapes: {
+          status: "partial",
+          request: expect.objectContaining({ root_type: "object" }),
+          response: null,
+        },
+      }),
+    ),
+  );
+  expect(inspection.metadata.responses).toEqual(
+    cases.map(({ id }) =>
+      expect.objectContaining({
+        request_id: id,
+        url: `${browser.allowedOrigin}/${id}/prior`,
         mime_type: "application/json",
         content_length: 123,
         content_encoding: "gzip",
-      });
-      expect(inspection.completeness.unavailable_sections).toContain(
-        "network_requests",
-      );
-      expect(inspection.completeness.unavailable_sections).toContain(
-        "json_body_shapes",
-      );
-      expect(inspection.completeness.excluded).toContainEqual({
-        section: "network_requests",
-        reason: "invalid_protocol_value",
-        count: expect.any(Number),
-      });
-      expect(inspection.completeness.excluded).toContainEqual({
-        section: "json_body_shapes",
-        reason: "invalid_protocol_value",
-        count: expect.any(Number),
-      });
-      expect(JSON.stringify(inspection.network.requests)).not.toContain(
-        "malformed-redirect-final",
-      );
-    },
+      }),
+    ),
   );
-});
-
-describe("CdpBrowserProvider: redirect errors: preserving authorized predecessor evidence", () => {
-  it("preserves predecessor evidence when a continuation omits redirectResponse", async () => {
-    const { browser, inspection } = await inspectNetwork({
-      malformedRedirectResponse: true,
-      omitRedirectResponse: true,
-    });
-
-    expect(inspection.network.requests).toHaveLength(1);
-    expect(inspection.network.requests[0]).toMatchObject({
-      request_id: "request-1",
-      url: `${browser.allowedOrigin}/malformed-redirect-prior`,
-      status: 201,
-      redirects: [
-        {
-          url: `${browser.allowedOrigin}/api?token=network-secret`,
-          response_url: `${browser.allowedOrigin}/api?token=network-secret`,
-        },
-      ],
-      body_shapes: { status: "partial", response: null },
-    });
-    expect(inspection.metadata.responses).toHaveLength(1);
-    expect(inspection.completeness.unavailable_sections).toContain(
-      "network_requests",
-    );
-    expect(inspection.completeness.excluded).toContainEqual({
+  expect(inspection.completeness.unavailable_sections).toEqual(
+    expect.arrayContaining(["network_requests", "json_body_shapes"]),
+  );
+  expect(
+    inspection.completeness.excluded.filter(
+      ({ section }) =>
+        section === "network_requests" || section === "json_body_shapes",
+    ),
+  ).toEqual([
+    {
+      section: "json_body_shapes",
+      reason: "invalid_protocol_value",
+      count: cases.length,
+    },
+    {
       section: "network_requests",
       reason: "invalid_protocol_value",
-      count: expect.any(Number),
-    });
-    expect(JSON.stringify(inspection)).not.toContain(
-      "malformed-redirect-final",
-    );
-  });
-
-  it("keeps authorized prior evidence when the later response URL is disallowed", async () => {
-    const { browser, inspection } = await inspectNetwork({
-      malformedRedirectResponse: true,
-      redirectResponseEnvelope: null,
-      responseAfterMalformedUrl:
-        "https://private.example.test/late?token=unauthorized-secret",
-    });
-
-    expect(inspection.network.requests).toHaveLength(1);
-    expect(inspection.network.requests[0]).toMatchObject({
-      url: `${browser.allowedOrigin}/malformed-redirect-prior`,
-      status: 201,
-      mime_type: "application/json",
-      encoded_data_length: null,
-      body_shapes: { status: "partial", response: null },
-    });
-    expect(inspection.metadata.responses).toHaveLength(1);
-    expect(inspection.metadata.responses[0]?.url).toBe(
-      `${browser.allowedOrigin}/malformed-redirect-prior`,
-    );
-    expect(inspection.completeness.unavailable_sections).toContain(
-      "json_body_shapes",
-    );
-    expect(inspection.completeness.excluded).toContainEqual({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
-      count: expect.any(Number),
-    });
-    const output = JSON.stringify(inspection);
-    expect(output).not.toContain("private.example.test");
-    expect(output).not.toContain("unauthorized-secret");
-    expect(output).not.toContain("header-secret");
-  });
+      count: cases.length,
+    },
+  ]);
+  expect(
+    browser.commands.filter(
+      ({ method }) => method === "Network.getResponseBody",
+    ),
+  ).toEqual([]);
+  const output = JSON.stringify(inspection);
+  for (const excluded of [
+    "/final",
+    "private.example.test",
+    "unauthorized-secret",
+    "redirect-header-secret",
+  ])
+    expect(output).not.toContain(excluded);
 });
 
 it.each([
-  { phase: "redirect", malformed: true, orphan: true },
-  { phase: "redirect", malformed: false, orphan: true },
-  { phase: "redirect", malformed: true, orphan: false },
-  { phase: "redirect", malformed: false, orphan: false },
-  { phase: "response", malformed: true, orphan: false },
-  { phase: "response", malformed: false, orphan: false },
+  { label: "omitted", status: {}, invalid: false },
+  { label: "malformed", status: { status: "302" }, invalid: true },
 ])(
-  "retains $phase facts with missing versus malformed status (orphan=$orphan, malformed=$malformed)",
-  async ({ phase, malformed, orphan }) => {
+  "retains scoped network facts when status is $label",
+  async ({ status, invalid }) => {
+    const phases = [
+      "orphan-redirect",
+      "observed-redirect",
+      "response",
+    ] as const;
+    const cases = [
+      ...phases.map((phase) => ({
+        id: phase,
+        phase,
+        status,
+        mime: "text/plain",
+      })),
+      ...(invalid
+        ? [
+            {
+              id: "fractional",
+              phase: "response" as const,
+              status: { status: 200.5 },
+              mime: "application/json",
+            },
+          ]
+        : []),
+    ];
     const { browser, inspection } = await inspectNetwork({
+      eventsBeforeReply: ["Network.enable"],
       commandEvents(command, origin) {
         if (command.method !== "Network.enable") return undefined;
-        const request = (url: string) => ({
-          requestId: "status-request",
-          timestamp: 1,
-          type: "Fetch",
-          request: { url, method: "GET" },
-          initiator: { type: "other" },
-        });
-        const response = {
-          url: `${origin}/prior`,
-          mimeType: "text/plain",
-          encodedDataLength: 0,
-          ...(malformed ? { status: "302" } : {}),
-        };
-        return [
-          ...(orphan
-            ? []
-            : [
-                {
+        return cases.flatMap(({ id, phase, status, mime }): CdpEvent[] => {
+          const priorUrl = `${origin}/${id}/prior`;
+          const request = (url: string) => ({
+            requestId: id,
+            type: "Fetch",
+            request: { url, method: "GET" },
+            initiator: { type: "other" },
+          });
+          const response = {
+            url: phase === "response" ? `${origin}/${id}/reported` : priorUrl,
+            mimeType: mime,
+            encodedDataLength: 0,
+            headers: { "Content-Length": "123", "Content-Encoding": "gzip" },
+            ...status,
+          };
+          const events: CdpEvent[] = [];
+          if (phase !== "orphan-redirect")
+            events.push({
+              method: "Network.requestWillBeSent",
+              sessionId: command.sessionId,
+              params: { ...request(priorUrl), timestamp: 1 },
+            });
+          events.push(
+            phase === "response"
+              ? {
+                  method: "Network.responseReceived",
+                  sessionId: command.sessionId,
+                  params: { requestId: id, response },
+                }
+              : {
                   method: "Network.requestWillBeSent",
                   sessionId: command.sessionId,
-                  params: request(`${origin}/prior`),
+                  params: {
+                    ...request(`${origin}/${id}/final`),
+                    timestamp: 2,
+                    redirectResponse: response,
+                  },
                 },
-              ]),
-          phase === "redirect"
-            ? {
-                method: "Network.requestWillBeSent",
-                sessionId: command.sessionId,
-                params: {
-                  ...request(`${origin}/final`),
-                  timestamp: 2,
-                  redirectResponse: response,
-                },
-              }
-            : {
-                method: "Network.responseReceived",
-                sessionId: command.sessionId,
-                params: { requestId: "status-request", response },
-              },
-          {
-            method: "Network.loadingFinished",
-            sessionId: command.sessionId,
-            params: {
-              requestId: "status-request",
-              timestamp: 3,
-              encodedDataLength: 0,
-            },
-          },
-        ];
+          );
+          return events;
+        });
       },
     });
-    expect(inspection.network.requests).toHaveLength(1);
-    const retained = inspection.network.requests[0];
-    if (orphan)
-      expect(retained).toMatchObject({
-        url: `${browser.allowedOrigin}/final`,
+
+    const origin = browser.allowedOrigin;
+    expect(inspection.network.requests).toEqual([
+      expect.objectContaining({
+        request_id: "orphan-redirect",
+        url: `${origin}/orphan-redirect/final`,
         redirects: [],
-      });
-    else if (phase === "redirect")
-      expect(retained?.redirects).toContainEqual(
-        expect.objectContaining({
-          response_url: `${browser.allowedOrigin}/prior`,
-          status: null,
-        }),
-      );
-    else
-      expect(retained).toMatchObject({
-        url: `${browser.allowedOrigin}/prior`,
-        status: null,
-      });
-    const invalid = expect.objectContaining({
-      section: "network_requests",
-      reason: "invalid_protocol_value",
-      count: 1,
-    });
-    if (malformed)
-      expect(inspection.completeness.excluded).toContainEqual(invalid);
-    else expect(inspection.completeness.excluded).not.toContainEqual(invalid);
+      }),
+      expect.objectContaining({
+        request_id: "observed-redirect",
+        url: `${origin}/observed-redirect/final`,
+        redirects: [
+          expect.objectContaining({
+            response_url: `${origin}/observed-redirect/prior`,
+            status: null,
+            encoded_data_length: 0,
+            request_timestamp: 1,
+            redirect_event_timestamp: 2,
+          }),
+        ],
+      }),
+      ...cases
+        .filter(({ phase }) => phase === "response")
+        .map(({ id, mime }) =>
+          expect.objectContaining({
+            request_id: id,
+            url: `${origin}/${id}/prior`,
+            status: null,
+            mime_type: mime,
+            redirects: [],
+          }),
+        ),
+    ]);
+    expect(inspection.metadata.responses).toEqual(
+      cases
+        .filter(({ phase }) => phase === "response")
+        .map(({ id, mime }) =>
+          expect.objectContaining({
+            request_id: id,
+            url: `${origin}/${id}/reported`,
+            mime_type: mime,
+            content_length: 123,
+            content_encoding: "gzip",
+          }),
+        ),
+    );
+    expect(
+      inspection.completeness.excluded.filter(
+        ({ section }) => section === "network_requests",
+      ),
+    ).toEqual(
+      invalid
+        ? [
+            {
+              section: "network_requests",
+              reason: "invalid_protocol_value",
+              count: 4,
+            },
+          ]
+        : [],
+    );
   },
 );

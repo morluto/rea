@@ -1,3 +1,8 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -15,7 +20,7 @@ import {
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -25,6 +30,8 @@ import {
   type ApplicationMcpHarness,
 } from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 
 const COLLECTIONS = [
   "types",
@@ -64,10 +71,11 @@ const verifyProjection = async ({
   const viewDefinition = advertised.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (viewDefinition?.outputSchema === undefined)
-    throw new Error("View schema is absent");
+  if (viewDefinition === undefined) throw new Error("View schema is absent");
   const viewInputSchema: Record<string, unknown> = viewDefinition.inputSchema;
-  const viewOutputSchema: Record<string, unknown> = viewDefinition.outputSchema;
+  const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
+    viewDefinition.name,
+  );
   for (const collection of COLLECTIONS) {
     const projectedReply = await client.callTool(
       {
@@ -86,7 +94,7 @@ const verifyProjection = async ({
           },
         },
       },
-      { toolDefinition: viewDefinition },
+      { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
     );
     expect(projectedReply.isError).not.toBe(true);
     const projected = analysisViewResultSchema.parse(
@@ -120,7 +128,7 @@ const verifyProjection = async ({
   ).toBe(true);
   const selectedReply = await client.callTool(
     { name: "inspect_analysis_view", arguments: selectedRequest },
-    { toolDefinition: viewDefinition },
+    { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
   );
   expect(selectedReply.isError).not.toBe(true);
   const selectedEvidence = parseEvidence(selectedReply.structuredContent);
@@ -146,6 +154,29 @@ const verifyProjection = async ({
   });
 };
 
+// ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
+const SUMMARY_METHOD_BODY = Buffer.from([
+  (18 << 2) | 2,
+  0x02,
+  0x7b,
+  1,
+  0,
+  0,
+  0x04,
+  0x28,
+  1,
+  0,
+  0,
+  0x0a,
+  0x72,
+  1,
+  0,
+  0,
+  0x70,
+  0x26,
+  0x2a,
+]);
+
 it("summarizes selected members and pages every original collection after the file disappears", async () => {
   const directory = await createTestTempDirectory("rea-member-summary-");
   const path = join(directory, "fixture.dll");
@@ -153,28 +184,9 @@ it("summarizes selected members and pages every original collection after the fi
     path,
     buildManagedPeFixture({
       methodRowCount: 2,
-      // ldarg.0; ldfld field; call member ref; ldstr "ok"; pop; ret
-      ilBody: Buffer.from([
-        (18 << 2) | 2,
-        0x02,
-        0x7b,
-        1,
-        0,
-        0,
-        0x04,
-        0x28,
-        1,
-        0,
-        0,
-        0x0a,
-        0x72,
-        1,
-        0,
-        0,
-        0x70,
-        0x26,
-        0x2a,
-      ]),
+      fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
+      methodSignature: Buffer.from([0x00, 0x00, 0x12, 0x04]),
+      ilBody: SUMMARY_METHOD_BODY,
       userStringHeap: Buffer.from([0, 5, 0x6f, 0, 0x6b, 0, 0]),
       exportedTypes: [
         {
@@ -191,9 +203,11 @@ it("summarizes selected members and pages every original collection after the fi
   const definition = advertised.find(
     (x) => x.name === "inspect_managed_members",
   );
-  if (definition?.outputSchema === undefined)
+  if (definition === undefined)
     throw new Error("Managed member schemas are absent");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition.name,
+  );
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -205,15 +219,14 @@ it("summarizes selected members and pages every original collection after the fi
       detail: "summary",
     }),
   ).toBe(true);
-  const reply = await client.callTool({
-    name: "inspect_managed_members",
-    arguments: { path, type_names, detail: "summary" },
-  });
+  const reply = await client.callTool(
+    {
+      name: "inspect_managed_members",
+      arguments: { path, type_names, detail: "summary" },
+    },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
+  );
   expect(reply.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
   const view = managedMemberSummaryViewResultSchema.parse(
     receipt.normalized_result,
@@ -225,13 +238,16 @@ it("summarizes selected members and pages every original collection after the fi
   expect(parent.parameters).toEqual({ path, type_names });
   expect(receipt.evidence_links).toEqual([parent.evidence_id]);
   const report = managedMemberInspectionSchema.parse(parent.normalized_result);
+  expect(report.fields[0]?.signature.field_type).toBe(
+    "class:4 (Fixture.Program)",
+  );
   expect(view.summary.selection).toEqual({
     type_names,
     unmatched_type_names: ["Missing.Type"],
   });
   expect(view.summary.coverage).toEqual(report.coverage);
   expect(view.summary.method_rows).toEqual({ offset: 0, count: 2, total: 2 });
-  expect(view.summary.signature_resolution).toBe("type-names-v1");
+  expect(view.summary.signature_resolution).toBe("type-names-v2");
   expect(view.summary.identity_scope).toEqual(report.identity_scope);
   expect(view.summary).not.toHaveProperty("methods");
   for (const detail of [undefined, "complete"]) {
@@ -276,7 +292,7 @@ it("summarizes selected members and pages every original collection after the fi
       if (page.kind !== "managed-members")
         throw new Error("Unexpected page kind");
       expect(page.page.collection).toBe(collection);
-      expect(page.signature_resolution).toBe("type-names-v1");
+      expect(page.signature_resolution).toBe("type-names-v2");
       expect(page.selection).toEqual(report.selection);
       expect(page.coverage.total).toBe(rows.length);
       expect(page.method_rows).toEqual(report.method_rows);
@@ -296,10 +312,10 @@ it("summarizes selected members and pages every original collection after the fi
   });
   if (!portable.ok) throw portable.error;
   expect(portable.value.normalized_result).toEqual(view);
-}, 30000);
+});
 
-it("keeps collections that historical member Evidence never examined unknown", async () => {
-  const directory = await createTestTempDirectory("rea-member-historical-");
+it("keeps collections that member Evidence never examined unknown", async () => {
+  const directory = await createTestTempDirectory("rea-member-unexamined-");
   const path = join(directory, "fixture.dll");
   await writeFile(path, buildManagedPeFixture());
   const { client } = await createHarness();
@@ -311,22 +327,33 @@ it("keeps collections that historical member Evidence never examined unknown", a
       })
     ).structuredContent,
   );
-  const {
-    exported_types: _exported,
-    user_strings: _strings,
-    selection: _selection,
-    signature_resolution: _resolution,
-    ...recorded
-  } = managedMemberInspectionSchema.parse(parent.normalized_result);
-  const historical = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: recorded,
-    limitations: parent.limitations,
-    authority: parent.authority,
-  });
+  const { unresolved_definitions: _projection, ...historical } =
+    managedMemberInspectionSchema.parse(parent.normalized_result);
+  const recorded = {
+    ...historical,
+    exported_types: null,
+    user_strings: null,
+    selection: null,
+    signature_resolution: null,
+    fields: [],
+    methods: [],
+    member_refs: [],
+    call_edges: [],
+    field_accesses: [],
+  };
+  const unexamined = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: recorded,
+      limitations: parent.limitations,
+      authority: parent.authority,
+    },
+  );
   const summary = await inspectAnalysisView({
-    source: { kind: "inline", evidence: historical },
+    source: { kind: "inline", evidence: unexamined },
     view: { kind: "summary" },
   });
   if (!summary.ok) throw summary.error;
@@ -336,20 +363,204 @@ it("keeps collections that historical member Evidence never examined unknown", a
   expect(view.summary.reported_counts.exported_types).toBeNull();
   expect(view.summary.signature_resolution).toBeNull();
   expect(view.summary.reported_counts.user_strings).toBeNull();
+  expect(view.summary.reported_counts).not.toHaveProperty(
+    "unresolved_definitions",
+  );
   expect(view.summary.user_strings).toBeNull();
   expect(view.summary.selection).toBeNull();
   expect(view.unknowns.join(" ")).toContain("no recorded subject");
-  for (const collection of ["exported_types", "user_strings"] as const)
+  for (const collection of [
+    "exported_types",
+    "user_strings",
+    "unresolved_definitions",
+  ] as const)
     expect(
       await inspectAnalysisView({
-        source: { kind: "inline", evidence: historical },
+        source: { kind: "inline", evidence: unexamined },
         view: { kind: "managed-members", collection, offset: 0, limit: 1 },
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   expect(
     await inspectAnalysisView({
-      source: { kind: "inline", evidence: historical },
+      source: { kind: "inline", evidence: unexamined },
       view: { kind: "managed", collection: "attributes", offset: 0, limit: 1 },
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-}, 30000);
+});
+
+it("binds managed member views to their recorded token scope", async () => {
+  const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;
+  const report = managedMemberInspectionSchema.parse(
+    original.normalized_result,
+  );
+  if (report.module?.mvid == null) throw new Error("Fixture requires an MVID");
+  const mismatchedDigest = "f".repeat(64);
+  const mismatchedMvid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const cases = [
+    {
+      name: "digest",
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: mismatchedDigest,
+        },
+      },
+      error: "token scope SHA-256",
+    },
+    {
+      name: "MVID",
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_mvid: mismatchedMvid,
+        },
+      },
+      error: "token scope MVID",
+    },
+    {
+      name: "missing module",
+      result: { ...report, module: null },
+      error: "token scope MVID",
+    },
+    {
+      name: "case-insensitive MVID",
+      result: {
+        ...report,
+        module: {
+          ...report.module,
+          mvid: "abcdef12-3456-4abc-8def-123456789abc",
+        },
+        identity_scope: {
+          ...report.identity_scope,
+          requires_mvid: "ABCDEF12-3456-4ABC-8DEF-123456789ABC",
+        },
+      },
+      error: undefined,
+    },
+    {
+      name: "null MVID",
+      result: {
+        ...report,
+        module: null,
+        identity_scope: { ...report.identity_scope, requires_mvid: null },
+      },
+      error: undefined,
+    },
+  ];
+  for (const test of cases) {
+    for (const subject of [true, false]) {
+      const evidence = createEvidence(
+        subject
+          ? {
+              path: report.artifact.path,
+              format: "pe",
+              sha256: report.artifact.sha256,
+            }
+          : unknownTarget("not-observed"),
+        original.provider,
+        {
+          operation: original.operation,
+          parameters: original.parameters,
+          result: test.result,
+        },
+      );
+      for (const view of [
+        { kind: "summary" as const },
+        {
+          kind: "managed-members" as const,
+          collection: "methods" as const,
+          offset: 0,
+          limit: 1,
+        },
+      ]) {
+        const actual = await inspectAnalysisView({
+          source: { kind: "inline", evidence },
+          view,
+        });
+        if (test.error === undefined) {
+          expect(actual.ok, test.name).toBe(true);
+          if (!actual.ok) continue;
+          if (!subject)
+            expect(JSON.stringify(actual.value.normalized_result)).toContain(
+              "no recorded subject",
+            );
+        } else {
+          expect(actual, test.name).toMatchObject({
+            ok: false,
+            error: {
+              _tag: "EvidenceIntegrityError",
+              message: expect.stringContaining(test.error),
+            },
+          });
+        }
+      }
+    }
+  }
+
+  const incompatible = createEvidence(
+    { path: report.artifact.path, format: "pe", sha256: mismatchedDigest },
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: original.parameters,
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: mismatchedDigest,
+        },
+      },
+    },
+  );
+  const actual = await inspectAnalysisView({
+    source: { kind: "inline", evidence: incompatible },
+    view: { kind: "summary" },
+  });
+  expect(actual).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "EvidenceIntegrityError",
+      message: expect.stringContaining("Parent subject SHA-256"),
+    },
+  });
+});
+
+it("rejects a contradictory managed token scope through MCP for inline and retained Evidence", async () => {
+  const original = MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members;
+  const report = managedMemberInspectionSchema.parse(
+    original.normalized_result,
+  );
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: original.parameters,
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: "f".repeat(64),
+        },
+      },
+    },
+  );
+  const { client, session } = await createHarness();
+  expect(session.recordEvidence(evidence).ok).toBe(true);
+  for (const source of [
+    { kind: "inline" as const, evidence },
+    { kind: "retained-evidence" as const, evidence_id: evidence.evidence_id },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+      details: { reason: expect.stringContaining("token scope SHA-256") },
+    });
+  }
+});

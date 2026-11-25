@@ -1,13 +1,13 @@
-import {
-  projectAnalysisView,
-  type AnalysisViewResult,
-} from "../../src/domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../src/domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../src/domain/analysisView/analysisViewResult.js";
 import type { TemplateRule } from "../../src/domain/analysisView/environmentManifestRules.js";
 import type { Evidence } from "../../src/domain/evidence.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import {
   analysisViewCaptureEvidence,
   environmentManifestCaptureFixture,
+  captureParent,
+  timedCaptureEvidence,
   type TimedCaptureRow,
 } from "./analysisView.js";
 
@@ -283,7 +283,7 @@ export const UNCHAPTERED_ROWS: readonly TimedCaptureRow[] = renamingRows(
 );
 
 /** A book whose sent handle the application stores as its code and embeds in its link. */
-export const handledBook = (entity: Book, handle: string): Book => ({
+const handledBook = (entity: Book, handle: string): Book => ({
   ...entity,
   code: handle,
   link: `https://books.example.test/b/${handle}`,
@@ -348,7 +348,7 @@ const shelved = (entry: Book, shelf: string): Book => ({ ...entry, shelf });
 const SHELVED_FIRST = shelved(FIRST_BOOK, "a");
 const SHELVED_SECOND = shelved(SECOND_BOOK, "b");
 /** The book the create at exchange 7 of QUERY_ROWS made, on shelf a. */
-export const SHELVED_THIRD = shelved(book(3, "Third Book", bookClock(7)), "a");
+const SHELVED_THIRD = shelved(book(3, "Third Book", bookClock(7)), "a");
 
 /**
  * One list tool recorded whole, filtered by shelf, searched, sorted and with a flag that changes nothing; item reads;
@@ -373,7 +373,7 @@ export const QUERY_ROWS: readonly TimedCaptureRow[] = [
 ];
 
 /** A clock spelled with a `+00:00` offset where the books application's item reads spell `Z`. */
-export const offsetClock = (clock: JsonValue | undefined): string =>
+const offsetClock = (clock: JsonValue | undefined): string =>
   String(clock).replace(/Z$/u, "+00:00");
 
 /** A book as a list that spells its clocks with an offset shows it. */
@@ -453,18 +453,20 @@ export const environmentStateViewOf = (
   capture: Evidence,
   templateRules: readonly TemplateRule[] = [],
 ): EnvironmentStateView => {
-  const result = projectAnalysisView(
-    {
-      evidenceId: capture.evidence_id,
-      operation: capture.operation,
-      normalizedResult: capture.normalized_result,
-      subject: capture.subject,
-      limitations: [],
-      parameters: capture.parameters,
-    },
-    { kind: "environment-state", template_rules: [...templateRules] },
-  );
+  const result = projectAnalysisView(captureParent(capture), {
+    kind: "environment-state",
+    template_rules: [...templateRules],
+  });
   if (!result.ok || result.value.kind !== "environment-state")
     throw new Error("Expected an environment state");
   return result.value;
+};
+
+/** The write plan inferred for one tool from a timed capture. */
+export const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
+  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
+    (candidate) => candidate.tool === tool,
+  );
+  if (plan === undefined) throw new Error(`No write plan for ${tool}`);
+  return plan;
 };

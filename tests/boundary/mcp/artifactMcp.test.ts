@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
@@ -26,13 +30,14 @@ import {
   ok as resultOk,
   err as resultErr,
 } from "../../../src/domain/result.js";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { createPackageWithOptions } from "@electron/asar";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect, it, vi, type MockInstance } from "vitest";
+import { expect, vi, type MockInstance } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -42,6 +47,8 @@ import {
 } from "../../fixtures/zipNames.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { mcpTest as it } from "../../support/mcp/mcpFixture.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -50,14 +57,10 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { cArchiveExecutable } from "../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
 
-const integrityMessage = (unpacked: boolean): string =>
-  `${
-    unpacked
-      ? "Declared ASAR integrity for unpacked entry main.js contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive."
-      : "Artifact bytes contradict declared integrity."
-  } If expected, rerun inspect_artifact with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
-
-it("refuses an artifact parent and summary when its actual inventory source cannot be recorded", async () => {
+it("refuses an artifact parent and summary when its actual inventory source cannot be recorded", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory(
     "rea-artifact-source-refusal-mcp-",
   );
@@ -66,10 +69,12 @@ it("refuses an artifact parent and summary when its actual inventory source cann
   await zip.add("main.js", new TextReader("console.log('source');\n"));
   await writeFile(archive, await zip.close());
   const session = await createArtifactBinarySession({});
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "artifact-source-refusal", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "artifact-source-refusal",
+    version: "1",
+  });
   const attempted: Evidence[] = [];
   const failure = new EvidenceIntegrityError(
     "controlled inventory source recording refusal",
@@ -77,8 +82,6 @@ it("refuses an artifact parent and summary when its actual inventory source cann
   const nativeRecord = session.recordEvidence.bind(session);
   let recording: MockInstance<typeof session.recordEvidence> | undefined;
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: archive },
@@ -112,31 +115,16 @@ it("refuses an artifact parent and summary when its actual inventory source cann
     expect(session.exportEvidenceBundle().records).toEqual(before);
   } finally {
     recording?.mockRestore();
-    const closed = await Promise.allSettled([
-      client.close(),
-      server.close(),
-      session.close(),
-    ]);
-    const failures: unknown[] = [];
-    for (const result of closed)
-      if (result.status === "rejected") failures.push(result.reason);
-    const sessionClosed = closed[2];
-    if (sessionClosed.status === "fulfilled" && !sessionClosed.value.ok)
-      failures.push(sessionClosed.value.error);
-    if (failures.length > 0)
-      throw new AggregateError(
-        failures,
-        "Artifact recorder refusal cleanup failed",
-      );
+    await mcp.close();
   }
 });
 
-it.each([
+it.for([
   { unpacked: false, label: "embedded" },
   { unpacked: true, label: "unpacked" },
 ])(
   "returns actionable local details for an $label ASAR integrity error",
-  async ({ unpacked }) => {
+  async ({ unpacked }, { mcp, onTestFinished }) => {
     const root = await createTestTempDirectory("rea-asar-integrity-mcp-");
     const source = join(root, "source");
     const original = "console.log('ok');\n";
@@ -160,13 +148,13 @@ it.each([
     }
 
     const session = createTestBinarySession(new ArtifactProvider(process.env));
+    ownArtifactSession(session, onTestFinished);
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "asar-integrity-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
+    const client = await mcp.connect(server, {
+      name: "asar-integrity-test",
+      version: "1",
+    });
     try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
       const opened = await client.callTool({
         name: "open_binary",
         arguments: { path: archive },
@@ -178,33 +166,45 @@ it.each([
         arguments: {},
       });
       expect(result.isError).toBe(true);
-      expect(parseMcpToolError(result)).toEqual({
+      const projected = parseMcpToolError(result);
+      expect(projected).toEqual({
         error: {
           code: "artifact_integrity_mismatch",
           category: "integrity_mismatch",
-          message: integrityMessage(unpacked),
+          message: expect.stringMatching(
+            /integrity.*inspect_artifact.*integrity_policy=record-and-continue.*untrusted.*fresh copy/iu,
+          ),
           details: {
             logical_path: "main.js",
-            declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-            calculated_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            declared_sha256: createHash("sha256")
+              .update(original)
+              .digest("hex"),
+            calculated_sha256: createHash("sha256")
+              .update(changed)
+              .digest("hex"),
             unpacked,
+            integrity_check: "declared-digest",
+            related_parameters: ["integrity_policy"],
           },
           retryable: false,
-          remediation: { action: integrityMessage(unpacked) },
+          remediation: { action: projected.error.message },
         },
       });
+      expect(projected.error.message).not.toContain("--integrity-policy");
+      if (unpacked)
+        expect(projected.error.message).toMatch(
+          /unpacked entry main\.js.*companion file/iu,
+        );
     } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
+      await mcp.close();
     }
   },
-  20_000,
 );
 
-it("extracts an active archive through MCP when requested", async () => {
+it("extracts an active archive through MCP when requested", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-artifact-extract-mcp-");
   const archive = join(root, "fixture.zip");
   const zip = new ZipWriter(new Uint8ArrayWriter());
@@ -212,14 +212,14 @@ it("extracts an active archive through MCP when requested", async () => {
   await writeFile(archive, await zip.close());
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "artifact-extract-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "artifact-extract-test",
+    version: "1",
+  });
   let outputRoot: string | undefined;
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: archive },
@@ -240,13 +240,19 @@ it("extracts an active archive through MCP when requested", async () => {
     );
     expect(normalized.artifacts).toHaveLength(1);
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
-    if (outputRoot !== undefined)
-      await rm(outputRoot, { recursive: true, force: true });
+    try {
+      await mcp.close();
+    } finally {
+      if (outputRoot !== undefined)
+        await rm(outputRoot, { recursive: true, force: true });
+    }
   }
 });
 
-it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MCP", async () => {
+it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MCP", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-legacy-zip-name-mcp-");
   const archive = join(root, "legacy-name.zip");
   const rawName = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);
@@ -261,13 +267,13 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
   );
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "legacy-zip-name-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "legacy-zip-name-test",
+    version: "1",
+  });
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: archive },
@@ -288,17 +294,21 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
+        hash_status: "verified",
         limitations: [
-          "ZIP name uses CP437 fallback; source encoding unverified; raw hex: c7d1b1db2e747874.",
+          expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],
       }),
     );
   } finally {
-    await Promise.all([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("extracts a macOS app bundle through MCP", async () => {
+it("extracts a macOS app bundle through MCP", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-artifact-extract-app-mcp-");
   const contents = join(root, "Fixture.app", "Contents");
   await mkdir(join(contents, "MacOS"), { recursive: true });
@@ -313,17 +323,14 @@ it("extracts a macOS app bundle through MCP", async () => {
   await writeFile(join(contents, "MacOS", "Fixture"), header);
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
+  const client = await mcp.connect(server, {
     name: "artifact-extract-app-test",
     version: "1",
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
   let outputRoot: string | undefined;
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: join(root, "Fixture.app") },
@@ -343,13 +350,19 @@ it("extracts a macOS app bundle through MCP", async () => {
       await readFile(join(outputRoot, "Contents", "Info.plist"), "utf8"),
     ).toBe(plist);
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
-    if (outputRoot !== undefined)
-      await rm(outputRoot, { recursive: true, force: true });
+    try {
+      await mcp.close();
+    } finally {
+      if (outputRoot !== undefined)
+        await rm(outputRoot, { recursive: true, force: true });
+    }
   }
 });
 
-it("records an explicitly continued mismatch, preserves verified siblings, and never reports equivalence", async () => {
+it("records an explicitly continued mismatch, preserves verified siblings, and never reports equivalence", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-asar-continue-mcp-");
   const source = join(root, "source");
   await mkdir(source);
@@ -372,13 +385,13 @@ it("records an explicitly continued mismatch, preserves verified siblings, and n
   await writeFile(archive, bytes);
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "asar-continue-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "asar-continue-test",
+    version: "1",
+  });
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     await client.callTool({
       name: "open_binary",
       arguments: { path: archive },
@@ -464,7 +477,11 @@ it("records an explicitly continued mismatch, preserves verified siblings, and n
     });
     const { coverage: _coverage, ...inventoryWithoutCoverage } = inventory;
     const missingCoverage = createEvidence(
-      { path: archive, sha256: inventory.manifest.root_sha256, format: "asar" },
+      {
+        path: archive,
+        sha256: inventory.manifest.root_sha256,
+        format: "asar",
+      },
       compact.provider,
       {
         operation: "inventory_artifact",
@@ -480,26 +497,26 @@ it("records an explicitly continued mismatch, preserves verified siblings, and n
       true,
     );
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("rejects inline artifact Evidence whose content does not match its ID", async () => {
+it("rejects inline artifact Evidence whose content does not match its ID", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
+  const client = await mcp.connect(server, {
     name: "artifact-authority-test",
     version: "1",
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const result = await client.callTool({
       name: "compare_artifacts",
       arguments: {
@@ -518,26 +535,26 @@ it("rejects inline artifact Evidence whose content does not match its ID", async
       session.evidenceById(ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id),
     ).toBeUndefined();
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("compares inline inventory Evidence without prior session calls", async () => {
+it("compares inline inventory Evidence without prior session calls", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
+  const client = await mcp.connect(server, {
     name: "artifact-ownership-test",
     version: "1",
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const result = await client.callTool({
       name: "compare_artifacts",
       arguments: ARTIFACT_COMPARISON_EXAMPLE,
@@ -557,11 +574,14 @@ it("compares inline inventory Evidence without prior session calls", async () =>
       session.evidenceById(ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id),
     ).toBeDefined();
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("returns full artifact graphs inline and compares changed inventories", async () => {
+it("returns full artifact graphs inline and compares changed inventories", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const directory = await createTestTempDirectory("rea-artifact-mcp-");
   const archive = join(directory, "fixture.ipa");
   const changedArchive = join(directory, "changed.ipa");
@@ -575,13 +595,13 @@ it("returns full artifact graphs inline and compares changed inventories", async
   );
   await writeFile(changedArchive, await changedWriter.close());
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "artifact-mcp-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "artifact-mcp-test",
+    version: "1",
+  });
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: archive },
@@ -629,7 +649,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     if (evidence === undefined) throw new Error("missing inventory Evidence");
     expect(evidence).toMatchObject({
       provider: { id: "rea-artifact-graph" },
-      subject: { format: "ipa" },
+      subject: { identity: { format: "ipa" } },
     });
     const inventoryInspection = z
       .object({
@@ -692,11 +712,14 @@ it("returns full artifact graphs inline and compares changed inventories", async
       },
     });
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("compares summary Evidence through retained complete inspection parents", async () => {
+it("compares summary Evidence through retained complete inspection parents", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const directory = await createTestTempDirectory("rea-artifact-summary-mcp-");
   const archive = join(directory, "one.zip");
   const changedArchive = join(directory, "two.zip");
@@ -709,16 +732,13 @@ it("compares summary Evidence through retained complete inspection parents", asy
   await writeFile(changedArchive, await changedWriter.close());
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
+  const client = await mcp.connect(server, {
     name: "artifact-summary-mcp-test",
     version: "1",
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const summaries = [];
     for (const path of [archive, changedArchive]) {
       const opened = await client.callTool({
@@ -753,7 +773,7 @@ it("compares summary Evidence through retained complete inspection parents", asy
       .parse(right.normalized_result).parent_evidence_id;
     expect(result.evidence_links).toEqual([leftParentId, rightParentId]);
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
@@ -901,12 +921,11 @@ const withForeignMetadataAndNestedZipMember = (
     graphSha256,
   );
   const subject = evidence.subject;
-  if (subject === null) throw new Error("missing inventory subject");
   return createEvidence(
     {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      path: fileSubjectDisplay(subject).local_path,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     evidence.provider,
     {
@@ -930,18 +949,21 @@ const withForeignMetadataAndNestedZipMember = (
   );
 };
 
-it("does not apply PyInstaller declaration unknowns to foreign metadata or nested ZIP members", async () => {
+it("does not apply PyInstaller declaration unknowns to foreign metadata or nested ZIP members", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-pyinstaller-scope-mcp-");
   const archive = join(root, "sample");
   await writeFile(archive, pyInstallerComparisonArchive("m", false));
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "pyinstaller-scope-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "pyinstaller-scope-test",
+    version: "1",
+  });
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const observed = await inspectArtifactInventoryThroughMcp(client, archive);
     const foreign = withForeignMetadataAndNestedZipMember(observed);
     const response = await compareArtifactEvidenceThroughMcp(
@@ -958,32 +980,98 @@ it("does not apply PyInstaller declaration unknowns to foreign metadata or neste
       changes: [],
     });
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("compares PyInstaller declaration facts without inventing payload identity", async () => {
+const verifyComparableDeclarations = async (
+  client: Client,
+  session: ReturnType<typeof createTestBinarySession>,
+  clean: ReturnType<typeof parseEvidence>,
+  declarationsPath: string,
+  declarationsCopyPath: string,
+) => {
+  // Complete PyInstaller declarations can prove equality even when their
+  // payloads were not hashed. Verification must reuse that producer rule.
+  const manifest = artifactInventoryResultSchema.parse(
+    clean.normalized_result,
+  ).manifest;
+  const declarationEvidence = (path: string) =>
+    createEvidence(
+      { path, sha256: manifest.root_sha256, format: manifest.root_format },
+      clean.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: { path },
+        result: clean.normalized_result,
+        confidence: "observed",
+      },
+    );
+  const original = declarationEvidence(declarationsPath);
+  const reconstruction = declarationEvidence(declarationsCopyPath);
+  expect(session.recordEvidence(original).ok).toBe(true);
+  expect(session.recordEvidence(reconstruction).ok).toBe(true);
+  const separateDeclarations = await compareArtifactEvidenceThroughMcp(
+    client,
+    original,
+    reconstruction,
+  );
+  expect(separateDeclarations.isError).not.toBe(true);
+  const comparison = toolEvidence(separateDeclarations.structuredContent);
+  expect(comparison.normalized_result).toMatchObject({ status: "unchanged" });
+  const verification = await client.callTool({
+    name: "verify_reconstruction",
+    arguments: {
+      specification: {
+        name: "Declaration comparison",
+        claims: [
+          {
+            kind: "structural-artifact",
+            claim_id: "declarations",
+            title: "Declared structure remains equal",
+            comparison_evidence_id: comparison.evidence_id,
+            dimension: "overall",
+          },
+        ],
+      },
+    },
+  });
+  expect(verification.isError, JSON.stringify(verification)).not.toBe(true);
+  expect(
+    toolEvidence(verification.structuredContent).normalized_result,
+    JSON.stringify(verification),
+  ).toMatchObject({
+    status: "pass",
+  });
+};
+
+it("compares PyInstaller declaration facts without inventing payload identity", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-pyinstaller-compare-mcp-");
   const leftPath = join(root, "module");
   const rightPath = join(root, "script");
   const declarationsPath = join(root, "declarations");
+  const declarationsCopyPath = join(root, "declarations-copy");
   const modulePath = join(root, "module-clean");
   const shiftedPath = join(root, "module-shifted");
   await Promise.all([
     writeFile(leftPath, pyInstallerComparisonArchive("m", true)),
     writeFile(rightPath, pyInstallerComparisonArchive("s", true)),
     writeFile(declarationsPath, pyInstallerComparisonArchive("s", false)),
+    writeFile(declarationsCopyPath, pyInstallerComparisonArchive("s", false)),
     writeFile(modulePath, pyInstallerComparisonArchive("m", false)),
     writeFile(shiftedPath, pyInstallerComparisonArchive("m", false, true)),
   ]);
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "pyinstaller-compare-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "pyinstaller-compare-test",
+    version: "1",
+  });
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const left = await inspectArtifactInventoryThroughMcp(client, leftPath);
     const right = await inspectArtifactInventoryThroughMcp(client, rightPath);
     const clean = await inspectArtifactInventoryThroughMcp(
@@ -1048,18 +1136,12 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
         }),
       ]),
     });
-    expect(
-      z
-        .object({ changes: z.array(z.object({ logical_path: z.string() })) })
-        .parse(changedResult)
-        .changes.map(({ logical_path }) => logical_path),
-    ).not.toContain("__pyinstaller__/runtime-options/1");
-    expect(
-      z
-        .object({ changes: z.array(z.object({ logical_path: z.string() })) })
-        .parse(changedResult)
-        .changes.map(({ logical_path }) => logical_path),
-    ).not.toContain("__pyinstaller__/dependencies/2");
+    const changedPaths = z
+      .object({ changes: z.array(z.object({ logical_path: z.string() })) })
+      .parse(changedResult)
+      .changes.map(({ logical_path }) => logical_path);
+    expect(changedPaths).not.toContain("__pyinstaller__/runtime-options/1");
+    expect(changedPaths).not.toContain("__pyinstaller__/dependencies/2");
 
     const declarationsOnly = await client.callTool({
       name: "compare_artifacts",
@@ -1073,6 +1155,14 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
       summary: { unchanged: 4, unknown: 0 },
       changes: [],
     });
+
+    await verifyComparableDeclarations(
+      client,
+      session,
+      clean,
+      declarationsPath,
+      declarationsCopyPath,
+    );
 
     const layoutOnly = await client.callTool({
       name: "compare_artifacts",
@@ -1103,11 +1193,14 @@ it("compares PyInstaller declaration facts without inventing payload identity", 
       ],
     });
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("discovers artifact target prerequisites and preserves typed MCP refusals", async () => {
+it("discovers artifact target prerequisites and preserves typed MCP refusals", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-artifact-availability-mcp-");
   const zip = new ZipWriter(new Uint8ArrayWriter());
   await zip.add("a.txt", new TextReader("hello"));
@@ -1137,13 +1230,12 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
   const session = createTestBinarySession(
     new ArtifactProvider(process.env, "darwin"),
   );
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
+  const client = await mcp.connect(server, {
     name: "artifact-availability-test",
     version: "1",
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
   const operations = [
     "decode_interface_builder",
     "inspect_asset_catalog",
@@ -1161,8 +1253,6 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
     return result.result.tool_availability.groups;
   };
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const before = await availability();
     for (const name of operations)
       expect(before.find((group) => group.names.includes(name))).toMatchObject({
@@ -1251,11 +1341,14 @@ it("discovers artifact target prerequisites and preserves typed MCP refusals", a
       await client.callTool({ name: "close_binary", arguments: {} });
     }
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
-it("attributes ASAR integrity contradictions to their actual inputs and withholds correlation support", async () => {
+it("attributes ASAR integrity contradictions to their actual inputs and withholds correlation support", async ({
+  mcp,
+  onTestFinished,
+}) => {
   const root = await createTestTempDirectory("rea-asar-attribution-");
   const source = join(root, "source");
   await mkdir(source);
@@ -1277,12 +1370,13 @@ it("attributes ASAR integrity contradictions to their actual inputs and withhold
   const currentArchive = join(root, "current.asar");
   await createPackageWithOptions(source, currentArchive, {});
   const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "artifact-attribution", version: "1" });
-  const [ct, st] = InMemoryTransport.createLinkedPair();
+  const client = await mcp.connect(server, {
+    name: "artifact-attribution",
+    version: "1",
+  });
   try {
-    await server.connect(st);
-    await client.connect(ct);
     const observations = [];
     for (const path of [
       originalArchive,
@@ -1334,7 +1428,7 @@ it("attributes ASAR integrity contradictions to their actual inputs and withhold
         presence,
       );
   } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    await mcp.close();
   }
 });
 
@@ -1432,3 +1526,142 @@ const assertIntegrityComparison = async (
       : { status: "correlated", summary: { hypotheses: 1, unresolved: 0 } },
   );
 };
+
+it("evaluates hypotheses for an unchanged artifact member the comparison omits from its deltas", async ({
+  mcp,
+  onTestFinished,
+}) => {
+  const root = await createTestTempDirectory("rea-unchanged-member-mcp-");
+  const archives = [];
+  for (const [name, value] of [
+    ["left", "1"],
+    ["right", "9"],
+  ] as const) {
+    const zip = new ZipWriter(new Uint8ArrayWriter());
+    await zip.add("lib/a.js", new TextReader(`var a = ${value};`));
+    await zip.add("lib/deep/x.js", new TextReader("unchanged"));
+    const archive = join(root, `${name}.zip`);
+    await writeFile(archive, await zip.close());
+    archives.push(archive);
+  }
+  const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
+  const server = createServer({ kind: "session", session });
+  const client = await mcp.connect(server, {
+    name: "artifact-unchanged-member",
+    version: "1",
+  });
+  try {
+    const inventories = [];
+    for (const archive of archives) {
+      inventories.push(
+        await inspectArtifactInventoryThroughMcp(client, archive),
+      );
+      await client.callTool({ name: "close_binary", arguments: {} });
+    }
+    const [left, right] = inventories;
+    if (left === undefined || right === undefined)
+      throw new Error("Expected two artifact inventories");
+    const compared = await compareArtifactEvidenceThroughMcp(
+      client,
+      left,
+      right,
+    );
+    expect(compared.isError).not.toBe(true);
+    const comparison = toolEvidence(compared.structuredContent);
+    expect(comparison.normalized_result).toMatchObject({
+      summary: { unchanged: 1 },
+    });
+    const { changes } = z
+      .object({ changes: z.array(z.object({ logical_path: z.string() })) })
+      .parse(comparison.normalized_result);
+    expect(changes.map(({ logical_path: path }) => path)).not.toContain(
+      "lib/deep/x.js",
+    );
+    for (const record of [
+      PROCESS_CAPTURE_REFERENCE,
+      PROCESS_CAPTURE_RECONSTRUCTION,
+      PROCESS_COMPARISON_EVIDENCE,
+    ])
+      expect(session.recordEvidence(record).ok).toBe(true);
+    const correlate = (logicalPath: string, expectedPattern: string) =>
+      client.callTool({
+        name: "correlate_static_and_runtime",
+        arguments: {
+          static_comparisons: [
+            {
+              kind: "retained-evidence",
+              evidence_id: comparison.evidence_id,
+            },
+          ],
+          runtime_comparisons: [
+            {
+              kind: "retained-evidence",
+              evidence_id: PROCESS_COMPARISON_EVIDENCE.evidence_id,
+            },
+          ],
+          mappings: [
+            {
+              static: {
+                comparison_evidence_id: comparison.evidence_id,
+                selector: { kind: "artifact", logical_path: logicalPath },
+              },
+              runtime: {
+                comparison_evidence_id: PROCESS_COMPARISON_EVIDENCE.evidence_id,
+                dimension: "exit",
+              },
+              side_alignment: "left_to_left",
+              hypothesis: {
+                statement: "Compare selected observations.",
+                expected_pattern: expectedPattern,
+              },
+            },
+          ],
+        },
+      });
+    for (const [expectedPattern, status, classification] of [
+      ["both_unchanged", "correlated", "hypothesis"],
+      ["runtime_only", "contradicted", "contradiction"],
+    ] as const) {
+      const correlated = await correlate("lib/deep/x.js", expectedPattern);
+      expect(correlated.isError, JSON.stringify(correlated)).not.toBe(true);
+      expect(
+        toolEvidence(correlated.structuredContent).normalized_result,
+      ).toMatchObject({
+        status,
+        correlations: {
+          items: [
+            {
+              static: {
+                selector: { kind: "artifact", logical_path: "lib/deep/x.js" },
+                status: "unchanged",
+                conclusion_kind: "derived_relationship",
+              },
+              runtime: { status: "unchanged" },
+              observed_pattern: "both_unchanged",
+              classification,
+            },
+          ],
+        },
+      });
+    }
+    const changed = await correlate("lib/a.js", "static_only");
+    expect(changed.isError).not.toBe(true);
+    expect(
+      toolEvidence(changed.structuredContent).normalized_result,
+    ).toMatchObject({
+      status: "correlated",
+      correlations: { items: [{ static: { status: "changed" } }] },
+    });
+    // A path neither inventory observed is still a malformed selector.
+    const absent = await correlate("lib/missing.js", "both_unchanged");
+    expect(absent.isError).toBe(true);
+    expect(parseMcpToolError(absent).error).toMatchObject({
+      code: "invalid_request",
+      message:
+        "Artifact selector must resolve exactly one compared artifact path",
+    });
+  } finally {
+    await mcp.close();
+  }
+});

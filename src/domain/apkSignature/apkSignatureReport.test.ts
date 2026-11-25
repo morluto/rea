@@ -201,8 +201,32 @@ describe("deriveApkPosture", () => {
       inspectApkSignatureInputSchema.safeParse({ path: "/a/b.apk", extra: 1 })
         .success,
     ).toBe(false);
-    // The result schema rejects unknown keys (sanity that strictObject holds).
-    expect(apkSignatureResultSchema.safeParse({}).success).toBe(false);
+    expect(
+      inspectApkSignatureInputSchema.safeParse({ path: "relative.apk" })
+        .success,
+    ).toBe(false);
+    const report = {
+      artifact: { path: "/a/b.apk", sha256: "a".repeat(64), bytes: 0 },
+      schemes: {
+        v1: {
+          present: false,
+          has_manifest: false,
+          signature_files: [],
+          block_files: [],
+          signers: [],
+        },
+        v2: { present: false, signers: [], uninterpreted_bytes: 0 },
+        v3: { present: false, signers: [], uninterpreted_bytes: 0 },
+        "v3.1": { present: false, signers: [], uninterpreted_bytes: 0 },
+      },
+      source_stamp: { present: false, certificate: null, decode_error: null },
+      posture: derive({}),
+      runtime_execution: "not-performed",
+    };
+    expect(apkSignatureResultSchema.safeParse(report).success).toBe(true);
+    expect(
+      apkSignatureResultSchema.safeParse({ ...report, extra: 1 }).success,
+    ).toBe(false);
   });
 });
 
@@ -225,9 +249,10 @@ describe("deriveApkPosture v1 comparison", () => {
     const match = (...args: Parameters<typeof v1>) =>
       v1(...args).posture.v1_signers_match_block_signers;
     expect(match(["aa"], ["aa"], ["aa"])).toBe(true);
-    // A rotated v3 signer does not hide that v1 and v2 agree.
+    // The v3 lineage names a different original key, so choosing it
+    // instead of the lower v2 scheme would report a mismatch.
     expect(
-      match(["old"], ["old"], [signer("new", decoded("old", "new"))]),
+      match(["old"], ["old"], [signer("new", decoded("other", "new"))]),
     ).toBe(true);
     // The JAR signature naming another key is a mismatch, not agreement.
     expect(match(["other"], ["aa"], ["aa"])).toBe(false);
@@ -268,10 +293,17 @@ describe("deriveApkPosture v1 comparison", () => {
   it("explains unknown identities on both sides without repeating reasons", () => {
     const result = v1([null], [null, null]);
     expect(result.posture.v1_signers_match_block_signers).toBeNull();
-    expect(result.notes).toEqual([
-      "v1_signers_match_block_signers is null: one or more v1 signer identities are unknown; inspect the v1 signer records for details.",
-      "v1_signers_match_block_signers is null: one or more v2 signer identities are unknown; inspect the block signer records for details.",
-    ]);
+    expect(result.notes).toHaveLength(2);
+    expect(result.notes).toContainEqual(
+      expect.stringMatching(
+        /v1_signers_match_block_signers.*null.*v1 signer identities.*unknown.*inspect.*v1 signer records/iu,
+      ),
+    );
+    expect(result.notes).toContainEqual(
+      expect.stringMatching(
+        /v1_signers_match_block_signers.*null.*v2 signer identities.*unknown.*inspect.*block signer records/iu,
+      ),
+    );
     expect(v1(["aa"], ["aa"]).notes).toEqual([]);
   });
 

@@ -3,11 +3,11 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -18,6 +18,8 @@ import { silentLogger } from "../../../src/logger.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { createBinarySessionTargets } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface Invocation {
   readonly name: string;
@@ -34,41 +36,27 @@ it("returns typed Hopper byte-search unavailability without launching the provid
   const session = composeBinarySession(
     new AnalysisProviderRegistry([provider]),
   );
-  const server = createServer(
-    { kind: "session", session },
-    { logger: silentLogger },
-  );
-  const client = new Client({
-    name: "hopper-byte-search-unavailable",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { logger: silentLogger },
+    clientIdentity: { name: "hopper-byte-search-unavailable", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path: target },
-    });
-    expect(opened.isError).not.toBe(true);
-    const result = await client.callTool({
-      name: "search_bytes",
-      arguments: { pattern: "48 8b" },
-    });
-    expect(result.isError).toBe(true);
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: {
-        code: "capability_unavailable",
-        details: { provider_id: "hopper", operation: "search_bytes" },
-      },
-    });
-  } finally {
-    await client.close();
-    await server.close();
-    const closed = await session.close();
-    if (!closed.ok) throw closed.error;
-  }
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path: target },
+  });
+  expect(opened.isError).not.toBe(true);
+  const result = await client.callTool({
+    name: "search_bytes",
+    arguments: { pattern: "48 8b" },
+  });
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "capability_unavailable",
+      details: { provider_id: "hopper", operation: "search_bytes" },
+    },
+  });
 });
 
 it("advertises strict masked-byte arguments and bounded pages", () => {
@@ -88,7 +76,7 @@ it("advertises strict masked-byte arguments and bounded pages", () => {
 });
 
 describe("read_bytes contract", () => {
-  it("accepts lengths above the former arbitrary ceiling and rejects zero", () => {
+  it("accepts any positive read length and rejects zero", () => {
     const contract = OFFICIAL_TOOL_CONTRACTS.find(
       ({ name }) => name === "read_bytes",
     );
@@ -142,7 +130,10 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "contract-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "contract-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

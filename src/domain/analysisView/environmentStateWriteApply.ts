@@ -1,3 +1,7 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
+import { boundedList } from "../boundedList.js";
+import { ellipsisExcerpt } from "../excerpt.js";
+import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -6,7 +10,6 @@ import {
   at,
   isObject,
   pointerTo,
-  pointerTokens,
   replaceAt,
   same,
   scalarText,
@@ -100,17 +103,11 @@ const LISTED_NAME_CHARS = 120;
 /** Captured member names quoted, so a separator in one cannot read as another, and bounded in count and length. */
 const listed = (members: readonly string[]): string => {
   if (members.length === 0) return "none";
-  const shown = members
-    .slice(0, LISTED_MEMBERS)
-    .map((member) =>
-      JSON.stringify(
-        member.length > LISTED_NAME_CHARS
-          ? `${member.slice(0, LISTED_NAME_CHARS)}…`
-          : member,
-      ),
-    )
+  const { items, omitted } = boundedList(members, LISTED_MEMBERS);
+  const shown = items
+    .map((member) => JSON.stringify(ellipsisExcerpt(member, LISTED_NAME_CHARS)))
     .join(", ");
-  return members.length > LISTED_MEMBERS
+  return omitted > 0
     ? `${shown}, … (${String(members.length)} members; all in the state Evidence)`
     : shown;
 };
@@ -179,9 +176,16 @@ export const valueAt = (
   pointer: string,
 ): JsonValue | undefined => {
   let value: JsonValue | undefined = body;
-  for (const token of pointerTokens(pointer)) {
-    if (Array.isArray(value)) value = value[Number(token)];
-    else if (isObject(value) && Object.hasOwn(value, token))
+  for (const token of jsonPointerTokens(pointer)) {
+    if (Array.isArray(value)) {
+      // JSON Pointer array indexes are canonical decimal tokens; coercing
+      // arbitrary text would make /01 alias /1 and can turn huge indexes into
+      // Infinity.
+      if (!/^(?:0|[1-9]\d*)$/u.test(token)) return undefined;
+      const index = Number(token);
+      if (!Number.isSafeInteger(index)) return undefined;
+      value = value[index];
+    } else if (isObject(value) && Object.hasOwn(value, token))
       value = value[token];
     else return undefined;
   }
@@ -223,14 +227,25 @@ const ruledValue = (
   observed: JsonObject,
   call: WriteCall,
   generate: GenerateValue,
-  referenced?: ReferencedEntity,
+  references: {
+    readonly referenced: ReferencedEntity | undefined;
+    readonly blank: WriteBody["blank"];
+  },
 ): Applied<JsonValue | undefined> => {
   const body = call.body ?? {};
   switch (rule.rule) {
     case "reference":
-      return referencedValue(rule, body, referenced);
-    case "identity":
+      return referencedValue(
+        rule,
+        body,
+        references.referenced,
+        references.blank,
+      );
     case "sequence":
+      return rule.sent === true && Object.hasOwn(body, rule.field)
+        ? ok(body[rule.field]!)
+        : generate(rule);
+    case "identity":
     case "unique":
     case "renewed":
     case "clock":
@@ -325,17 +340,22 @@ const copiedShapes = (
     rules.flatMap((rule): [string, JsonValue][] => {
       if (rule.rule !== "copy" || !Object.hasOwn(observed, rule.field))
         return [];
-      const tokens = pointerTokens(rule.from);
+      const tokens = jsonPointerTokens(rule.from);
       return tokens.length === 1 ? [[tokens[0]!, observed[rule.field]!]] : [];
     }),
   );
 
-/** A create's call with the members it left out that recorded calls sent empty, as the earliest sent them; one a call that left it out showed a default for keeps that default. */
-const withBlanks = (body: WriteBody, call: WriteCall): WriteCall => {
+/** A create's call with the members it left out that recorded calls sent empty, as the earliest sent them; one a call that left it out showed a default for keeps that default, and one `unheld` names stays left out. */
+const withBlanks = (
+  body: WriteBody,
+  call: WriteCall,
+  unheld: ReadonlySet<string>,
+): WriteCall => {
   const given = call.body ?? {};
   const left = (body.blank ?? []).filter(
     ({ member }, index, blank) =>
       !Object.hasOwn(given, member) &&
+      !unheld.has(member) &&
       !(body.defaults ?? []).some((entry) => entry.member === member) &&
       blank.findIndex((entry) => entry.member === member) === index,
   );
@@ -360,7 +380,30 @@ export const createdFields = (
   idField?: string,
 ): Applied<JsonObject> => {
   if (plan.body === null) return err("The tool has no modelled body.");
-  const call = withBlanks(plan.body, sentCall);
+  // A reference the observed entity lacks is one a create left out and stored nothing for, as a call leaving it out does.
+  const unheld = new Set(
+    plan.rules.flatMap((rule) =>
+      rule.rule === "reference" && !Object.hasOwn(observed, rule.field)
+        ? [rule.member]
+        : [],
+    ),
+  );
+  // A member a `sequence` with `sent` numbers when a call leaves it out takes the next number, not an empty value one sent.
+  const numbered = new Set(
+    plan.rules.flatMap((rule) =>
+      rule.rule === "sequence" && rule.sent === true ? [rule.field] : [],
+    ),
+  );
+  const call = withBlanks(
+    {
+      ...plan.body,
+      blank: (plan.body.blank ?? []).filter(
+        ({ member }) => !numbered.has(member),
+      ),
+    },
+    sentCall,
+    unheld,
+  );
   const problem = bodyProblem(plan.body, call, {
     entity: { ...copiedShapes(plan.rules, observed), ...observed },
   });
@@ -370,7 +413,10 @@ export const createdFields = (
     (plan.body.defaults ?? []).map(({ member, value }) => [member, value]),
   );
   for (const rule of plan.rules) {
-    const value = ruledValue(rule, observed, call, generate, referenced);
+    const value = ruledValue(rule, observed, call, generate, {
+      referenced,
+      blank: plan.body.blank,
+    });
     if (!value.ok) return value;
     if (value.value !== undefined)
       setOwnMember(written, rule.field, value.value);
@@ -465,8 +511,13 @@ export const updatedFields = (
   for (const rule of plan.rules) {
     const stated = statedValue(rule, sent);
     if (stated !== undefined) setOwnMember(written, rule.field, stated);
-    else if (rule.rule === "reference" && Object.hasOwn(sent, rule.member)) {
-      const value = referencedValue(rule, sent, referenced);
+    else if (rule.rule === "toggle") {
+      const was = ownMember(before, rule.field);
+      if (typeof was !== "boolean")
+        return err(`The entity holds no flag ${rule.field} to flip.`);
+      setOwnMember(written, rule.field, !was);
+    } else if (rule.rule === "reference" && Object.hasOwn(sent, rule.member)) {
+      const value = referencedValue(rule, sent, referenced, plan.body.blank);
       if (!value.ok) return value;
       if (value.value !== undefined)
         setOwnMember(written, rule.field, value.value);
@@ -489,6 +540,18 @@ export const updatedFields = (
         setOwnMember(written, rule.field, value.value);
     }
   }
+  // A member the call leaves out takes the default a whole-object update showed; one a reference names by its member is not left out.
+  for (const { member, value } of plan.body.defaults ?? [])
+    if (
+      !Object.hasOwn(sent, member) &&
+      !plan.rules.some(
+        (rule) =>
+          rule.rule === "reference" &&
+          rule.field === member &&
+          Object.hasOwn(sent, rule.member),
+      )
+    )
+      setOwnMember(written, member, value);
   const unspelled = derive(
     plan.rules.filter(
       (rule) => rule.rule !== "slug" || Object.hasOwn(sent, rule.from),
@@ -556,12 +619,16 @@ export const laterItemFields = (
   views: Iterable<StateView>,
   entities: readonly StateEntity[],
   type: string | null,
+  retain?: (bytes: number) => void,
 ): Set<string> => {
   const fields = new Set<string>();
   for (const view of views)
     if (view.shape === "item" && view.type === type)
       for (const field of view.fields)
-        if (!view.required_fields.includes(field)) fields.add(field);
+        if (!view.required_fields.includes(field) && !fields.has(field)) {
+          retain?.(ENTRY_BYTES);
+          fields.add(field);
+        }
   for (const entity of entities)
     if (entity.type === type)
       for (const held of [
@@ -642,7 +709,7 @@ export const writtenResponse = (
   );
   const answer = (written.unloaded ?? []).reduce<JsonObject>(
     (rendered, path) => {
-      const tokens = pointerTokens(path);
+      const tokens = jsonPointerTokens(path);
       const kept = memberAt(shown, tokens);
       if (kept !== undefined) return withMemberAt(rendered, tokens, kept);
       // A member the answer left out of an object it showed stays out.

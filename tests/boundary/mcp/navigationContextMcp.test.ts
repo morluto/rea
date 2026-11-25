@@ -7,6 +7,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const navigate = async (
   selection: Readonly<Record<string, unknown>>,
@@ -17,7 +18,10 @@ const navigate = async (
     close: () => Promise.resolve(ok(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "navigation-test", version: "1" });
+  const client = new Client(
+    { name: "navigation-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

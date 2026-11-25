@@ -34,13 +34,19 @@ const identity = (
   },
 });
 
-it.each(["readable", "retried", "reused", "retained-parent"] as const)(
+it.each([
+  "readable",
+  "retried",
+  "reused",
+  "retained-parent",
+  "retained-parent-esrch",
+] as const)(
   "keeps child scope tied to its native generation after parent exit (%s)",
   async (mode) => {
     const parent = row(200, 1);
     const child = row(300, parent.pid);
     const owner = new ProcessOwnershipEvidenceOwner();
-    if (mode === "retained-parent")
+    if (mode === "retained-parent" || mode === "retained-parent-esrch")
       owner.reconcile(
         [
           {
@@ -64,6 +70,7 @@ it.each(["readable", "retried", "reused", "retained-parent"] as const)(
     let childTokenReads = 0;
     let reparented = false;
     const host: ProcessOwnershipHost = {
+      platform: "linux",
       listProcesses: async () => [parent, child],
       environment: async (pid) =>
         pid === parent.pid ? { REA_PROCESS_RUN_ID: "run" } : {},
@@ -72,9 +79,15 @@ it.each(["readable", "retried", "reused", "retained-parent"] as const)(
           selected.map((process) => [
             process.pid,
             process.pid === parent.pid
-              ? mode === "retained-parent"
-                ? { state: "unavailable", reason: "EACCES" }
-                : { state: "readable", runId: "run" }
+              ? mode === "retained-parent-esrch"
+                ? {
+                    state: "unavailable",
+                    reason: "opaque failure",
+                    code: "ESRCH",
+                  }
+                : mode === "retained-parent"
+                  ? { state: "unavailable", reason: "EACCES" }
+                  : { state: "readable", runId: "run" }
               : ++childTokenReads === 1 && mode !== "readable"
                 ? { state: "unavailable", reason: "EACCES" }
                 : { state: "readable", runId: undefined },
@@ -82,7 +95,10 @@ it.each(["readable", "retried", "reused", "retained-parent"] as const)(
         ),
       processIdentities: async (selected) =>
         new Map<number, ProcessIdentityObservation>(
-          selected.map((process) => {
+          selected.map(({ pid }) => {
+            const process = [parent, child].find((entry) => entry.pid === pid);
+            if (process === undefined)
+              return [pid, { state: "absent", reason: "not-in-snapshot" }];
             if (process.pid === parent.pid && ++parentReads > 2) {
               reparented = true;
               return [
@@ -157,10 +173,15 @@ it("shares native exit waiting before signaling healthy groups in one cleanup at
     processIdentities: async (selected) => {
       clock += 25;
       return new Map<number, ProcessIdentityObservation>(
-        selected.map((process) => [
-          process.pid,
-          identity(process, process.pid !== root.pid),
-        ]),
+        selected.map(({ pid }) => {
+          const process = rows.find((entry) => entry.pid === pid);
+          return [
+            pid,
+            process === undefined
+              ? { state: "absent", reason: "not-in-snapshot" }
+              : identity(process, process.pid !== root.pid),
+          ];
+        }),
       );
     },
     signalGroup: vi.fn((group) => {

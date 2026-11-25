@@ -13,6 +13,7 @@ import {
   type CreateEvidence,
 } from "./environmentStateWriteExplain.js";
 import type { UpdateEvidence } from "./environmentStateWriteChanges.js";
+import { writtenResponse } from "./environmentStateWriteApply.js";
 import {
   callRenewal,
   unexplainedRenewals,
@@ -72,6 +73,27 @@ const updated = (
   others: [],
   ...context,
 });
+
+/**
+ * The body behind a counting proxy: each member read counts, and a read past
+ * `budget` fails at once, so searching the body again per field cannot finish.
+ */
+const countedBody = (
+  body: JsonObject,
+  reads: { count: number; readonly budget: number },
+): JsonObject => {
+  const wrap = (value: JsonValue): JsonValue =>
+    typeof value === "object" && value !== null
+      ? (new Proxy(value, {
+          get(target, key, receiver) {
+            if (typeof key === "string" && ++reads.count > reads.budget)
+              throw new Error("Request body read budget exceeded");
+            return wrap(Reflect.get(target, key, receiver) as JsonValue);
+          },
+        }) as JsonValue)
+      : value;
+  return wrap(body) as JsonObject;
+};
 
 const ruleFor = (
   rules: readonly FieldRule[],
@@ -504,6 +526,35 @@ it.each<[string, string[]]>([
 
 type Shaped = [WriteResponse["shape"], string | null];
 
+it.each([false, true])(
+  "keeps response entity selection distinct from repeated envelope metadata, ambiguous=%s",
+  (ambiguous) => {
+    const recorded = {
+      request_id: "42",
+      data: { id: "42", title: "Captured title" },
+      ...(ambiguous ? { other: { id: "42", title: "Another entity" } } : {}),
+    };
+    const shape = responseShapeOf(3, recorded, false, {
+      idField: "id",
+      id: "42",
+    });
+    expect(
+      writtenResponse(shape, recorded, {
+        id: "43",
+        fields: { id: "43", title: "Authored title" },
+      }),
+    ).toEqual({
+      ok: true,
+      value: ambiguous
+        ? recorded
+        : {
+            request_id: "42",
+            data: { id: "43", title: "Authored title" },
+          },
+    });
+  },
+);
+
 it.each<[string, JsonValue | undefined, boolean, Shaped]>([
   ["no body", undefined, true, ["empty", null]],
   ["an empty response with a body", { id: "42" }, true, ["empty", null]],
@@ -645,6 +696,115 @@ it.each([
   expect(randomIdentities(members, "id", ["at"])).toBe(random);
 });
 
+it.each([
+  [undefined, undefined, undefined],
+  ["2026-03-01T00:00:00Z", undefined, undefined],
+  [undefined, "2026-03-02T00:00:00Z", "2026-03-03T00:00:00Z"],
+])(
+  "does not treat missing creation clocks as identity inversions: %s",
+  (...clocks) => {
+    const members = clocks.map((at, index) => {
+      const member: JsonObject = { id: `id-${String(index)}` };
+      if (at !== undefined) member.at = at;
+      return member;
+    });
+    expect(randomIdentities(members, "id", ["at"])).toBe(false);
+  },
+);
+
+it("still recognizes a witnessed identity inversion when another clock value is missing", () => {
+  expect(
+    randomIdentities(
+      [
+        { id: "id-0", at: "2026-03-02T00:00:00Z" },
+        { id: "id-1", at: "2026-03-01T00:00:00Z" },
+        { id: "id-2" },
+      ],
+      "id",
+      ["at"],
+    ),
+  ).toBe(true);
+});
+
+it.each([undefined, null, false, {}] as const)(
+  "recognizes a real inversion across a noncomparable clock: %s",
+  (gap) => {
+    const middle: JsonObject = { id: "id-1" };
+    if (gap !== undefined) middle.at = gap;
+    expect(
+      randomIdentities(
+        [
+          { id: "id-0", at: "2026-03-02T00:00:00Z" },
+          middle,
+          { id: "id-2", at: "2026-03-01T00:00:00Z" },
+        ],
+        "id",
+        ["at"],
+      ),
+    ).toBe(true);
+  },
+);
+
+it("keeps a known ordered clock from classifying IDs as random across another clock's gap", () => {
+  expect(
+    randomIdentities(
+      [
+        {
+          id: "id-0",
+          at: "2026-03-02T00:00:00Z",
+          other: "2026-03-01T00:00:00Z",
+        },
+        { id: "id-1" },
+        {
+          id: "id-2",
+          at: "2026-03-01T00:00:00Z",
+          other: "2026-03-02T00:00:00Z",
+        },
+      ],
+      "id",
+      ["at", "other"],
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  [1772409602, "not-a-clock", 1772409601],
+  ["2026-03-02T00:00:00Z", "not-a-clock", "2026-03-01T00:00:00Z"],
+  [1772409602, "1772409600", 1772409601],
+])(
+  "keeps invalid clock text from hiding a known inversion: %s",
+  (first, gap, last) => {
+    expect(
+      randomIdentities(
+        [
+          { id: "id-0", at: first! },
+          { id: "id-1", at: gap! },
+          { id: "id-2", at: last! },
+        ],
+        "id",
+        ["at"],
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each([
+  [1772409602, 1772409601000, true],
+  [1772409602000, 1772409602, false],
+  ["2026-03-01T00:00:00.123000002Z", "2026-03-01T00:00:00.123000001Z", true],
+] as const)(
+  "compares creation clocks by their instants across gaps and units: %s",
+  (first, last, random) => {
+    expect(
+      randomIdentities(
+        [{ id: "id-0", at: first }, { id: "id-1" }, { id: "id-2", at: last }],
+        "id",
+        ["at"],
+      ),
+    ).toBe(random);
+  },
+);
+
 it("uses retained submillisecond precision to recognize and place sorted timestamps", () => {
   const members = [
     { at: "2026-03-04T05:00:00.123000002Z" },
@@ -783,66 +943,65 @@ it.each<[string, string, boolean]>([
   expect(prefixRelated(right, left)).toBe(related);
 });
 
-it(
-  "explains many copied and slugged fields of a wide body without searching it again for each",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
-    const nested = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `g${String(index)}`,
-        { s: value(index) },
-      ]),
-    );
-    const copies = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `c${String(index)}`,
-        value(index),
-      ]),
-    );
-    const copied = explainCreate(created({ id: 1, ...copies }, nested));
-    expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
-      field: `c${String(n - 1)}`,
-      rule: "copy",
-      from: `/g${String(n - 1)}/s`,
-    });
-    // Strings no member slugs to, in a body of many members, each tried as a slug.
-    const flat = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `m${String(index)}`,
-        `Member ${String(index)}`,
-      ]),
-    );
-    const others = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `o${String(index)}`,
-        `x${String(index)}`,
-      ]),
-    );
-    const slugged = explainCreate(
-      created({ id: 1, ...others, s: "member-7" }, flat),
-    );
-    expect(ruleFor(slugged.rules, "s")).toEqual({
-      field: "s",
-      rule: "slug",
-      from: "m7",
-    });
-  },
-);
+it("explains many copied and slugged fields of a wide body without searching it again for each", () => {
+  const n = 128;
+  const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
+  const nested = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `g${String(index)}`,
+      { s: value(index) },
+    ]),
+  );
+  const copies = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `c${String(index)}`,
+      value(index),
+    ]),
+  );
+  // The read budget allows several passes over the body, and fails a scan per field.
+  const reads = { count: 0, budget: 16 * n };
+  const copied = explainCreate(
+    created({ id: 1, ...copies }, countedBody(nested, reads)),
+  );
+  expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
+    field: `c${String(n - 1)}`,
+    rule: "copy",
+    from: `/g${String(n - 1)}/s`,
+  });
+  // Strings no member slugs to, in a body of many members, each tried as a slug.
+  const flat = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `m${String(index)}`,
+      `Member ${String(index)}`,
+    ]),
+  );
+  const others = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `o${String(index)}`,
+      `x${String(index)}`,
+    ]),
+  );
+  reads.count = 0;
+  const slugged = explainCreate(
+    created({ id: 1, ...others, s: "member-7" }, countedBody(flat, reads)),
+  );
+  expect(ruleFor(slugged.rules, "s")).toEqual({
+    field: "s",
+    rule: "slug",
+    from: "m7",
+  });
+});
 
-it(
-  "searches a wide request body for a copied value in linear time",
-  { timeout: 5_000 },
-  () => {
-    // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
-    const wide = Array.from({ length: 500_000 }, () => 0);
-    const result = explainCreate(
-      created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
-    );
-    expect(ruleFor(result.rules, "note")).toBeUndefined();
-  },
-);
+it("searches a wide request body for a copied value in linear time", () => {
+  // Shifting each value off the queue makes the search quadratic: about 18 s
+  // for 500,000 zeros and about a minute for this body, past the test's
+  // deadline, which is the guard. The linear walk takes well under a second.
+  const wide = Array.from({ length: 1_000_000 }, () => 0);
+  const result = explainCreate(
+    created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
+  );
+  expect(ruleFor(result.rules, "note")).toBeUndefined();
+});
 
 const ID = (n: number): string =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -1195,3 +1354,17 @@ it("trims a created clock's fraction, and its sibling clock's, when held entitie
     format: trimmed,
   });
 });
+
+it.each([
+  ["2024-02-29", "2024-02-29T00:00:00Z", false],
+  ["2024-02-30", "2024-03-01T00:00:00Z", true],
+  ["2023-02-29", "2023-03-01T00:00:00Z", true],
+])(
+  "only pins the date-only member %s when it denotes a real date",
+  (dateEnd, dateEndUtc, editable) => {
+    const { body } = explainCreate(
+      created({ id: "42", dateEnd, dateEndUtc }, { dateEnd }),
+    );
+    expect(body.accepted.includes("dateEnd")).toBe(editable);
+  },
+);

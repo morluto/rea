@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 
 /** Syntax alone can establish an exit, but never a branch's contextual truth. */
 export type ElectronStatementFallthrough =
@@ -44,6 +45,9 @@ interface PrefixEntry {
   readonly fact: ElectronStatementFallthrough;
 }
 
+/** Both braced blocks and switch cases own ordered statement sequences. */
+type StatementList = t.BlockStatement | t.SwitchCase;
+
 interface BlockIndex {
   readonly positions: WeakMap<t.Node, number>;
   readonly entries: readonly PrefixEntry[];
@@ -56,7 +60,7 @@ interface BlockIndex {
  * to the invocation's symbolic environment and can establish unknown coverage.
  */
 export class ElectronCallPathBlockPrefixes {
-  readonly #blocks = new WeakMap<t.BlockStatement, BlockIndex>();
+  readonly #blocks = new WeakMap<StatementList, BlockIndex>();
   readonly #facts = new WeakMap<
     t.Statement,
     ElectronStatementFallthrough | null
@@ -104,13 +108,8 @@ export class ElectronCallPathBlockPrefixes {
         }
         if (!local) breaks.add(node.label.name);
       }
-      for (const key of t.VISITOR_KEYS[node.type] ?? []) {
-        const value = (node as unknown as Record<string, unknown>)[key];
-        const children = Array.isArray(value) ? value : [value];
-        for (const child of children) {
-          if (t.isNode(child)) pending.push({ node: child, depth: depth + 1 });
-        }
-      }
+      for (const child of childNodes(node))
+        pending.push({ node: child, depth: depth + 1 });
     }
     return { ...FALLTHROUGH, breaks, uncertain };
   }
@@ -124,7 +123,7 @@ export class ElectronCallPathBlockPrefixes {
     if (depth >= 128) return UNKNOWN;
     if (!this.admitVisit()) return undefined;
     if (t.isReturnStatement(node) || t.isThrowStatement(node)) return EXIT;
-    if (t.isBreakStatement(node))
+    if (t.isBreakStatement(node) || t.isContinueStatement(node))
       return {
         fallthrough: false,
         exits: false,
@@ -166,13 +165,15 @@ export class ElectronCallPathBlockPrefixes {
 
   private exits(
     node: t.Node | null | undefined,
-    block: t.BlockStatement,
+    block: StatementList,
   ): boolean | undefined {
     const result = this.completion(node);
     if (result === undefined || result.fallthrough || result.uncertain)
       return result === undefined ? undefined : false;
     for (const label of result.breaks) {
-      if (!label || !this.parents) return false;
+      // A switch-local break or enclosing-loop continue ends this case.
+      if (!label && t.isSwitchCase(block)) continue;
+      if (!this.parents) return false;
       let matched = false;
       for (
         let parent = this.parents.get(block), n = 0;
@@ -181,7 +182,11 @@ export class ElectronCallPathBlockPrefixes {
       ) {
         if (!this.admitVisit()) return undefined;
         if (t.isFunction(parent)) break;
-        if (t.isLabeledStatement(parent) && parent.label.name === label) {
+        if (
+          label
+            ? t.isLabeledStatement(parent) && parent.label.name === label
+            : t.isLoop(parent) || t.isSwitchStatement(parent)
+        ) {
           matched = true;
           break;
         }
@@ -193,7 +198,7 @@ export class ElectronCallPathBlockPrefixes {
 
   statement(
     statement: t.Statement,
-    block: t.BlockStatement,
+    block: StatementList,
   ): ElectronStatementFallthrough | null | undefined {
     const cached = this.#facts.get(statement);
     if (cached !== undefined) return cached;
@@ -222,7 +227,7 @@ export class ElectronCallPathBlockPrefixes {
   }
 
   *before(
-    block: t.BlockStatement,
+    block: StatementList,
     child: t.Node,
   ): Generator<
     void,
@@ -233,7 +238,8 @@ export class ElectronCallPathBlockPrefixes {
     if (index === undefined) {
       const positions = new WeakMap<t.Node, number>();
       const entries: PrefixEntry[] = [];
-      for (const [position, statement] of block.body.entries()) {
+      const statements = t.isSwitchCase(block) ? block.consequent : block.body;
+      for (const [position, statement] of statements.entries()) {
         if (!this.admitVisit()) return undefined;
         positions.set(statement, position);
         const fact = this.statement(statement, block);

@@ -3,14 +3,17 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../dist/process/ProcessOwnership.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { discoverCdpEndpoint } from "../../dist/browser/CdpEndpoint.js";
+import { BrowserObservationError } from "../../dist/domain/browserObservationError.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { importVerifierSource } from "./verifier-source-loader.mjs";
 
@@ -26,6 +29,7 @@ const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS, waitForBrowserDevtoolsPort } =
 export async function startRuntimeFixtureBrowser(executable, initialUrl) {
   await requireOrdinaryWindowsVerifierCaller();
   const profile = await mkdtemp(join(tmpdir(), "rea-real-web-runtime-"));
+  const deadline = performance.now() + BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS;
   let supervisor;
   let stopOwnedBrowser;
   const resources = new ArtifactResourceScope();
@@ -94,13 +98,119 @@ export async function startRuntimeFixtureBrowser(executable, initialUrl) {
       stderr: () => supervisor.snapshot().stderr.text,
       // Match the broader real-browser verifier's allowance for cold Chrome
       // startup on shared runners; early process failures still reject at once.
-      timeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
+      timeoutMs: Math.max(1, deadline - performance.now()),
+    });
+    await waitForRuntimeFixturePage({
+      child: owned.process,
+      port,
+      origin: initialUrl,
+      deadline,
     });
     return { port, profile, process: owned.process, close };
   } catch (cause) {
     return withVerifierCleanup(async () => {
       throw cause;
     }, [close]);
+  }
+}
+
+async function waitForRuntimeFixturePage({ child, port, origin, deadline }) {
+  const controller = new AbortController();
+  let lastFailure;
+  const onExit = () =>
+    controller.abort(
+      new Error(
+        "Owned runtime fixture exited before CDP discovery became ready",
+        { cause: lastFailure },
+      ),
+    );
+  const onError = (cause) => controller.abort(cause);
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new Error(
+          "Owned runtime fixture page was not discoverable within its startup budget",
+          { cause: lastFailure },
+        ),
+      ),
+    Math.max(1, deadline - performance.now()),
+  );
+  child.once("exit", onExit);
+  child.once("error", onError);
+  try {
+    for (;;) {
+      if (child.exitCode !== null || child.signalCode !== null) onExit();
+      controller.signal.throwIfAborted();
+      try {
+        const discovery = await discoverCdpEndpoint(
+          `http://127.0.0.1:${port}`,
+          "list_browser_targets",
+          controller.signal,
+        );
+        if (
+          discovery.targets.some(
+            (target) =>
+              target.type === "page" &&
+              (target.url === origin || target.url.startsWith(`${origin}/`)),
+          )
+        )
+          return;
+      } catch (cause) {
+        controller.signal.throwIfAborted();
+        // Only transient startup failures are retryable. Invalid protocol
+        // responses and payload-limit failures must remain visible immediately.
+        if (
+          !(cause instanceof BrowserObservationError) ||
+          !["timeout", "endpoint_unreachable"].includes(cause.reason)
+        )
+          throw cause;
+        lastFailure = cause;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    clearTimeout(timer);
+    child.removeListener("exit", onExit);
+    child.removeListener("error", onError);
+  }
+}
+
+/** Wait for both external scripts in the owned fixture document. */
+export async function waitForRuntimeFixtureSources(
+  connection,
+  timeoutMs = 10_000,
+) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let state = null;
+  try {
+    for (;;) {
+      const reply = await connection.send(
+        "Runtime.evaluate",
+        {
+          expression: `({
+            readyState: document.readyState,
+            chosenLoaded: typeof chosen === 'function',
+            untouchedLoaded: typeof untouched === 'function'
+          })`,
+          returnByValue: true,
+        },
+        undefined,
+        signal,
+      );
+      signal.throwIfAborted();
+      if (reply.exceptionDetails !== undefined)
+        throw new Error("Runtime fixture source probe threw");
+      state = reply.result.value ?? null;
+      if (state?.chosenLoaded === true && state.untouchedLoaded === true)
+        return;
+      await delay(20, undefined, { signal });
+    }
+  } catch (cause) {
+    if (!signal.aborted) throw cause;
+    throw new Error(
+      `Runtime fixture sources did not load within ${String(timeoutMs)} ms; last state: ${JSON.stringify(state)}`,
+      { cause },
+    );
   }
 }
 

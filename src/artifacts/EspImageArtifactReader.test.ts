@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,14 +6,20 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as espImageDecoding from "../domain/firmware/espImage.js";
 import {
+  TWO_OTA_PARTITIONS,
+  flashImage,
+  partitionTable,
+} from "../domain/firmware/espFlash.fixture.js";
+import {
   ESP32C3_APP_SEGMENTS,
+  ESP32C3_BOOTLOADER_SEGMENTS,
   esp8266Image,
   espImage,
+  pattern,
   signedEspImage,
 } from "../../tests/fixtures/espImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -27,12 +34,6 @@ const writeImage = async (bytes: Uint8Array, name = "app.bin") => {
   const path = join(await createTestTempDirectory("rea-esp-image-"), name);
   await writeFile(path, bytes);
   return path;
-};
-
-const list = async (reader: EspImageArtifactReader) => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
 };
 
 it("inventories segments and signature blocks with root and entry facts", async () => {
@@ -133,16 +134,9 @@ it("reports truncation and undescribed trailing bytes as coverage", async () => 
   );
   expect(truncated.manifest.root_format).toBe("esp-image");
   expect(truncated.coverage.status).toBe("unknown");
-  const decoder = espImageDecoding.createEspImageDecoder(bytes.length);
-  decoder.write(bytes);
-  const decoded = decoder.finish();
-  if (!decoded.ok)
-    throw new Error("Expected partial fixture facts", { cause: decoded.error });
-  expect(truncated.limitations).toEqual(
-    expect.arrayContaining([
-      ESP_IMAGE_LIMITATIONS.inventoryScope,
-      ...decoded.value.limitations,
-    ]),
+  expect(truncated.limitations).toContain(ESP_IMAGE_LIMITATIONS.inventoryScope);
+  expect(truncated.limitations).toContain(
+    ESP_IMAGE_LIMITATIONS.truncatedSegment(2, 32, 352, 8),
   );
   const segment = truncated.occurrences.find(
     (row) => row.logical_path === "segment-02.bin",
@@ -170,7 +164,7 @@ it("reports truncation and undescribed trailing bytes as coverage", async () => 
   });
 });
 
-it("extracts byte-exact segments that re-inventory as raw files", async () => {
+it("extracts exact segment and signature bytes inside the output directory", async () => {
   const directory = await createTestTempDirectory("rea-esp-extract-");
   const path = join(directory, "signed.bin");
   await writeFile(path, SIGNED);
@@ -205,13 +199,70 @@ it("extracts byte-exact segments that re-inventory as raw files", async () => {
           SIGNED.subarray(offset, offset + length),
         ),
       ).toBe(0);
-    const reinventoried = await scanCanonicalArtifactInventory(
-      extracted.output_root,
-    );
-    expect(reinventoried.manifest.root_format).toBe("directory");
   } finally {
     await resourceScope.close();
   }
+});
+
+const rootMetadata = async (bytes: Uint8Array) =>
+  (
+    await scanCanonicalArtifactInventory(await writeImage(bytes))
+  ).occurrences.find((row) => row.logical_path === ".")?.format_metadata;
+const bootloaderOf = (chipId: number) =>
+  espImage({ segments: ESP32C3_BOOTLOADER_SEGMENTS, chipId });
+const TABLE = partitionTable(TWO_OTA_PARTITIONS);
+
+it("says when an image is the bootloader of a flash dump read from a later address", async () => {
+  // ESP32 and S2 ROMs load the bootloader from 0x1000, so a dump read from
+  // there has the table at file 0x7000; a C5's ROM loads from 0x2000.
+  for (const [chipId, flashOffset] of [
+    [0x0000, 0x1000],
+    [0x0017, 0x2000],
+  ] as const) {
+    const tableFileOffset = 0x8000 - flashOffset;
+    expect(
+      await rootMetadata(
+        flashImage(0x8000, [
+          { at: 0, bytes: bootloaderOf(chipId) },
+          { at: tableFileOffset, bytes: TABLE },
+        ]),
+      ),
+    ).toMatchObject({
+      flash_dump: {
+        flash_offset: flashOffset,
+        table_file_offset: tableFileOffset,
+      },
+    });
+  }
+});
+
+it("reads no flash dump without a table after a bootloader", async () => {
+  const esp32 = bootloaderOf(0x0000);
+  // A table inside the image's segment is segment data.
+  const data = Buffer.alloc(0x7400);
+  TABLE.copy(data, 0x7000 - 0x20);
+  const spanning = espImage({
+    segments: [{ address: 0x3ffe_0000, data }],
+    chipId: 0x0000,
+  });
+  for (const bytes of [
+    esp32,
+    // Bytes that begin like a table but are not one.
+    flashImage(0x8000, [
+      { at: 0, bytes: esp32 },
+      {
+        at: 0x7000,
+        bytes: Buffer.concat([TABLE.subarray(0, 32), pattern(32, 9)]),
+      },
+    ]),
+    // An app carries esp_app_desc_t, so it is no bootloader.
+    flashImage(0x8000, [
+      { at: 0, bytes: espImage({ segments: ESP32C3_APP_SEGMENTS, chipId: 0 }) },
+      { at: 0x7000, bytes: TABLE },
+    ]),
+    spanning,
+  ])
+    expect(await rootMetadata(bytes)).toMatchObject({ flash_dump: null });
 });
 
 it("refuses an ESP8266 image with its specific reason", async () => {
@@ -219,21 +270,10 @@ it("refuses an ESP8266 image with its specific reason", async () => {
     await writeImage(esp8266Image(), "esp8266.bin"),
   );
   try {
-    await expect(list(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "unavailable",
       message: espImageDecoding.ESP8266_REFUSAL,
     });
-  } finally {
-    await reader.close();
-  }
-});
-
-it("rejects a changed carrier during extraction preparation", async () => {
-  const reader = new EspImageArtifactReader(await writeImage(APP));
-  try {
-    await expect(reader.prepareContainer("0".repeat(64))).rejects.toMatchObject(
-      { reason: "integrity" },
-    );
   } finally {
     await reader.close();
   }
@@ -243,7 +283,7 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   const path = await writeImage(APP);
   const reader = new EspImageArtifactReader(path);
   try {
-    const [entry] = await list(reader);
+    const [entry] = await collectEntries(reader);
     if (entry === undefined) throw new Error("Missing segment");
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
@@ -264,17 +304,21 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   }
 });
 
-it("settles an active entry stream when closed", async () => {
-  const reader = new EspImageArtifactReader(await writeImage(APP));
+it("refuses to complete inventory closed after its final entry", async () => {
+  const bytes = espImage({
+    segments: [{ address: 0x4038_0000, data: Buffer.alloc(8, 0x61) }],
+  });
+  const reader = new EspImageArtifactReader(await writeImage(bytes));
   try {
-    const [entry] = await list(reader);
-    if (entry === undefined) throw new Error("Missing segment");
-    const stream = await reader.open(entry);
+    const entries = reader.entries()[Symbol.asyncIterator]();
+    expect(await entries.next()).toMatchObject({
+      done: false,
+      value: { path: "segment-00.bin" },
+    });
     await reader.close();
-    expect(stream.destroyed).toBe(true);
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "unavailable" });
+    await expect(entries.next()).rejects.toMatchObject({
+      reason: "unavailable",
+    });
   } finally {
     await reader.close();
   }
@@ -297,9 +341,11 @@ it("honors cancellation before admitting a file with the exact reason", async ()
 it.each(["cancel", "close"] as const)(
   "settles decoding when the caller requests %s",
   async (action) => {
-    // Several MiB of segment data take many chunked reads to decode.
+    // Several 64 KiB reads are required before the image can finish.
     const large = espImage({
-      segments: [{ address: 0x4038_0000, data: Buffer.alloc(8 << 20, 0x5a) }],
+      segments: [
+        { address: 0x4038_0000, data: Buffer.alloc(256 * 1024, 0x5a) },
+      ],
     });
     const reader = new EspImageArtifactReader(await writeImage(large));
     const controller = new AbortController();

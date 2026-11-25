@@ -73,12 +73,13 @@ export const waitForBrowserDevtoolsPort = async (
   const deadline = startedAt + timeoutMs;
 
   try {
-    while (true) {
-      const terminalState = currentTerminalState(options.child);
-      if (terminalState !== null)
-        throw startupError(options, startedAt, timeoutMs, terminalState);
+    const terminalState = currentTerminalState(options.child);
+    if (terminalState !== null)
+      throw startupError(options, startedAt, timeoutMs, terminalState);
 
+    while (true) {
       const port = await readDevtoolsPort(options.activePortPath);
+      if (terminal.failure !== undefined) throw terminal.failure;
       if (port !== null) return port;
 
       const remainingMs = deadline - performance.now();
@@ -108,34 +109,34 @@ const childTermination = (
   options: BrowserStartupOptions,
   startedAt: number,
   startupTimeoutMs: number,
-): { readonly outcome: Promise<BrowserStartupError>; close(): void } => {
+): {
+  readonly failure: BrowserStartupError | undefined;
+  readonly outcome: Promise<BrowserStartupError>;
+  close(): void;
+} => {
+  let failure: BrowserStartupError | undefined;
   let onError: (cause: unknown) => void;
   let onExit: () => void;
   const outcome = new Promise<BrowserStartupError>((resolve) => {
-    onError = (cause: unknown) => {
-      resolve(
-        startupError(options, startedAt, startupTimeoutMs, {
-          failure: "spawn-error",
-          cause,
-        }),
-      );
+    const record = (state: TerminalState): void => {
+      failure ??= startupError(options, startedAt, startupTimeoutMs, state);
+      resolve(failure);
     };
+    onError = (cause) => record({ failure: "spawn-error", cause });
     onExit = () => {
-      resolve(
-        startupError(
-          options,
-          startedAt,
-          startupTimeoutMs,
-          options.child.signalCode === null
-            ? { failure: "exited" }
-            : { failure: "signalled" },
-        ),
+      record(
+        options.child.signalCode === null
+          ? { failure: "exited" }
+          : { failure: "signalled" },
       );
     };
     options.child.once("error", onError);
     options.child.once("exit", onExit);
   });
   return {
+    get failure() {
+      return failure;
+    },
     outcome,
     close: () => {
       options.child.off("error", onError);

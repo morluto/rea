@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -9,10 +10,152 @@ import {
   reconstructionCoverageDataFixture,
 } from "../../../src/domain/reconstructionCoverage.fixture.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createResidualUnknown,
+  recordUnknownInputSchema,
+  updateResidualUnknown,
+} from "../../../src/domain/residualUnknown.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+it("rejects malformed boundary identifiers at the MCP request boundary", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const result = await client.callTool({
+      name: "evaluate_reconstruction_coverage",
+      arguments: {
+        coverage: currentFixtureCoverage(),
+        boundary_id: "replacement cli",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [{ path: ["boundary_id"], reason: "invalid_format" }],
+        },
+      },
+    });
+  });
+});
+
+it("refuses an unmarked Evidence bundle through the format owner, not the SDK", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const coverage = currentFixtureCoverage();
+    const { evidence_format: _current, ...unmarked } = coverage.evidence_bundle;
+    const result = await client.callTool({
+      name: "evaluate_reconstruction_coverage",
+      arguments: {
+        coverage: { ...coverage, evidence_bundle: unmarked },
+        boundary_id: "replacement.cli",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "evidence_integrity_mismatch",
+        details: {
+          reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
+        },
+      },
+    });
+  });
+});
+
+it("uses the latest listed unknown revision when evaluating a boundary", async () => {
+  await withCoverageMcp(async ({ client }) => {
+    const base = currentFixtureCoverage();
+    const [first, second] = base.evidence_bundle.records;
+    if (first === undefined || second === undefined)
+      throw new Error("Missing fixture Evidence");
+    const unknownSource = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "unknown-source", name: "Unknown source", version: "1" },
+      {
+        operation: "observe_unknown",
+        parameters: {},
+        result: { evidence: true },
+      },
+    );
+    const input = recordUnknownInputSchema.parse({
+      question: "Is the route covered?",
+      supporting_evidence_ids: [unknownSource.evidence_id],
+      domain: "fixture",
+      severity: "medium",
+      required_authority: null,
+      required_confidence: "derived",
+      required_environment: null,
+      recommended_probes: [],
+      relationships: [],
+    });
+    const open = createResidualUnknown(input, first.evidence_id, null);
+    const resolved = updateResidualUnknown(
+      open,
+      {
+        ...input,
+        unknown_id: open.unknown_id,
+        expected_revision: 1,
+        status: "resolved",
+        resolution: {
+          disposition: "withdrawn",
+          rationale: "No longer applicable",
+          evidence_ids: [],
+        },
+      },
+      second.evidence_id,
+    );
+    const reopened = updateResidualUnknown(
+      resolved,
+      {
+        ...input,
+        unknown_id: open.unknown_id,
+        expected_revision: 2,
+        status: "investigating",
+        resolution: null,
+      },
+      second.evidence_id,
+    );
+    const coverage = (revisions: (typeof open)[]) => ({
+      ...base,
+      evidence_bundle: createEvidenceBundle(
+        [...base.evidence_bundle.records, unknownSource],
+        revisions,
+      ),
+      residual_unknown_ids: [open.unknown_id, open.unknown_id],
+    });
+    expect(
+      (await evaluate(client, coverage([open]))).structuredContent,
+    ).toMatchObject({
+      status: "unknown",
+      evidence_ids: expect.arrayContaining([unknownSource.evidence_id]),
+      reasons: [
+        expect.objectContaining({
+          code: "active-unknown",
+          subject_id: open.unknown_id,
+        }),
+      ],
+    });
+    expect(
+      (await evaluate(client, coverage([open, resolved]))).structuredContent,
+    ).toMatchObject({ status: "ready", reasons: [] });
+    expect(
+      (await evaluate(client, coverage([open, resolved, reopened])))
+        .structuredContent,
+    ).toMatchObject({
+      status: "unknown",
+      reasons: [
+        expect.objectContaining({
+          code: "active-unknown",
+          subject_id: open.unknown_id,
+        }),
+      ],
+    });
+  });
+});
 
 describe("reconstruction coverage inline Evidence", () => {
   it("evaluates inline fail-closed coverage without retaining request Evidence", async () => {
@@ -37,7 +180,7 @@ describe("reconstruction coverage inline Evidence", () => {
       if (latest === undefined)
         throw new Error("Expected fixture verifier result");
       const inference = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "weak-proof", name: "Weak proof fixture", version: "1" },
         {
           operation: "infer",
@@ -75,7 +218,7 @@ describe("reconstruction coverage inline Evidence", () => {
     await withCoverageMcp(async ({ client }) => {
       const coverage = currentFixtureCoverage();
       const inference = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "tampered-proof", name: "Tampered proof fixture", version: "1" },
         {
           operation: "infer",
@@ -279,7 +422,10 @@ const withCoverageMcp = async <T>(
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "coverage-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "coverage-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

@@ -1,141 +1,142 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
-import { observed } from "../../fixtures/analysisExecution.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 
-it("reports malformed source coordinates as unknown through MCP", async () => {
+const positions = [
+  {
+    name: "malformed",
+    declaration: { lineNumber: -3, columnNumber: 7.5 },
+    observed: { line: null, column: null },
+  },
+  {
+    name: "inline",
+    declaration: { lineNumber: 21, columnNumber: -40 },
+    observed: { line: 21, column: -40 },
+  },
+] as const;
+
+it("keeps valid and malformed producer source coordinates distinct through MCP", async () => {
   const browser = await startFakeCdpBrowser({
     webMcpTools: true,
-    webMcpStackTrace: (origin) => ({
-      callFrames: [
-        { url: `${origin}/app.js`, lineNumber: -3, columnNumber: 7.5 },
-      ],
-    }),
     commandEvents(command, origin) {
-      const frame = {
-        url: `${origin}/app.js`,
-        lineNumber: -3,
-        columnNumber: 7.5,
-      };
       const session =
         command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      if (command.method === "Runtime.enable")
-        return [
-          {
+      const stack = ({ name, declaration }: (typeof positions)[number]) => ({
+        callFrames: [{ url: `${origin}/${name}.js`, ...declaration }],
+      });
+      switch (command.method) {
+        case "Runtime.enable":
+          return positions.map((position, index) => ({
             ...session,
             method: "Runtime.consoleAPICalled",
             params: {
               type: "log",
-              timestamp: 1,
+              timestamp: index + 1,
               args: [],
-              stackTrace: { callFrames: [frame] },
+              stackTrace: stack(position),
             },
-          },
-        ];
-      if (command.method === "Network.enable")
-        return [
-          {
+          }));
+        case "Network.enable":
+          return positions.map((position, index) => ({
             ...session,
             method: "Network.requestWillBeSent",
             params: {
-              requestId: "bad-coordinates",
-              timestamp: 1,
+              requestId: position.name,
+              timestamp: index + 1,
               type: "Script",
-              request: { url: `${origin}/app.js`, method: "GET" },
-              initiator: { type: "script", stack: { callFrames: [frame] } },
+              request: {
+                url: `${origin}/${position.name}.js`,
+                method: "GET",
+              },
+              initiator: { type: "script", stack: stack(position) },
             },
-          },
-        ];
-      return undefined;
+          }));
+        case "WebMCP.enable":
+          return [
+            {
+              ...session,
+              method: "WebMCP.toolsAdded",
+              params: {
+                tools: positions.map((position) => ({
+                  name: position.name,
+                  frameId: "frame-main",
+                  stackTrace: stack(position),
+                })),
+              },
+            },
+          ];
+        default:
+          return undefined;
+      }
     },
   });
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
+  onTestFinished(() => browser.close());
+  const { client } = await createApplicationMcpHarness({
+    serverOptions: { browserObservation: new CdpBrowserProvider() },
+  });
+  const args = {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+  };
+  const definitions = (await client.listTools()).tools;
+  const call = async (name: "inspect_web_page" | "discover_webmcp_tools") => {
+    const definition = definitions.find((tool) => tool.name === name);
+    if (definition === undefined)
+      throw new Error(`Missing advertised output schema: ${name}`);
+    const reply = await client.callTool(
+      { name, arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
+    );
+    expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+    return reply.structuredContent;
+  };
+  const observed = positions.map(({ name, observed }) => ({
+    name,
+    location: { url: `${browser.allowedOrigin}/${name}.js`, ...observed },
   }));
-  const server = createServer(
-    { kind: "session", session },
-    {
-      environment: { ...process.env },
-      browserObservation: new CdpBrowserProvider(),
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
+  const invalid = (section: string) => ({
+    section,
+    reason: "invalid_protocol_value",
+    count: 1,
+  });
+
+  expect(await call("inspect_web_page")).toMatchObject({
+    normalized_result: {
+      console: { events: observed.map(({ location }) => location) },
+      network: {
+        requests: observed.map(({ name, location }) => ({
+          request_id: name,
+          initiator: location,
+        })),
+      },
+      completeness: {
+        excluded: expect.arrayContaining([
+          invalid("console_events"),
+          invalid("network_initiators"),
+        ]),
+      },
     },
-  );
-  const client = new Client({ name: "source-coordinate-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const args = {
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-    };
-    const page = await client.callTool({
-      name: "inspect_web_page",
-      arguments: args,
-    });
-    expect(page.isError).not.toBe(true);
-    expect(page.structuredContent).toMatchObject({
-      normalized_result: {
-        console: {
-          events: [expect.objectContaining({ line: null, column: null })],
-        },
-        network: {
-          requests: expect.arrayContaining([
+  });
+  expect(await call("discover_webmcp_tools")).toMatchObject({
+    normalized_result: {
+      tools: {
+        total: 2,
+        items: expect.arrayContaining(
+          observed.map(({ name, location }) =>
             expect.objectContaining({
-              request_id: "bad-coordinates",
-              initiator: expect.objectContaining({ line: null, column: null }),
+              name,
+              registration_source: name === "malformed" ? null : location,
             }),
-          ]),
-        },
-        completeness: {
-          excluded: expect.arrayContaining([
-            expect.objectContaining({
-              section: "console_events",
-              reason: "invalid_protocol_value",
-            }),
-            expect.objectContaining({
-              section: "network_initiators",
-              reason: "invalid_protocol_value",
-            }),
-          ]),
-        },
+          ),
+        ),
       },
-    });
-    const tools = await client.callTool({
-      name: "discover_webmcp_tools",
-      arguments: args,
-    });
-    expect(tools.isError).not.toBe(true);
-    expect(tools.structuredContent).toMatchObject({
-      normalized_result: {
-        tools: {
-          items: [expect.objectContaining({ registration_source: null })],
-        },
-        completeness: {
-          excluded: expect.arrayContaining([
-            expect.objectContaining({
-              section: "webmcp_tools",
-              reason: "invalid_protocol_value",
-            }),
-          ]),
-        },
+      completeness: {
+        excluded: expect.arrayContaining([invalid("webmcp_tools")]),
       },
-    });
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-    await browser.close();
-  }
-}, 20_000);
+    },
+  });
+});

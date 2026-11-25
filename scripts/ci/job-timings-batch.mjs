@@ -39,7 +39,7 @@ export async function collectJobTimingsBatch({
       status: "completed",
       createdAfter: cutoff,
       lookbackHours: 24,
-      overlap: "Each hourly run re-reads the preceding 24 hours.",
+      overlap: "Each scheduled run re-reads the preceding 24 hours.",
       pagination:
         "Run listings use the first 100; jobs are paginated within the remaining time and 16 MiB response limits.",
       maxRunsPerWorkflow: MAX_RUNS_PER_WORKFLOW,
@@ -159,6 +159,8 @@ export async function collectJobTimingsBatch({
       runRecord.status = "collected";
       runRecord.rawPath = result.rawPath;
       runRecord.reportPath = result.reportPath;
+      if (run.workflow === "CI" && run.event === "pull_request")
+        runRecord.selectionShadow = selectionShadowCost(result.report.jobs);
       manifest.coverage.collectedRuns += 1;
     } catch (cause) {
       runRecord.status = "error";
@@ -176,6 +178,32 @@ export async function collectJobTimingsBatch({
       "Time budget reached; selected runs remain unattempted.",
     );
   return await writeManifest(outputDirectory, manifest, started, now, env);
+}
+
+// A successful classifier upload identifies an actual cap-only candidate.
+function selectionShadowCost(jobs) {
+  const classifier = jobs.find((job) => job.name === "Classify changes");
+  if (
+    !classifier?.steps.some(
+      (step) =>
+        step.name === "Record affected-test prediction before the full suite" &&
+        step.conclusion === "success",
+    )
+  )
+    return null;
+  let measuredSeconds = 0;
+  let unknownJobs = 0;
+  for (const job of jobs) {
+    if (
+      job.name !== "Source tests" &&
+      !/^Test shard \(\d+\/\d+\)$/u.test(job.name)
+    )
+      continue;
+    if (job.conclusion === "skipped" || job.runnerId === 0) continue;
+    if (job.runnerId === null || job.execution.seconds === null) unknownJobs++;
+    else measuredSeconds += job.execution.seconds;
+  }
+  return { measuredSeconds, unknownJobs };
 }
 
 function validateRepository(repository) {
@@ -233,11 +261,18 @@ async function appendBatchSummary(summaryPath, manifest, manifestPath) {
   const failed = manifest.runs.filter(
     ({ status }) => status === "error",
   ).length;
+  const shadows = manifest.runs.flatMap((run) =>
+    run.selectionShadow ? [run.selectionShadow] : [],
+  );
+  const minutes =
+    shadows.reduce((sum, shadow) => sum + shadow.measuredSeconds, 0) / 60;
+  const unknown = shadows.reduce((sum, shadow) => sum + shadow.unknownJobs, 0);
   const lines = [
     "### Batched CI timing snapshot",
     "",
     `Observed ${manifest.observedAt}; collected ${String(collected)} of ${String(manifest.coverage.selectedRuns)} selected recent completed runs (${String(failed)} run errors).`,
     `Coverage uses the first ${String(MAX_RUNS_PER_WORKFLOW)} runs per workflow created in the preceding 24 hours and a ${String(TIME_BUDGET_MS / 1_000)} second total budget. This sample is bounded and is not exhaustive.`,
+    `Recorded affected-test predictions: ${shadows.length} PR attempts, ${minutes.toFixed(1)} observed source and shard runner-minutes, ${unknown} jobs with unknown cost. These minutes measure the broad suites that actually ran.`,
     `Manifest: \`${manifestPath}\`.`,
     ...manifest.truncation.map((message) => `- Truncated: ${message}`),
     ...manifest.errors.map(

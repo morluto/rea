@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { RecordedCrashPort } from "./RecordedCrashPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { RecordedCrashPort } from "../../ports/binaryDiagnostics/RecordedCrashPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -95,6 +95,9 @@ export class RecordedCrashService {
           parameters: {
             path: input.value.path,
             include_debugger_context: input.value.include_debugger_context,
+            ...(input.value.producer_limits === undefined
+              ? {}
+              : { producer_limits: input.value.producer_limits }),
             ...(input.value.pwntools_timeout_ms === undefined
               ? {}
               : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),

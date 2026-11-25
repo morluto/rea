@@ -1,5 +1,7 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
@@ -11,6 +13,7 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const platform = Object.getOwnPropertyDescriptor(
   systemProcessOwnershipHost,
@@ -50,15 +53,12 @@ it("gives bounded macOS preparation the caller signal and no command deadline", 
   expect(prepare).toHaveBeenCalledOnce();
 });
 
-it.each(["linux", "win32"] as const)(
-  "leaves %s preparation inside the command deadline",
-  async (value) => {
-    hostPlatform(value);
-    const prepare = vi.spyOn(systemProcessOwnershipHost, "prepare");
-    await prepareOwnedCommand();
-    expect(prepare).not.toHaveBeenCalled();
-  },
-);
+it("leaves Windows preparation inside the command deadline", async () => {
+  hostPlatform("win32");
+  const prepare = vi.spyOn(systemProcessOwnershipHost, "prepare");
+  await prepareOwnedCommand();
+  expect(prepare).not.toHaveBeenCalled();
+});
 
 it("keeps an observed compiler failure primary when cancellation is also observed", async () => {
   hostPlatform("darwin");
@@ -75,6 +75,27 @@ it("keeps an observed compiler failure primary when cancellation is also observe
   await expect(prepareOwnedCommand(controller.signal)).rejects.toBe(failure);
 });
 
+const cancelledPreparation = (
+  observed: unknown,
+  reason: unknown,
+): ProcessOwnershipInspectionCancelled => {
+  if (
+    !(observed instanceof OwnedCommandFailure) ||
+    !(
+      observed.preparationFailure instanceof ProcessOwnershipInspectionCancelled
+    )
+  )
+    throw new Error("Expected cancelled ownership preparation", {
+      cause: observed,
+    });
+  expect(observed.reason).toBe("cancelled");
+  expect(observed.snapshot).toBeNull();
+  expect(observed.cancellation?.reason).toBe(reason);
+  expect(observed.preparationFailure.reason).toBe(reason);
+  expect(observed.preparationFailure.cause).toBe(reason);
+  return observed.preparationFailure;
+};
+
 it.each(["before", "during"] as const)(
   "does not reinterpret a typed opaque caller reason as a helper failure: %s",
   async (phase) => {
@@ -83,24 +104,20 @@ it.each(["before", "during"] as const)(
       "caller-owned reason",
     );
     const controller = new AbortController();
+    let emitted: ProcessOwnershipInspectionCancelled | undefined;
     const prepare = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockImplementation(async () => {
         controller.abort(reason);
-        throw reason;
+        emitted = new ProcessOwnershipInspectionCancelled(reason);
+        throw emitted;
       });
     if (phase === "before") controller.abort(reason);
-    let observed: unknown;
-    try {
-      await prepareOwnedCommand(controller.signal);
-    } catch (error) {
-      observed = error;
-    }
-    expect(observed).toBeInstanceOf(OwnedCommandFailure);
-    if (!(observed instanceof OwnedCommandFailure)) throw observed;
-    expect(observed.reason).toBe("cancelled");
-    expect(observed.cancellation?.reason).toBe(reason);
-    expect(observed.preparationFailure).toBeUndefined();
+    const observed = await prepareOwnedCommand(controller.signal).catch(
+      (cause: unknown) => cause,
+    );
+    const failure = cancelledPreparation(observed, reason);
+    if (phase === "during") expect(failure).toBe(emitted);
     expect(prepare).toHaveBeenCalledTimes(phase === "before" ? 0 : 1);
   },
 );
@@ -116,7 +133,7 @@ it("preserves exact cancelled preparation cleanup capabilities", async () => {
   );
   const owner = {
     close: vi.fn(async () => {
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     }),
   };
   const failure = new DarwinProcessOwnershipInspectionError(
@@ -129,17 +146,21 @@ it("preserves exact cancelled preparation cleanup capabilities", async () => {
       throw failure;
     },
   );
-  let observed: unknown;
-  try {
-    await prepareOwnedCommand(controller.signal);
-  } catch (error) {
-    observed = error;
-  }
-  if (!(observed instanceof OwnedCommandFailure)) throw observed;
+  const observed = await prepareOwnedCommand(controller.signal).catch(
+    (cause: unknown) => cause,
+  );
+  if (
+    !(observed instanceof OwnedCommandFailure) ||
+    !(
+      observed.preparationFailure instanceof
+      DarwinProcessOwnershipInspectionError
+    )
+  )
+    throw new Error("Expected retained Darwin preparation failure", {
+      cause: observed,
+    });
   expect(observed.cancellation?.reason).toBe(reason);
   expect(observed.preparationFailure).toBe(failure);
-  if (observed.preparationFailure === undefined)
-    throw new Error("Expected retained preparation failure");
   expect(observed.preparationFailure.cleanupOwner).toBe(owner);
   expect(observed.preparationFailure.cleanupFailure).toBe(cleanup);
   await observed.preparationFailure.cleanupOwner!.close();
@@ -153,9 +174,13 @@ it("bounds simulated Linux preparation by the command deadline before launch", a
     .spyOn(systemProcessOwnershipHost, "prepare")
     .mockImplementation(async (signal) => {
       await new Promise<void>((_resolve, reject) =>
-        signal?.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        }),
+        signal?.addEventListener(
+          "abort",
+          () => reject(new ProcessOwnershipInspectionCancelled(signal.reason)),
+          {
+            once: true,
+          },
+        ),
       );
     });
   await prepareOwnedCommand();
@@ -225,6 +250,7 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
     "opaque caller reason",
   );
   const started = createDeferred<void>();
+  let emitted: ProcessOwnershipInspectionCancelled | undefined;
   const pending = runOwnedCommand(
     {
       command: "never-launched",
@@ -237,10 +263,21 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
       launcher: async (input) => {
         expect(input.signal).toBe(controller.signal);
         started.resolve();
+        if (input.signal?.aborted) {
+          emitted = new ProcessOwnershipInspectionCancelled(
+            input.signal.reason,
+          );
+          throw emitted;
+        }
         await new Promise<void>((_resolve, reject) =>
           input.signal?.addEventListener(
             "abort",
-            () => reject(input.signal?.reason),
+            () => {
+              emitted = new ProcessOwnershipInspectionCancelled(
+                input.signal?.reason,
+              );
+              reject(emitted);
+            },
             {
               once: true,
             },
@@ -250,13 +287,17 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
       },
     },
   );
-  const expected = expect(pending).rejects.toMatchObject({
-    reason: "cancelled",
-    cancellation: { reason },
-    preparationFailure: undefined,
-    snapshot: null,
-  });
-  await started.promise;
-  controller.abort(reason);
-  await expected;
+  const observed = pending.catch((cause: unknown) => cause);
+  try {
+    await awaitAcknowledgement(
+      started.promise,
+      observed,
+      "command preparation",
+    );
+    controller.abort(reason);
+    expect(cancelledPreparation(await observed, reason)).toBe(emitted);
+  } finally {
+    controller.abort(reason);
+    await observed;
+  }
 });

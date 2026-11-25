@@ -1,8 +1,11 @@
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+import {
+  ensureGeneratedFile,
+  regularFilePaths,
+} from "./lib/generated-file.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 const { addSkillManifestToolCount } = await importVerifierSource(
@@ -23,8 +26,8 @@ const current = (
   await readFile(join(sourceRoot, "SKILL.md"), "utf8")
 ).replaceAll("\r\n", "\n");
 const cacheBust = String(Date.now());
-const { FULL_CATALOG_IDENTITY } = await import(
-  `${pathToFileURL(join(root, "dist/catalogIdentity.js")).href}?${cacheBust}`
+const { DEFAULT_CATALOG_IDENTITY } = await import(
+  `${pathToFileURL(join(root, "dist/contracts/catalog/catalogIdentity.js")).href}?${cacheBust}`
 );
 const { PRODUCT_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/identity.js")).href}?${cacheBust}`
@@ -34,11 +37,13 @@ const latestSpecifier = PRODUCT_IDENTITY.packageSpecifier;
 const pinnedSpecifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
 const generated = addSkillManifestToolCount(
   current,
-  FULL_CATALOG_IDENTITY.counts.mcp_tools,
+  DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
 );
 if (!generated.ok) throw generated.error;
 const source = generated.value.replaceAll(latestSpecifier, pinnedSpecifier);
-const paths = await filePaths(sourceRoot);
+const invalidSkillEntry = (path) =>
+  `Skill bundle requires regular files or directories: ${path}`;
+const paths = await regularFilePaths(sourceRoot, invalidSkillEntry);
 // Rebuild this owned output directory so removed references cannot survive a build.
 if (!check) await rm(outputRoot, { recursive: true, force: true });
 for (const relativePath of paths) {
@@ -59,28 +64,9 @@ for (const relativePath of paths) {
 }
 if (
   check &&
-  JSON.stringify(await filePaths(outputRoot)) !== JSON.stringify(paths)
+  JSON.stringify(await regularFilePaths(outputRoot, invalidSkillEntry)) !==
+    JSON.stringify(paths)
 )
   throw new Error(
     "Generated skill file inventory drifted; run npm run docs:generate",
   );
-
-async function filePaths(directory, prefix = "") {
-  const paths = [];
-  for (const entry of (await readdir(directory, { withFileTypes: true })).sort(
-    (left, right) =>
-      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
-  )) {
-    const relativePath = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory())
-      paths.push(
-        ...(await filePaths(join(directory, entry.name), relativePath)),
-      );
-    else if (entry.isFile()) paths.push(relativePath);
-    else
-      throw new Error(
-        `Skill bundle requires regular files or directories: ${relativePath}`,
-      );
-  }
-  return paths;
-}

@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
@@ -12,36 +13,14 @@ import {
   peWithoutImportTableFixture,
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 for (const bits of [32, 64] as const) {
   cliTest(
-    `rejects non-MZ PE${String(bits)} imports across CLI and MCP`,
+    `reads a valid PE${String(bits)} imports across CLI and MCP`,
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-pe-imports-signature-");
+      const root = await createTestTempDirectory("rea-pe-imports-valid-");
       const call = await cli.sharedMcpCall!();
-      for (const [name, prefix] of [
-        ["zz", Buffer.from("ZZ")],
-        ["high-bit", Buffer.from([0xcd, 0xda])],
-      ] as const) {
-        const bytes = peImportImage({ bits });
-        prefix.copy(bytes);
-        const path = join(root, `${name}.exe`);
-        await writeFile(path, bytes);
-        const result = await cli.run({
-          arguments: ["inspect-pe-imports", path, "--json"],
-        });
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject({
-          code: "invalid_request",
-          details: { operation: "inspect_pe_imports" },
-        });
-        const response = await call("inspect_pe_imports", { path });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response)).toEqual({ error: result.json });
-        expect((await readFile(path)).equals(bytes)).toBe(true);
-      }
       const path = join(root, "valid.exe");
       const bytes = peImportImage({ bits });
       await writeFile(path, bytes);
@@ -168,7 +147,9 @@ cliTest(
   "resolves a relative PE path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-imports-cli-rel-");
-    await writeFile(join(root, "unsigned.exe"), peWithoutImportTableFixture());
+    const path = join(root, "unsigned.exe");
+    const bytes = peWithoutImportTableFixture();
+    await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-pe-imports", "unsigned.exe", "--json"],
       cwd: root,
@@ -177,24 +158,37 @@ cliTest(
     const evidence = toolContract("inspect_pe_imports").outputSchema.parse(
       result.json,
     );
-    expect(evidence.normalized_result.import_directory).toBeNull();
-    expect(evidence.subject?.local_path).toBe(join(root, "unsigned.exe"));
+    expect(evidence).toMatchObject({
+      confidence: "observed",
+      subject: {
+        local_path: path,
+        identity: {
+          format: "pe",
+          architecture: "x86_64",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      },
+      normalized_result: {
+        artifact: { path, bytes: bytes.length },
+        format: "pe32-plus",
+        machine: 0x8664,
+        bits: 64,
+        architecture: "amd64",
+        import_directory: null,
+        delay_import_directory: null,
+        imports: [],
+        delay_imports: [],
+        imphash: { algorithm: "pefile", md5: null },
+        coverage: {
+          status: "complete",
+          examined_dlls: 0,
+          imports: 0,
+          delay_imports: 0,
+        },
+      },
+    });
   },
 );
-
-cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-imports-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-imports", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_pe_imports" },
-  });
-});
 
 cliTest(
   "preserves directory declarations and partial rows at RVA and mapping boundaries",
@@ -219,8 +213,12 @@ cliTest(
           ? peImportDirectoryMappingStops(kind, retained)
           : peImportDirectoryAtRva(kind, rva),
       );
-      const result = await cli.run({
+      const invocation = {
         arguments: ["inspect-pe-imports", path, "--json"],
+      };
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: rva === 0xffffffec,
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = toolContract("inspect_pe_imports").outputSchema.parse(

@@ -7,7 +7,11 @@ import {
   type SafeJsonParseResult,
 } from "../domain/safeJson.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { HOPPER_DOWNLOAD_BYTES } from "./HopperDownload.js";
+import {
+  describeHopperRequestFailure,
+  HOPPER_DOWNLOAD_BYTES,
+  type HopperRequestFailure,
+} from "./HopperDownload.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 
 /** Vendor endpoints, shared by installation and existing-build inspection. */
@@ -37,9 +41,19 @@ export const hopperArchiveIntegrityMatches = (
   bytes.byteLength <= HOPPER_DOWNLOAD_BYTES &&
   createHash("sha1").update(bytes).digest("hex") === release.file_hash;
 
+const archiveLength = z
+  .string()
+  .regex(/^\d+$/u)
+  .refine((text) => {
+    const count = Number(text);
+    return (
+      Number.isSafeInteger(count) && count > 0 && count <= HOPPER_DOWNLOAD_BYTES
+    );
+  });
+
 const archiveReleaseSchema = z.object({
   filename: z.string().url(),
-  file_length: z.string().regex(/^\d+$/u),
+  file_length: archiveLength,
   file_hash: z.string().regex(/^[a-f0-9]{40}$/u),
 });
 export type MacHopperRelease = z.infer<typeof archiveReleaseSchema> &
@@ -86,6 +100,18 @@ export const parseMacHopperReleases = (
   return ok(retained);
 };
 
+/**
+ * The minimum macOS version the selected release declares (`deployment_target`).
+ * Undefined when the row declares none as text; the signed application's own
+ * requirement is still checked before it is copied.
+ */
+export const macHopperReleaseMinimumSystemVersion = (
+  release: MacHopperRelease,
+): string | undefined =>
+  typeof release.deployment_target === "string"
+    ? release.deployment_target
+    : undefined;
+
 /** Stable publisher identity; signing subkeys are admitted through this primary. */
 export const HOPPER_LINUX_PRIMARY_FINGERPRINT =
   "7C2D73BAFAF5B9A710A69DA1A26DF815099B1BCD";
@@ -100,11 +126,15 @@ const suffixes = { deb: ".deb", rpm: ".rpm", arch: ".pkg.tar.xz" } as const;
 
 export class HopperReleaseError extends Error {
   readonly _tag = "HopperReleaseError";
+  /** The vendor request whose transport failure produced this error. */
+  readonly download: HopperRequestFailure | undefined;
   constructor(
     readonly reason:
       | "release_metadata"
       | "download"
       | "integrity"
+      /** The authenticated package's launcher differs from the feed's main_exe_hash. */
+      | "launcher_digest_mismatch"
       | "publisher_verification_failed"
       | "verification_unavailable"
       | "unsupported_hopper_build"
@@ -112,23 +142,30 @@ export class HopperReleaseError extends Error {
       | "cleanup_failed"
       | "cache_missing",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly download?: HopperRequestFailure },
   ) {
     super(message, options);
     this.name = this._tag;
+    this.download = options?.download;
+  }
+
+  /** Describe a failed vendor request once, from the transport's observed facts. */
+  static fromDownload(
+    reason: HopperReleaseError["reason"],
+    download: HopperRequestFailure,
+  ): HopperReleaseError {
+    return new HopperReleaseError(
+      reason,
+      describeHopperRequestFailure(download),
+      { download },
+    );
   }
 }
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const releaseSchema = archiveReleaseSchema.extend({
   version: z.string().min(1),
-  file_length: z
-    .string()
-    .regex(/^[1-9]\d*$/u)
-    .refine((text) => {
-      const count = Number(text);
-      return Number.isSafeInteger(count) && count <= HOPPER_DOWNLOAD_BYTES;
-    }),
+  file_length: archiveLength.refine((text) => !text.startsWith("0")),
   main_exe_hash: sha256,
   signature: z
     .string()

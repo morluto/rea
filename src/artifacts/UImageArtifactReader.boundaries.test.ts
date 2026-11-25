@@ -1,4 +1,8 @@
-import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+import {
+  artifactPreparationRecoveryCases,
+  artifactReaderLifecycleCases,
+} from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -10,6 +14,8 @@ import { buildUImage, buildMultiPayload } from "../../tests/fixtures/uimage.js";
 import {
   parseUImageHeaderFields,
   parseMultiImageTable,
+  UIMAGE_HEADER_SIZE,
+  UIMAGE_MULTI_TABLE_WINDOW,
 } from "../domain/uimageFormat.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
@@ -19,11 +25,6 @@ const fixture = async (bytes: Buffer): Promise<string> => {
   );
   await writeFile(path, bytes);
   return path;
-};
-const entries = async (reader: UImageArtifactReader) => {
-  const result = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
 };
 
 it.each([
@@ -89,10 +90,21 @@ it("preserves cancellation during payload CRC admission", async () => {
         }
       })(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
-  } finally {
-    await reader.close();
     reads.mockRestore();
-    await admitted.handle.close();
+    const recovered = await collectEntries(reader);
+    expect(recovered).toHaveLength(1);
+    expect(
+      (await buffer(await reader.open(recovered[0]!))).equals(
+        Buffer.alloc(128 * 1024, 0x61),
+      ),
+    ).toBe(true);
+  } finally {
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 
@@ -106,15 +118,42 @@ it("admits a multi-image count before scanning the remaining payload", async () 
   const reader = new UImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
     });
-    expect(reads).toHaveBeenCalledTimes(2); // header and bounded table, no payload scan
+    expect(reads.mock.calls.length).toBeGreaterThan(0);
+    for (const call of reads.mock.calls) {
+      const [, , length, position] = call as unknown as [
+        Buffer,
+        number,
+        number,
+        number,
+      ];
+      expect(Number.isSafeInteger(position)).toBe(true);
+      expect(Number.isSafeInteger(length)).toBe(true);
+      expect(position).toBeGreaterThanOrEqual(0);
+      expect(length).toBeGreaterThanOrEqual(0);
+      if (length > 0)
+        expect(position + length).toBeLessThanOrEqual(
+          UIMAGE_HEADER_SIZE + UIMAGE_MULTI_TABLE_WINDOW,
+        );
+    }
+    const results = await Promise.all(
+      reads.mock.results.map(
+        ({ value }) => value as Promise<{ bytesRead: number }>,
+      ),
+    );
+    expect(
+      results.reduce((sum, result) => sum + result.bytesRead, 0),
+    ).toBeLessThanOrEqual(UIMAGE_HEADER_SIZE + UIMAGE_MULTI_TABLE_WINDOW);
   } finally {
-    await reader.close();
-    reads.mockRestore();
-    await admitted.handle.close();
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 
@@ -123,7 +162,7 @@ it("rejects a source changed after its header and CRC were prepared", async () =
   const path = await fixture(bytes),
     reader = new UImageArtifactReader(path);
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     await writeFile(path, Buffer.concat([bytes, Buffer.from([0])]));
     await expect(reader.open(entry!)).rejects.toMatchObject({
       reason: "integrity",
@@ -138,7 +177,7 @@ it("checks a multi-chunk stored payload incrementally and preserves read cancell
   const path = await fixture(bytes);
   const reader = new UImageArtifactReader(path);
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const controller = new AbortController(),
       reason = new Error("cancel member bytes");
     const stream = await reader.open(entry!, controller.signal);
@@ -163,5 +202,26 @@ artifactReaderLifecycleCases({
       type: 4,
       payload: buildMultiPayload([Buffer.from("a"), Buffer.from("b")]),
     }),
+  createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
+});
+
+it("reports impossible over-cap component extents as malformed", async () => {
+  const payload = Buffer.alloc(UIMAGE_MULTI_TABLE_WINDOW);
+  for (let offset = 0; offset < payload.length; offset += 4)
+    payload.writeUInt32BE(1, offset);
+  const reader = new UImageArtifactReader(
+    await fixture(buildUImage({ type: 4, payload })),
+  );
+  try {
+    await expect(collectEntries(reader)).rejects.toMatchObject({
+      reason: "format",
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => buildUImage({ payload: Buffer.from("payload") }),
   createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
 });

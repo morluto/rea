@@ -1,7 +1,7 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeLoadConfigPort } from "./PeLoadConfigPort.js";
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeLoadConfigInputSchema,
@@ -9,9 +9,8 @@ import {
   type PeLoadConfig,
 } from "../../domain/native/peLoadConfig.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_pe_load_config";
 
@@ -23,65 +22,62 @@ export class PeLoadConfigService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectPeLoadConfigInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = peLoadConfigSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPeLoadConfigInputSchema,
+        outputSchema: peLoadConfigSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "PE TLS/load-config provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = peSubjectArchitecture(value.machine, value.format);
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...fileRange(value.tls?.directory ?? null),
-      ...fileRange(value.load_config?.directory ?? null),
-      ...structureRange(value.load_config),
-      ...(value.tls?.callback_array_locations ?? []).map(
-        ({ offset, bytes }) => ({
-          kind: "file-offset-range" as const,
-          start: offset,
-          end: offset + bytes,
-        }),
-      ),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "pe",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = peSubjectArchitecture(
+            value.machine,
+            value.format,
+          );
+          const locations = [
+            { kind: "artifact-path" as const, path: value.artifact.path },
+            ...fileRange(value.tls?.directory ?? null),
+            ...fileRange(value.load_config?.directory ?? null),
+            ...structureRange(value.load_config),
+            ...structureRange(value.tls),
+            ...(value.tls?.callback_array_locations ?? []).map(
+              ({ offset, bytes }) => ({
+                kind: "file-offset-range" as const,
+                start: offset,
+                end: offset + bytes,
+              }),
+            ),
+          ];
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: "pe",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations,
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }
@@ -99,29 +95,31 @@ const fileRange = (
         },
       ];
 
-/** The checked `Size` span, when it differs from the declared directory range. */
+/** The structure span read, when it differs from the declared directory range. */
 const structureRange = (
-  loadConfig: PeLoadConfig["load_config"],
+  table: {
+    readonly directory: { readonly size: number };
+    readonly structure_location?:
+      | { readonly offset: number; readonly bytes: number }
+      | undefined;
+  } | null,
 ): { kind: "file-offset-range"; start: number; end: number }[] =>
-  loadConfig === null ||
-  loadConfig.structure_location.bytes === loadConfig.directory.size
+  table?.structure_location === undefined ||
+  table.structure_location.bytes === table.directory.size
     ? []
     : [
         {
           kind: "file-offset-range",
-          start: loadConfig.structure_location.offset,
-          end:
-            loadConfig.structure_location.offset +
-            loadConfig.structure_location.bytes,
+          start: table.structure_location.offset,
+          end: table.structure_location.offset + table.structure_location.bytes,
         },
       ];
 
 const validReport = (
   report: PeLoadConfig,
-  input: { max_callbacks: number; max_file_bytes: number },
+  input: { max_callbacks: number },
 ): boolean => {
   if (
-    report.artifact.bytes > input.max_file_bytes ||
     report.examined_callbacks !== (report.tls?.callbacks.length ?? 0) ||
     report.examined_callbacks > input.max_callbacks ||
     report.bits !== (report.format === "pe32" ? 32 : 64)
@@ -130,19 +128,19 @@ const validReport = (
   const ranges = [
     ...fileRange(report.tls?.directory ?? null),
     ...fileRange(report.load_config?.directory ?? null),
+    ...structureRange(report.tls),
   ];
   const structure = report.load_config?.structure_location;
+  const inside = insideArtifact(report.artifact.bytes);
   return (
     (structure === undefined ||
       (structure.offset === report.load_config?.directory.file_offset &&
         structure.bytes === report.load_config.size &&
-        structure.offset <= report.artifact.bytes - structure.bytes)) &&
+        inside(structure))) &&
     ranges.every(
       ({ start, end }) => start <= end && end <= report.artifact.bytes,
     ) &&
-    (report.tls?.callback_array_locations ?? []).every(
-      ({ offset, bytes }) => offset <= report.artifact.bytes - bytes,
-    ) &&
+    (report.tls?.callback_array_locations ?? []).every(inside) &&
     (report.tls?.callbacks ?? []).every(
       ({ file_offset }) =>
         file_offset === null || file_offset < report.artifact.bytes,

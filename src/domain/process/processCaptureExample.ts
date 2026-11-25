@@ -31,6 +31,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
       state: "path_metadata_unchanged",
       reason: null,
     },
+    root_process: { state: "withheld-by-caller" },
     normalization_sha256: digestProcessCommitment(normalization),
   },
   normalization,

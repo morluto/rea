@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { BinaryLayoutPort } from "./BinaryLayoutPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { BinaryLayoutPort } from "../../ports/binaryDiagnostics/BinaryLayoutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -14,6 +14,7 @@ import { parseAnalysisInput } from "../AnalysisInput.js";
 const OPERATION = "inspect_binary_layout";
 const EVIDENCE_ARCHITECTURES = {
   EM_X86_64: "x86_64",
+  EM_AARCH64: "arm64",
   EM_386: "x86",
   EM_ARM: "arm",
   EM_MIPS: "mips",
@@ -92,6 +93,9 @@ export class BinaryLayoutService {
           operation: OPERATION,
           parameters: {
             path: input.value.path,
+            ...(input.value.producer_limits === undefined
+              ? {}
+              : { producer_limits: input.value.producer_limits }),
             ...(input.value.pwntools_timeout_ms === undefined
               ? {}
               : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),
