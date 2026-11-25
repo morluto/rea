@@ -14,6 +14,8 @@ export interface HostMemoryAdmissionFacts {
   readonly cgroupMaxBytes: number | null;
   /** Current cgroup charge in bytes, or null when unknown. */
   readonly cgroupUsageBytes: number | null;
+  /** Smallest remaining bytes across visible cgroups with finite limits, or null when unlimited/unknown. */
+  readonly cgroupRemainingBytes?: number | null;
 }
 
 /** Admission decision for a memory-heavy launch. */
@@ -127,6 +129,7 @@ export const readHostMemoryAdmissionFacts = async (
   const effective = cgroup?.effectiveMemoryMax;
   return {
     hostAvailableBytes,
+    cgroupRemainingBytes: cgroup?.effectiveRemainingBytes ?? null,
     cgroupMaxBytes: typeof effective === "number" ? effective : null,
     cgroupUsageBytes: cgroup?.usageBytes ?? null,
   };
@@ -140,9 +143,10 @@ export const assessMemoryAdmission = (
 ): MemoryAdmission => {
   const minHeadroom = options.minHeadroomBytes ?? 512 * 1024 * 1024;
   const cgroupRemaining =
-    facts.cgroupMaxBytes === null
+    facts.cgroupRemainingBytes ??
+    (facts.cgroupMaxBytes === null
       ? Number.POSITIVE_INFINITY
-      : Math.max(0, facts.cgroupMaxBytes - (facts.cgroupUsageBytes ?? 0));
+      : Math.max(0, facts.cgroupMaxBytes - (facts.cgroupUsageBytes ?? 0)));
   const available = Math.min(facts.hostAvailableBytes, cgroupRemaining);
   const needed = requiredBytes + minHeadroom;
   if (available < needed) {

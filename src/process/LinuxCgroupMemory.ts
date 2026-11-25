@@ -226,6 +226,11 @@ export interface LinuxCgroupAdmissionFacts {
   readonly effectiveMemoryMax: number | "max" | null;
   /** This group's `memory.current` in bytes, or null when unreadable. */
   readonly usageBytes: number | null;
+  /**
+   * Smallest remaining bytes (`memory.max - memory.current`) across the group
+   * and all visible ancestors with finite limits: bytes, or null when unlimited/unreadable.
+   */
+  readonly effectiveRemainingBytes: number | null;
 }
 
 /** Read one cgroup v2 `memory.current` byte count. */
@@ -236,45 +241,100 @@ const parseLinuxCgroupCurrent = (value: string): number | null => {
   return Number.isSafeInteger(bytes) ? bytes : null;
 };
 
-/** Tightest finite `memory.max` from the group up to the mount point. */
-const readEffectiveAncestorMax = async (
-  location: LinuxCgroupLocation,
-  retainFailedClose?: (path: string, owner: OwnedFileHandle) => void,
-): Promise<number | "max" | null> => {
-  let tightest: number | "max" | null = null;
-  let directory = location.directory;
+/**
+ * Find all visible ancestor cgroup directories across covering mounts, preferring
+ * the widest usable mount (shortest mount.root) so parent limits outside subtree
+ * mounts are not skipped.
+ */
+const resolveAncestorCgroupDirectories = (
+  mounts: readonly LinuxCgroup2Mount[],
+  leafPath: string,
+): readonly string[] => {
+  const sortedMounts = [...mounts].sort(
+    (a, b) => a.root.length - b.root.length,
+  );
+  const leafCovered = sortedMounts.some(
+    (mount) =>
+      mount.root === "/" ||
+      leafPath === mount.root ||
+      leafPath.startsWith(`${mount.root}/`),
+  );
+  if (!leafCovered) return [];
+
+  const cgroupPaths: string[] = [];
+  let current = leafPath;
   for (;;) {
-    const raw = await readKernelFile(
-      posix.join(directory, "memory.max"),
-      undefined,
-      retainFailedClose,
-    );
-    const parsed =
-      raw === undefined
-        ? undefined
-        : parseLinuxCgroupMemoryMax(raw.toString("utf8"));
-    if (parsed === "max") {
-      if (tightest === null) tightest = "max";
-    } else if (parsed !== undefined) {
-      tightest =
-        tightest === null || tightest === "max"
-          ? parsed
-          : Math.min(tightest, parsed);
-    }
-    if (directory === location.mountPoint) break;
-    const parent = posix.dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
+    cgroupPaths.push(current);
+    if (current === "/") break;
+    const parent = posix.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
-  return tightest;
+
+  const directories: string[] = [];
+  const visited = new Set<string>();
+
+  for (const cgroupPath of cgroupPaths) {
+    for (const mount of sortedMounts) {
+      const rest =
+        mount.root === "/"
+          ? cgroupPath
+          : cgroupPath === mount.root
+            ? "/"
+            : cgroupPath.startsWith(`${mount.root}/`)
+              ? cgroupPath.slice(mount.root.length)
+              : undefined;
+      if (rest !== undefined) {
+        const directory = posix.resolve(mount.mountPoint, `.${rest}`);
+        if (!visited.has(directory)) {
+          visited.add(directory);
+          directories.push(directory);
+        }
+        break;
+      }
+    }
+  }
+
+  return directories;
+};
+
+interface DirectoryMemoryMetrics {
+  readonly max: number | "max" | undefined;
+  readonly current: number | null;
+}
+
+const readDirectoryMemoryMetrics = async (
+  directory: string,
+  retainFailedClose?: (path: string, owner: OwnedFileHandle) => void,
+): Promise<DirectoryMemoryMetrics> => {
+  const rawMax = await readKernelFile(
+    posix.join(directory, "memory.max"),
+    undefined,
+    retainFailedClose,
+  );
+  const max =
+    rawMax === undefined
+      ? undefined
+      : parseLinuxCgroupMemoryMax(rawMax.toString("utf8"));
+
+  const rawCurrent = await readKernelFile(
+    posix.join(directory, "memory.current"),
+    undefined,
+    retainFailedClose,
+  );
+  const current =
+    rawCurrent === undefined
+      ? null
+      : parseLinuxCgroupCurrent(rawCurrent.toString("utf8"));
+
+  return { max, current };
 };
 
 /**
  * Read the effective cgroup memory ceiling for this process: the tightest
  * finite `memory.max` across the group and its visible ancestors, together
- * with the group's current charge. Admission caps host availability by this
- * ceiling so a container/service limit cannot admit a launch the kernel would
- * OOM-kill.
+ * with the smallest remaining allowance (`memory.max - memory.current`)
+ * across all levels to account for sibling memory use in parent groups.
  */
 export const readLinuxCgroupAdmissionFacts = async (
   options: {
@@ -299,26 +359,47 @@ export const readLinuxCgroupAdmissionFacts = async (
     MOUNT_INFO_BYTES,
     options.retainFailedClose,
   );
-  const location =
-    mountInfo === undefined
-      ? undefined
-      : linuxCgroupLocation(parseLinuxCgroup2Mounts(mountInfo), path);
-  if (location === undefined) return undefined;
-  const effectiveMemoryMax = await readEffectiveAncestorMax(
-    location,
-    options.retainFailedClose,
-  );
-  const current = await readKernelFile(
-    posix.join(location.directory, "memory.current"),
-    undefined,
-    options.retainFailedClose,
-  );
+  if (mountInfo === undefined) return undefined;
+  const mounts = parseLinuxCgroup2Mounts(mountInfo);
+  const directories = resolveAncestorCgroupDirectories(mounts, path);
+  if (directories.length === 0) return undefined;
+
+  let tightestMax: number | "max" | null = null;
+  let tightestRemaining: number | null = null;
+  let leafUsageBytes: number | null = null;
+
+  for (let index = 0; index < directories.length; index += 1) {
+    const directory = directories[index];
+    if (directory === undefined) continue;
+
+    const metrics = await readDirectoryMemoryMetrics(
+      directory,
+      options.retainFailedClose,
+    );
+
+    if (index === 0) {
+      leafUsageBytes = metrics.current;
+    }
+
+    if (metrics.max === "max") {
+      if (tightestMax === null) tightestMax = "max";
+    } else if (metrics.max !== undefined) {
+      tightestMax =
+        tightestMax === null || tightestMax === "max"
+          ? metrics.max
+          : Math.min(tightestMax, metrics.max);
+      const remaining = Math.max(0, metrics.max - (metrics.current ?? 0));
+      tightestRemaining =
+        tightestRemaining === null
+          ? remaining
+          : Math.min(tightestRemaining, remaining);
+    }
+  }
+
   return {
-    effectiveMemoryMax,
-    usageBytes:
-      current === undefined
-        ? null
-        : parseLinuxCgroupCurrent(current.toString("utf8")),
+    effectiveMemoryMax: tightestMax,
+    usageBytes: leafUsageBytes,
+    effectiveRemainingBytes: tightestRemaining,
   };
 };
 

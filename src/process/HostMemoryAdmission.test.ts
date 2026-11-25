@@ -7,6 +7,7 @@ import {
   parseMemorySizeBytes,
   readHostAvailableBytes,
   readHostMemoryAdmissionFacts,
+  type HostMemoryAdmissionFacts,
 } from "./HostMemoryAdmission.js";
 
 const GiB = 1024 ** 3;
@@ -88,6 +89,25 @@ describe("assessMemoryAdmission", () => {
     );
     expect(admitted.admitted).toBe(true);
   });
+
+  it("uses cgroupRemainingBytes to reflect parent limits under sibling memory pressure", () => {
+    // Parent limit 4 GiB, leaf usage 256 MiB, but siblings use 3 GiB, so cgroupRemainingBytes is 1 GiB.
+    const facts: HostMemoryAdmissionFacts = {
+      hostAvailableBytes: 16 * GiB,
+      cgroupMaxBytes: 4 * GiB,
+      cgroupUsageBytes: 256 * 1024 ** 2,
+      cgroupRemainingBytes: 1 * GiB,
+    };
+    // 2 GiB heap + 512 MiB headroom = 2.5 GiB needed.
+    // Without cgroupRemainingBytes, 4 GiB - 256 MiB = 3.75 GiB would wrongly admit.
+    // With cgroupRemainingBytes (1 GiB), it correctly refuses.
+    const result = assessMemoryAdmission(facts, 2 * GiB);
+    expect(result.admitted).toBe(false);
+    if (!result.admitted) {
+      expect(result.reason).toContain("1024 MiB available");
+      expect(result.reason).toContain("cgroup remaining 1024 MiB");
+    }
+  });
 });
 
 describe("readHostAvailableBytes", () => {
@@ -142,11 +162,13 @@ describe("readHostMemoryAdmissionFacts", () => {
         readCgroup: async () => ({
           effectiveMemoryMax: 2 * GiB,
           usageBytes: 512 * 1024 ** 2,
+          effectiveRemainingBytes: 1536 * 1024 ** 2,
         }),
       });
       expect(facts.hostAvailableBytes).toBe(4_000_000 * 1024);
       expect(facts.cgroupMaxBytes).toBe(2 * GiB);
       expect(facts.cgroupUsageBytes).toBe(512 * 1024 ** 2);
+      expect(facts.cgroupRemainingBytes).toBe(1536 * 1024 ** 2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
