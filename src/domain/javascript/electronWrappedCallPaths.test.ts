@@ -2389,6 +2389,12 @@ describe("Webpack harmony export getters", () => {
       "a CommonJS export (control)",
       { exports: "__webpack_exports__.handle = handle;" },
     ],
+    [
+      "a replacement object without the key",
+      {
+        exports: `__unused_module.exports = { other: () => {} };\n__webpack_exports__ = __unused_module.exports;\n${DEFINE_HANDLE}`,
+      },
+    ],
   ] as const)("substitutes a wrapper exported through %s", (_name, parts) => {
     expect(pingRegistrations(harmonyBundle(parts))).toEqual([
       expect.objectContaining({
@@ -2466,6 +2472,12 @@ describe("Webpack harmony export getters", () => {
       },
     ],
     ["a conditional definition", { exports: `if (enabled) ${DEFINE_HANDLE}` }],
+    [
+      "a replacement object that already owns the key",
+      {
+        exports: `__unused_module.exports = { handle: () => {} };\n__webpack_exports__ = __unused_module.exports;\n${DEFINE_HANDLE}`,
+      },
+    ],
     [
       "an unproven loader alias",
       {

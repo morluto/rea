@@ -538,6 +538,21 @@ export class JavaScriptSymbolicBindings {
           key,
           read,
         );
+      // The helper also skips a key that a replacement object already owns,
+      // so a getter after `module.exports = {...}` needs that object's keys.
+      if (write?.getter) {
+        const replacement = available
+          .slice(0, available.indexOf(write))
+          .findLast((other) => other.path.length === 0);
+        if (replacement !== undefined) {
+          const object = this.evaluate(replacement.value, value.environment);
+          if (
+            this.unknownMembers(object) > 0 ||
+            this.members(object).includes(key)
+          )
+            return symbolicUnknown("export getter skipped by an owned key");
+        }
+      }
       // A getter keeps the key's first definition: an earlier write makes
       // the helper skip the key, and a later one fails against the accessor.
       if (
