@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import type { Devicetree } from "../firmware/devicetree.js";
 import {
@@ -162,8 +163,9 @@ it("pages nodes without nested properties and includes property_count and source
     offset: 0,
     limit: 10,
   });
-  if (!result.ok || result.value.kind !== "devicetree")
-    throw new Error("Devicetree nodes page failed");
+  if (!result.ok) throw result.error;
+  expect(result.value.kind).toBe("devicetree");
+  if (result.value.kind !== "devicetree") return;
   expect(result.value.items).toEqual([
     {
       path: "/",
@@ -196,8 +198,9 @@ it("pages nodes with offset and limit, returning the second page and updating co
     offset: 0,
     limit: 1,
   });
-  if (!firstPage.ok || firstPage.value.kind !== "devicetree")
-    throw new Error("First page failed");
+  if (!firstPage.ok) throw firstPage.error;
+  expect(firstPage.value.kind).toBe("devicetree");
+  if (firstPage.value.kind !== "devicetree") return;
   expect(firstPage.value.items).toEqual([
     {
       path: "/",
@@ -219,8 +222,9 @@ it("pages nodes with offset and limit, returning the second page and updating co
     offset: 1,
     limit: 1,
   });
-  if (!secondPage.ok || secondPage.value.kind !== "devicetree")
-    throw new Error("Second page failed");
+  if (!secondPage.ok) throw secondPage.error;
+  expect(secondPage.value.kind).toBe("devicetree");
+  if (secondPage.value.kind !== "devicetree") return;
   expect(secondPage.value.items).toEqual([
     {
       path: "/soc",
@@ -246,8 +250,9 @@ it("pages a single node by path while preserving its original index", () => {
     offset: 0,
     limit: 10,
   });
-  if (!result.ok || result.value.kind !== "devicetree")
-    throw new Error("Devicetree node by path failed");
+  if (!result.ok) throw result.error;
+  expect(result.value.kind).toBe("devicetree");
+  if (result.value.kind !== "devicetree") return;
   expect(result.value.items).toEqual([
     {
       path: "/soc",
@@ -269,8 +274,9 @@ it("pages properties of a selected node path", () => {
     offset: 0,
     limit: 10,
   });
-  if (!result.ok || result.value.kind !== "devicetree")
-    throw new Error("Devicetree properties page failed");
+  if (!result.ok) throw result.error;
+  expect(result.value.kind).toBe("devicetree");
+  if (result.value.kind !== "devicetree") return;
   expect(result.value.items).toEqual([
     {
       name: "compatible",
@@ -342,8 +348,9 @@ it("pages reservations and references with source_index", () => {
     offset: 0,
     limit: 10,
   });
-  if (!reservations.ok || reservations.value.kind !== "devicetree")
-    throw new Error("Devicetree reservations failed");
+  if (!reservations.ok) throw reservations.error;
+  expect(reservations.value.kind).toBe("devicetree");
+  if (reservations.value.kind !== "devicetree") return;
   expect(reservations.value.items).toEqual([
     {
       offset: 16,
@@ -359,8 +366,9 @@ it("pages reservations and references with source_index", () => {
     offset: 0,
     limit: 10,
   });
-  if (!references.ok || references.value.kind !== "devicetree")
-    throw new Error("Devicetree references failed");
+  if (!references.ok) throw references.error;
+  expect(references.value.kind).toBe("devicetree");
+  if (references.value.kind !== "devicetree") return;
   expect(references.value.items).toHaveLength(2);
   expect(references.value.items[0]).toMatchObject({
     source: "/soc/serial@1000",
@@ -402,6 +410,7 @@ it("rejects unsupported view kinds with an input error", () => {
   } as unknown as AnalysisViewRequest);
   expect(invalid.ok).toBe(false);
   if (!invalid.ok) {
+    expect(invalid.error).toBeInstanceOf(AnalysisInputError);
     expect(invalid.error).toMatchObject({
       operation: "inspect_analysis_view",
       issues: [
