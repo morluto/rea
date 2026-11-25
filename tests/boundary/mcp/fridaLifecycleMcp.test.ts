@@ -310,7 +310,7 @@ it.each(["attached", "during-resume", "after-resume"] as const)(
     const state = async () => {
       const result = await fixture.client.callTool({
         name: "frida_session_status",
-        arguments: { session_id: id },
+        arguments: { detail: "complete", session_id: id },
       });
       return fridaSessionStatusSchema.parse(
         toolContract("frida_session_status").outputSchema.parse(
@@ -383,7 +383,7 @@ it("retains detached state and resume evidence when remote cleanup needs retry",
   expect((await close()).isError).toBe(true);
   const result = await fixture.client.callTool({
     name: "frida_session_status",
-    arguments: { session_id: id },
+    arguments: { detail: "complete", session_id: id },
   });
   expect(
     fridaSessionStatusSchema.parse(
@@ -549,7 +549,7 @@ it.each([
     ).toBeLessThanOrEqual(32_768);
     const status = await client.callTool({
       name: "frida_session_status",
-      arguments: { session_id: sessionId },
+      arguments: { detail: "complete", session_id: sessionId },
     });
     expect(status.isError).not.toBe(true);
     expect(
@@ -638,7 +638,7 @@ it("declares non-destructive session mutation when status retains Evidence", asy
   expect((await bundle()).records).toHaveLength(0);
   const response = await client.callTool({
     name: "frida_session_status",
-    arguments: { session_id: id },
+    arguments: { detail: "complete", session_id: id },
   });
   expect(response.isError).not.toBe(true);
   const evidence = toolContract("frida_session_status").outputSchema.parse(
@@ -688,7 +688,10 @@ it("declares non-destructive session mutation when status retains Evidence", asy
 
   const missing = await client.callTool({
     name: "frida_session_status",
-    arguments: { session_id: "00000000-0000-4000-8000-000000000000" },
+    arguments: {
+      detail: "complete",
+      session_id: "00000000-0000-4000-8000-000000000000",
+    },
   });
   expect(parseMcpToolError(missing)).toMatchObject({
     error: { code: "invalid_request" },
@@ -1280,7 +1283,7 @@ it.each([
       (
         await fixture.client.callTool({
           name: "frida_session_status",
-          arguments: { session_id: id },
+          arguments: { detail: "complete", session_id: id },
         })
       ).isError,
     ).not.toBe(true);

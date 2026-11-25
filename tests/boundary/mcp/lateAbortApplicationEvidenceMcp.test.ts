@@ -58,7 +58,10 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const call = client.callTool(
-    { name: "inspect_go_binary", arguments: { path: report.artifact.path } },
+    {
+      name: "inspect_go_binary",
+      arguments: { detail: "complete", path: report.artifact.path },
+    },
     { signal: controller.signal },
   );
   await goInspection.reached(call, "MCP observation");

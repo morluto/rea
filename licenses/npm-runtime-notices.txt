@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): 4633446d45ff711dcf262cc68c123e64a5fe45cc250b1b9800a165156f4c776e
+Runtime dependency fingerprint (SHA-256): ace4d479bfa0c00c686481331dd503029223c8c5f91c52f82613fd65032cf6dd
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -3497,10 +3497,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== evmole@0.9.4 =====
+===== evmole@0.9.6 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.4.tgz
-Integrity: sha512-bXy0WM9YHff/wj4WWrfRH4jtQlxxBbC0oNx/AMzmrLrzzn63w5RKzQohNYNHjoclc/Yb3x6Rg8k/j33lbCmHtw==
+Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
+Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---
@@ -4251,10 +4251,10 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
-===== isomorphic-git@1.44.15 =====
+===== isomorphic-git@1.44.17 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.15.tgz
-Integrity: sha512-jm7drCsGNOuyAKCKiZ9n0WtGImsEjfTbms0HxLHJF3H8A+luGSerLnVFeAo/gADjF8PrdLzmO/p2G/0IqjNwig==
+Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.17.tgz
+Integrity: sha512-jVTvfct/ZDqutRKOWSnTTLtbkKSXlvV5bWOkRpW143tsDfUxZsnNqSPq8BgNpsviuD9OuQ/1Sz8reNb/+daVSQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---
@@ -4267,31 +4267,91 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+## Third-party code
+
+### path-browserify
+
+`src/utils/join.js` contains the POSIX path normalisation from
+[path-browserify](https://github.com/browserify/path-browserify), which
+extracted it from Node.js.
+
+MIT License
+
+Copyright (c) 2013 James Halliday
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+The Node.js code it was extracted from carries its own notice:
+
+Copyright Joyent, Inc. and other Node contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 --- package/index.umd.min.js.LICENSE.txt ---
+
+/*!
+ * The POSIX core below - `assertPath`, `normalizeStringPosix` and the body of
+ * `normalize` - comes from path-browserify, which extracted it from Node.js.
+ * Reformatted to this project's style (`const`/`let`, no semicolons); the
+ * algorithm is unchanged.
+ *
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2013 James Halliday
+ * Copyright Joyent, Inc. and other Node contributors.
+ *
+ * @see https://github.com/browserify/path-browserify
+ *
+ * The Windows handling is this project's own, added in #2302. path-browserify
+ * is the POSIX part of `path` only, so `normalize` and `join` are wrapped with:
+ *   - Backslashes are normalised to forward slashes before processing.
+ *   - Drive-letter prefixes (e.g. "C:") are detected and preserved through
+ *     normalisation, so absolute Windows paths are handled correctly.
+ *   - A drive-letter argument passed to join() resets the accumulated path,
+ *     matching Node behaviour and handling worktree gitdir paths properly.
+ *
+ * Limitation: UNC paths (e.g. \\server\share) are not supported. The leading
+ *   backslashes are normalised to forward slashes and then collapsed by
+ *   normalizeStringPosix, losing the UNC root. Git on Windows works with
+ *   drive-letter paths, so this is not expected to be a practical issue.
+ */
 
 /*!
  * The buffer module from node.js, for the browser.
  *
  * @author   Feross Aboukhadijeh <https://feross.org>
  * @license  MIT
- */
-
-/*!
- * This code for `path.join` is directly copied from @zenfs/core/path for bundle size improvements.
- * SPDX-License-Identifier: LGPL-3.0-or-later
- * Copyright (c) James Prevett and other ZenFS contributors.
- *
- * Windows support added:
- *   - Backslashes are normalised to forward slashes before processing.
- *   - Drive-letter prefixes (e.g. "C:") are detected and preserved through
- *     normalisation, so absolute Windows paths are handled correctly.
- *   - An absolute argument passed to join() resets the accumulated path,
- *     matching Node behaviour and handling worktree gitdir paths properly.
- *
- * Limitation: UNC paths (e.g. \\server\share) are not supported. The leading
- *   backslashes are normalised to forward slashes and then collapsed by
- *   normalizeString, losing the UNC root. Git on Windows works with
- *   drive-letter paths, so this is not expected to be a practical issue.
  */
 
 /*! crc32.js (C) 2014-present SheetJS -- http://sheetjs.com */
@@ -4303,28 +4363,36 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 --- package/managers/index.umd.min.js.LICENSE.txt ---
 
 /*!
- * The buffer module from node.js, for the browser.
+ * The POSIX core below - `assertPath`, `normalizeStringPosix` and the body of
+ * `normalize` - comes from path-browserify, which extracted it from Node.js.
+ * Reformatted to this project's style (`const`/`let`, no semicolons); the
+ * algorithm is unchanged.
  *
- * @author   Feross Aboukhadijeh <https://feross.org>
- * @license  MIT
- */
-
-/*!
- * This code for `path.join` is directly copied from @zenfs/core/path for bundle size improvements.
- * SPDX-License-Identifier: LGPL-3.0-or-later
- * Copyright (c) James Prevett and other ZenFS contributors.
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2013 James Halliday
+ * Copyright Joyent, Inc. and other Node contributors.
  *
- * Windows support added:
+ * @see https://github.com/browserify/path-browserify
+ *
+ * The Windows handling is this project's own, added in #2302. path-browserify
+ * is the POSIX part of `path` only, so `normalize` and `join` are wrapped with:
  *   - Backslashes are normalised to forward slashes before processing.
  *   - Drive-letter prefixes (e.g. "C:") are detected and preserved through
  *     normalisation, so absolute Windows paths are handled correctly.
- *   - An absolute argument passed to join() resets the accumulated path,
+ *   - A drive-letter argument passed to join() resets the accumulated path,
  *     matching Node behaviour and handling worktree gitdir paths properly.
  *
  * Limitation: UNC paths (e.g. \\server\share) are not supported. The leading
  *   backslashes are normalised to forward slashes and then collapsed by
- *   normalizeString, losing the UNC root. Git on Windows works with
+ *   normalizeStringPosix, losing the UNC root. Git on Windows works with
  *   drive-letter paths, so this is not expected to be a practical issue.
+ */
+
+/*!
+ * The buffer module from node.js, for the browser.
+ *
+ * @author   Feross Aboukhadijeh <https://feross.org>
+ * @license  MIT
  */
 
 /*! crc32.js (C) 2014-present SheetJS -- http://sheetjs.com */
@@ -4336,20 +4404,28 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 --- package/models/index.umd.min.js.LICENSE.txt ---
 
 /*!
- * This code for `path.join` is directly copied from @zenfs/core/path for bundle size improvements.
- * SPDX-License-Identifier: LGPL-3.0-or-later
- * Copyright (c) James Prevett and other ZenFS contributors.
+ * The POSIX core below - `assertPath`, `normalizeStringPosix` and the body of
+ * `normalize` - comes from path-browserify, which extracted it from Node.js.
+ * Reformatted to this project's style (`const`/`let`, no semicolons); the
+ * algorithm is unchanged.
  *
- * Windows support added:
+ * SPDX-License-Identifier: MIT
+ * Copyright (c) 2013 James Halliday
+ * Copyright Joyent, Inc. and other Node contributors.
+ *
+ * @see https://github.com/browserify/path-browserify
+ *
+ * The Windows handling is this project's own, added in #2302. path-browserify
+ * is the POSIX part of `path` only, so `normalize` and `join` are wrapped with:
  *   - Backslashes are normalised to forward slashes before processing.
  *   - Drive-letter prefixes (e.g. "C:") are detected and preserved through
  *     normalisation, so absolute Windows paths are handled correctly.
- *   - An absolute argument passed to join() resets the accumulated path,
+ *   - A drive-letter argument passed to join() resets the accumulated path,
  *     matching Node behaviour and handling worktree gitdir paths properly.
  *
  * Limitation: UNC paths (e.g. \\server\share) are not supported. The leading
  *   backslashes are normalised to forward slashes and then collapsed by
- *   normalizeString, losing the UNC root. Git on Windows works with
+ *   normalizeStringPosix, losing the UNC root. Git on Windows works with
  *   drive-letter paths, so this is not expected to be a practical issue.
  */
 
@@ -7714,10 +7790,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== rolldown@1.3.2 =====
+===== rolldown@1.3.3 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/rolldown/-/rolldown-1.3.2.tgz
-Integrity: sha512-EFHqbVkXiYZA6akmYm2bvJhNbEGdUwAResRhYwl/BO8QhB5KxsG+t3RVHJSIOy5jBEb0XCACvrIGnnl6Z8sMGA==
+Archive: https://registry.npmjs.org/rolldown/-/rolldown-1.3.3.tgz
+Integrity: sha512-ksB1g74e7haRy02OYm4lOQAlr6sK6hBpAY5R+YC30Gkv4L1COwF6M9umBAYAPxWpGow6Vr+IXtyDjH9fq7A+Zg==
 Scope: generated runtime helpers; the build compiler is not bundled.
 
 --- package/LICENSE ---

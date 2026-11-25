@@ -105,6 +105,7 @@ export class PwntoolsRecordedCrashProvider
           "../../../bridge/pwntools/recorded_crash.py",
           import.meta.url,
         ),
+        targetFormat: "elf-core",
         payloadSchema: recordedCrashPayloadSchema,
         project: ({ input, payload, snapshot, diagnostics }): RecordedCrash => {
           const checked = safeParseProjectedRecordedCrash(payload, {

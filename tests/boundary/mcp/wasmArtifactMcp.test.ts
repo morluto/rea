@@ -523,7 +523,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   );
   const reply = await harness.client.callTool({
     name: "inspect_wasm_artifact",
-    arguments: { path: value.artifact.path },
+    arguments: { path: value.artifact.path, detail: "complete" },
   });
   const reference = z
     .object({

@@ -69,7 +69,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Default complete returns full Evidence; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
+      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
@@ -146,7 +146,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect one exact Android class's methods, fields, inner classes, DEX prototypes and encoded static final values without generating source. Select an overload_index from these results for inspect_android_method; indices are artifact/engine-session scoped and prototypes are not complete raw method IDs. Optional mapping_path adds verified R8/ProGuard names separately; observed names remain primary. detail summary retains complete Evidence and returns normalized symbols without duplicate raw calls; complete remains the default.",
+      "Inspect one exact Android class's methods, fields, inner classes, DEX prototypes and encoded static final values without generating source. Select an overload_index from these results for inspect_android_method; indices are artifact/engine-session scoped and prototypes are not complete raw method IDs. Optional mapping_path adds verified R8/ProGuard names separately; observed names remain primary. detail summary retains complete Evidence and returns normalized symbols without duplicate raw calls; omitted detail is complete within the agent result budget, else the retained summary.",
     kind: "android-provider",
     inputSchema: androidSymbolInspectionInputSchemas.inspect_android_class,
     outputSchema: evidenceResultOf(
@@ -183,7 +183,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Decompile one Android method, with explicit overload_index when names collide and smali fallback when needed. Reports DEX prototype, representation, fallback markers and source truncation; display signatures may be aliases. Optional mapping_path annotates R8/ProGuard names without replacing observed names. detail summary retains complete Evidence and returns the selected body without duplicate class metadata; complete remains the default. Use inspect_android_class to choose the overload.",
+      "Decompile one Android method, with explicit overload_index when names collide and smali fallback when needed. Reports DEX prototype, representation, fallback markers and source truncation; display signatures may be aliases. Optional mapping_path annotates R8/ProGuard names without replacing observed names. detail summary retains complete Evidence and returns the selected body without duplicate class metadata; omitted detail is complete within the agent result budget, else the retained summary. Use inspect_android_class to choose the overload.",
     kind: "android-provider",
     inputSchema: androidSymbolInspectionInputSchemas.inspect_android_method,
     outputSchema: evidenceResultOf(

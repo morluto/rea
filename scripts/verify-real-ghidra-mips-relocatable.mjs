@@ -26,6 +26,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane for ET_REL objects. No tool acquisition, no
 // linking and no target execution.
@@ -136,7 +140,9 @@ async function verifyFixture(byteOrder, kernelModule) {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-real-mips-rel-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-mips-rel-proof", version: "1" }),
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
@@ -204,7 +210,10 @@ async function verifyFixture(byteOrder, kernelModule) {
       return found[0].address;
     };
     const entry = named("rea_mips_rel_entry");
-    const callees = await call("procedure_callees", { procedure: entry });
+    const callees = await call("procedure_callees", {
+      detail: "complete",
+      procedure: entry,
+    });
     for (const callee of [
       named("rea_mips_rel_leaf"),
       named("rea_mips_rel_far"),
@@ -281,12 +290,14 @@ async function verifyFixture(byteOrder, kernelModule) {
       process.execPath,
       [
         entrypoint,
-        "function",
-        fixture.path,
-        "rea_mips_rel_entry",
-        "--provider",
-        "ghidra",
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          fixture.path,
+          "rea_mips_rel_entry",
+          "--provider",
+          "ghidra",
+          "--json",
+        ])),
       ],
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );

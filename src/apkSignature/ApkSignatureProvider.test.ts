@@ -408,7 +408,7 @@ const registerSignatureInputAdmissionCases = () => {
     expect(
       tagOf(new ArtifactReaderFailure("path", "Expected a regular file")),
     ).toBe("AnalysisInputError");
-    for (const reason of ["io", "unavailable", "format"] as const)
+    for (const reason of ["io", "unavailable"] as const)
       expect(tagOf(new ArtifactReaderFailure(reason, "reader failed"))).toBe(
         "ProviderAdapterError",
       );
@@ -431,7 +431,7 @@ const registerSignatureInputAdmissionCases = () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+    expect(result.error._tag).toBe("AnalysisTargetFailureError");
   });
 
   it("reports a damaged supported Zip64 end record as input failure while accepting the intact and restored controls", async () => {

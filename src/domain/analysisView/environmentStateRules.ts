@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
 import { isRecord } from "../../kernel/isRecord.js";
 import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
@@ -508,9 +509,7 @@ export const apiBaseLengths = (
   for (const template of templates) {
     const segments = segmentsOf(template);
     const first = segments[0] ?? "";
-    const group = groups.get(first);
-    if (group === undefined) groups.set(first, [segments]);
-    else group.push(segments);
+    appendToMapList(groups, first, segments);
   }
   return new Map(
     [...groups.entries()].map(([first, members]) => {

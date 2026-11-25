@@ -216,8 +216,10 @@ it("summarizes an inventory above the inline bound when detail is omitted, and r
       byte_length: 7001,
     },
   }));
-  const harness = await connectGhidraMcp("native-inventory-capacity", () =>
-    Promise.resolve(ok(items)),
+  const harness = await connectGhidraMcp(
+    "native-inventory-capacity",
+    () => Promise.resolve(ok(items)),
+    { testDelivery: "budgeted" },
   );
   onTestFinished(() => harness.close());
   const omitted = await harness.mcp.callTool({
@@ -279,8 +281,10 @@ it("inlines a small inventory, summarizes a large one, and keeps it complete whe
       procedure: { external: false, thunk: false, thunk_target: null },
     }));
   let result = rows(2);
-  const harness = await connectGhidraMcp("native-inventory-size-aware", () =>
-    Promise.resolve(ok(result)),
+  const harness = await connectGhidraMcp(
+    "native-inventory-size-aware",
+    () => Promise.resolve(ok(result)),
+    { testDelivery: "budgeted" },
   );
   onTestFinished(() => harness.close());
   const small = await harness.mcp.callTool({
@@ -317,7 +321,10 @@ it("inlines a small inventory, summarizes a large one, and keeps it complete whe
   const unpaged = await connectGhidraMcp(
     "native-inventory-size-aware-unpaged",
     () => Promise.resolve(ok(rows(600))),
-    { environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" } },
+    {
+      environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" },
+      testDelivery: "budgeted",
+    },
   );
   onTestFinished(() => unpaged.close());
   const unpagedReply = await unpaged.mcp.callTool({

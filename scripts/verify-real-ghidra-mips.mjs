@@ -50,6 +50,10 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 const mode = process.argv[2];
@@ -169,7 +173,9 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-existing-mips-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-existing-mips-proof", version: "1" }),
+  );
   try {
     await client.connect(transport);
     const opened = await client.callTool(
@@ -181,7 +187,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     requireMcpOperationResult(opened, "open_binary");
     const result = await client.callTool(
-      { name: "list_procedures", arguments: {} },
+      { name: "list_procedures", arguments: { detail: "complete" } },
       { timeout: 180000 },
     );
     const observation = parseEvidence(
@@ -295,10 +301,12 @@ try {
         env,
         stderr: "pipe",
       });
-      const client = new Client({
-        name: "rea-real-mips-legacy-proof",
-        version: "1",
-      });
+      const client = completeEvidenceClient(
+        new Client({
+          name: "rea-real-mips-legacy-proof",
+          version: "1",
+        }),
+      );
       let stderr = "";
       transport.stderr?.on("data", (chunk) => {
         stderr = (stderr + chunk.toString()).slice(-65536);
@@ -468,7 +476,9 @@ try {
       env,
       stderr: "pipe",
     });
-    const client = new Client({ name: "rea-real-mips-proof", version: "1" });
+    const client = completeEvidenceClient(
+      new Client({ name: "rea-real-mips-proof", version: "1" }),
+    );
     let stderr = "";
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
@@ -498,12 +508,14 @@ try {
             process.execPath,
             [
               entrypoint,
-              "function",
-              fixture.path,
-              `${prefix}_entry`,
-              "--provider",
-              "ghidra",
-              "--json",
+              ...(await completeEvidenceCliArguments([
+                "function",
+                fixture.path,
+                `${prefix}_entry`,
+                "--provider",
+                "ghidra",
+                "--json",
+              ])),
             ],
             { env, timeout: 60000, maxBuffer: 1024 * 1024 },
           );
@@ -629,6 +641,7 @@ try {
         ).toString("hex"),
       );
       const callees = await call("procedure_callees", {
+        detail: "complete",
         procedure: entry.address,
       });
       assert.ok(
@@ -771,12 +784,14 @@ try {
         process.execPath,
         [
           entrypoint,
-          "function",
-          fixture.path,
-          `${prefix}_entry`,
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            fixture.path,
+            `${prefix}_entry`,
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -829,12 +844,14 @@ try {
             process.execPath,
             [
               entrypoint,
-              "function",
-              carvedPath,
-              independent.symbols.rea_mips_entry,
-              "--provider",
-              "ghidra",
-              "--json",
+              ...(await completeEvidenceCliArguments([
+                "function",
+                carvedPath,
+                independent.symbols.rea_mips_entry,
+                "--provider",
+                "ghidra",
+                "--json",
+              ])),
             ],
             { env, timeout: 60000, maxBuffer: 1024 * 1024 },
           );

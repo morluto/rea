@@ -17,6 +17,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  malformedArtifact,
   decodeZipEntryText,
   zipEntryNameLimitations,
   typedZipFailure,
@@ -148,7 +149,10 @@ const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
       `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
       { cause: typed },
     );
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
+  if (
+    typed instanceof ArtifactReaderFailure &&
+    typed.parseFailure !== undefined
+  )
     throw malformedInput(NUGET_NUPKG_FORMAT, typed.message, { cause: typed });
   throw cause;
 };
@@ -531,8 +535,8 @@ class RandomAccessZipReader extends Reader<undefined> {
   ): Promise<Uint8Array> {
     const readBytes = Math.min(length, this.size - index);
     if (readBytes < 0)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "zip",
         `ZIP archive is malformed: read at ${String(index)} extends beyond the ${String(this.size)}-byte archive`,
       );
     const bytes = await this.#source.readRange(index, readBytes);

@@ -15,7 +15,10 @@ import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -76,11 +79,7 @@ const retryFixture = async (
           ...client,
           runtimeLineageSnapshots: () => [
             {
-              provider: {
-                id: "fixture",
-                name: "Fixture analysis provider",
-                version: "1",
-              },
+              provider: createFixtureProviderIdentity(),
               observation: {
                 status: "unavailable" as const,
                 observedAt: "2026-10-16T00:00:00Z",

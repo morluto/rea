@@ -470,7 +470,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_erlang_beam",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "beam",
       },
     });
@@ -512,7 +512,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_erlang_beam",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "beam",
         reason: "BEAM chunk payload exceeds the form.",
       },

@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
@@ -84,10 +85,7 @@ export const createCapturedWebScriptReconciler = (
     );
   const keysByUrl = new Map<string, string[]>();
   for (const resource of resources) {
-    const keys = keysByUrl.get(resource.url);
-    if (keys === undefined)
-      keysByUrl.set(resource.url, [resource.resource_key]);
-    else keys.push(resource.resource_key);
+    appendToMapList(keysByUrl, resource.url, resource.resource_key);
   }
   for (const [url, keys] of keysByUrl)
     if (keys.length > 1) keysByUrl.set(url, [...new Set(keys)].sort());

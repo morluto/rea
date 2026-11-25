@@ -3,11 +3,8 @@ import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.j
 import { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../resources/index.js";
-import {
-  assertAsarReadActive,
-  asarCancellationFailure,
-  asarFailure,
-} from "./AsarFailure.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { asarCancellationFailure, asarFailure } from "./AsarFailure.js";
 
 const ASAR_READ_CHUNK_BYTES = 256 * 1024;
 
@@ -112,15 +109,6 @@ export const readValidatedAsarRange = (
   return output;
 };
 
-/** Close an ASAR file handle before honoring cancellation of an empty member. */
-export const closeAsarHandle = async (
-  close: () => Promise<void>,
-  signal?: AbortSignal,
-): Promise<void> => {
-  await close();
-  assertAsarReadActive(signal);
-};
-
 /** Validate and contextualize bytes read from one ASAR member source. */
 export const readValidatedAsarEntry = (
   source: FileHandleChunkStream,
@@ -157,8 +145,7 @@ export const readValidatedAsarEntry = (
           if (next.done) break;
           const chunk: unknown = next.value;
           if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array))
-            throw new ArtifactReaderFailure(
-              "format",
+            throw invariantViolation(
               `ASAR entry did not return bytes: ${entryPath}`,
             );
           const coverage = source.readCoverage();

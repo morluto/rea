@@ -11,7 +11,7 @@ import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import {
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../../../src/domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -25,9 +25,10 @@ const CLI_ISSUE_REPORT_URL = "https://github.com/morluto/rea/issues";
 
 const unsupportedTargetProjection = (): AnalysisErrorProjection =>
   projectAnalysisError(
-    new AnalysisUnsupportedTargetError(
+    unsupportedTarget(
       "inspect-target",
       "/tmp/sample.bin",
+      "fixture",
       "Container format is unsupported.",
     ),
     "invocation",

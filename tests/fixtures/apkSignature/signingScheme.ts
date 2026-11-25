@@ -1,12 +1,9 @@
-/** Full v2/v3 signer framing with opaque, deliberately unverified signatures. */
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
+import { uint32LE as u32 } from "../../../src/native/BinaryInteger.fixture.js";
+
 const lp = (bytes: Uint8Array): Buffer =>
   Buffer.concat([u32(bytes.length), bytes]);
 
+/** Full v2/v3 signer framing with opaque, deliberately unverified signatures. */
 export const apkSchemeValue = (
   signedData: Uint8Array,
   sdkRange?: { readonly min: number; readonly max: number },

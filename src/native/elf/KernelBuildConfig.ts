@@ -15,25 +15,14 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
-import { BinaryReader } from "../../domain/binaryContainer.js";
+import { hasElfMagic, BinaryReader } from "../../domain/binaryContainer.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
-import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource, type ByteSource } from "../../domain/byteSource.js";
 
 interface ByteSpan {
   readonly size: number;
   readonly readRange: (offset: number, length: number) => Promise<Buffer>;
 }
-
-const bufferSpan = (bytes: Buffer): ByteSpan => ({
-  size: bytes.length,
-  readRange: (offset, length) => {
-    if (offset < 0 || length <= 0 || offset >= bytes.length)
-      return Promise.resolve(Buffer.alloc(0));
-    return Promise.resolve(
-      bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    );
-  },
-});
 
 const sourceSpan = (source: ByteSource): ByteSpan => ({
   size: source.size,
@@ -159,13 +148,6 @@ export class KernelBuildConfigBudgetFailure extends ParseFailureError<"limit"> {
 const budget = (knob: KernelBuildConfigBudgetKnob, limit: number): never => {
   throw new KernelBuildConfigBudgetFailure(knob, limit);
 };
-
-const isElf = (bytes: Buffer): boolean =>
-  bytes.length >= 4 &&
-  bytes[0] === 0x7f &&
-  bytes[1] === 0x45 &&
-  bytes[2] === 0x4c &&
-  bytes[3] === 0x46;
 
 const codecAt = (bytes: Buffer, offset: number) =>
   kernelCompressionCodecAt(bytes, offset, KERNEL_BUILD_CONFIG_CODECS);
@@ -1082,7 +1064,7 @@ const bzImageReport = async (
     "file",
     input,
     {
-      span: bufferSpan(member.output),
+      span: bufferByteSource(member.output),
       space: "inflated_payload",
       payload: {
         ...base,
@@ -1105,7 +1087,7 @@ const parseKernelBuildConfigCore = async (
   signal?: AbortSignal,
 ): Promise<Report> => {
   const prefix = await span.readRange(0, Math.min(span.size, 0x250));
-  const elf = isElf(prefix);
+  const elf = hasElfMagic(prefix);
   if (!elf) {
     const header = readBzImage(prefix, span.size);
     if (header.kind !== "none")

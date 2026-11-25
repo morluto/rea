@@ -15,6 +15,7 @@ import {
 } from "../native/nativeSectionDirectory.js";
 import { readElfImageFromDirectory } from "../native/elfImage.js";
 import {
+  hasElfMagic,
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
@@ -111,13 +112,7 @@ export const inspectAndroidJniLibrary = async (
   };
   try {
     active();
-    if (
-      bytes.length < 4 ||
-      bytes[0] !== 0x7f ||
-      bytes[1] !== 0x45 ||
-      bytes[2] !== 0x4c ||
-      bytes[3] !== 0x46
-    )
+    if (!hasElfMagic(bytes))
       return err({
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
