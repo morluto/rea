@@ -343,7 +343,17 @@ it("preserves cancellation while streaming a volume", async () => {
   }
 });
 
-it("closes the reader when a paused volume is cancelled", async () => {
+it.each([
+  { name: "closes the reader when a paused volume is cancelled", held: null },
+  {
+    name: "cancels a paused volume after a held read succeeds",
+    held: "success",
+  },
+  {
+    name: "preserves a paused volume's late EIO after cancellation",
+    held: "failure",
+  },
+])("$name", async ({ held }) => {
   const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
   const lebCount = 6;
   const layouts = ubiLayoutPebs(
@@ -376,19 +386,33 @@ it("closes the reader when a paused volume is cancelled", async () => {
     const lastReadPosition = BigInt(
       (layouts.length + 1) * wide.pebSize + wide.dataOffset + 64 * 1024,
     );
+    let releaseRead!: () => void;
+    let rejectRead!: (cause: Error) => void;
+    const heldRead = new Promise<void>((resolve, reject) => {
+      releaseRead = resolve;
+      rejectRead = reject;
+    });
+    const ioFailure = Object.assign(new Error("volume read failed"), {
+      code: "EIO",
+    });
     const nativeRead = admitted.handle.read.bind(admitted.handle);
     const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
       ...args: unknown[]
     ) => {
       const result = await Reflect.apply(nativeRead, admitted.handle, args);
-      if (args[3] === lastReadPosition) acknowledgeReadAhead();
+      if (args[3] === lastReadPosition) {
+        acknowledgeReadAhead();
+        if (held !== null) await heldRead;
+      }
       return result;
     }) as typeof admitted.handle.read);
     let stream: Awaited<ReturnType<UbiImageArtifactReader["open"]>> | undefined;
     try {
       const volumeStream = await reader.open(volume!, controller.signal);
       stream = volumeStream;
-      const streamError = finished(volumeStream).catch((cause: unknown) => cause);
+      const streamError = finished(volumeStream).catch(
+        (cause: unknown) => cause,
+      );
       volumeStream.once("data", () => volumeStream.pause());
       const failure = await Promise.race([
         (async () => {
@@ -400,6 +424,9 @@ it("closes the reader when a paused volume is cancelled", async () => {
             volumeStream.readableHighWaterMark,
           );
           controller.abort(reason);
+          if (held !== null) expect(volumeStream.destroyed).toBe(false);
+          if (held === "failure") rejectRead(ioFailure);
+          else releaseRead();
           await reader.close();
           return streamError;
         })(),
@@ -409,8 +436,17 @@ it("closes the reader when a paused volume is cancelled", async () => {
           );
         }),
       ]);
-      expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+      if (held === "failure") {
+        expect(failure).toBeInstanceOf(AggregateError);
+        expect(failure).toMatchObject({
+          cause: ioFailure,
+          errors: [ioFailure, { reason: "cancelled", cause: reason }],
+        });
+      } else {
+        expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+      }
     } finally {
+      releaseRead();
       deadline.abort();
       stream?.destroy();
       try {

@@ -197,7 +197,11 @@ function volumeStream(
   signal: AbortSignal,
   cancellationFailure: (reason: unknown) => Error,
 ): Readable {
-  let pending = false;
+  let active: { stream: Readable; closed: Promise<void> } | undefined;
+  let abortFailure: Promise<Error> | undefined;
+  let cancellation: Error | undefined;
+  const cancelled = (): Error =>
+    (cancellation ??= cancellationFailure(signal.reason));
   const source = Readable.from(
     (async function* () {
       for (const range of ranges) {
@@ -206,36 +210,48 @@ function volumeStream(
           start: range.offset,
           end: range.offset + range.length - 1,
           signal,
-          cancellationFailure,
+          cancellationFailure: cancelled,
         });
+        const closed = new Promise<void>((resolve) =>
+          inner.once("close", resolve),
+        );
+        active = { stream: inner, closed };
         const chunks = (inner as AsyncIterable<Buffer>)[Symbol.asyncIterator]();
         try {
           while (true) {
-            pending = true;
-            let result: IteratorResult<Buffer, unknown>;
-            try {
-              result = await chunks.next();
-            } finally {
-              pending = false;
-            }
-            if (signal.aborted) throw cancellationFailure(signal.reason);
-            if (result.done) break;
+            const result = await chunks.next();
+            if (signal.aborted || result.done) break;
             yield result.value;
           }
+        } catch (cause) {
+          if (abortFailure === undefined) throw cause;
         } finally {
-          if (!inner.destroyed) inner.destroy();
-          // Read-ahead may still own a descriptor read after the outer yield.
-          if (!inner.closed)
-            await new Promise<void>((resolve) => inner.once("close", resolve));
+          if (abortFailure === undefined) inner.destroy();
+          await closed;
+          active = undefined;
         }
+        if (abortFailure !== undefined) throw await abortFailure;
       }
     })(),
     { objectMode: false },
   );
   const onAbort = (): void => {
-    // An active iterator read forwards its own failure before cancellation.
-    if (!pending && !source.destroyed)
-      source.destroy(cancellationFailure(signal.reason));
+    if (source.destroyed) return;
+    if (active === undefined) {
+      source.destroy(cancelled());
+      return;
+    }
+    const { stream, closed } = active;
+    // The inner stream settles its descriptor read even while delivery is paused.
+    abortFailure = closed.then(() => {
+      const physical = stream.errored;
+      return physical === null || physical === cancelled()
+        ? cancelled()
+        : new AggregateError([physical, cancelled()], physical.message, {
+            cause: physical,
+          });
+    });
+    void abortFailure.then((failure) => source.destroy(failure));
   };
   signal.addEventListener("abort", onAbort, { once: true });
   source.once("close", () => signal.removeEventListener("abort", onAbort));
