@@ -147,8 +147,8 @@ separately authorized tools:
    above.
 
 ADB acquisition and caller-authored Frida instrumentation are separate REA
-lanes; see [ADB device analysis](./adb-device-analysis.md) and [Frida
-instrumentation](./frida-instrumentation.md). They are not an end-to-end
+lanes; see [ADB device analysis](../android/adb-device-analysis.md) and [Frida
+instrumentation](../runtime/frida-instrumentation.md). They are not an end-to-end
 interception workflow, and possession of a device, APK, or Frida endpoint
 does not establish authorization. REA does not ship or select a built-in
 unpinning script.

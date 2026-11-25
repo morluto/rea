@@ -304,7 +304,7 @@ may use a separately authorized HTTP Toolkit setup with a debug/test app and
 then export a HAR for REA's offline capture inspection, but REA does not
 install a CA, change device trust settings, select a pinning-bypass script, or
 join the device lifecycle to the capture lifecycle. See [historical web
-network captures](./web-network-captures.md#android-interception-as-a-manual-composition)
+network captures](../web/web-network-captures.md#android-interception-as-a-manual-composition)
 for the supported composition and its boundaries.
 
 ## Real verification
