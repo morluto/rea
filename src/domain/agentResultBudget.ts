@@ -74,6 +74,11 @@ export const estimatedJsonTokens = (bytes: number): number =>
  * reach the retained record, and the caller can page the summary; an
  * invalid launch seed (no budget) leaves delivery unbudgeted. A fitting
  * result stops measuring at the budget.
+ *
+ * Evidence nested in a larger result, such as a failure's partial
+ * observation, has only the budget its envelope leaves: `envelopeBytes`
+ * are the bytes the rest of that result already uses. The envelope itself
+ * is never budgeted.
  */
 export const budgetedSummaryBytes = (input: {
   readonly detail: unknown;
@@ -81,6 +86,7 @@ export const budgetedSummaryBytes = (input: {
   readonly budget: AgentResultBudget | undefined;
   readonly retained: boolean;
   readonly pageable: boolean;
+  readonly envelopeBytes?: number;
 }): number | undefined => {
   const { budget, evidence } = input;
   if (
@@ -90,9 +96,34 @@ export const budgetedSummaryBytes = (input: {
     !input.pageable
   )
     return undefined;
-  return jsonValueByteLength(evidence, budget.bytes) <= budget.bytes
+  const remaining = Math.max(0, budget.bytes - (input.envelopeBytes ?? 0));
+  return jsonValueByteLength(evidence, remaining) <= remaining
     ? undefined
     : jsonValueByteLength(evidence);
+};
+
+/** Result field that carries a budgeted partial observation's delivery facts. */
+export const PARTIAL_OBSERVATION_DELIVERY = "partial_observation_delivery";
+
+/**
+ * Bytes a failure uses besides its partial observation: the envelope the
+ * observation must fit beside. Its code, retry and recovery facts are
+ * always delivered whole.
+ */
+export const failureEnvelopeBytes = (failure: {
+  readonly [key: string]: JsonValue | undefined;
+  readonly details?: JsonValue | undefined;
+}): number => {
+  const details =
+    failure.details !== null &&
+    typeof failure.details === "object" &&
+    !Array.isArray(failure.details)
+      ? { ...failure.details, partial_observation: null }
+      : failure.details;
+  return jsonValueByteLength({
+    ...failure,
+    ...(details === undefined ? {} : { details }),
+  } as JsonValue);
 };
 
 /** Where the complete Evidence that a summary replaced can be read. */

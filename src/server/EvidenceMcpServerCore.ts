@@ -54,6 +54,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
   pageable: boolean,
+  record: () => EvidenceWriter["recordEvidence"] | undefined,
 ): Schema => {
   const standard = schema["~standard"];
   // Zod issues feed field-level diagnostics; the delivery selection is
@@ -79,6 +80,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
             context.deliverySelection = {
               detail: isRecord(value) ? value.detail : undefined,
               pageable,
+              record: record(),
             };
           return result;
         };
@@ -381,6 +383,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                   name,
                   presented.inputSchema as StandardSchemaWithJSON,
                   this.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+                  () => this.recordEvidence,
                 ),
               }),
           ...(outputSchema === undefined ? {} : { outputSchema }),

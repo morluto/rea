@@ -344,6 +344,18 @@ not, the work is never refused or truncated:
   `retained` (`["--evidence_output", "<new-bundle-path>"]`). Caller inputs are
   never echoed, since they can carry access credentials; the note names both.
 
+A failure's own facts (code, `failure_kind`, retry, recovery and limits)
+are never budgeted. Its `details.partial_observation`, the complete Evidence
+of work that finished before the failure, gets the same decision with the
+budget the rest of the failure leaves. When it fits, it is delivered as
+before: inline, or on MCP as a `retained-evidence` reference when the
+session retained it. When it does not fit, it is replaced by its summary
+view, and `details.partial_observation_delivery` carries the same delivery
+facts as a successful result. On MCP the session retains the complete
+partial Evidence and `next` pages it. On the CLI, `--evidence_output`
+publishes it and `next` names the bundle. Without `--evidence_output`,
+nothing is written and `rerun` names the arguments to add.
+
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with
 `update_analysis_settings`. An operation without a summary view, or with no

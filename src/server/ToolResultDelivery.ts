@@ -43,6 +43,8 @@ import {
   agentBudgetDelivery,
   budgetedSummaryBytes,
   currentAgentResultBudget,
+  failureEnvelopeBytes,
+  PARTIAL_OBSERVATION_DELIVERY,
   type AgentBudgetDelivery,
 } from "../domain/agentResultBudget.js";
 import { currentMcpToolRequest } from "./McpToolRequest.js";
@@ -475,8 +477,15 @@ export class ToolResultDelivery {
         },
         targetContent,
       );
+    // A retained partial that fits is referenced by ID, as before; one over
+    // the budget is replaced by its summary and the cursor that pages it.
     return this.projectedErrorResult(
-      {
+      budgetedPartialObservation(projected, {
+        partial: partial.value,
+        record: recordEvidence,
+        agentBudgetSeed: this.agentBudgetSeed,
+        retained: true,
+      }) ?? {
         ...projected,
         details: {
           ...projected.details,
@@ -491,9 +500,12 @@ export class ToolResultDelivery {
   }
 
   private projectedErrorResult(
-    projected: AnalysisErrorProjection,
+    input: AnalysisErrorProjection,
     targetContent: boolean,
   ): CallToolResult {
+    // Inline partial Evidence over the agent result budget is retained and
+    // replaced by its summary; the failure's own facts are never budgeted.
+    const projected = inlinePartialWithinBudget(input, this.agentBudgetSeed);
     let structuredContent = { error: projected };
     // Errors reach the wire as text only; the structured copy is a private
     // carrier the transport removes after its own budget check.
@@ -729,6 +741,86 @@ const withAgentBudgetDelivery = (
   content: [...result.content, agentBudgetDeliveryBlock(delivery)],
   _meta: { ...result._meta, [AGENT_BUDGET_DELIVERY_META]: delivery },
 });
+
+/**
+ * The failure with its partial observation replaced by the retained summary
+ * when the complete partial Evidence does not fit the agent result budget
+ * left beside the failure's own facts; undefined keeps the failure as it
+ * is. The same decision as a successful result's: an explicit `detail`, a
+ * session that cannot page a summary, an operation without a summary view,
+ * or a record that cannot be retained keeps it unchanged. `retained` says
+ * whether the caller already recorded the complete partial Evidence.
+ */
+const budgetedPartialObservation = (
+  projected: AnalysisErrorProjection,
+  {
+    partial,
+    record,
+    agentBudgetSeed,
+    retained,
+  }: {
+    readonly partial: Evidence;
+    readonly record: EvidenceWriter["recordEvidence"] | undefined;
+    readonly agentBudgetSeed: string | undefined;
+    readonly retained: boolean;
+  },
+): AnalysisErrorProjection | undefined => {
+  const selection = currentMcpToolRequest()?.deliverySelection;
+  if (selection === undefined || record === undefined) return undefined;
+  const budget = currentAgentResultBudget(agentBudgetSeed);
+  const completeBytes = budgetedSummaryBytes({
+    detail: selection.detail,
+    evidence: partial,
+    budget,
+    retained: true,
+    pageable: selection.pageable,
+    envelopeBytes: failureEnvelopeBytes({ error: projected }),
+  });
+  if (completeBytes === undefined || budget === undefined) return undefined;
+  const summary = summarizeOverBudgetEvidence(partial);
+  if (!summary.ok) return undefined;
+  if (!retained && !record(partial).ok) return undefined;
+  // The summary is retained like an explicit one, so its own ID resolves.
+  if (!record(summary.value).ok) return undefined;
+  return {
+    ...projected,
+    details: {
+      ...projected.details,
+      partial_observation: summary.value,
+      [PARTIAL_OBSERVATION_DELIVERY]: agentBudgetDelivery({
+        operation: partial.operation,
+        evidenceId: partial.evidence_id,
+        completeBytes,
+        budget,
+        recovery: { kind: "session" },
+      }) as unknown as JsonValue,
+    },
+  };
+};
+
+/** Budget a failure's inline partial Evidence with the session's writer. */
+const inlinePartialWithinBudget = (
+  projected: AnalysisErrorProjection,
+  agentBudgetSeed: string | undefined,
+): AnalysisErrorProjection => {
+  const inline = projected.details?.partial_observation;
+  // Already a budgeted summary, or nothing to budget.
+  if (
+    inline === undefined ||
+    projected.details?.[PARTIAL_OBSERVATION_DELIVERY] !== undefined
+  )
+    return projected;
+  const partial = safeParseEvidence(inline);
+  if (!partial.ok) return projected;
+  return (
+    budgetedPartialObservation(projected, {
+      partial: partial.value,
+      record: currentMcpToolRequest()?.deliverySelection?.record,
+      agentBudgetSeed,
+      retained: false,
+    }) ?? projected
+  );
+};
 
 /** The ledger's own retained/unretained fact for this exact record, if it gave one. */
 const ledgerRetentionFact = (

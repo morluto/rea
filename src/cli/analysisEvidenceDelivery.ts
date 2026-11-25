@@ -26,6 +26,8 @@ import {
   agentBudgetDelivery,
   budgetedSummaryBytes,
   currentAgentResultBudget,
+  failureEnvelopeBytes,
+  PARTIAL_OBSERVATION_DELIVERY,
   type AgentBudgetDelivery,
   type AgentBudgetRecovery,
 } from "../domain/agentResultBudget.js";
@@ -169,7 +171,7 @@ export const publishCliAnalysisEvidence = async (
     );
   if (!result.ok)
     return evidenceOutput === undefined
-      ? result.error
+      ? budgetFailurePartialEvidence(result.error, input)
       : publishFailurePartialEvidence(
           result.error,
           evidenceOutput,
@@ -237,6 +239,8 @@ const deliveryJson = (delivery: AgentBudgetDelivery): JsonValue =>
 const budgetDelivery = (
   complete: Evidence,
   input: CliEvidencePublication,
+  /** Bytes of the failure that carries `complete` as its partial observation. */
+  envelopeBytes?: number,
 ): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
   const invocation = cliPublicationInvocation();
   // An explicit --filter-output selects fields directly from the command's
@@ -251,6 +255,7 @@ const budgetDelivery = (
     budget,
     retained: true,
     pageable: true,
+    ...(envelopeBytes === undefined ? {} : { envelopeBytes }),
   });
   return completeBytes === undefined || budget === undefined
     ? undefined
@@ -262,6 +267,58 @@ const budgetDelivery = (
           budget,
           recovery,
         });
+};
+
+/** A failure's partial observation, when it is complete Evidence. */
+const failurePartialEvidence = (
+  failure: JsonValue,
+): { readonly failure: JsonObject; readonly partial: Evidence } | undefined => {
+  if (
+    !isObject(failure) ||
+    !isObject(failure.details) ||
+    failure.details.partial_observation === undefined
+  )
+    return undefined;
+  try {
+    return {
+      failure,
+      partial: parseEvidence(failure.details.partial_observation),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Without --evidence_output, a failure whose partial Evidence does not fit
+ * the agent result budget beside its own facts delivers that Evidence's
+ * summary, with delivery facts naming the arguments that keep it complete.
+ * The failure's code, retry and recovery are never budgeted.
+ */
+const budgetFailurePartialEvidence = async (
+  failure: JsonValue,
+  input: CliEvidencePublication,
+): Promise<JsonValue> => {
+  const found = failurePartialEvidence(failure);
+  if (found === undefined) return failure;
+  const overBudget = budgetDelivery(
+    found.partial,
+    input,
+    failureEnvelopeBytes(found.failure),
+  );
+  if (overBudget === undefined) return failure;
+  const summary = await overBudgetSummary(found.partial);
+  if (summary === undefined) return failure;
+  return {
+    ...found.failure,
+    details: {
+      ...(found.failure.details as JsonObject),
+      partial_observation: summary,
+      [PARTIAL_OBSERVATION_DELIVERY]: deliveryJson(
+        overBudget({ kind: "not-retained" }),
+      ),
+    },
+  };
 };
 
 /**
@@ -465,10 +522,18 @@ const publishFailurePartialEvidence = async (
   // are read from the partial Evidence of this operation.
   if (partial.operation === input.operation)
     recordCliDeliveredEvidence(partial);
+  // Partial Evidence over the budget left beside the failure's own facts is
+  // delivered as its summary, as a successful result's would be.
+  const overBudget = budgetDelivery(
+    partial,
+    input,
+    failureEnvelopeBytes(failure),
+  );
   const published = await publishDeliveredEvidence(
     partial,
     evidenceOutput,
     input,
+    overBudget !== undefined,
   );
   if (!published.ok) {
     const refusal = refusedPartialPublication(
@@ -481,11 +546,24 @@ const publishFailurePartialEvidence = async (
       ? refusal
       : withUndeliveredSourceClosure(refusal, input);
   }
+  const outputPath = absoluteCallerPath(evidenceOutput);
+  const delivery =
+    published.value.budgeted && overBudget !== undefined
+      ? overBudget({
+          kind: "evidence-file",
+          path: revealsSensitiveValue(outputPath, input)
+            ? undefined
+            : outputPath,
+        })
+      : undefined;
   return {
     ...failure,
     details: {
       ...details,
       partial_observation: published.value.delivered,
+      ...(delivery === undefined
+        ? {}
+        : { [PARTIAL_OBSERVATION_DELIVERY]: deliveryJson(delivery) }),
       diagnostics: { ...diagnostics, evidence_bundle: published.value.receipt },
     },
   };
