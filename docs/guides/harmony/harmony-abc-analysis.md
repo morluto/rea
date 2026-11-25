@@ -100,7 +100,10 @@ a capability error that names the missing tool and the verified release.
   remainder.
 - **Whole-file decompilation is a producer loop.** Classes without output are
   counted as `skipped`, per-class failures as `failed`, and coverage becomes
-  `partial`; at most 200 written names are returned.
+  `partial`; at most 200 written names are returned. The producer writes into a
+  private runtime root, and REA publishes only regular files under the selected
+  absent directory; linked or escaping entries and a written-count mismatch are
+  refused instead of overwriting files.
 - **String-pool search requires a full disassembly pass per query.** Methods
   that fail disassembly are absent from the pool without individual reporting.
 - **Symbol search reads metadata only.** It does not prove that a method has a

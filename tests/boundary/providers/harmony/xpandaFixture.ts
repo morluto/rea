@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { XpandaProvider } from "../../../../src/harmony/XpandaProvider.js";
@@ -102,4 +101,4 @@ export const fakeXpandaCalls = async (
 };
 
 export const tempRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "rea-xpanda-run-"));
+  createTestTempDirectory("rea-xpanda-run-");

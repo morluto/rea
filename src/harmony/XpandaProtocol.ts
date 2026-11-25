@@ -22,17 +22,6 @@ const envelopeSchema = z.object({
   isError: z.boolean().optional(),
 });
 
-export class XpandaEnvelopeError extends ProviderAdapterError {
-  constructor(
-    operation: string,
-    readonly upstream: string,
-  ) {
-    super(XPANDA_PROVIDER_ID, operation, {
-      diagnostics: { upstream_operation: upstream },
-    });
-  }
-}
-
 /** Extract the producer text or fail typed when the producer reported an error. */
 export const parseXpandaEnvelope = (
   operation: string,
@@ -172,8 +161,6 @@ export const xpandaLoadSchema = z.object({
   previewTruncated: producerBoolean,
 });
 
-export type XpandaLoad = z.infer<typeof xpandaLoadSchema>;
-
 /** abc_load on a .hap container: the package entry inventory, not bytecode facts. */
 export const xpandaHapLoadSchema = z.object({
   kind: z.literal("hap"),
@@ -222,8 +209,6 @@ export const xpandaClassListSchema = z.object({
   ),
 });
 
-export type XpandaClassList = z.infer<typeof xpandaClassListSchema>;
-
 /** abc_export: whole-file decompilation written to disk. */
 export const xpandaExportSchema = z.object({
   fileId: z.string().min(1),
@@ -235,8 +220,6 @@ export const xpandaExportSchema = z.object({
   files: z.array(z.string()),
   filesTruncated: producerBoolean,
 });
-
-export type XpandaExport = z.infer<typeof xpandaExportSchema>;
 
 /** abc_search_strings: one page of string-pool matches. */
 export const xpandaStringMatchesSchema = z.object({
@@ -250,8 +233,6 @@ export const xpandaStringMatchesSchema = z.object({
     z.object({ offset: z.string().min(1), content: z.string() }),
   ),
 });
-
-export type XpandaStringMatches = z.infer<typeof xpandaStringMatchesSchema>;
 
 /** Strict header of decompilation text results (2.x and 3.x producers). */
 const DECOMPILE_HEADER_PREFIX = "// xpanda-mcp ";
@@ -358,10 +339,48 @@ export const parseXpandaDecompile = (
     });
   const header = parseDecompileHeader(operation, text.slice(0, newline));
   const field = (name: string): string | undefined => header.fields.get(name);
+  const booleanField = (name: string): boolean => {
+    const value = field(name);
+    if (value === "true") return true;
+    if (value === "false") return false;
+    throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
+      diagnostics: {
+        reason: `decompilation header field ${name} is not the documented true or false token`,
+        value: value ?? null,
+      },
+      remediationAction:
+        "Retry the operation; a repeated unknown header token indicates an xpanda release incompatible with this integration.",
+    });
+  };
   const content = text.slice(newline + 1);
-  const declared = Number.parseInt(field("chars") ?? "", 10);
+  const characters = field("chars") ?? "";
+  if (!/^\d+$/u.test(characters))
+    throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
+      diagnostics: {
+        reason:
+          "decompilation header did not declare a non-negative character count",
+        value: characters,
+      },
+    });
+  const declared = Number.parseInt(characters, 10);
+  const modern =
+    field("lines") !== undefined ||
+    field("offset") !== undefined ||
+    field("returned") !== undefined ||
+    field("truncated") !== undefined;
+  const truncatedField = field("truncated");
+  if (modern && truncatedField === undefined)
+    throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
+      diagnostics: {
+        reason:
+          "decompilation header omitted the truncation fact its page fields require",
+      },
+    });
   const payloadTruncated =
-    header.legacyTruncated || field("truncated") === "true";
+    header.legacyTruncated ||
+    (truncatedField === undefined ? false : booleanField("truncated"));
+  const simplified = booleanField("simplified");
+  const degraded = booleanField("degraded");
   const payloadComplete = !payloadTruncated && content.length === declared;
   const legacyCapTruncation =
     header.legacyTruncated && content.length >= XPANDA_DECOMPILE_TRANSFER_CAP;
@@ -390,8 +409,8 @@ export const parseXpandaDecompile = (
   return {
     className: field("class") ?? "",
     methodName: field("method") ?? null,
-    simplified: field("simplified") === "true",
-    degraded: field("degraded") === "true",
+    simplified,
+    degraded,
     emptyResult: false,
     truncated: payloadTruncated,
     characters: declared,
@@ -494,8 +513,6 @@ export const xpandaClassMetadataSchema = z.object({
   ),
 });
 
-export type XpandaClassMetadata = z.infer<typeof xpandaClassMetadataSchema>;
-
 /** abc_search_symbols: one page of class/method/field matches. */
 export const xpandaSymbolSearchSchema = z.object({
   fileId: z.string().min(1),
@@ -519,8 +536,6 @@ export const xpandaSymbolSearchSchema = z.object({
     }),
   ),
 });
-
-export type XpandaSymbolSearch = z.infer<typeof xpandaSymbolSearchSchema>;
 
 /** abc_search_code: one page of decompiled-source matches. */
 export const xpandaCodeSearchSchema = z.object({
@@ -552,8 +567,6 @@ export const xpandaCodeSearchSchema = z.object({
   ),
   hint: z.string().optional(),
 });
-
-export type XpandaCodeSearch = z.infer<typeof xpandaCodeSearchSchema>;
 
 /** abc_xrefs: one page of class/method/field/string references. */
 export const xpandaXrefsSchema = z.object({
@@ -589,8 +602,6 @@ export const xpandaXrefsSchema = z.object({
   hint: z.string().optional(),
 });
 
-export type XpandaXrefs = z.infer<typeof xpandaXrefsSchema>;
-
 /** abc_call_graph: nodes, edges and an optional Mermaid rendering. */
 export const xpandaCallGraphSchema = z.object({
   fileId: z.string().min(1),
@@ -622,8 +633,6 @@ export const xpandaCallGraphSchema = z.object({
   mermaid: z.string().optional(),
 });
 
-export type XpandaCallGraph = z.infer<typeof xpandaCallGraphSchema>;
-
 /** hap_read_abc: the extracted .abc entry registered as an abc session. */
 export const xpandaHapAbcSchema = z.object({
   abcFileId: z.string().min(1),
@@ -636,8 +645,6 @@ export const xpandaHapAbcSchema = z.object({
   previewTruncated: producerBoolean,
   hint: z.string().optional(),
 });
-
-export type XpandaHapAbc = z.infer<typeof xpandaHapAbcSchema>;
 
 /** hap_resources: one page of the package resource table. */
 export const xpandaHapResourcesSchema = z.object({
@@ -661,5 +668,3 @@ export const xpandaHapResourcesSchema = z.object({
   ),
   truncated: producerBoolean,
 });
-
-export type XpandaHapResources = z.infer<typeof xpandaHapResourcesSchema>;

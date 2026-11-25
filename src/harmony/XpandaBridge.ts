@@ -186,6 +186,11 @@ export class XpandaBridge {
     }
   }
 
+  /** Begin one REA request whose producer calls its result will cite. */
+  beginRequest(): void {
+    this.#observedCalls.length = 0;
+  }
+
   /** Facts and upstream replies retained if a later request step fails. */
   observedCalls(): readonly ObservedCall[] {
     return [...this.#observedCalls];

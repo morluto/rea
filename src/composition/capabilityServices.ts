@@ -68,6 +68,10 @@ import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysi
 import type { HarmonyAbcAnalysisPort } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "./firmware.js";
 import { createHarmonyAbcAnalysisProvider } from "./harmonyAbc.js";
+import {
+  HARMONY_ABC_OPERATIONS,
+  inspectHarmonyAbcAvailability,
+} from "../harmony/XpandaConfiguration.js";
 import { firmwareHostSupported } from "../firmware/FirmwareCommand.js";
 import { createAndroidAnalysisProvider } from "./android.js";
 import { createPcapAnalysisProvider } from "./pcap.js";
@@ -517,6 +521,18 @@ const modules = {
           options.harmonyAbc !== undefined ||
           ((platform === "linux" || platform === "darwin") &&
             isAbsolute(environment.REA_XPANDA_ROOT ?? "")),
+      },
+      probes: {
+        harmonyAbcAvailability: (signal: AbortSignal) =>
+          options.harmonyAbc === undefined
+            ? inspectHarmonyAbcAvailability(environment, { signal, platform })
+            : Promise.resolve({
+                status: "available" as const,
+                code: null,
+                reason: null,
+                diagnostics: { injected: true },
+                supportedOperations: HARMONY_ABC_OPERATIONS,
+              }),
       },
     }),
   ),

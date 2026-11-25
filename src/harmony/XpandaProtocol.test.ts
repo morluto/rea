@@ -273,6 +273,27 @@ describe("abc_decompile_class text parsing", () => {
     });
   });
 
+  it("refuses unknown boolean tokens and incomplete page facts", () => {
+    expect(() =>
+      parseXpandaDecompile(
+        "decompile_harmony_abc_class",
+        "// xpanda-mcp class=C simplified=maybe degraded=false chars=4\nbody",
+      ),
+    ).toThrow(ProviderAdapterError);
+    expect(() =>
+      parseXpandaDecompile(
+        "decompile_harmony_abc_class",
+        "// xpanda-mcp class=C simplified=true degraded=false chars=4 lines=1 cached=false offset=0 returned=1\nbody",
+      ),
+    ).toThrow(ProviderAdapterError);
+    expect(() =>
+      parseXpandaDecompile(
+        "decompile_harmony_abc_class",
+        "// xpanda-mcp class=C simplified=true degraded=false chars=4 lines=1 cached=false offset=0 returned=1 truncated=maybe\nbody",
+      ),
+    ).toThrow(ProviderAdapterError);
+  });
+
   it("recognizes the producer's empty-decompilation marker", () => {
     const parsed = parseXpandaDecompile(
       "decompile_harmony_abc_class",

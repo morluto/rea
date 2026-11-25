@@ -14,7 +14,7 @@ const SCRIPT = String.raw`
 const fs = require("node:fs");
 const behaviorPath = process.env.REA_TEST_XPANDA_BEHAVIOR;
 const callsPath = process.env.REA_TEST_XPANDA_CALLS;
-const behavior = JSON.parse(fs.readFileSync(behaviorPath, "utf8"));
+let behavior = JSON.parse(fs.readFileSync(behaviorPath, "utf8"));
 const log = (entry) =>
   fs.appendFileSync(callsPath, JSON.stringify({ pid: process.pid, at: Date.now(), ...entry }) + "\n");
 const hang = () => setInterval(() => {}, 60_000);
@@ -275,6 +275,8 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (request.id === undefined) continue; // notification
+    // Re-read on every request so a test can swap behavior without a restart.
+    behavior = JSON.parse(fs.readFileSync(behaviorPath, "utf8"));
     const { id, method, params } = request;
     log({ method, ...(params?.name === undefined ? {} : { tool: params.name }) });
     if (method === "initialize") {
@@ -297,6 +299,10 @@ process.stdin.on("data", (chunk) => {
       const args = params?.arguments ?? {};
       if (name === "abc_load") {
         if (behavior.load === "hang") return hang();
+        if (behavior.load === "slow") {
+          setTimeout(() => jsonReply(id, cannedLoad()), 300);
+          return;
+        }
         if (behavior.load === "badmagic") {
           replyError(id, "PandaParseException: invalid magic PANDA\\0\\0\\0 missing; the file may not be Ark bytecode");
           return;
@@ -329,6 +335,15 @@ process.stdin.on("data", (chunk) => {
       } else if (name === "abc_export") {
         if (behavior.abc_export === "hang") return hang();
         if (behavior.abc_export === "error") return replyError(id, "export failed");
+        if (behavior.abc_export === "escape") {
+          const result = cannedExport(args.fileId, args.outDir);
+          fs.writeFileSync(
+            require("node:path").join(args.outDir, "..", "escaped.js"),
+            "// escaped",
+          );
+          jsonReply(id, { ...result, written: result.written + 1 });
+          return;
+        }
         jsonReply(id, cannedExport(args.fileId, args.outDir));
       } else if (name === "abc_get_class") {
         jsonReply(
@@ -380,12 +395,12 @@ process.on("disconnect", () => process.exit(0));
 
 export interface FakeXpandaBehavior {
   readonly hap?: boolean;
-  readonly load?: "ok" | "badmagic" | "hang";
+  readonly load?: "ok" | "badmagic" | "hang" | "slow";
   readonly loadFacts?: Record<string, unknown>;
   readonly abc_list_classes?: "ok" | "error" | "hang" | "not-json";
   readonly abc_decompile_class?: "ok" | "error" | "hang" | "empty";
   readonly abc_disassemble_method?: "ok" | "error" | "hang";
-  readonly abc_export?: "ok" | "error" | "hang";
+  readonly abc_export?: "ok" | "error" | "hang" | "escape";
   readonly abc_search_strings?: "ok" | "error" | "hang";
 }
 

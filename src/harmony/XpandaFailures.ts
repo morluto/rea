@@ -8,7 +8,6 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { StableFileHashFailure } from "../filesystem/StableFileHash.js";
 import type {
   HarmonyAbcPartialObservation,
@@ -166,21 +165,3 @@ const presentDiagnosticFailure = (
     },
   });
 };
-
-/**
- * Bind a retained cleanup failure onto an operation failure without losing
- * either; the retained resources stay owned for a later close retry.
- */
-export const xpandaCleanupFailure = (
-  cause: unknown,
-  operation: string,
-  resources: readonly string[],
-): ProviderCleanupError =>
-  new ProviderCleanupError(
-    "xpanda",
-    resources,
-    {
-      reason: errorMessage(cause),
-    },
-    { operation, cause },
-  );

@@ -11,6 +11,7 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
+import type { HarmonyAbcAnalysisAvailability } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -59,6 +60,7 @@ const probeSessionAvailability = async (
   readonly adb: ProviderAvailability | undefined;
   readonly apktool: ProviderAvailability | undefined;
   readonly jeb: JebAnalysisAvailability | undefined;
+  readonly harmonyAbc: HarmonyAbcAnalysisAvailability | undefined;
   readonly evmLimiter: ProviderAvailability | undefined;
 }> => {
   const probe = <T>(family: ToolFamilyId, run: () => Promise<T> | undefined) =>
@@ -68,11 +70,13 @@ const probeSessionAvailability = async (
     probe("adb", () => probes.adbAnalysisAvailability?.(signal)),
     probe("apktool", () => probes.apktoolAnalysisAvailability?.(signal)),
     probe("jeb", () => probes.jebAnalysisAvailability?.(signal)),
+    probe("harmony", () => probes.harmonyAbcAvailability?.(signal)),
     probe("artifact", () => probes.evmLimiterAvailability?.(signal)),
   ] as const;
   try {
-    const [android, adb, apktool, jeb, evmLimiter] = await Promise.all(pending);
-    return { android, adb, apktool, jeb, evmLimiter };
+    const [android, adb, apktool, jeb, harmonyAbc, evmLimiter] =
+      await Promise.all(pending);
+    return { android, adb, apktool, jeb, harmonyAbc, evmLimiter };
   } catch (cause: unknown) {
     const settled = await Promise.allSettled(pending);
     let failure = cause;
@@ -152,6 +156,9 @@ export const readSessionStatus = async (
       ...(availabilityResults.jeb === undefined
         ? {}
         : { jebAnalysisAvailability: availabilityResults.jeb }),
+      ...(availabilityResults.harmonyAbc === undefined
+        ? {}
+        : { harmonyAbcAvailability: availabilityResults.harmonyAbc }),
       ...(availabilityResults.evmLimiter === undefined
         ? {}
         : { evmLimiterAvailability: availabilityResults.evmLimiter }),

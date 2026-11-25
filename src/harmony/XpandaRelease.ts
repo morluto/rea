@@ -62,7 +62,7 @@ export const XPANDA_LIMITATIONS = [
   "Decompiled output is producer-generated JavaScript, not recovered source. Methods beyond the producer's structural-analysis limits, including unimplemented conditional-jump instructions (the jeq/jne family), degrade to linear output with decompiler_goto labels; the degraded flag and degraded class lists report this per result.",
   "Instruction and block rendering belong to the producer: disassembly text is preserved verbatim behind the parsed method header, and REA does not re-derive control flow from it.",
   "Single-class decompilation is capped by the producer at 50,000 characters and reports truncation; use whole-file decompilation to write every class to disk instead.",
-  "Whole-file decompilation reports per-class failures as skipped or failed counts without aborting, and returns at most 200 written file names.",
+  "Whole-file decompilation reports per-class failures as skipped or failed counts without aborting, and returns at most 200 written file names. The producer writes into a private runtime root; REA publishes only regular files under the selected absent directory and refuses linked, escaping or count-mismatched output instead of overwriting.",
   "The TypeScript loader, Node runtime and installed producer dependencies are not independently attested; the engine digest covers the configured checkout's package.json and its src tree (2.x) or each workspace's manifest and src tree (3.x) only.",
   "The producer string-pool search requires a full disassembly pass per query; methods that fail disassembly are absent from the pool without being reported individually.",
 ] as const;

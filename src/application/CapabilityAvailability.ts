@@ -1,5 +1,6 @@
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
+import type { HarmonyAbcAnalysisAvailability } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 import type { AvailabilityPolicy } from "./CapabilityInventory.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import type { CommandProviderLaunchFailures } from "./reverse/ReverseEngineeringService.js";
@@ -52,6 +53,9 @@ export interface CapabilityAvailabilityProbes {
   readonly jebAnalysisAvailability?: (
     signal: AbortSignal,
   ) => Promise<JebAnalysisAvailability>;
+  readonly harmonyAbcAvailability?: (
+    signal: AbortSignal,
+  ) => Promise<HarmonyAbcAnalysisAvailability>;
   readonly evmLimiterAvailability?: (
     signal: AbortSignal,
   ) => Promise<ProviderAvailability | undefined>;

@@ -1,4 +1,4 @@
-import { access, constants } from "node:fs/promises";
+import { access, constants, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it as test, onTestFinished } from "vitest";
 
@@ -7,6 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
   AnalysisTimeoutError,
 } from "../../../../src/domain/analysisErrorCore.js";
 import type { HarmonyAbcRequest } from "../../../../src/domain/harmony/harmonyAbcAnalysis.js";
@@ -437,4 +438,108 @@ it("refuses an unconfigured environment with the documented remediation", async 
   expect(
     (failure as AnalysisCapabilityUnavailableError).remediationAction,
   ).toContain("REA_XPANDA_ROOT");
+});
+
+it("cites only the producer calls of the current operation", async () => {
+  const fixture = await xpandaFixture();
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  await run(fixture, {
+    operation: "inspect_harmony_abc",
+    input: { path: fixture.targetPath },
+  });
+  const second = await run(fixture, {
+    operation: "list_harmony_abc_classes",
+    input: {
+      path: fixture.targetPath,
+      filter: "_GLOBAL",
+      offset: 0,
+      limit: 50,
+    },
+  });
+  const calls = (
+    second.rawResult as { calls: { operation: string }[] }
+  ).calls.map(({ operation }) => operation);
+  expect(calls).toEqual(["abc_load", "abc_list_classes", "abc_close"]);
+});
+
+it("publishes exports from the private root and refuses escaped files", async () => {
+  const fixture = await xpandaFixture();
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  const destination = join(await tempRoot(), "nested", "published");
+  const execution = await run(fixture, {
+    operation: "decompile_harmony_abc",
+    input: {
+      path: fixture.targetPath,
+      output_directory: destination,
+      simplify: true,
+    },
+  });
+  expect(execution.result).toMatchObject({
+    output_directory: destination,
+    written: 1,
+  });
+  await access(join(destination, "_GLOBAL.js"), constants.R_OK);
+
+  await setFakeXpandaBehavior(fixture.behaviorPath, { abc_export: "escape" });
+  const escapedDestination = join(await tempRoot(), "escaped");
+  const failure = await fixture.provider
+    .execute({
+      operation: "decompile_harmony_abc",
+      input: {
+        path: fixture.targetPath,
+        output_directory: escapedDestination,
+        simplify: true,
+      },
+    })
+    .then((result) => (result.ok ? undefined : result.error));
+  expect(failure).toBeInstanceOf(AnalysisOutputError);
+  await expect(access(escapedDestination)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("refuses a non-regular selected path before starting the producer", async () => {
+  const fixture = await xpandaFixture();
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  const directory = join(fixture.root, "directory-input");
+  await mkdir(directory);
+  const failure = await fixture.provider
+    .execute({
+      operation: "inspect_harmony_abc",
+      input: { path: directory },
+    })
+    .then((result) => (result.ok ? undefined : result.error));
+  expect(failure).toBeInstanceOf(AnalysisInputError);
+  expect((failure as AnalysisInputError).issues[0]?.path).toEqual(["path"]);
+  expect(
+    (await fakeXpandaCalls(fixture.callsPath)).filter(
+      ({ method }) => method === "initialize",
+    ),
+  ).toEqual([]);
+});
+
+it("keeps the bridge when an idle deadline elapses during a request", async () => {
+  const fixture = await xpandaFixture({}, { idleRetireMs: 100 });
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  await run(fixture, {
+    operation: "inspect_harmony_abc",
+    input: { path: fixture.targetPath },
+  });
+  await setFakeXpandaBehavior(fixture.behaviorPath, { load: "slow" });
+  await run(fixture, {
+    operation: "list_harmony_abc_classes",
+    input: {
+      path: fixture.targetPath,
+      filter: "_GLOBAL",
+      offset: 0,
+      limit: 50,
+    },
+  });
+  await setFakeXpandaBehavior(fixture.behaviorPath, {});
+  await run(fixture, {
+    operation: "inspect_harmony_abc",
+    input: { path: fixture.targetPath },
+  });
+  const calls = await fakeXpandaCalls(fixture.callsPath);
+  expect(calls.filter(({ method }) => method === "initialize")).toHaveLength(1);
 });

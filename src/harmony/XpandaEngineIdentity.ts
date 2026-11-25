@@ -14,7 +14,11 @@ export interface XpandaEngineIdentity {
 export class XpandaEngineScanError extends Error {
   constructor(
     message: string,
-    readonly code: "too_many_files" | "too_many_bytes" | "unreadable",
+    readonly code:
+      | "too_many_files"
+      | "too_many_bytes"
+      | "unreadable"
+      | "linked_code",
   ) {
     super(message);
     this.name = "XpandaEngineScanError";
@@ -30,14 +34,31 @@ const digestOf = async (
   let bytes = 0;
   hash.update("files " + String(relativePaths.length) + "\0");
   for (const relativePath of relativePaths) {
-    const content = await readFile(join(root, relativePath)).catch(
-      (cause: unknown) => {
-        throw new XpandaEngineScanError(
-          `The configured xpanda checkout could not be read at ${relativePath}: ${errorMessage(cause)}`,
-          "unreadable",
-        );
-      },
-    );
+    const path = join(root, relativePath);
+    const entry = await stat(path).catch((cause: unknown) => {
+      throw new XpandaEngineScanError(
+        `The configured xpanda checkout could not be read at ${relativePath}: ${errorMessage(cause)}`,
+        "unreadable",
+      );
+    });
+    if (!entry.isFile())
+      throw new XpandaEngineScanError(
+        `The configured xpanda checkout entry ${relativePath} is not a regular file`,
+        "unreadable",
+      );
+    // Charge the bound before allocation so one oversized file cannot be read
+    // into memory before the scan refuses it.
+    if (bytes + entry.size > limits.bytes)
+      throw new XpandaEngineScanError(
+        `The configured xpanda checkout's source tree exceeds the ${String(limits.bytes)}-byte engine scan bound`,
+        "too_many_bytes",
+      );
+    const content = await readFile(path).catch((cause: unknown) => {
+      throw new XpandaEngineScanError(
+        `The configured xpanda checkout could not be read at ${relativePath}: ${errorMessage(cause)}`,
+        "unreadable",
+      );
+    });
     bytes += content.byteLength;
     if (bytes > limits.bytes)
       throw new XpandaEngineScanError(
@@ -87,6 +108,11 @@ const collectSourcePaths = async (
     });
     for (const entry of entries) {
       const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (entry.isSymbolicLink())
+        throw new XpandaEngineScanError(
+          `The configured xpanda checkout links ${relativePath}; REA cannot prove which code its digest covers`,
+          "linked_code",
+        );
       if (entry.isDirectory()) await walk(relativePath);
       else if (entry.isFile()) {
         paths.push(relativePath);
@@ -109,7 +135,13 @@ const collectSourcePaths = async (
       );
     });
     for (const entry of packages) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      if (entry.name.startsWith(".")) continue;
+      if (entry.isSymbolicLink())
+        throw new XpandaEngineScanError(
+          `The configured xpanda checkout links packages/${entry.name}; REA cannot prove which code its digest covers`,
+          "linked_code",
+        );
+      if (!entry.isDirectory()) continue;
       const directory = `packages/${entry.name}`;
       const manifest = `${directory}/package.json`;
       if (await isFile(join(root, manifest))) paths.push(manifest);

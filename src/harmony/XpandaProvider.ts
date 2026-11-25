@@ -1,5 +1,6 @@
-import { copyFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { AnalysisCleanupLease } from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { HarmonyAbcAnalysisPort } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
@@ -8,7 +9,11 @@ import {
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { HarmonyAbcRequest } from "../domain/harmony/harmonyAbcAnalysis.js";
+import type {
+  HarmonyAbcPartialObservation,
+  HarmonyAbcRequest,
+} from "../domain/harmony/harmonyAbcAnalysis.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import {
   harmonyAbcResultSchemas,
   DEFAULT_HARMONY_ABC_ANALYSIS_TIMEOUT_MS,
@@ -17,6 +22,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
   OwnerCancellation,
   carriedReason,
   cancelledBy,
@@ -99,6 +105,8 @@ interface RetainedBridge {
 
 interface StagedInput {
   readonly lease: AnalysisCleanupLease;
+  /** Private runtime root that owns the staged input and producer exports. */
+  readonly rootPath: string;
   readonly stagedPath: string;
   readonly sha256: string;
   readonly size: number;
@@ -126,6 +134,124 @@ const configurationUnavailable = (
       remediationAction: failure.remediation,
     },
   );
+
+/**
+ * Publish a producer export from the private runtime root. The producer never
+ * writes into the caller's directory: REA creates it exclusively, copies only
+ * regular files whose resolved paths stay under it, and removes the partial
+ * tree when publication fails.
+ */
+const publishStagedExport = async (options: {
+  readonly source: string;
+  readonly destination: string;
+  readonly operation: string;
+  /** Files the producer claims it wrote; a mismatch publishes nothing. */
+  readonly expectedWritten: number;
+}): Promise<readonly string[]> => {
+  const { source, destination, operation, expectedWritten } = options;
+  try {
+    // The producer created parents recursively; keep that behavior while
+    // claiming the destination itself exclusively.
+    await mkdir(dirname(destination), { recursive: true });
+    await mkdir(destination);
+  } catch (cause: unknown) {
+    const code =
+      cause instanceof Error && "code" in cause ? String(cause.code) : "";
+    throw new AnalysisInputError(operation, { cause }, [
+      {
+        path: ["output_directory"],
+        reason: "invalid_value",
+        message:
+          code === "EEXIST"
+            ? `The output directory already exists: ${destination}. Select an absent directory.`
+            : `The output directory path is not usable: ${destination}: ${errorMessage(cause)}`,
+      },
+    ]);
+  }
+  const published: string[] = [];
+  const directories = [""];
+  try {
+    while (directories.length > 0) {
+      const directory = directories.pop() ?? "";
+      const entries = await readdir(join(source, directory), {
+        withFileTypes: true,
+      });
+      for (const entry of entries) {
+        const relativePath =
+          directory.length === 0 ? entry.name : `${directory}/${entry.name}`;
+        if (entry.isSymbolicLink())
+          throw new AnalysisOutputError(
+            operation,
+            `The producer's export contains a symbolic link at ${relativePath}.`,
+          );
+        const target = resolve(destination, relativePath);
+        if (!target.startsWith(`${destination}${sep}`))
+          throw new AnalysisOutputError(
+            operation,
+            `The producer's export names a path outside the selected output directory: ${relativePath}.`,
+          );
+        if (entry.isDirectory()) {
+          await mkdir(target);
+          directories.push(relativePath);
+          continue;
+        }
+        if (!entry.isFile())
+          throw new AnalysisOutputError(
+            operation,
+            `The producer's export contains a non-regular entry at ${relativePath}.`,
+          );
+        await copyFile(
+          join(source, relativePath),
+          target,
+          constants.COPYFILE_EXCL,
+        );
+        published.push(relativePath);
+      }
+    }
+    if (published.length !== expectedWritten)
+      throw new AnalysisOutputError(
+        operation,
+        `The producer reported ${String(expectedWritten)} written classes but emitted ${String(published.length)} files; no overwrite was published.`,
+      );
+    return published;
+  } catch (cause: unknown) {
+    const primary =
+      cause instanceof AnalysisError
+        ? cause
+        : new AnalysisOutputError(
+            operation,
+            `The producer's exported files could not be published: ${errorMessage(cause)}`,
+            { cause },
+          );
+    try {
+      await rm(destination, { recursive: true, force: true });
+    } catch (cleanupCause: unknown) {
+      const cleanup = new ProviderCleanupError(
+        XPANDA_PROVIDER_ID,
+        [destination],
+        { reason: errorMessage(cleanupCause) },
+        { operation, cause: cleanupCause },
+      );
+      throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
+    }
+    throw primary;
+  }
+};
+
+/** Keep a completed observation with the cleanup failure that followed it. */
+const completedHarmonyAbcObservation = (
+  execution: Awaited<ReturnType<typeof createAnalysisExecution>>,
+): HarmonyAbcPartialObservation => ({
+  kind: "harmony-abc",
+  result: execution.result,
+  provenance: ownedJsonValueSchema.parse({
+    provider: execution.provider,
+    raw_result: execution.rawResult,
+    limitations: execution.limitations,
+    subject: execution.subject ?? null,
+    locations: execution.locations,
+  }),
+});
 
 /** Bind a staging cleanup failure onto a finished outcome without losing facts. */
 const finishStagedInput = async (
@@ -155,7 +281,15 @@ const finishStagedInput = async (
     {
       reason: closeCauses.map((failure) => errorMessage(failure)).join("; "),
     },
-    { operation, cause: new AggregateError(closeCauses) },
+    {
+      operation,
+      cause: new AggregateError(closeCauses),
+      ...(outcome.ok
+        ? { partialObservation: completedHarmonyAbcObservation(outcome.value) }
+        : outcome.error.partialObservation === undefined
+          ? {}
+          : { partialObservation: outcome.error.partialObservation }),
+    },
   );
   staged.lease.bindCleanupError(cleanup);
   return err(
@@ -175,6 +309,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
   #pendingBridge: XpandaBridge | undefined;
   #pendingBridgeResources: readonly string[] = [];
   #idle: NodeJS.Timeout | undefined;
+  #idleGeneration = 0;
   readonly #shutdown = new AbortController();
   readonly #idleRetireMs: number;
   readonly #platform: NodeJS.Platform;
@@ -199,6 +334,9 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
   ): Promise<Outcome> {
     if (this.#closed)
       return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
+    this.#idleGeneration += 1;
+    clearTimeout(this.#idle);
+    this.#idle = undefined;
     const predecessor = this.#tail;
     let release = () => {};
     this.#tail = new Promise<void>((resolve) => {
@@ -235,8 +373,15 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
     clearTimeout(this.#idle);
     return (this.#closing ??= this.#tail
       .then(async () => {
-        await this.#retryPendingBridge();
+        const pending = await this.#retryPendingBridge();
         const retired = await this.#retire();
+        if (pending !== undefined && !retired.ok)
+          throw analysisErrorWithCleanupDependencies(
+            pending,
+            retired.error,
+            "close_xpanda",
+          );
+        if (pending !== undefined) throw pending;
         if (!retired.ok) throw retired.error;
       })
       .catch((cause: unknown) => {
@@ -290,8 +435,12 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
 
   #scheduleIdle(): void {
     clearTimeout(this.#idle);
+    const generation = ++this.#idleGeneration;
     this.#idle = setTimeout(() => {
       this.#tail = this.#tail.then(async () => {
+        // A request that started after this timer was scheduled owns the
+        // bridge again; its own completion schedules the next idle window.
+        if (generation !== this.#idleGeneration) return;
         await this.#retryPendingBridge();
         await this.#retire();
       });
@@ -381,6 +530,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       const retained = this.#retained;
       const bridge = retained.bridge;
       const callContext = { signal, timeoutMs };
+      bridge.beginRequest();
       await bridge.ensureConnected({
         operation: request.operation,
         signal,
@@ -403,11 +553,32 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           version: retained.version,
         },
         callContext,
+        request.operation === "decompile_harmony_abc"
+          ? join(staged.rootPath, "export")
+          : undefined,
       );
-      const parsed = harmonyAbcResultSchemas[request.operation].parse(result);
+      let normalized = result;
+      if (request.operation === "decompile_harmony_abc") {
+        const exported =
+          harmonyAbcResultSchemas.decompile_harmony_abc.parse(result);
+        const published = await publishStagedExport({
+          source: join(staged.rootPath, "export"),
+          destination: request.input.output_directory,
+          operation: request.operation,
+          expectedWritten: exported.written,
+        });
+        normalized = {
+          ...exported,
+          output_directory: request.input.output_directory,
+          written: published.length,
+        };
+      }
+      const parsed =
+        harmonyAbcResultSchemas[request.operation].parse(normalized);
       // Best-effort producer session release; the producer's LRU bounds any
       // leak, and a failed close stays visible in the retained raw facts.
       let sessionCloseFailed = false;
+      let closeCleanup: AnalysisError | undefined;
       try {
         await bridge.call(
           request.operation,
@@ -417,6 +588,12 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
         );
       } catch {
         sessionCloseFailed = true;
+        // A producer that answered with an error keeps the session. A transport
+        // that already failed must not be reused for the next request.
+        if (bridge.transport.observedFailure() !== undefined) {
+          const retired = await this.#retire();
+          if (!retired.ok) closeCleanup = retired.error;
+        }
       }
       const execution = createAnalysisExecution(
         parsed,
@@ -459,7 +636,14 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
         },
       );
       bridgeFatal = false;
-      outcome = ok(execution);
+      outcome =
+        closeCleanup === undefined
+          ? ok(execution)
+          : err(
+              closeCleanup.retainPartialObservation(
+                completedHarmonyAbcObservation(execution),
+              ),
+            );
     } catch (cause: unknown) {
       if (cause instanceof AnalysisInputError) bridgeFatal = false;
       const failure = captureXpandaFailure({
@@ -532,7 +716,9 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       const stagedPath = join(root.path, "input.abc");
       let size: number;
       try {
-        size = (await stat(request.input.path)).size;
+        const source = await stat(request.input.path);
+        size = source.size;
+        if (!source.isFile()) size = Number.NaN;
       } catch (cause: unknown) {
         if (
           cause instanceof Error &&
@@ -570,7 +756,59 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
             },
           ],
         );
-      await copyFile(request.input.path, stagedPath);
+      const copyFailed = (cause: unknown) =>
+        new AnalysisInputError(
+          request.operation,
+          {
+            cause,
+            userMessage: `REA could not copy the selected file ${request.input.path}: ${errorMessage(cause)}`,
+          },
+          [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: "The selected file could not be copied",
+            },
+          ],
+        );
+      try {
+        await copyFile(request.input.path, stagedPath);
+      } catch (cause: unknown) {
+        throw copyFailed(cause);
+      }
+      const staged = await stat(stagedPath).catch((cause: unknown) => {
+        throw copyFailed(cause);
+      });
+      // A file that grew after the size check must not exceed the admitted
+      // bound, and its copied length must still be the selected length.
+      if (!staged.isFile() || staged.size !== size)
+        throw new AnalysisInputError(
+          request.operation,
+          {
+            userMessage: `The selected file changed while REA staged it at ${request.input.path}; retry against a stable file.`,
+          },
+          [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: "Input changed during staging",
+            },
+          ],
+        );
+      if (staged.size > XPANDA_LIMITS.inputBytes)
+        throw new AnalysisInputError(
+          request.operation,
+          {
+            userMessage: `The copied input is ${String(staged.size)} bytes; this integration admits at most ${String(XPANDA_LIMITS.inputBytes)} bytes.`,
+          },
+          [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: `Input exceeds the ${String(XPANDA_LIMITS.inputBytes)}-byte admission bound`,
+            },
+          ],
+        );
       const inputChanged = (path: string) =>
         new AnalysisInputError(
           request.operation,
@@ -596,7 +834,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       } catch (cause: unknown) {
         if (cause instanceof RegularFileChangedError)
           throw inputChanged(request.input.path);
-        throw cause;
+        throw copyFailed(cause);
       }
       let stagedSha256: string;
       try {
@@ -609,24 +847,57 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       } catch (cause: unknown) {
         if (cause instanceof RegularFileChangedError)
           throw inputChanged(stagedPath);
-        throw cause;
+        throw copyFailed(cause);
       }
       if (stagedSha256 !== sourceSha256) throw inputChanged(request.input.path);
       return {
         lease,
+        rootPath: root.path,
         stagedPath,
         sha256: stagedSha256,
         size,
         failedHandles,
       };
     } catch (cause: unknown) {
-      // Join failed hash descriptors before releasing the fresh root; a root
-      // whose removal still fails is reported through the lease error.
+      // Join failed hash descriptors, then release the root. A cleanup that
+      // still fails keeps its owner on the lease and surfaces as the primary's
+      // cleanup dependency instead of disappearing with the staging failure.
+      const closeCauses: unknown[] = [];
       for (const [owner] of failedHandles) {
-        await owner.close().catch(() => undefined);
+        try {
+          await owner.close();
+          failedHandles.delete(owner);
+        } catch (closeCause: unknown) {
+          closeCauses.push(closeCause);
+        }
       }
-      await lease.release().catch(() => undefined);
-      throw cause;
+      try {
+        await lease.release();
+      } catch (closeCause: unknown) {
+        closeCauses.push(closeCause);
+      }
+      if (closeCauses.length === 0) throw cause;
+      const cleanup = new ProviderCleanupError(
+        XPANDA_PROVIDER_ID,
+        [root.path],
+        {
+          reason: closeCauses
+            .map((failure) => errorMessage(failure))
+            .join("; "),
+        },
+        {
+          operation: request.operation,
+          cause: new AggregateError([cause, ...closeCauses]),
+        },
+      );
+      if (!lease.released) lease.bindCleanupError(cleanup);
+      throw cause instanceof AnalysisError
+        ? analysisErrorWithCleanupDependencies(
+            cause,
+            cleanup,
+            request.operation,
+          )
+        : cleanup;
     }
   }
 
@@ -637,6 +908,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
     load: XpandaSession,
     engine: EngineFacts,
     context: { readonly signal: AbortSignal; readonly timeoutMs: number },
+    producerExportDirectory: string | undefined,
   ): Promise<unknown> {
     const engineFacts = {
       name: XPANDA_PROVIDER_ID,
@@ -744,7 +1016,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           xpandaExportSchema,
           {
             fileId: load.fileId,
-            outDir: request.input.output_directory,
+            outDir: producerExportDirectory ?? request.input.output_directory,
             ...(request.input.simplify ? {} : { simplify: false }),
           },
           context,

@@ -3,14 +3,19 @@ import { access, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import type { HarmonyAbcAnalysisAvailability } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 import {
+  harmonyAbcResultSchemas,
+  type HarmonyAbcOperation,
+} from "../domain/harmony/harmonyAbcAnalysis.js";
+import {
+  XPANDA_VERIFIED_VERSION,
   XPANDA_ADMITTED_MAJOR_VERSIONS,
   XPANDA_CHECKOUT_REMEDIATION,
   XPANDA_ROOT_REMEDIATION,
   XPANDA_ROOT_VARIABLE,
   XPANDA_UNSUPPORTED_HOST_REMEDIATION,
   XPANDA_VERSION_REMEDIATION,
-  XPANDA_VERIFIED_VERSION,
 } from "./XpandaRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -232,8 +237,12 @@ export type XpandaAvailability =
 /** Cheap availability probe; starts no process and reads only the checkout. */
 export const inspectXpandaAvailability = async (
   environment: Readonly<Record<string, string | undefined>>,
+  options: { readonly platform?: NodeJS.Platform } = {},
 ): Promise<XpandaAvailability> => {
-  const resolved = await resolveXpandaConfiguration(environment);
+  const resolved = await resolveXpandaConfiguration(
+    environment,
+    options.platform === undefined ? {} : { platform: options.platform },
+  );
   if (!resolved.ok)
     return {
       status: "unavailable",
@@ -244,5 +253,64 @@ export const inspectXpandaAvailability = async (
     status: "available",
     reason: null,
     version: resolved.value.version,
+  };
+};
+
+/** Every HarmonyOS operation this integration exposes. */
+export const HARMONY_ABC_OPERATIONS = Object.keys(
+  harmonyAbcResultSchemas,
+) as readonly HarmonyAbcOperation[];
+
+/** Operations a 2.x checkout advertises; 3.x added the rest. */
+const XPANDA_LEGACY_OPERATIONS: readonly HarmonyAbcOperation[] = [
+  "inspect_harmony_abc",
+  "list_harmony_abc_classes",
+  "decompile_harmony_abc_class",
+  "decompile_harmony_abc",
+  "disassemble_harmony_abc_method",
+  "search_harmony_abc_strings",
+];
+
+/**
+ * Probe readiness without starting the bridge, including which producer
+ * operations the configured major can serve. A 3.x checkout is assumed to
+ * provide its advertised surface; a missing tool still fails at execution.
+ */
+export const inspectHarmonyAbcAvailability = async (
+  environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly platform?: NodeJS.Platform;
+  } = {},
+): Promise<HarmonyAbcAnalysisAvailability> => {
+  const resolved = await resolveXpandaConfiguration(environment, options);
+  if (!resolved.ok)
+    return {
+      status: "unavailable",
+      code:
+        resolved.error.code === "unsupported_host"
+          ? "unsupported_host"
+          : resolved.error.code === "not_configured"
+            ? "not_configured"
+            : resolved.error.code === "checkout_invalid"
+              ? "runtime_unavailable"
+              : resolved.error.code === "version_unresolved"
+                ? "version_unresolved"
+                : "unsupported_version",
+      reason: resolved.error.reason,
+      remediation: resolved.error.remediation,
+      diagnostics: { code: resolved.error.code },
+    };
+  const major = Number.parseInt(
+    resolved.value.version.match(/^\d+/u)?.[0] ?? "",
+    10,
+  );
+  return {
+    status: "available",
+    code: null,
+    reason: null,
+    diagnostics: { version: resolved.value.version },
+    supportedOperations:
+      major >= 3 ? HARMONY_ABC_OPERATIONS : XPANDA_LEGACY_OPERATIONS,
   };
 };
