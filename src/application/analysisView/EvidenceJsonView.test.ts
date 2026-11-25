@@ -4,7 +4,10 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { inspectAnalysisViewValidated } from "./AnalysisViewService.js";
-import { DEFAULT_EVIDENCE_JSON_PAGE_BYTES } from "../../domain/analysisView/evidenceJsonView.js";
+import {
+  DEFAULT_EVIDENCE_JSON_PAGE_BYTES,
+  projectEvidenceJsonView,
+} from "../../domain/analysisView/evidenceJsonView.js";
 import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../../domain/analysisResourceLimits.js";
 
 const parentEvidence = (): Evidence =>
@@ -77,6 +80,49 @@ describe("evidence-json view", () => {
     for (const text of pages.slice(0, -1)) {
       const last = text.charCodeAt(text.length - 1);
       expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    }
+  });
+
+  it("pages a record it does not cache from a window, matching the cached pages", () => {
+    // A mutable inline parent is never cached, so each page streams the
+    // serialization and keeps only the requested window.
+    const inline = parentEvidence();
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(parentEvidence()).ok).toBe(true);
+    const text = JSON.stringify(inline);
+    const streamed = (offset: number, limit: number | undefined) => {
+      const projected = projectEvidenceJsonView(
+        {
+          evidenceId: inline.evidence_id,
+          operation: inline.operation,
+          predicateType: inline.predicate_type,
+          normalizedResult: inline.normalized_result,
+          limitations: inline.limitations,
+          evidence: inline,
+        } as never,
+        {
+          kind: "evidence-json",
+          offset,
+          ...(limit === undefined ? {} : { limit }),
+        },
+      );
+      if (!projected.ok) throw projected.error;
+      return projected.value;
+    };
+    for (const limit of [1, 7, 64, undefined]) {
+      let offset = 0;
+      let joined = "";
+      for (;;) {
+        const value = streamed(offset, limit);
+        if (limit !== undefined)
+          expect(value.text).toBe(
+            page(ledger, inline.evidence_id, offset, limit).text,
+          );
+        joined += value.text;
+        if (value.coverage.next_offset === null) break;
+        offset = value.coverage.next_offset;
+      }
+      expect(joined).toBe(text);
     }
   });
 
