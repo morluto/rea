@@ -30,6 +30,7 @@ import {
   completeSemanticSteps,
   traverseJavaScriptValueAst,
 } from "./javascriptSemanticTraversal.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 /** A standalone Webpack bootstrap uses the module, exports, loader convention. */
 const BOOTSTRAP_RUNTIME = "webpack-bootstrap";
@@ -44,10 +45,8 @@ interface BootstrapExternals {
   readonly externals: ReadonlyMap<string, JavaScriptModuleOrigin | null>;
 }
 
-const proofs = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.CallExpression, BootstrapExternals | null>
->();
+const proofs =
+  semanticConsumerMemo<WeakMap<t.CallExpression, BootstrapExternals | null>>();
 
 /**
  * Recover a literal require reached through a proven Webpack bootstrap.
@@ -221,7 +220,7 @@ const canonicalWebpackInteropBindings = (
         aliases.add(dependent);
         added += 1;
         if (added > state.precision.alias_selections) {
-          state.valueResourceLimits.add("alias-selections");
+          state.observations.valueResourceLimits.add("alias-selections");
           return { aliases, exhausted: true };
         }
         pending.push(dependent);
