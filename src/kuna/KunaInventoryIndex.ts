@@ -1,4 +1,4 @@
-import { appendToBucket } from "../kernel/appendToBucket.js";
+import { appendToMapList } from "../domain/appendToMapList.js";
 import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -58,12 +58,12 @@ const indexInventoryEntryNames = (
   byName: Map<string, KunaInventoryFunction[]>,
   entry: KunaInventoryFunction,
 ): void => {
-  appendToBucket(byName, entry.name, entry);
+  appendToMapList(byName, entry.name, entry);
   const { aliases } = entry;
   if (aliases.length === 0) return;
   if (aliases.length === 1) {
     const alias = aliases[0]!;
-    if (alias !== entry.name) appendToBucket(byName, alias, entry);
+    if (alias !== entry.name) appendToMapList(byName, alias, entry);
     return;
   }
   if (aliases.length <= 8) {
@@ -77,7 +77,7 @@ const indexInventoryEntryNames = (
           break;
         }
       }
-      if (!duplicate) appendToBucket(byName, alias, entry);
+      if (!duplicate) appendToMapList(byName, alias, entry);
     }
     return;
   }
@@ -86,7 +86,7 @@ const indexInventoryEntryNames = (
     const alias = aliases[i]!;
     if (!seen.has(alias)) {
       seen.add(alias);
-      appendToBucket(byName, alias, entry);
+      appendToMapList(byName, alias, entry);
     }
   }
 };

@@ -1,4 +1,4 @@
-import { appendToBucket } from "../../kernel/appendToBucket.js";
+import { appendToMapList } from "../appendToMapList.js";
 import { selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
 import { canonicalJson } from "../comparisonSemantics.js";
@@ -144,15 +144,15 @@ const buildFactsIndex = (nodes: readonly ApplicationNode[]): FactsIndex => {
     for (const observation of node.observations) {
       const ordinal = all.length;
       all.push({ node, observation });
-      appendToBucket(byKind, node.kind, ordinal);
+      appendToMapList(byKind, node.kind, ordinal);
       const path = observationPath(observation);
       if (path !== null) {
-        appendToBucket(byPath, path, ordinal);
+        appendToMapList(byPath, path, ordinal);
         if (kindPaths === undefined) {
           kindPaths = new Map();
           byKindAndPath.set(node.kind, kindPaths);
         }
-        appendToBucket(kindPaths, path, ordinal);
+        appendToMapList(kindPaths, path, ordinal);
       }
     }
   }

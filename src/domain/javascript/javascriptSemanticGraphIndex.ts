@@ -1,4 +1,4 @@
-import { appendToBucket } from "../../kernel/appendToBucket.js";
+import { appendToMapList } from "../appendToMapList.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
@@ -79,8 +79,8 @@ export const buildSemanticAdjacency = (
   const outgoingByNode = new Map<string, JavaScriptSemanticGraphRelation[]>();
   const incomingByNode = new Map<string, JavaScriptSemanticGraphRelation[]>();
   for (const relation of relations) {
-    appendToBucket(outgoingByNode, relation.source_node_id, relation);
-    appendToBucket(incomingByNode, relation.target_node_id, relation);
+    appendToMapList(outgoingByNode, relation.source_node_id, relation);
+    appendToMapList(incomingByNode, relation.target_node_id, relation);
   }
   return { outgoingByNode, incomingByNode };
 };
@@ -149,7 +149,7 @@ const buildUnknownIndex = (
   const global: JavaScriptSemanticGraphUnknown[] = [];
   for (const unknown of unknowns) {
     if (unknown.node_id === null) global.push(unknown);
-    else appendToBucket(byNodeId, unknown.node_id, unknown);
+    else appendToMapList(byNodeId, unknown.node_id, unknown);
   }
   return { byNodeId, global };
 };
@@ -180,7 +180,7 @@ const buildSeedIndex = (
 
   for (const node of graph.nodes) {
     for (const appNodeId of node.application_node_ids)
-      appendToBucket(byApplicationNodeId, appNodeId, node.node_id);
+      appendToMapList(byApplicationNodeId, appNodeId, node.node_id);
     indexNodeByKind(node, {
       byLiteralSets,
       representedCalls,
@@ -247,7 +247,7 @@ const indexNodeByKind = (
     if (slotless && Array.isArray(path)) {
       const last = path.at(-1);
       if (typeof last === "string")
-        appendToBucket(state.byProperty, last, node.node_id);
+        appendToMapList(state.byProperty, last, node.node_id);
     }
     return;
   }
@@ -258,21 +258,21 @@ const indexNodeByKind = (
   }
   if (node.kind === "property-slot") {
     if (typeof node.properties.name === "string")
-      appendToBucket(state.byProperty, node.properties.name, node.node_id);
+      appendToMapList(state.byProperty, node.properties.name, node.node_id);
     return;
   }
   if (node.kind === "request" || node.kind === "response") {
     if (typeof node.properties.endpoint === "string")
-      appendToBucket(state.byEndpoint, node.properties.endpoint, node.node_id);
+      appendToMapList(state.byEndpoint, node.properties.endpoint, node.node_id);
     return;
   }
   if (node.kind === "event" || node.kind === "listener") {
     if (typeof node.properties.event_name === "string")
-      appendToBucket(state.byEvent, node.properties.event_name, node.node_id);
+      appendToMapList(state.byEvent, node.properties.event_name, node.node_id);
     return;
   }
   if (node.kind === "boundary" && typeof node.properties.field === "string")
-    appendToBucket(state.byBoundaryField, node.properties.field, node.node_id);
+    appendToMapList(state.byBoundaryField, node.properties.field, node.node_id);
 };
 
 const isLiteralPrimitive = (

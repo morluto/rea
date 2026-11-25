@@ -1,4 +1,4 @@
-import { appendToBucket } from "../../kernel/appendToBucket.js";
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -147,7 +147,7 @@ const indexMainHandlers = (
     if (!isMainHandler(record)) continue;
     const { finding } = record;
     if (finding.channel !== null) {
-      appendToBucket(exactByChannel, finding.channel, record);
+      appendToMapList(exactByChannel, finding.channel, record);
       continue;
     }
     if (
@@ -155,7 +155,7 @@ const indexMainHandlers = (
       finding.invocation_channels === "literal"
     ) {
       for (const channel of new Set(finding.guarded_invocation_channels ?? []))
-        appendToBucket(guardedByChannel, channel, record);
+        appendToMapList(guardedByChannel, channel, record);
       continue;
     }
     wildcardDynamic.push(record);

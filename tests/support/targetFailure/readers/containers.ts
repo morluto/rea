@@ -1,4 +1,5 @@
 import { zipArchive } from "../../../../src/domain/desktop/zipArchive.fixture.js";
+import { buildIso9660Image } from "../../../../src/domain/iso9660/iso9660.fixture.js";
 import { INTEL_HEX_I32_GAP } from "../../../../src/domain/firmware/hexRecords.fixture.js";
 import {
   RP2040_FAMILY,
@@ -34,7 +35,46 @@ const conflictingUf2 = (): Buffer =>
     ]),
   );
 
+/** An ISO 9660 image whose subdirectory record points back at the root. */
+const iso9660DirectoryCycle = (): Buffer => {
+  const { bytes, layout } = buildIso9660Image({
+    files: [{ path: "dir/a.txt", bytes: Buffer.from("a") }],
+  });
+  const record = layout.primaryRecords.get("dir");
+  const root = layout.directoryBlocks.get("");
+  if (record === undefined || root === undefined)
+    throw new Error("Expected the ISO 9660 fixture's directory layout");
+  bytes.writeUInt32LE(root, record + 2);
+  bytes.writeUInt32BE(root, record + 6);
+  return bytes;
+};
+
+/** An ISO 9660 image cut one byte into its only file's extent. */
+const iso9660ExtentCutOff = (): Buffer => {
+  const { bytes, layout } = buildIso9660Image({
+    files: [{ path: "top.txt", bytes: Buffer.from("cut-off download\n") }],
+  });
+  const record = layout.primaryRecords.get("top.txt");
+  if (record === undefined)
+    throw new Error("Expected the ISO 9660 fixture's file record");
+  return bytes.subarray(0, bytes.readUInt32LE(record + 2) * 2048 + 1);
+};
+
 const containerCases: readonly TargetFailureCase[] = [
+  {
+    name: "iso9660-directory-cycle",
+    kind: "malformed",
+    bytes: iso9660DirectoryCycle,
+    facts: { format: "iso9660", field: "extent_location" },
+    identity: false,
+  },
+  {
+    name: "iso9660-extent-cut-off",
+    kind: "truncated",
+    bytes: iso9660ExtentCutOff,
+    facts: { format: "iso9660", field: "data_length" },
+    identity: false,
+  },
   {
     name: "zip-member-past-eof",
     kind: "malformed",

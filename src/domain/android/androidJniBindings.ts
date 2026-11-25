@@ -1,4 +1,4 @@
-import { appendToBucket } from "../../kernel/appendToBucket.js";
+import { appendToMapList } from "../appendToMapList.js";
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
 import { excludedValues } from "../schemaConstraints.js";
@@ -309,7 +309,7 @@ export const projectAndroidJniBindings = (input: {
     return retained <= ANDROID_JNI_REPORT_BYTES;
   };
   for (const method of declarations) {
-    appendToBucket(
+    appendToMapList(
       byPair,
       JSON.stringify([method.method_name, method.descriptor]),
       method.declaration_id,
@@ -324,8 +324,8 @@ export const projectAndroidJniBindings = (input: {
     names.set(method.declaration_id, expected.ok ? expected.value : null);
     if (expected.ok) {
       if (!charge(expected.value)) return err({ kind: "capacity" });
-      appendToBucket(byExport, expected.value.short, method.declaration_id);
-      appendToBucket(byExport, expected.value.long, method.declaration_id);
+      appendToMapList(byExport, expected.value.short, method.declaration_id);
+      appendToMapList(byExport, expected.value.long, method.declaration_id);
     }
   }
   const libraries: AndroidJniReport["libraries"] = [];
@@ -339,9 +339,7 @@ export const projectAndroidJniBindings = (input: {
     candidates.push(candidate);
     for (const method of candidate.declaration_ids) {
       const key = JSON.stringify([method, candidate.library_id]);
-      const previous = matches.get(key);
-      if (previous === undefined) matches.set(key, [candidate]);
-      else previous.push(candidate);
+      appendToMapList(matches, key, candidate);
     }
     return true;
   };
@@ -468,9 +466,7 @@ export const projectAndroidJniBindings = (input: {
   if (!charge(selectedDeclarationIds)) return err({ kind: "capacity" });
   const librariesByAbi = new Map<string, AndroidJniReport["libraries"]>();
   for (const library of libraries) {
-    const previous = librariesByAbi.get(library.abi);
-    if (previous === undefined) librariesByAbi.set(library.abi, [library]);
-    else previous.push(library);
+    appendToMapList(librariesByAbi, library.abi, library);
   }
   const abis = [...new Set(input.selection.abis ?? librariesByAbi.keys())];
   const abiMeta = new Map(

@@ -1,4 +1,4 @@
-import { appendToBucket } from "../kernel/appendToBucket.js";
+import { appendToMapList } from "./appendToMapList.js";
 import type { BrowserScenarioEvent } from "./browserScenarioCaptureValues.js";
 
 type ResponseEvent = Extract<BrowserScenarioEvent, { kind: "response" }>;
@@ -26,9 +26,9 @@ export const indexBrowserScenarioTransactions = (
         (requestCounts.get(event.transaction_id) ?? 0) + 1,
       );
     else if (event.kind === "response")
-      appendToBucket(responses, event.transaction_id, event);
+      appendToMapList(responses, event.transaction_id, event);
     else if (event.kind === "network-content")
-      appendToBucket(contents, event.source_event_sequence, event);
+      appendToMapList(contents, event.source_event_sequence, event);
   }
 
   return { requestCounts, responses, contents };

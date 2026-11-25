@@ -1,4 +1,4 @@
-import { appendToBucket } from "../../kernel/appendToBucket.js";
+import { appendToMapList } from "../appendToMapList.js";
 import { createJavaScriptApplicationEdge } from "./javascriptApplicationGraph.js";
 import type { ApplicationEdge } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
@@ -286,13 +286,13 @@ const indexCandidates = (
   >();
   for (const candidate of candidates) {
     for (const { sha256 } of candidate.digests)
-      appendToBucket(
+      appendToMapList(
         byCategoryDigest,
         categoryDigestKey(candidate.category, sha256),
         candidate,
       );
     for (const path of candidate.paths)
-      appendToBucket(
+      appendToMapList(
         byLayerCategoryPath,
         layerCategoryPathKey(candidate.layer.layerId, candidate.category, path),
         candidate,
@@ -301,7 +301,7 @@ const indexCandidates = (
       for (const { path, sourcePath } of candidate.nativeDeclarationPaths[
         style
       ])
-        appendToBucket(
+        appendToMapList(
           byNativeDeclarationPath,
           `${style}\0${layerCategoryPathKey(candidate.layer.layerId, candidate.category, path)}`,
           { candidate, sourcePath },

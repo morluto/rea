@@ -1,4 +1,4 @@
-import { appendToBucket } from "../kernel/appendToBucket.js";
+import { appendToMapList } from "./appendToMapList.js";
 import type { Node } from "@babel/types";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
@@ -246,9 +246,9 @@ const buildCapturedModuleIndex = (
   const responseByUrl = new Map<string, number[]>();
   for (let i = 0; i < scripts.length; i += 1) {
     const script = scripts[i]!;
-    appendToBucket(byUrl, script.url, i);
+    appendToMapList(byUrl, script.url, i);
     if (script.source.kind === "scenario-response")
-      appendToBucket(responseByUrl, script.url, i);
+      appendToMapList(responseByUrl, script.url, i);
   }
   return { byUrl, responseByUrl };
 };
