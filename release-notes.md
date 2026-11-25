@@ -768,6 +768,7 @@
 * **desktop:** project captured drafts through the guest schema ([#14338](https://github.com/morluto/rea/issues/14338)) ([57ae5dc](https://github.com/morluto/rea/commit/57ae5dcbc4f9ed131e536e6fd5655bcd90165be6))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), refs [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
+* **doctor:** share client registration checks ([#14529](https://github.com/morluto/rea/issues/14529)) ([ff2f1c2](https://github.com/morluto/rea/commit/ff2f1c2f72a5cbe696086d64a28d450dcd7dc4b5))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure ([#13652](https://github.com/morluto/rea/issues/13652)) ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure onto shared owners ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
 * **domain:** compose cleanup dependencies through analysisErrorCleanup helpers ([#14064](https://github.com/morluto/rea/issues/14064)) ([65ee0e8](https://github.com/morluto/rea/commit/65ee0e80abc12b582a8d3158878bf444e2397e8a))
