@@ -1048,6 +1048,7 @@
 * **ci:** consolidate project discovery and isolation checks ([#12842](https://github.com/morluto/rea/issues/12842)) ([21795b1](https://github.com/morluto/rea/commit/21795b199d1bc94f3ee17688e45403e689cbc966))
 * **ci:** consolidate required lane gate coverage ([#13515](https://github.com/morluto/rea/issues/13515)) ([77c5e6b](https://github.com/morluto/rea/commit/77c5e6bf82bf4bceb4a4cffcd2e4b517d3ffb51a))
 * **ci:** make test selection and provider report refusals observable ([#12782](https://github.com/morluto/rea/issues/12782)) ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
+* **ci:** require planner directories in classifier checkouts ([#14553](https://github.com/morluto/rea/issues/14553)) ([0acafde](https://github.com/morluto/rea/commit/0acafdeafa5880c8e8a385ef0e5b737887a4cecf))
 * **ci:** reuse workflow inventory and verify cache authority ([#13525](https://github.com/morluto/rea/issues/13525)) ([eb1d540](https://github.com/morluto/rea/commit/eb1d54007576e0443c7200f8da4143ed38025699))
 * **ci:** verify selected shard and provider report refusals ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
 * **cli:** consolidate Amp launcher registration coverage ([#12940](https://github.com/morluto/rea/issues/12940)) ([a31b80a](https://github.com/morluto/rea/commit/a31b80a4128502bcffda98d88e764db0a3544dc3))
