@@ -41,10 +41,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: async (...args: Parameters<typeof original.open>) => {
       const handle = await original.open(...args);
       const flags = args[1];
+      // Instrument every readable handle for the fault path, including the
+      // single O_RDWR output handle: since #8410 the write and the durable
+      // readback share one descriptor, so gating on read-only opens would
+      // leave the readback uninstrumented and the injected fault unfired.
       if (
         args[0] !== fault.path ||
         typeof flags !== "number" ||
-        (flags & (constants.O_WRONLY | constants.O_RDWR)) !== 0
+        (flags & constants.O_WRONLY) !== 0
       )
         return handle;
       fault.opened.push(handle);
