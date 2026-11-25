@@ -263,3 +263,15 @@ it("ranks name matches ahead of description-only matches and caches projected in
   );
   expect(repeatPage.loaded_count).toBe(5);
 });
+
+it("returns ranked matches for multi-word task queries when not every word appears (#11707)", async () => {
+  const f = await connect({ bulk: false });
+  const result = await f.discover({
+    query: "alpha sqlite nonexistent",
+    limit: 3,
+  });
+  const page = DISCOVER_TOOLS.outputSchema.parse(result.structuredContent);
+  expect(page.total_matches).toBeGreaterThanOrEqual(2);
+  // alpha_sqlite matches 2 words (alpha + sqlite), ranking ahead of beta_sqlite (1 word)
+  expect(page.tools[0]?.name).toBe("alpha_sqlite");
+});
