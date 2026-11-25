@@ -819,6 +819,7 @@
 * **python:** extract PycReportProjection from PythonPycParser ([#13773](https://github.com/morluto/rea/issues/13773)) ([70045e6](https://github.com/morluto/rea/commit/70045e6ffddcdda03564ac8c783cba97a6809d1f))
 * **regex:** consolidate worker input and deadline proofs ([#13732](https://github.com/morluto/rea/issues/13732)) ([588b257](https://github.com/morluto/rea/commit/588b257e486a3cdb3a02c98681da20375434f02d))
 * remove internal re-export shims and guard against new ones ([#14009](https://github.com/morluto/rea/issues/14009)) ([88dfad5](https://github.com/morluto/rea/commit/88dfad5bb7eb1dd673143acc0405ed802537592c))
+* **resources:** share provider descriptor cleanup ([#14425](https://github.com/morluto/rea/issues/14425)) ([adb4679](https://github.com/morluto/rea/commit/adb46794491e2ef3f139ec656ccfaf28955d7edf))
 * **rizin:** extract NUL-frame reader and wait helpers from RizinDebugSessionManager ([#14001](https://github.com/morluto/rea/issues/14001)) ([a1747df](https://github.com/morluto/rea/commit/a1747df7a70b9a51c434d917cad52b5b06183dec))
 * **rizin:** extract RizinDebugEvidence from RizinDebugSessionManager ([#13823](https://github.com/morluto/rea/issues/13823)) ([e69c42d](https://github.com/morluto/rea/commit/e69c42deeb2ba74cbfa2287d9c27b1464451cb9d))
 * **rust:** consolidate binary parser checks on positional reads ([#14033](https://github.com/morluto/rea/issues/14033)) ([d0a9e6b](https://github.com/morluto/rea/commit/d0a9e6b912395c8ecb6f1f08cc40b76910392006))
