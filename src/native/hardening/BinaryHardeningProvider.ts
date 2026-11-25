@@ -23,7 +23,6 @@ import {
   MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
   type InspectBinaryHardeningInput,
 } from "../../domain/native/binaryHardening.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -34,7 +33,6 @@ import {
 import { readElfHardeningFromHandle } from "./ElfHardening.js";
 import { readMachoHardeningFromHandle } from "./MachoHardening.js";
 import { readPeHardeningFromHandle } from "./PeHardening.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
 const HEADER_PREFIX_BYTES = 4096;
@@ -170,14 +168,6 @@ const binaryHardeningFailure = (
             max_file_bytes: input.max_file_bytes,
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   return projectStableArtifactFailure(

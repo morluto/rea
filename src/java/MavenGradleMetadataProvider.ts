@@ -118,7 +118,6 @@ const mavenGradleMetadataFailure = (
         providerId: MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY.id,
         path: input.path,
         description: "Maven POM or Gradle module metadata",
-        fallbackMessage: "Maven/Gradle metadata inspection failed.",
         recognise: (failure) => {
           if (!isParseLimit(failure, MAVEN_GRADLE_METADATA_FORMAT))
             return undefined;
