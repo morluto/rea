@@ -1,4 +1,7 @@
-import { supportedFixtureTarget } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  supportedFixtureTarget,
+} from "../../fixtures/analysisExecution.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -39,11 +42,7 @@ afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
 });
 
-const identity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const identity = createFixtureProviderIdentity();
 const dispatchMetadata = inspectNativeDispatchMetadata(
   [
     {
