@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **errors:** inspect_plist, inspect_apk_signature, inspect_ntfs_journal, inspect_api_contract, audit_release_exposure, inspect_web_network_capture, inspect_playwright_trace, inspect_packet_capture, inspect_packet_fields, inspect_gpu_code_objects, inspect_model_artifact, inspect_native_dispatch_metadata, inspect_macho, list_architectures, inspect_sqlite_database, sigrok recording operations, Android mapping reads and the shared provider classifier report a non-change integrity check (for example admitted-identity) as artifact_operation_failed, category integrity_mismatch, retryable false, with details.reason "integrity" and details.integrity_check, instead of artifact_changed. artifact_changed errors from AnalysisArtifactChangedError now include retry "backoff".
 * **macho:** selected-file malformed and truncated refusals add details.failure_kind, and a truncated target's remediation now says to re-acquire the complete file instead of choosing another target. Codes are unchanged. Affected operations: every operation that refuses a selected file's malformed or truncated bytes, including the ELF, PE, Mach-O, DWARF, Go, Rust, BEAM, pyc, devicetree, Apple IPS, kernel module, binary hardening, managed PE/CLI and IL2CPP readers.
 * **cli:** selected-file malformed and truncated refusals add details.failure_kind, and a truncated target's remediation now says to re-acquire the complete file instead of choosing another target. Codes are unchanged. Affected operations: every operation that refuses a selected file's malformed or truncated bytes, including the ELF, PE, Mach-O, DWARF, Go, Rust, BEAM, pyc, devicetree, Apple IPS, kernel module, binary hardening, managed PE/CLI and IL2CPP readers.
 * **errors:** selected-file malformed and truncated refusals add details.failure_kind, and a truncated target's remediation now says to re-acquire the complete file instead of choosing another target. Codes are unchanged. Affected operations: every operation that refuses a selected file's malformed or truncated bytes, including the ELF, PE, Mach-O, DWARF, Go, Rust, BEAM, pyc, devicetree, Apple IPS, kernel module, binary hardening, managed PE/CLI and IL2CPP readers.
@@ -250,6 +251,7 @@
 * **erlang:** require complete positional BEAM reads ([#14045](https://github.com/morluto/rea/issues/14045)) ([2e47bc0](https://github.com/morluto/rea/commit/2e47bc09f357cf6e5bcc6c93f39e4972bd79192e))
 * **erlang:** retain verified BEAM reports through descriptor finalization ([#14062](https://github.com/morluto/rea/issues/14062)) ([2e98c70](https://github.com/morluto/rea/commit/2e98c70c911f5062bad2e3045e557f90cf886d54))
 * **errors:** align unsupported-signature status and split invalid-method-token at its producer ([#14230](https://github.com/morluto/rea/issues/14230)) ([eb6c281](https://github.com/morluto/rea/commit/eb6c281fec68568aa95e7cbef59fe1c9eade99e5))
+* **errors:** keep only changed reader integrity checks retryable ([b7f662b](https://github.com/morluto/rea/commit/b7f662bd1935378559d240f17b3ff5a8e81ef544))
 * **errors:** raise container reader byte faults as malformed or truncated targets ([#14265](https://github.com/morluto/rea/issues/14265)) ([6f26702](https://github.com/morluto/rea/commit/6f267022ed076d3e0df003f03b426fad8db50c3b))
 * **errors:** refuse corrupt managed, IL2CPP and universal Mach-O bytes as a malformed target ([#14224](https://github.com/morluto/rea/issues/14224)) ([57f4e3c](https://github.com/morluto/rea/commit/57f4e3c4bd7577336f344f5ec5b14a5ea0c9ce6b))
 * **errors:** refuse malformed SQLite, pwntools and EVM inputs as target failures ([#14268](https://github.com/morluto/rea/issues/14268)) ([a61ff39](https://github.com/morluto/rea/commit/a61ff39c9a59c172e9ab6941a5a4c488db2968f1))
@@ -782,6 +784,7 @@
 * **domain:** one ByteSource representation for streaming parsers ([#14044](https://github.com/morluto/rea/issues/14044)) ([a324181](https://github.com/morluto/rea/commit/a324181cccd428618f1bb839121789720fb1395d))
 * **domain:** replace production prose/regex limitation matching with typed discriminators ([#14359](https://github.com/morluto/rea/issues/14359)) ([72bdcad](https://github.com/morluto/rea/commit/72bdcad49d1e6d89d935d1a493e0434b3f5d5fd7))
 * **domain:** reuse ordered map appends in index builders ([#14548](https://github.com/morluto/rea/issues/14548)) ([5cd8658](https://github.com/morluto/rea/commit/5cd86586431698d80facc62259ff04a91310f16a))
+* **domain:** share first duplicate index lookup ([#14560](https://github.com/morluto/rea/issues/14560)) ([59b75ec](https://github.com/morluto/rea/commit/59b75ecc3e2bd1c787985e7bebf128f453d5ec82))
 * **domain:** share ordered map list appends ([#14538](https://github.com/morluto/rea/issues/14538)) ([092daf7](https://github.com/morluto/rea/commit/092daf7d443e6e6ebc1a38aa3998ceaaa9a35797))
 * **domain:** share ordered reconstruction obligation categories ([#14524](https://github.com/morluto/rea/issues/14524)) ([e953b21](https://github.com/morluto/rea/commit/e953b215292567a1f74feeffb63a2f0c3c59ad4f))
 * **domain:** share record and graph parsing across input paths ([#14321](https://github.com/morluto/rea/issues/14321)) ([2add88a](https://github.com/morluto/rea/commit/2add88a014e1bb16b53584615ea142067f55f916))
@@ -822,11 +825,13 @@
 * **inspector:** own the Node discovery path rule in one module ([#10680](https://github.com/morluto/rea/issues/10680)) ([559956c](https://github.com/morluto/rea/commit/559956cf6b5db2677aa4f8b4f34ee67b8038f4d8))
 * **investigation:** build comparison unknowns in their owning function ([#14335](https://github.com/morluto/rea/issues/14335)) ([c2c4298](https://github.com/morluto/rea/commit/c2c4298f3ca4a2a02028cc1d11cfc9316491e14f))
 * **javascript:** share one-sided version comparison results ([#14539](https://github.com/morluto/rea/issues/14539)) ([2ace7a8](https://github.com/morluto/rea/commit/2ace7a8d38a8de60d2854d2f841771bef0c2fdff))
+* **javascript:** share statement position caching ([#14561](https://github.com/morluto/rea/issues/14561)) ([ca70be0](https://github.com/morluto/rea/commit/ca70be0feb227c2f311f26c1e6c80d0b87f5e06c))
 * **javascript:** share unresolved bundler node construction ([#14441](https://github.com/morluto/rea/issues/14441)) ([17a1d03](https://github.com/morluto/rea/commit/17a1d033fe458c0e8884c773d7a784bea3186cc5))
 * **kuna:** extract KunaCacheManifest from KunaProjectCache ([#13770](https://github.com/morluto/rea/issues/13770)) ([66d819f](https://github.com/morluto/rea/commit/66d819f36958850f8e443e0b4c8465252d81732f))
 * **kuna:** extract KunaInventoryIndex from KunaSessionClient ([#13821](https://github.com/morluto/rea/issues/13821)) ([a022067](https://github.com/morluto/rea/commit/a02206755e8733f0bda5918707c60100bd0beeaa))
 * **kuna:** extract KunaSessionEvidence from KunaSessionClient ([#13879](https://github.com/morluto/rea/issues/13879)) ([12c50f1](https://github.com/morluto/rea/commit/12c50f1309b7ab75a5c70075a7c5078ac888e5af))
 * **kuna:** extract KunaSingleFunctionCache from KunaSessionClient ([#13863](https://github.com/morluto/rea/issues/13863)) ([135c136](https://github.com/morluto/rea/commit/135c136701c54a830264ac1a24aa2e37185faa3d)), refs [#13862](https://github.com/morluto/rea/issues/13862)
+* **lint:** share counted findings reporting ([#14558](https://github.com/morluto/rea/issues/14558)) ([2f5dc7b](https://github.com/morluto/rea/commit/2f5dc7b27c08a06843a65a4ce7c4c525e8442c51))
 * **macho:** read LC_BUILD_VERSION fields through BinaryReader ([a0d2357](https://github.com/morluto/rea/commit/a0d2357230bdce24510436ee405d263fceb47870)), refs [#11865](https://github.com/morluto/rea/issues/11865)
 * **macho:** use binary facts for native diagnostic admission ([#13929](https://github.com/morluto/rea/issues/13929)) ([7ce3e5d](https://github.com/morluto/rea/commit/7ce3e5d208fe213882de9427835b993a9a36945c))
 * **managed:** read custom-attribute prologs and resource lengths through BinaryReader ([2bd8963](https://github.com/morluto/rea/commit/2bd8963062fa664e7c6fab0410547480778a5ea5)), refs [#11865](https://github.com/morluto/rea/issues/11865)
@@ -861,6 +866,7 @@
 * **providers:** adopt offlineArtifactFailureDialect in PE, ELF, and Apple IPS providers ([#13954](https://github.com/morluto/rea/issues/13954)) ([fc23eb6](https://github.com/morluto/rea/commit/fc23eb65aaf65532e3a4f6377a92b7e1765f4f6e))
 * **providers:** pass stable file handles directly to parsers ([#14508](https://github.com/morluto/rea/issues/14508)) ([3124e6b](https://github.com/morluto/rea/commit/3124e6b7e2cb99f45dd88035eb2da84df5092940))
 * **providers:** share offlineArtifactFailureDialect across offline providers ([#13921](https://github.com/morluto/rea/issues/13921)) ([68803f0](https://github.com/morluto/rea/commit/68803f0082055a51a283351d77cff4001a2813f1))
+* **providers:** share queued close attempts ([#14563](https://github.com/morluto/rea/issues/14563)) ([dcce28e](https://github.com/morluto/rea/commit/dcce28e284858286ad4f7eb8719d717362dd1960))
 * **providers:** share the offline adapter error fallback ([#14466](https://github.com/morluto/rea/issues/14466)) ([2c847e7](https://github.com/morluto/rea/commit/2c847e767cf9014d1d87a0c2df7876fb3d696136))
 * prune 5 redundant single-call wrapper modules ([#13807](https://github.com/morluto/rea/issues/13807)) ([cc5df28](https://github.com/morluto/rea/commit/cc5df28644ad4f0885d12695294afc9a612cf18f))
 * **python:** extract PycReportProjection from PythonPycParser ([#13773](https://github.com/morluto/rea/issues/13773)) ([70045e6](https://github.com/morluto/rea/commit/70045e6ffddcdda03564ac8c783cba97a6809d1f))
@@ -900,6 +906,7 @@
 * **uninstall:** extract UninstallDataAndSkills from Uninstall ([#13736](https://github.com/morluto/rea/issues/13736)) ([054bbbc](https://github.com/morluto/rea/commit/054bbbc55e63ff8d4b617a04cb681145f2ca134f))
 * **verification:** share client version probes ([#14541](https://github.com/morluto/rea/issues/14541)) ([b3f4da9](https://github.com/morluto/rea/commit/b3f4da940425e9231b43de4c847a4748107193d7))
 * **verifiers:** share installed skill checks across three clients ([#14521](https://github.com/morluto/rea/issues/14521)) ([8d881ce](https://github.com/morluto/rea/commit/8d881cef7b9aad769fa723297bd673db4ea88d43))
+* **verifiers:** share legacy Ghidra snapshot construction ([#14566](https://github.com/morluto/rea/issues/14566)) ([150d6f0](https://github.com/morluto/rea/commit/150d6f0e1986ebdf646a5d1c063d19ca3eb26f12))
 * **verifiers:** share package fixture home settings ([#14523](https://github.com/morluto/rea/issues/14523)) ([4f839e6](https://github.com/morluto/rea/commit/4f839e6a8f025f7dea154bbd9fbabda635430d2f))
 * **verifiers:** share the model fixture request reader ([#14520](https://github.com/morluto/rea/issues/14520)) ([f5f6bb1](https://github.com/morluto/rea/commit/f5f6bb18613bb55e62de4f547114195f1f3d6cac))
 * **verifiers:** share whole-file SHA-256 hashing ([#14475](https://github.com/morluto/rea/issues/14475)) ([60af9ef](https://github.com/morluto/rea/commit/60af9ef6b35e332dd5645fbb99ededfe5b40c64c))
@@ -983,6 +990,7 @@
 * **apk:** consolidate signature refusal coverage ([d766ab5](https://github.com/morluto/rea/commit/d766ab56dc43ab18130ca50f038c24891cc0fd75))
 * **apple:** consolidate bundle resource CLI coverage ([#12936](https://github.com/morluto/rea/issues/12936)) ([12ac054](https://github.com/morluto/rea/commit/12ac0541f68268e6562807e1168ca62d0efd9d7f))
 * **apple:** consolidate dylib resolution contract checks ([#13424](https://github.com/morluto/rea/issues/13424)) ([8925ec4](https://github.com/morluto/rea/commit/8925ec461e0f36d8109c8226650d5714c6da4bf5))
+* **apple:** expect path-selected inspect_artifact in resource-only sessions ([a4d9a24](https://github.com/morluto/rea/commit/a4d9a2412fb2958950e7b0941a3f8777e5bb950d))
 * **apple:** share binary plist object layout fixtures ([#14488](https://github.com/morluto/rea/issues/14488)) ([6c51be5](https://github.com/morluto/rea/commit/6c51be53172fa9cc49a0f337b2e0e1906638b465))
 * **apple:** share the binary plist decoder invariant suite ([#14492](https://github.com/morluto/rea/issues/14492)) ([b06d82a](https://github.com/morluto/rea/commit/b06d82aa28e3aa7629e4a8f71f177f3a12b3622b))
 * **application:** share late cancellation evidence checks ([#14381](https://github.com/morluto/rea/issues/14381)) ([7fe9fc5](https://github.com/morluto/rea/commit/7fe9fc5ee9b950c060c536050bd77d51cf80cf25))
@@ -1170,6 +1178,7 @@
 * **firmware:** consolidate staging and resource recovery checks ([#13358](https://github.com/morluto/rea/issues/13358)) ([2209acc](https://github.com/morluto/rea/commit/2209acc82424bee01512419bee02e9613aa3392c))
 * **firmware:** consolidate UF2 numbering and shared reader identity ([#13372](https://github.com/morluto/rea/issues/13372)) ([e9dead7](https://github.com/morluto/rea/commit/e9dead75ea7efd3567e80cf84a79b40fe3883c51))
 * **firmware:** observe decoded region descriptor settlement ([#13378](https://github.com/morluto/rea/issues/13378)) ([ac7ae19](https://github.com/morluto/rea/commit/ac7ae19cb23c9dc2380b08381ca96e073620ad1e))
+* **fixtures:** share byte digest calculations ([#14564](https://github.com/morluto/rea/issues/14564)) ([edca378](https://github.com/morluto/rea/commit/edca3783ca62065aa50b4faf2622bd02b8442e48))
 * **fixtures:** share little-endian integer buffers ([#14432](https://github.com/morluto/rea/issues/14432)) ([1e5cdbc](https://github.com/morluto/rea/commit/1e5cdbc7ee10118dde862e904b2b537e886bf35a))
 * **flutter:** consolidate ELF and snapshot header checks ([#13595](https://github.com/morluto/rea/issues/13595)) ([2d65688](https://github.com/morluto/rea/commit/2d65688ac79ebe9b625d2620e4bb2bfc6ffd1b5e))
 * **formats:** consolidate BEAM and DOL boundary checks ([#12832](https://github.com/morluto/rea/issues/12832)) ([c9caa0a](https://github.com/morluto/rea/commit/c9caa0aa5b60e049ac5284b7f9efaad4d793c3ff))
@@ -1550,6 +1559,7 @@
 
 ### Continuous Integration
 
+* **apple:** discover and run every macOS-gated test on macOS ([fa2776d](https://github.com/morluto/rea/commit/fa2776d065f51b65d88348dc80ffc4b5a0a14834))
 * **apple:** run the bundle executable provenance regression on macOS ([5d136df](https://github.com/morluto/rea/commit/5d136df3ce720385a7cb33137bf77962733c08aa))
 * compare frozen selections with observed test failures ([#14301](https://github.com/morluto/rea/issues/14301)) ([54f6fd4](https://github.com/morluto/rea/commit/54f6fd4f907caef76127c7e377ef181c0b5a4a82))
 * **deps:** upgrade Pages, artifact transfers and cache actions together ([#8128](https://github.com/morluto/rea/issues/8128)) ([d957d43](https://github.com/morluto/rea/commit/d957d43ec196a498dc1c9540edbbad809f471e52))
