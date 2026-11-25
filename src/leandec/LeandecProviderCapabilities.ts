@@ -5,8 +5,14 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
-import { DEFAULT_REGEX_MATCHING_DEADLINE, type RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
-import { DEFAULT_REGEX_WORKER_HEAP_REQUEST, type RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
+import {
+  DEFAULT_REGEX_MATCHING_DEADLINE,
+  type RegexMatchingDeadline,
+} from "../config/regexMatchingDeadline.js";
+import {
+  DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  type RegexWorkerHeapRequest,
+} from "../config/regexWorkerHeapRequest.js";
 
 /** Public identity committed by every Leandec-backed observation. */
 export const LEANDEC_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
@@ -71,11 +77,19 @@ export const leandecLimitations = (
     case "address_name":
       return [PROVENANCE, INVENTORY_LIMITATION];
     case "search_procedures":
-      return [PROVENANCE, INVENTORY_LIMITATION, launchRegexMatchingLimitation(deadline, heapRequest)];
+      return [
+        PROVENANCE,
+        INVENTORY_LIMITATION,
+        launchRegexMatchingLimitation(deadline, heapRequest),
+      ];
     case "list_strings":
       return [PROVENANCE, STRING_LIMITATION];
     case "search_strings":
-      return [PROVENANCE, STRING_LIMITATION, launchRegexMatchingLimitation(deadline, heapRequest)];
+      return [
+        PROVENANCE,
+        STRING_LIMITATION,
+        launchRegexMatchingLimitation(deadline, heapRequest),
+      ];
     case "procedure_callers":
     case "procedure_callees":
     case "xrefs":
@@ -123,5 +137,7 @@ export const leandecCapabilities = (
       changesPermissions: false,
       requiresRoot: false,
     },
-    limitations: Object.freeze(leandecLimitations(operation, deadline, heapRequest)),
+    limitations: Object.freeze(
+      leandecLimitations(operation, deadline, heapRequest),
+    ),
   }));

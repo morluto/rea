@@ -34,10 +34,18 @@ const DEFAULT_IMPORT_TIMEOUT_MS = 3_600_000;
 const DEFAULT_INVENTORY_LIMIT = 50_000;
 const DEFAULT_STRING_LIMIT = 20_000;
 
-const integer = (raw: string | undefined, fallback: number): number | undefined => {
+const integer = (
+  raw: string | undefined,
+  fallback: number,
+): number | undefined => {
   if (raw === undefined) return fallback;
   const value = Number(raw);
-  return /^[0-9]+$/u.test(raw) && Number.isSafeInteger(value) && value >= 1 && value <= 2147483647 ? value : undefined;
+  return /^[0-9]+$/u.test(raw) &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= 2147483647
+    ? value
+    : undefined;
 };
 
 /** Read SERVER_VERSION from the script so the profile reflects the real server. */
@@ -78,25 +86,58 @@ export const resolveLeandecSettings = (
     };
   }
   const requestedPython = environment.LEANDEC_PYTHON?.trim() || "python3";
-  const candidates = requestedPython.includes("/") || isAbsolute(requestedPython)
-    ? [resolve(dirname(server), requestedPython)]
-    : (environment.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(delimiter)
-      .filter(Boolean).map(directory => resolve(directory, requestedPython));
-  const python = candidates.find(candidate => {
+  const candidates =
+    requestedPython.includes("/") || isAbsolute(requestedPython)
+      ? [resolve(dirname(server), requestedPython)]
+      : (environment.PATH ?? "/usr/local/bin:/usr/bin:/bin")
+          .split(delimiter)
+          .filter(Boolean)
+          .map((directory) => resolve(directory, requestedPython));
+  const python = candidates.find((candidate) => {
     try {
       if (!statSync(candidate).isFile()) return false;
       accessSync(candidate, constants.X_OK);
       return true;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   });
   if (python === undefined)
-    return { ok: false, code: "runtime_missing", reason: `Python interpreter is not executable: ${requestedPython}` };
-  const defaultTimeoutMs = integer(environment.LEANDEC_CALL_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
-  const importTimeoutMs = integer(environment.LEANDEC_IMPORT_TIMEOUT_MS, DEFAULT_IMPORT_TIMEOUT_MS);
-  const inventoryLimit = integer(environment.LEANDEC_INVENTORY_LIMIT, DEFAULT_INVENTORY_LIMIT);
-  const stringLimit = integer(environment.LEANDEC_STRING_LIMIT, DEFAULT_STRING_LIMIT);
-  if (defaultTimeoutMs === undefined || importTimeoutMs === undefined || inventoryLimit === undefined || stringLimit === undefined || (environment.LEANDEC_AUTO_ANALYZE !== undefined && !["0", "1"].includes(environment.LEANDEC_AUTO_ANALYZE)))
-    return { ok: false, code: "open_options_invalid", reason: "LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and 2147483647; LEANDEC_AUTO_ANALYZE must be 0 or 1." };
+    return {
+      ok: false,
+      code: "runtime_missing",
+      reason: `Python interpreter is not executable: ${requestedPython}`,
+    };
+  const defaultTimeoutMs = integer(
+    environment.LEANDEC_CALL_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+  );
+  const importTimeoutMs = integer(
+    environment.LEANDEC_IMPORT_TIMEOUT_MS,
+    DEFAULT_IMPORT_TIMEOUT_MS,
+  );
+  const inventoryLimit = integer(
+    environment.LEANDEC_INVENTORY_LIMIT,
+    DEFAULT_INVENTORY_LIMIT,
+  );
+  const stringLimit = integer(
+    environment.LEANDEC_STRING_LIMIT,
+    DEFAULT_STRING_LIMIT,
+  );
+  if (
+    defaultTimeoutMs === undefined ||
+    importTimeoutMs === undefined ||
+    inventoryLimit === undefined ||
+    stringLimit === undefined ||
+    (environment.LEANDEC_AUTO_ANALYZE !== undefined &&
+      !["0", "1"].includes(environment.LEANDEC_AUTO_ANALYZE))
+  )
+    return {
+      ok: false,
+      code: "open_options_invalid",
+      reason:
+        "LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and 2147483647; LEANDEC_AUTO_ANALYZE must be 0 or 1.",
+    };
   return {
     ok: true,
     settings: {
@@ -124,7 +165,8 @@ export const leandecAvailability = (
       status: "unavailable",
       code: resolution.code,
       reason: resolution.reason,
-      remediation: "Configure a readable LEANDEC_MCP_SERVER and executable LEANDEC_PYTHON.",
+      remediation:
+        "Configure a readable LEANDEC_MCP_SERVER and executable LEANDEC_PYTHON.",
       diagnostics: { platform },
     };
   if (platform === "win32")

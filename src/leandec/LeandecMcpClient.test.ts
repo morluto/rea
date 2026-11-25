@@ -2,7 +2,11 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { LeandecMcpClient, LeandecCallCancelled, LeandecRpcError } from "./LeandecMcpClient.js";
+import {
+  LeandecMcpClient,
+  LeandecCallCancelled,
+  LeandecRpcError,
+} from "./LeandecMcpClient.js";
 
 const fixture = String.raw`
 const readline = require("node:readline");
@@ -28,7 +32,13 @@ const clientFor = async () => {
   const cwd = await createTestTempDirectory("leandec-mcp-");
   const server = join(cwd, "server.cjs");
   await writeFile(server, fixture);
-  return new LeandecMcpClient({ python: process.execPath, server, cwd, environment: process.env, defaultTimeoutMs: 5000 });
+  return new LeandecMcpClient({
+    python: process.execPath,
+    server,
+    cwd,
+    environment: process.env,
+    defaultTimeoutMs: 5000,
+  });
 };
 
 describe.skipIf(process.platform === "win32")("Leandec stdio transport", () => {
@@ -37,27 +47,39 @@ describe.skipIf(process.platform === "win32")("Leandec stdio transport", () => {
     try {
       await client.initialize();
       const cancellation = new AbortController();
-      const waiting = client.call("wait", {}, {signal: cancellation.signal});
-      const rejected = expect(waiting).rejects.toBeInstanceOf(LeandecCallCancelled);
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const waiting = client.call("wait", {}, { signal: cancellation.signal });
+      const rejected =
+        expect(waiting).rejects.toBeInstanceOf(LeandecCallCancelled);
+      await new Promise((resolve) => setTimeout(resolve, 100));
       cancellation.abort();
       await rejected;
       const result = await client.call("observe", {});
-      expect(result).toMatchObject({notifications: [expect.any(Number)]});
-    } finally { await client.close(); }
+      expect(result).toMatchObject({ notifications: [expect.any(Number)] });
+    } finally {
+      await client.close();
+    }
   });
 
   it("rejects malformed MCP envelopes instead of returning empty output", async () => {
     const client = await clientFor();
     try {
-      await expect(client.call("malformed", {})).rejects.toBeInstanceOf(LeandecRpcError);
-    } finally { await client.close(); }
+      await expect(client.call("malformed", {})).rejects.toBeInstanceOf(
+        LeandecRpcError,
+      );
+    } finally {
+      await client.close();
+    }
   });
 
   it("rejects a pending call on process exit and closes idempotently", async () => {
     const client = await clientFor();
     try {
-      await expect(client.call("exit", {})).rejects.toBeInstanceOf(LeandecRpcError);
-    } finally { await client.close(); await client.close(); }
+      await expect(client.call("exit", {})).rejects.toBeInstanceOf(
+        LeandecRpcError,
+      );
+    } finally {
+      await client.close();
+      await client.close();
+    }
   });
 });

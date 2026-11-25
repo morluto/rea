@@ -41,37 +41,94 @@ const make = async () => {
   await writeFile(server, fixture);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const provider = new LeandecProvider({
-    ...process.env, LEANDEC_MCP_SERVER: server, LEANDEC_PYTHON: process.execPath,
-    LEANDEC_AUTO_ANALYZE: "0", LEANDEC_INVENTORY_LIMIT: "1",
-    FIXTURE_SHA: sha256, FIXTURE_PATH: path,
+    ...process.env,
+    LEANDEC_MCP_SERVER: server,
+    LEANDEC_PYTHON: process.execPath,
+    LEANDEC_AUTO_ANALYZE: "0",
+    LEANDEC_INVENTORY_LIMIT: "1",
+    FIXTURE_SHA: sha256,
+    FIXTURE_PATH: path,
   });
-  const target = {path,sha256,kind:"executable" as const,format:"elf" as const,architecture:"x86_64" as const,availableArchitectures:["x86_64" as const]};
-  return {client:provider.createClient(target),path};
+  const target = {
+    path,
+    sha256,
+    kind: "executable" as const,
+    format: "elf" as const,
+    architecture: "x86_64" as const,
+    availableArchitectures: ["x86_64" as const],
+  };
+  return { client: provider.createClient(target), path };
 };
 
-describe.skipIf(process.platform === "win32")("Leandec analysis through stdio", () => {
-  it("keeps lookup spelling, returns public addresses, and reports capped searches", async () => {
-    const {client} = await make();
-    try {
-      const inventory = await client.execute("list_procedures", {});
-      expect(inventory).toMatchObject({ok:true,value:{result:[{address:"0x1000",value:"entry"}],limitations:expect.arrayContaining([expect.stringContaining("1 of 2")])}});
-      const named = await client.execute("procedure_address", {procedure:"fade"});
-      expect(named).toMatchObject({ok:true,value:{result:"0x2000"}});
-      const direct = await client.execute("procedure_pseudo_code", {procedure:"0x2000"});
-      expect(direct).toMatchObject({ok:true,value:{result:"return 1;"}});
-      const strings = await client.execute("search_strings", {pattern:"hell",mode:"literal",case_sensitive:false});
-      expect(strings).toMatchObject({ok:true,value:{result:[{address:"0x3000",value:"hello"}],limitations:expect.arrayContaining([expect.stringContaining("1 of 3")])}});
-      const bytes = await client.execute("read_bytes", {address:"0x100000000",length:2});
-      expect(bytes).toMatchObject({ok:true,value:{result:{address:"0x100000000",bytes_hex:"aabb",complete:true}}});
-    } finally { expect(await client.close()).toEqual({ok:true,value:null}); }
-  });
+describe.skipIf(process.platform === "win32")(
+  "Leandec analysis through stdio",
+  () => {
+    it("keeps lookup spelling, returns public addresses, and reports capped searches", async () => {
+      const { client } = await make();
+      try {
+        const inventory = await client.execute("list_procedures", {});
+        expect(inventory).toMatchObject({
+          ok: true,
+          value: {
+            result: [{ address: "0x1000", value: "entry" }],
+            limitations: expect.arrayContaining([
+              expect.stringContaining("1 of 2"),
+            ]),
+          },
+        });
+        const named = await client.execute("procedure_address", {
+          procedure: "fade",
+        });
+        expect(named).toMatchObject({ ok: true, value: { result: "0x2000" } });
+        const direct = await client.execute("procedure_pseudo_code", {
+          procedure: "0x2000",
+        });
+        expect(direct).toMatchObject({
+          ok: true,
+          value: { result: "return 1;" },
+        });
+        const strings = await client.execute("search_strings", {
+          pattern: "hell",
+          mode: "literal",
+          case_sensitive: false,
+        });
+        expect(strings).toMatchObject({
+          ok: true,
+          value: {
+            result: [{ address: "0x3000", value: "hello" }],
+            limitations: expect.arrayContaining([
+              expect.stringContaining("1 of 3"),
+            ]),
+          },
+        });
+        const bytes = await client.execute("read_bytes", {
+          address: "0x100000000",
+          length: 2,
+        });
+        expect(bytes).toMatchObject({
+          ok: true,
+          value: {
+            result: {
+              address: "0x100000000",
+              bytes_hex: "aabb",
+              complete: true,
+            },
+          },
+        });
+      } finally {
+        expect(await client.close()).toEqual({ ok: true, value: null });
+      }
+    });
 
-  it("rejects bytes changed after target admission", async () => {
-    const {client,path} = await make();
-    try {
-      await writeFile(path,"changed");
-      const result = await client.execute("list_procedures",{});
-      expect(result.ok).toBe(false);
-    } finally { expect(await client.close()).toEqual({ok:true,value:null}); }
-  });
-});
+    it("rejects bytes changed after target admission", async () => {
+      const { client, path } = await make();
+      try {
+        await writeFile(path, "changed");
+        const result = await client.execute("list_procedures", {});
+        expect(result.ok).toBe(false);
+      } finally {
+        expect(await client.close()).toEqual({ ok: true, value: null });
+      }
+    });
+  },
+);

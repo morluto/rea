@@ -50,9 +50,17 @@ describe("Leandec provider discovery", () => {
   });
 
   it("does not advertise operations on Windows", async () => {
-    const provider = new LeandecProvider({ LEANDEC_MCP_SERVER: await server(), LEANDEC_PYTHON: process.execPath }, "win32");
-    expect(provider.inspectAvailability()).toMatchObject({ status: "unavailable", code: "unsupported_host" });
-    expect(provider.capabilities().every(capability => !capability.available)).toBe(true);
+    const provider = new LeandecProvider(
+      { LEANDEC_MCP_SERVER: await server(), LEANDEC_PYTHON: process.execPath },
+      "win32",
+    );
+    expect(provider.inspectAvailability()).toMatchObject({
+      status: "unavailable",
+      code: "unsupported_host",
+    });
+    expect(
+      provider.capabilities().every((capability) => !capability.available),
+    ).toBe(true);
   });
 
   it("supports Mach-O and ELF executables only", async () => {

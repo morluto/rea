@@ -5,7 +5,10 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
-import { classifyProviderFailure, type ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   createAnalysisExecution,
@@ -97,22 +100,34 @@ const canonicalAddress = (raw: unknown): string | undefined => {
 // Leandec stores padded hex addresses; REA exposes normalized 0x addresses.
 const addressPredicate = (address: string): string => {
   const canonical = canonicalAddress(address);
-  if (canonical === undefined) throw new AnalysisInputError("address", { userMessage: "Expected hexadecimal address." });
-  return "COALESCE(NULLIF(ltrim(lower(addr), '0'), ''), '0') = '" + canonical + "'";
+  if (canonical === undefined)
+    throw new AnalysisInputError("address", {
+      userMessage: "Expected hexadecimal address.",
+    });
+  return (
+    "COALESCE(NULLIF(ltrim(lower(addr), '0'), ''), '0') = '" + canonical + "'"
+  );
 };
 
 const publicAddress = (value: unknown): string => {
   const address = canonicalAddress(value);
-  if (address === undefined) throw new AnalysisOutputError("leandec", "Invalid Leandec address");
+  if (address === undefined)
+    throw new AnalysisOutputError("leandec", "Invalid Leandec address");
   return "0x" + address;
 };
 
 const invalidReply = (detail: string): never => {
-  throw new AnalysisOutputError("leandec", `Malformed Leandec reply: ${detail}`);
+  throw new AnalysisOutputError(
+    "leandec",
+    `Malformed Leandec reply: ${detail}`,
+  );
 };
 
 const record = (value: JsonValue | undefined): Record<string, JsonValue> =>
-  value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
+  value !== null &&
+  value !== undefined &&
+  typeof value === "object" &&
+  !Array.isArray(value)
     ? (value as Record<string, JsonValue>)
     : invalidReply("expected object");
 
@@ -124,38 +139,70 @@ const requiredText = (value: JsonValue | undefined): string =>
 
 const requiredCount = (value: JsonValue | undefined): number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value : invalidReply("expected nonnegative integer");
+    ? value
+    : invalidReply("expected nonnegative integer");
 
 const inventoryEntry = (row: JsonValue): InventoryEntry => {
   const cells = list(row);
   const address = requiredText(cells[0]);
-  if (canonicalAddress(address) === undefined) invalidReply("invalid function address");
+  if (canonicalAddress(address) === undefined)
+    invalidReply("invalid function address");
   const name = requiredText(cells[1]);
   const namespace = requiredText(cells[2]);
-  return { address, name, qualified: namespace ? `${namespace}::${name}` : name, size: requiredCount(cells[3]) };
+  return {
+    address,
+    name,
+    qualified: namespace ? `${namespace}::${name}` : name,
+    size: requiredCount(cells[3]),
+  };
 };
 
-const waitShared = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+const waitShared = async <T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> => {
   const result = await waitForAbortable(promise, signal);
   if (result instanceof AbortedWait) throw cancelledBy("leandec", result);
   return result;
 };
 
-const filterEntries = async <T>(entries: readonly T[], value: (entry: T) => string,
-  query: AnalysisSearchQuery, operation: string, deadline: RegexMatchingDeadline, heapRequest: RegexWorkerHeapRequest, signal?: AbortSignal): Promise<readonly T[]> => {
+const filterEntries = async <T>(
+  entries: readonly T[],
+  value: (entry: T) => string,
+  query: AnalysisSearchQuery,
+  operation: string,
+  deadline: RegexMatchingDeadline,
+  heapRequest: RegexWorkerHeapRequest,
+  signal?: AbortSignal,
+): Promise<readonly T[]> => {
   if (query.mode !== "regex") {
     const matches = analysisSearchPredicate(query);
-    return entries.filter(entry => matches(value(entry)));
+    return entries.filter((entry) => matches(value(entry)));
   }
-  const matched = await matchRegexValues({ operation, pattern: query.pattern,
-    caseSensitive: query.case_sensitive ?? false, values: entries.map(value), deadline, heapRequest, signal });
+  const matched = await matchRegexValues({
+    operation,
+    pattern: query.pattern,
+    caseSensitive: query.case_sensitive ?? false,
+    values: entries.map(value),
+    deadline,
+    heapRequest,
+    signal,
+  });
   if (!matched.ok) throw matched.error;
   const indices = new Set(matched.value);
   return entries.filter((_entry, index) => indices.has(index));
 };
 
-const coverage = (kind: string, retained: number, total: number): readonly string[] =>
-  retained < total ? [`Leandec returned ${retained} of ${total} ${kind}; results are incomplete.`] : [];
+const coverage = (
+  kind: string,
+  retained: number,
+  total: number,
+): readonly string[] =>
+  retained < total
+    ? [
+        `Leandec returned ${retained} of ${total} ${kind}; results are incomplete.`,
+      ]
+    : [];
 
 const text = (value: JsonValue | undefined): string | undefined =>
   typeof value === "string" ? value : undefined;
@@ -182,6 +229,11 @@ export class LeandecSessionClient implements AnalysisClient {
   readonly #stagingRoots = new Set<PrivateRuntimeRoot>();
   readonly #progress = new Map<symbol, ProgressReporter>();
   #cleanupFailure: ProviderCleanupError | undefined;
+  #cleanupReleased = false;
+
+  get cleanupReleased(): boolean {
+    return this.#cleanupReleased;
+  }
 
   constructor(
     target: BinaryTarget,
@@ -212,9 +264,7 @@ export class LeandecSessionClient implements AnalysisClient {
         this.#unavailable(operation, "This Leandec session is already closed."),
       );
     if (options.signal?.aborted === true)
-      return err(
-        cancelledBy(operation, options.signal),
-      );
+      return err(cancelledBy(operation, options.signal));
     if (operation !== "health" && !isLeandecOperation(operation))
       return err(
         this.#unavailable(
@@ -237,7 +287,14 @@ export class LeandecSessionClient implements AnalysisClient {
           limitations:
             operation === "health"
               ? answer.limitations
-              : [...leandecLimitations(operation, this.regexDeadline, this.regexHeap), ...answer.limitations],
+              : [
+                  ...leandecLimitations(
+                    operation,
+                    this.regexDeadline,
+                    this.regexHeap,
+                  ),
+                  ...answer.limitations,
+                ],
           ...(this.#profile === undefined
             ? {}
             : { analysisProfile: this.#profile }),
@@ -248,7 +305,12 @@ export class LeandecSessionClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
-      return err(classifyProviderFailure(cause, this.#failureDialect(operation, options)));
+      return err(
+        classifyProviderFailure(
+          cause,
+          this.#failureDialect(operation, options),
+        ),
+      );
     }
   }
 
@@ -268,10 +330,15 @@ export class LeandecSessionClient implements AnalysisClient {
       }
       await this.#runtime?.close();
       this.#runtime = undefined;
-      this.#cleanupFailure?.markCleanupIncomplete(false);
+      this.#cleanupReleased = true;
       return ok(null);
     } catch (cause: unknown) {
-      this.#cleanupFailure ??= new ProviderCleanupError("leandec", ["Leandec MCP process and owned input resources"], { reason: cause instanceof Error ? cause.message : String(cause) }, { cause });
+      this.#cleanupFailure ??= new ProviderCleanupError(
+        "leandec",
+        ["Leandec MCP process and owned input resources"],
+        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { cause },
+      ).bindCleanupReleaseClaim(this);
       return err(this.#cleanupFailure);
     }
   }
@@ -384,10 +451,26 @@ export class LeandecSessionClient implements AnalysisClient {
       options,
     );
     return {
-      result: (await filterEntries(inventory.entries, entry => entry.qualified, query, operation, this.regexDeadline, this.regexHeap, options.signal))
-        .map((entry) => ({ address: publicAddress(entry.address), value: entry.qualified })),
+      result: (
+        await filterEntries(
+          inventory.entries,
+          (entry) => entry.qualified,
+          query,
+          operation,
+          this.regexDeadline,
+          this.regexHeap,
+          options.signal,
+        )
+      ).map((entry) => ({
+        address: publicAddress(entry.address),
+        value: entry.qualified,
+      })),
       locations: [],
-      limitations: coverage("functions", inventory.entries.length, inventory.total),
+      limitations: coverage(
+        "functions",
+        inventory.entries.length,
+        inventory.total,
+      ),
     };
   }
 
@@ -396,15 +479,23 @@ export class LeandecSessionClient implements AnalysisClient {
     options: ExecutionOptions,
   ): Promise<Answer> {
     const strings = await this.#stringsOf(options);
-    const wanted = parameters.address === undefined ? undefined : canonicalAddress(parameters.address);
+    const wanted =
+      parameters.address === undefined
+        ? undefined
+        : canonicalAddress(parameters.address);
     if (parameters.address !== undefined && wanted === undefined)
-      throw new AnalysisInputError("list_strings", { userMessage: "Invalid string address." });
+      throw new AnalysisInputError("list_strings", {
+        userMessage: "Invalid string address.",
+      });
     const selected =
       wanted === undefined
         ? strings.items
         : strings.items.filter((entry) => entry.address === wanted);
     return {
-      result: selected.map(({ address, value }) => ({ address: publicAddress(address), value })),
+      result: selected.map(({ address, value }) => ({
+        address: publicAddress(address),
+        value,
+      })),
       locations: [],
       limitations:
         strings.total > strings.items.length
@@ -423,8 +514,20 @@ export class LeandecSessionClient implements AnalysisClient {
     const query = this.#searchQuery(operation, parameters);
     const strings = await this.#stringsOf(options);
     return {
-      result: (await filterEntries(strings.items, entry => entry.value, query, operation, this.regexDeadline, this.regexHeap, options.signal))
-        .map(({ address, value }) => ({ address: publicAddress(address), value })),
+      result: (
+        await filterEntries(
+          strings.items,
+          (entry) => entry.value,
+          query,
+          operation,
+          this.regexDeadline,
+          this.regexHeap,
+          options.signal,
+        )
+      ).map(({ address, value }) => ({
+        address: publicAddress(address),
+        value,
+      })),
       locations: [],
       limitations: coverage("strings", strings.items.length, strings.total),
     };
@@ -452,27 +555,43 @@ export class LeandecSessionClient implements AnalysisClient {
       canonicalAddress(parameters.address) ??
       (await this.#resolve("address_name", parameters.address, options))
         .address;
-    const functions = record(await this.#call("sql", {
-      target: key,
-      query: "SELECT name FROM functions WHERE kind != 'external' AND " + addressPredicate(address),
-      limit: 2,
-    }, options));
+    const functions = record(
+      await this.#call(
+        "sql",
+        {
+          target: key,
+          query:
+            "SELECT name FROM functions WHERE kind != 'external' AND " +
+            addressPredicate(address),
+          limit: 2,
+        },
+        options,
+      ),
+    );
     const matches = list(functions.rows);
     if (matches.length > 1) invalidReply("multiple names for the same address");
     if (matches[0] !== undefined)
-      return { result: requiredText(list(matches[0])[0]), locations: [{ kind: "address", address: publicAddress(address) }], limitations: [] };
+      return {
+        result: requiredText(list(matches[0])[0]),
+        locations: [{ kind: "address", address: publicAddress(address) }],
+        limitations: [],
+      };
     const labels = record(
       await this.#call(
         "sql",
         {
           target: key,
-          query: "SELECT name FROM labels WHERE " + addressPredicate(address) + " AND name != '' LIMIT 1",
+          query:
+            "SELECT name FROM labels WHERE " +
+            addressPredicate(address) +
+            " AND name != '' LIMIT 1",
         },
         options,
       ),
     );
     const labelRows = list(labels.rows);
-    const label = labelRows.length === 0 ? undefined : requiredText(list(labelRows[0])[0]);
+    const label =
+      labelRows.length === 0 ? undefined : requiredText(list(labelRows[0])[0]);
     return {
       result: label ?? null,
       locations: [{ kind: "address", address: publicAddress(address) }],
@@ -542,8 +661,9 @@ export class LeandecSessionClient implements AnalysisClient {
     );
     const field = operation === "procedure_callers" ? "callers" : "callees";
     return {
-      result: list(payload[field])
-        .map((item) => publicAddress(record(item).address)),
+      result: list(payload[field]).map((item) =>
+        publicAddress(record(item).address),
+      ),
       locations: [{ kind: "address", address: publicAddress(entry.address) }],
       limitations:
         payload.cached === true
@@ -584,8 +704,9 @@ export class LeandecSessionClient implements AnalysisClient {
     }
     const sources = [
       ...new Set(
-        list(references.references)
-          .map((item) => publicAddress(record(item).src)),
+        list(references.references).map((item) =>
+          publicAddress(record(item).src),
+        ),
       ),
     ];
     return {
@@ -623,7 +744,11 @@ export class LeandecSessionClient implements AnalysisClient {
       await this.#call("read_bytes", { target: key, address, length }, options),
     );
     const bytes = hexFromDump(requiredText(payload.dump));
-    if (bytes.length / 2 !== requiredCount(payload.length) || bytes.length / 2 > length || canonicalAddress(payload.address) !== address)
+    if (
+      bytes.length / 2 !== requiredCount(payload.length) ||
+      bytes.length / 2 > length ||
+      canonicalAddress(payload.address) !== address
+    )
       invalidReply("inconsistent byte dump");
     return {
       result: {
@@ -655,46 +780,99 @@ export class LeandecSessionClient implements AnalysisClient {
   ): Promise<InventoryEntry> {
     const key = await this.#ensureSession(options);
     if (typeof raw !== "string" || raw.trim().length === 0)
-      throw new AnalysisInputError(operation, { userMessage: "procedure is required." });
+      throw new AnalysisInputError(operation, {
+        userMessage: "procedure is required.",
+      });
     const wanted = raw.trim();
     // Exact names take precedence over unprefixed hexadecimal addresses.
     if (!/^0x[0-9a-f]+$/iu.test(wanted)) {
       const literal = wanted.replaceAll("'", "''");
-      const reply = record(await this.#call("sql", {
-        target: key, limit: 2,
-        query: "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND (name = '" +
-          literal + "' OR (CASE WHEN COALESCE(ns, '') = '' THEN name ELSE ns || '::' || name END) = '" + literal + "')",
-      }, options));
+      const reply = record(
+        await this.#call(
+          "sql",
+          {
+            target: key,
+            limit: 2,
+            query:
+              "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND (name = '" +
+              literal +
+              "' OR (CASE WHEN COALESCE(ns, '') = '' THEN name ELSE ns || '::' || name END) = '" +
+              literal +
+              "')",
+          },
+          options,
+        ),
+      );
       const matches = list(reply.rows).map(inventoryEntry);
       if (matches.length > 1)
-        throw new AnalysisInputError(operation, { userMessage: `${wanted} is ambiguous; select a procedure by address.` });
+        throw new AnalysisInputError(operation, {
+          userMessage: `${wanted} is ambiguous; select a procedure by address.`,
+        });
       if (matches[0] !== undefined) return matches[0];
     }
     const address = canonicalAddress(wanted);
     if (address === undefined)
-      throw new AnalysisInputError(operation, { userMessage: `No exact procedure named ${wanted}.` });
-    const direct = record(await this.#call("sql", { target: key, limit: 2,
-      query: "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND " + addressPredicate(address),
-    }, options));
+      throw new AnalysisInputError(operation, {
+        userMessage: `No exact procedure named ${wanted}.`,
+      });
+    const direct = record(
+      await this.#call(
+        "sql",
+        {
+          target: key,
+          limit: 2,
+          query:
+            "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND " +
+            addressPredicate(address),
+        },
+        options,
+      ),
+    );
     const rows = list(direct.rows);
     if (rows.length > 1) invalidReply("multiple entries for the same address");
     if (rows[0] !== undefined) return inventoryEntry(rows[0]);
-    const resolved = record(await this.#call("resolve", { target: key, selector: "0x" + address }, options));
+    const resolved = record(
+      await this.#call(
+        "resolve",
+        { target: key, selector: "0x" + address },
+        options,
+      ),
+    );
     const entryAddress = requiredText(resolved.address);
-    const canonicalEntry = canonicalAddress(entryAddress) ?? invalidReply("invalid resolved address");
-    if (canonicalEntry !== address && canonicalAddress(resolved.inside_address) !== address)
+    const canonicalEntry =
+      canonicalAddress(entryAddress) ??
+      invalidReply("invalid resolved address");
+    if (
+      canonicalEntry !== address &&
+      canonicalAddress(resolved.inside_address) !== address
+    )
       throw new AnalysisInputError(operation, { userMessage: INTERIOR_ONLY });
     const name = requiredText(resolved.name);
-    return { address: entryAddress, name, qualified: name, size: requiredCount(resolved.size) };
+    return {
+      address: entryAddress,
+      name,
+      qualified: name,
+      size: requiredCount(resolved.size),
+    };
   }
 
   async #ensureSession(options: ExecutionOptions): Promise<string> {
     const token = Symbol("leandec waiter");
-    if (options.progress !== undefined) this.#progress.set(token, options.progress);
+    if (options.progress !== undefined)
+      this.#progress.set(token, options.progress);
     try {
-      this.#session ??= this.#open({ signal: this.#owner.signal, progress: { report: async update => {
-        await Promise.allSettled([...this.#progress.values()].map(reporter => reporter.report(update)));
-      } } }).catch((cause: unknown) => {
+      this.#session ??= this.#open({
+        signal: this.#owner.signal,
+        progress: {
+          report: async (update) => {
+            await Promise.allSettled(
+              [...this.#progress.values()].map((reporter) =>
+                reporter.report(update),
+              ),
+            );
+          },
+        },
+      }).catch((cause: unknown) => {
         this.#session = undefined;
         throw cause;
       });
@@ -712,56 +890,102 @@ export class LeandecSessionClient implements AnalysisClient {
     const cached = await this.#findByDigest(input.digest, options);
     if (cached !== undefined) return cached;
     if (!this.#settings.autoAnalyze)
-      throw this.#unavailable("open_binary", "No matching Leandec target is cached. Import the verified target or enable LEANDEC_AUTO_ANALYZE.");
-    const durablePath = await this.#persistInput(input.path, input.digest, options);
+      throw this.#unavailable(
+        "open_binary",
+        "No matching Leandec target is cached. Import the verified target or enable LEANDEC_AUTO_ANALYZE.",
+      );
+    const durablePath = await this.#persistInput(
+      input.path,
+      input.digest,
+      options,
+    );
     await this.#importTarget(durablePath, options);
     const imported = await this.#findByDigest(input.digest, options);
     if (imported === undefined)
-      throw new AnalysisOutputError("open_binary", "Leandec import did not produce the verified slice");
+      throw new AnalysisOutputError(
+        "open_binary",
+        "Leandec import did not produce the verified slice",
+      );
     return imported;
   }
 
-  async #verifiedInput(options: ExecutionOptions): Promise<{ path: string; digest: string }> {
-    this.#runtime ??= await PrivateRuntimeRoot.create({ prefix: "rea-leandec-" });
+  async #verifiedInput(
+    options: ExecutionOptions,
+  ): Promise<{ path: string; digest: string }> {
+    this.#runtime ??= await PrivateRuntimeRoot.create({
+      prefix: "rea-leandec-",
+    });
     const path = join(this.#runtime.path, "input");
     const owner = new OwnedFileHandle(await open(path, "w", 0o600));
     const source = createHash("sha256");
     const selected = createHash("sha256");
-    const slice = this.#target.format === "mach-o-universal" ? this.#target.universalSlice : undefined;
+    const slice =
+      this.#target.format === "mach-o-universal"
+        ? this.#target.universalSlice
+        : undefined;
     let offset = 0;
     let copied = 0;
-    await withOwnedFileHandle(path, owner, {
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      retainFailedClose: failed => { this.#failedHandles.add(failed); },
-    }, async file => {
-      for await (const chunk of createReadStream(this.#target.path, { highWaterMark: 64 * 1024, signal: options.signal })) {
-        options.signal?.throwIfAborted();
-        const bytes = Buffer.from(chunk);
-        source.update(bytes);
-        const start = slice === undefined ? offset : Math.max(offset, slice.offset);
-        const end = slice === undefined ? offset + bytes.length : Math.min(offset + bytes.length, slice.offset + slice.size);
-        if (end > start) {
-          const admitted = bytes.subarray(start - offset, end - offset);
-          selected.update(admitted);
-          let written = 0;
-          while (written < admitted.length) {
-            const result = await file.write(admitted, written, admitted.length - written);
-            if (result.bytesWritten === 0) throw new Error("Leandec private input write stalled");
-            written += result.bytesWritten;
+    await withOwnedFileHandle(
+      path,
+      owner,
+      {
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        retainFailedClose: (failed) => {
+          this.#failedHandles.add(failed);
+        },
+      },
+      async (file) => {
+        for await (const chunk of createReadStream(this.#target.path, {
+          highWaterMark: 64 * 1024,
+          signal: options.signal,
+        })) {
+          options.signal?.throwIfAborted();
+          const bytes = Buffer.from(chunk);
+          source.update(bytes);
+          const start =
+            slice === undefined ? offset : Math.max(offset, slice.offset);
+          const end =
+            slice === undefined
+              ? offset + bytes.length
+              : Math.min(offset + bytes.length, slice.offset + slice.size);
+          if (end > start) {
+            const admitted = bytes.subarray(start - offset, end - offset);
+            selected.update(admitted);
+            let written = 0;
+            while (written < admitted.length) {
+              const result = await file.write(
+                admitted,
+                written,
+                admitted.length - written,
+              );
+              if (result.bytesWritten === 0)
+                throw new Error("Leandec private input write stalled");
+              written += result.bytesWritten;
+            }
+            copied += admitted.length;
           }
-          copied += admitted.length;
+          offset += bytes.length;
         }
-        offset += bytes.length;
-      }
-    });
-    if (source.digest("hex") !== this.#target.sha256 || copied === 0 || (slice !== undefined && copied !== slice.size))
-      throw new AnalysisInputError("open_binary", { userMessage: "Target bytes changed or the selected slice is incomplete; reopen the target." });
+      },
+    );
+    if (
+      source.digest("hex") !== this.#target.sha256 ||
+      copied === 0 ||
+      (slice !== undefined && copied !== slice.size)
+    )
+      throw new AnalysisInputError("open_binary", {
+        userMessage:
+          "Target bytes changed or the selected slice is incomplete; reopen the target.",
+      });
     return { path, digest: selected.digest("hex") };
   }
 
   async #hashInput(path: string, options: ExecutionOptions): Promise<string> {
     const hash = createHash("sha256");
-    for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024, signal: options.signal })) {
+    for await (const chunk of createReadStream(path, {
+      highWaterMark: 64 * 1024,
+      signal: options.signal,
+    })) {
       options.signal?.throwIfAborted();
       hash.update(chunk);
     }
@@ -770,33 +994,64 @@ export class LeandecSessionClient implements AnalysisClient {
 
   // Leandec retains its imported slice path for subsequent byte reads.
   // Publish a verified content-addressed file in its explicitly selected cache.
-  async #persistInput(path: string, digest: string, options: ExecutionOptions): Promise<string> {
+  async #persistInput(
+    path: string,
+    digest: string,
+    options: ExecutionOptions,
+  ): Promise<string> {
     const environment = this.#settings.environment;
-    const state = resolve(this.#settings.cwd, environment.LEANDEC_HOME ??
-      join(environment.HOME ?? homedir(), "Library", "Caches", "leandec"));
+    const state = resolve(
+      this.#settings.cwd,
+      environment.LEANDEC_HOME ??
+        join(environment.HOME ?? homedir(), "Library", "Caches", "leandec"),
+    );
     const directory = join(state, "rea-inputs");
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const metadata = await lstat(directory);
-    if (!metadata.isDirectory() || (metadata.mode & 0o077) !== 0 ||
-      (process.getuid !== undefined && metadata.uid !== process.getuid()))
-      throw new AnalysisOutputError("open_binary", "Leandec input cache is not a private owner-controlled directory");
+    if (
+      !metadata.isDirectory() ||
+      (metadata.mode & 0o077) !== 0 ||
+      (process.getuid !== undefined && metadata.uid !== process.getuid())
+    )
+      throw new AnalysisOutputError(
+        "open_binary",
+        "Leandec input cache is not a private owner-controlled directory",
+      );
     const destination = join(directory, digest);
-    const staging = await PrivateRuntimeRoot.create({ parent: directory, prefix: "rea-stage-" });
+    const staging = await PrivateRuntimeRoot.create({
+      parent: directory,
+      prefix: "rea-stage-",
+    });
     this.#stagingRoots.add(staging);
     try {
       const temporary = join(staging.path, "input");
       await copyFile(path, temporary);
-      if (await this.#hashInput(temporary, options) !== digest)
-        throw new AnalysisOutputError("open_binary", "Leandec staged input digest differs");
-      try { await link(temporary, destination); }
-      catch (cause: unknown) {
-        if (!(cause instanceof Error) || !("code" in cause) || cause.code !== "EEXIST") throw cause;
+      if ((await this.#hashInput(temporary, options)) !== digest)
+        throw new AnalysisOutputError(
+          "open_binary",
+          "Leandec staged input digest differs",
+        );
+      try {
+        await link(temporary, destination);
+      } catch (cause: unknown) {
+        if (
+          !(cause instanceof Error) ||
+          !("code" in cause) ||
+          cause.code !== "EEXIST"
+        )
+          throw cause;
       }
       const stored = await lstat(destination);
-      if (!stored.isFile() || (stored.mode & 0o077) !== 0 ||
+      if (
+        !stored.isFile() ||
+        (stored.mode & 0o077) !== 0 ||
         (process.getuid !== undefined && stored.uid !== process.getuid()) ||
-        await this.#hashInput(destination, options) !== digest)
-        throw new AnalysisOutputError("open_binary", "Leandec durable input does not match verified bytes");
+        (await this.#hashInput(destination, options)) !== digest
+      )
+        throw new AnalysisOutputError(
+          "open_binary",
+          "Leandec durable input does not match verified bytes",
+        );
       return destination;
     } finally {
       await staging.close();
@@ -810,19 +1065,42 @@ export class LeandecSessionClient implements AnalysisClient {
     return normalize(value) === this.#target.architecture;
   }
 
-  async #findByDigest(digest: string, options: ExecutionOptions): Promise<string | undefined> {
+  async #findByDigest(
+    digest: string,
+    options: ExecutionOptions,
+  ): Promise<string | undefined> {
     const response = await this.#call("targets", {}, options);
-    const targets = typeof response === "string" && response.startsWith("no targets yet:") ? [] : list(response);
-    const match = targets.map(record).find(item => item.slice_sha256 === digest && this.#architectureMatches(item.arch));
+    const targets =
+      typeof response === "string" && response.startsWith("no targets yet:")
+        ? []
+        : list(response);
+    const match = targets
+      .map(record)
+      .find(
+        (item) =>
+          item.slice_sha256 === digest && this.#architectureMatches(item.arch),
+      );
     if (match === undefined) return undefined;
     const key = requiredText(match.key);
-    const overview = record(await this.#call("overview", { target: key }, options));
-    if (overview.key !== key || overview.slice_sha256 !== digest || !this.#architectureMatches(overview.arch))
-      throw new AnalysisOutputError("open_binary", "Leandec cache identity does not match the selected bytes and architecture");
+    const overview = record(
+      await this.#call("overview", { target: key }, options),
+    );
+    if (
+      overview.key !== key ||
+      overview.slice_sha256 !== digest ||
+      !this.#architectureMatches(overview.arch)
+    )
+      throw new AnalysisOutputError(
+        "open_binary",
+        "Leandec cache identity does not match the selected bytes and architecture",
+      );
     requiredCount(overview.functions);
     const slice = requiredText(overview.slice);
-    if (await this.#hashInput(slice, options) !== digest)
-      throw new AnalysisOutputError("open_binary", "Leandec cached slice bytes do not match the verified digest");
+    if ((await this.#hashInput(slice, options)) !== digest)
+      throw new AnalysisOutputError(
+        "open_binary",
+        "Leandec cached slice bytes do not match the verified digest",
+      );
     return key;
   }
 
@@ -883,7 +1161,9 @@ export class LeandecSessionClient implements AnalysisClient {
     key: string,
     options: ExecutionOptions,
   ): Promise<Inventory> {
-    this.#inventory ??= this.#loadInventory(key, { signal: this.#owner.signal }).catch((cause: unknown) => {
+    this.#inventory ??= this.#loadInventory(key, {
+      signal: this.#owner.signal,
+    }).catch((cause: unknown) => {
       this.#inventory = undefined;
       throw cause;
     });
@@ -908,22 +1188,32 @@ export class LeandecSessionClient implements AnalysisClient {
       ),
     );
     const entries = list(payload.rows).map(inventoryEntry);
-    const count = record(await this.#call("sql", {
-      target: key, limit: 1,
-      query: "SELECT COUNT(*) FROM functions WHERE kind != 'external'",
-    }, options));
+    const count = record(
+      await this.#call(
+        "sql",
+        {
+          target: key,
+          limit: 1,
+          query: "SELECT COUNT(*) FROM functions WHERE kind != 'external'",
+        },
+        options,
+      ),
+    );
     const total = requiredCount(list(list(count.rows)[0])[0]);
-    if (total < entries.length) invalidReply("function count is smaller than returned inventory");
+    if (total < entries.length)
+      invalidReply("function count is smaller than returned inventory");
     return { entries, total };
   }
 
   async #stringsOf(
     options: ExecutionOptions,
   ): Promise<{ items: readonly StringEntry[]; total: number }> {
-    this.#strings ??= this.#loadStrings({ signal: this.#owner.signal }).catch((cause: unknown) => {
-      this.#strings = undefined;
-      throw cause;
-    });
+    this.#strings ??= this.#loadStrings({ signal: this.#owner.signal }).catch(
+      (cause: unknown) => {
+        this.#strings = undefined;
+        throw cause;
+      },
+    );
     return waitShared(this.#strings, options.signal);
   }
 
@@ -940,11 +1230,14 @@ export class LeandecSessionClient implements AnalysisClient {
     );
     const items = list(payload.items).map((item) => {
       const value = record(item);
-      const address = canonicalAddress(requiredText(value.address)) ?? invalidReply("invalid string address");
+      const address =
+        canonicalAddress(requiredText(value.address)) ??
+        invalidReply("invalid string address");
       return { address, value: requiredText(value.value) };
     });
     const total = requiredCount(payload.total_strings);
-    if (total < items.length) invalidReply("string count is smaller than returned inventory");
+    if (total < items.length)
+      invalidReply("string count is smaller than returned inventory");
     return { items, total };
   }
 
@@ -960,28 +1253,55 @@ export class LeandecSessionClient implements AnalysisClient {
     });
   }
 
-  #failureDialect(operation: string, options: ExecutionOptions): ProviderFailureDialect {
+  #failureDialect(
+    operation: string,
+    options: ExecutionOptions,
+  ): ProviderFailureDialect {
     return {
       providerId: "leandec",
       operation,
       file: { path: this.#target.path, description: "selected binary" },
       recognise: (cause, details) => {
-        if (cause instanceof LeandecCallCancelled)
+        if (cause instanceof LeandecCallCancelled) {
+          const { cause: _cause, ...cancellationDetails } = details;
           return cause.reason === "timeout"
-            ? new AnalysisTimeoutError(operation, this.#settings.defaultTimeoutMs, { ...details, userMessage: cause.message })
-            : cancelledBy(operation, options.signal ?? carriedReason(cause), details);
+            ? new AnalysisTimeoutError(
+                operation,
+                this.#settings.defaultTimeoutMs,
+                { ...details, userMessage: cause.message },
+              )
+            : cancelledBy(
+                operation,
+                options.signal ?? carriedReason(cause),
+                cancellationDetails,
+              );
+        }
         if (cause instanceof LeandecToolError)
-          return /no function|no procedure|required|hexadecimal|invalid|unknown target|not a procedure/iu.test(cause.message)
-            ? new AnalysisInputError(operation, { ...details, userMessage: cause.message })
-            : new ProviderAdapterError("leandec", operation, { ...details, userMessage: cause.message });
+          return /no function|no procedure|required|hexadecimal|invalid|unknown target|not a procedure/iu.test(
+            cause.message,
+          )
+            ? new AnalysisInputError(operation, {
+                ...details,
+                userMessage: cause.message,
+              })
+            : new ProviderAdapterError("leandec", operation, {
+                ...details,
+                userMessage: cause.message,
+              });
         if (cause instanceof LeandecRpcError)
           return new ProviderAdapterError("leandec", operation, {
-            ...details, userMessage: cause.message,
-            capturedOutput: { stdout: "", stderr: cause.capturedOutput, truncated: false },
+            ...details,
+            userMessage: cause.message,
+            capturedOutput: {
+              stdout: "",
+              stderr: cause.capturedOutput,
+              truncated: false,
+            },
           });
         return undefined;
       },
-      unclassified: (_cause, details) => new ProviderAdapterError("leandec", operation, details),
+      unclassified: (_cause, details) =>
+        new ProviderAdapterError("leandec", operation, details),
     };
   }
 

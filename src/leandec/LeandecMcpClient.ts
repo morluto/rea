@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
-import { spawnOwnedProviderProcess, ProviderProcessSupervisor, type ProviderProcessHandle } from "../process/ProviderProcess.js";
+import {
+  spawnOwnedProviderProcess,
+  ProviderProcessSupervisor,
+  type ProviderProcessHandle,
+} from "../process/ProviderProcess.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -94,7 +98,11 @@ export class LeandecMcpClient {
       expectedCommand: null,
       cwd: this.#options.cwd,
       hostEnvironment: {},
-      env: { ...this.#options.environment, LEANDEC_GUI_AUTO: "0", LEANDEC_GUI_FOLLOW: "0" },
+      env: {
+        ...this.#options.environment,
+        LEANDEC_GUI_AUTO: "0",
+        LEANDEC_GUI_FOLLOW: "0",
+      },
       stdin: "pipe",
       sweepTokenOwnedProcesses: true,
       signal: this.#owner.signal,
@@ -102,32 +110,52 @@ export class LeandecMcpClient {
     this.#child = launch.process;
     this.#supervisor = new ProviderProcessSupervisor(
       { ...launch, ownsProcessLifetime: true },
-      { captureStdout: false, maxDiagnosticBytes: STDERR_LIMIT,
-        onDiagnostic: event => {
-          if (event.type === "error") this.#transportFailure("spawn", event.message);
-        } },
+      {
+        captureStdout: false,
+        maxDiagnosticBytes: STDERR_LIMIT,
+        onDiagnostic: (event) => {
+          if (event.type === "error")
+            this.#transportFailure("spawn", event.message);
+        },
+      },
     );
     const child = launch.process;
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => this.#onStdout(chunk));
-    child.stdout?.on("error", (cause: Error) => this.#transportFailure("frame", cause.message));
-    child.stdin?.on("error", (cause: Error) => this.#transportFailure("rpc", cause.message));
+    child.stdout?.on("error", (cause: Error) =>
+      this.#transportFailure("frame", cause.message),
+    );
+    child.stdin?.on("error", (cause: Error) =>
+      this.#transportFailure("rpc", cause.message),
+    );
     child.stderr?.on("data", (chunk: string) => {
       this.#stderr = (this.#stderr + chunk).slice(-STDERR_LIMIT);
     });
     child.on("exit", (code: number | null, signal: string | null) => {
       this.#exit = { code, signal };
-      this.#transportFailure("exit", `Leandec MCP server stopped (${signal ?? String(code)})`);
+      this.#transportFailure(
+        "exit",
+        `Leandec MCP server stopped (${signal ?? String(code)})`,
+      );
     });
     if (child.stdin == null || child.stdout == null)
-      this.#transportFailure("spawn", "Leandec MCP protocol streams are unavailable");
+      this.#transportFailure(
+        "spawn",
+        "Leandec MCP protocol streams are unavailable",
+      );
     if (this.#supervisor.observedExit() !== undefined)
-      this.#transportFailure("exit", "Leandec MCP server stopped during startup");
+      this.#transportFailure(
+        "exit",
+        "Leandec MCP server stopped during startup",
+      );
     if (this.#fatal !== undefined) throw this.#fatal;
   }
 
-  #transportFailure(reason: "exit" | "frame" | "rpc" | "spawn", message: string): void {
+  #transportFailure(
+    reason: "exit" | "frame" | "rpc" | "spawn",
+    message: string,
+  ): void {
     this.#fatal ??= new LeandecRpcError(reason, message, this.#stderr);
     this.#failAll(this.#fatal);
   }
@@ -138,11 +166,18 @@ export class LeandecMcpClient {
 
   /** Perform the MCP handshake once; repeated callers share the same attempt. */
   async initialize(signal?: AbortSignal): Promise<void> {
-    if (this.#closed) throw new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr);
-    if (signal?.aborted) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+    if (this.#closed)
+      throw new LeandecRpcError(
+        "exit",
+        "Leandec MCP session closed",
+        this.#stderr,
+      );
+    if (signal?.aborted)
+      throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
     this.#handshake ??= this.#handshakeOnce();
     const result = await waitForAbortable(this.#handshake, signal);
-    if (result instanceof AbortedWait) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+    if (result instanceof AbortedWait)
+      throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
   }
 
   async #handshakeOnce(): Promise<void> {
@@ -163,8 +198,17 @@ export class LeandecMcpClient {
     );
     const reply = asRecord(result);
     const serverInfo = asRecord(reply?.serverInfo);
-    if (reply?.protocolVersion !== "2024-11-05" || asRecord(asRecord(reply.capabilities)?.tools) === undefined || typeof serverInfo?.name !== "string" || typeof serverInfo.version !== "string")
-      throw new LeandecRpcError("frame", "Incompatible Leandec MCP handshake", this.#stderr);
+    if (
+      reply?.protocolVersion !== "2024-11-05" ||
+      asRecord(asRecord(reply.capabilities)?.tools) === undefined ||
+      typeof serverInfo?.name !== "string" ||
+      typeof serverInfo.version !== "string"
+    )
+      throw new LeandecRpcError(
+        "frame",
+        "Incompatible Leandec MCP handshake",
+        this.#stderr,
+      );
     if (typeof serverInfo?.version === "string")
       this.#serverVersion = serverInfo.version;
     this.#write({ jsonrpc: "2.0", method: "notifications/initialized" });
@@ -190,8 +234,15 @@ export class LeandecMcpClient {
       },
     );
     const content = asRecord(result)?.content;
-    if (!Array.isArray(content) || typeof asRecord(content[0])?.text !== "string")
-      throw new LeandecRpcError("frame", `Malformed MCP reply for ${tool}`, this.#stderr);
+    if (
+      !Array.isArray(content) ||
+      typeof asRecord(content[0])?.text !== "string"
+    )
+      throw new LeandecRpcError(
+        "frame",
+        `Malformed MCP reply for ${tool}`,
+        this.#stderr,
+      );
     const text = asRecord(content[0])?.text as string;
     if (asRecord(result)?.isError === true)
       throw new LeandecToolError(tool, text || `${tool} failed`);
@@ -208,7 +259,9 @@ export class LeandecMcpClient {
   close(): Promise<void> {
     this.#closed = true;
     this.#owner.abort();
-    this.#failAll(new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr));
+    this.#failAll(
+      new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr),
+    );
     this.#closing ??= this.#closeOwned().catch((cause: unknown) => {
       this.#closing = undefined;
       throw cause;
@@ -226,8 +279,11 @@ export class LeandecMcpClient {
 
   #cancel(id: number, method: string, reason: string): void {
     if (method === "tools/call" && this.#pending.has(id))
-      this.#write({ jsonrpc: "2.0", method: "notifications/cancelled",
-        params: { requestId: id, reason } });
+      this.#write({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: { requestId: id, reason },
+      });
   }
 
   #request(
@@ -304,7 +360,10 @@ export class LeandecMcpClient {
         if (cause != null) this.#transportFailure("rpc", cause.message);
       });
     } catch (cause: unknown) {
-      this.#transportFailure("rpc", cause instanceof Error ? cause.message : String(cause));
+      this.#transportFailure(
+        "rpc",
+        cause instanceof Error ? cause.message : String(cause),
+      );
     }
   }
 

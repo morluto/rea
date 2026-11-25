@@ -90,7 +90,12 @@ const composeDeepBinarySession = (
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
-  const leandec = new LeandecProvider(environment, platform, config.regexMatchingDeadline, config.regexWorkerHeapRequest);
+  const leandec = new LeandecProvider(
+    environment,
+    platform,
+    config.regexMatchingDeadline,
+    config.regexWorkerHeapRequest,
+  );
   const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
     environment,
     platform,

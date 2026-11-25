@@ -28,7 +28,10 @@ import {
   inspectKunaProvider,
   kunaSettingAffectsProbe,
 } from "./kuna/KunaDoctor.js";
-import { inspectLeandecProvider, LEANDEC_DOCTOR_SETTINGS } from "./leandec/LeandecDoctor.js";
+import {
+  inspectLeandecProvider,
+  LEANDEC_DOCTOR_SETTINGS,
+} from "./leandec/LeandecDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -660,9 +663,17 @@ export const createSystemDoctorHost = (
         inspectionEnvironment,
         platform,
       );
-      const leandecUnresolved = unresolvedProvider("leandec", unresolved, inspectionEnvironment, platform);
+      const leandecUnresolved = unresolvedProvider(
+        "leandec",
+        unresolved,
+        inspectionEnvironment,
+        platform,
+      );
       const inspections = await settleConcurrent([
-        Promise.resolve(leandecUnresolved ?? inspectLeandecProvider(inspectionEnvironment, platform)),
+        Promise.resolve(
+          leandecUnresolved ??
+            inspectLeandecProvider(inspectionEnvironment, platform),
+        ),
         ghidraUnresolved !== undefined
           ? Promise.resolve(ghidraUnresolved)
           : withProbeResourceScope(
