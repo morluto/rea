@@ -15,10 +15,7 @@ import {
 } from "../fixtures/binaryDiagnostics/layout.js";
 import { PeResourcesService } from "../../src/application/binaryDiagnostics/PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../src/domain/investigationProviders.js";
-import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { parsePeResources } from "../../src/domain/pe/peResourceInventory.js";
-import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
-import { createHash } from "node:crypto";
+import { peResourceReportFixture } from "../fixtures/binaryDiagnostics/peResources.js";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
 import {
   recordedCrashFixture,
@@ -178,25 +175,13 @@ it("retains valid binary-layout Evidence while preserving malformed output prece
   });
 });
 
-const peReport = async () => {
-  const { bytes } = peResourceFixture();
-  return await parsePeResources(
-    bytes,
-    {
-      path: "/fixtures/example.exe",
-      bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    },
-    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
-  );
-};
 it("retains valid PE-resource Evidence and preserves malformed output precedence", async () => {
   const controller = new AbortController();
   const valid = await new PeResourcesService({
     identity: PE_RESOURCES_PROVIDER,
     inspect: () => {
       controller.abort();
-      return peReport().then(ok);
+      return peResourceReportFixture().then(ok);
     },
   }).inspect({ path: "/fixtures/example.exe" }, { signal: controller.signal });
   expect(valid).toMatchObject({
@@ -207,7 +192,7 @@ it("retains valid PE-resource Evidence and preserves malformed output precedence
     },
   });
   const invalidController = new AbortController();
-  const malformed = await peReport();
+  const malformed = await peResourceReportFixture();
   malformed.artifact.path = "/other.exe";
   const invalid = await new PeResourcesService({
     identity: PE_RESOURCES_PROVIDER,
