@@ -8,7 +8,7 @@ import {
   ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
 } from "../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
@@ -66,10 +66,7 @@ export const electronFuseFailure = (
     return cleanup;
   }
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   const cancellation = regularFileCancellation(cause);
   if (cancellation !== undefined)
     return cancelledBy(operation, carriedReason(cancellation.reason));

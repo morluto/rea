@@ -27,6 +27,8 @@ import {
   AnalysisTargetFailureError,
   cancelledBy,
   carriedReason,
+  type AnalysisCancelledError,
+  type CancelledOptions,
 } from "../domain/analysisErrorCore.js";
 
 /**
@@ -67,6 +69,18 @@ export const readerIntegrityFailure = (
         },
       );
 
+/** Carry the artifact reader's observed abort reason into the analysis error. */
+export const artifactFileCancellationError = (
+  operation: string,
+  failure: ArtifactReaderFailure,
+  options?: CancelledOptions,
+): AnalysisCancelledError =>
+  cancelledBy(
+    operation,
+    carriedReason(artifactFileCancellationCause(failure)),
+    options,
+  );
+
 /** Preserve ownership classification for stable-file identity and cancellation. */
 export const projectOwnedArtifactIdentityFailure = (
   facts: ArtifactFilePrimaryFacts,
@@ -82,10 +96,7 @@ export const projectOwnedArtifactIdentityFailure = (
   if (cause.reason === "integrity")
     return readerIntegrityFailure(operation, path, cause);
   if (cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   return undefined;
 };
 

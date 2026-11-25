@@ -2,7 +2,7 @@ import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   readerIntegrityFailure,
   ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
@@ -535,10 +535,7 @@ const appleDispatchMetadataPrimaryFailure = (
         cause,
       });
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"

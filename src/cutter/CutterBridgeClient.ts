@@ -11,7 +11,7 @@ import {
   withArtifactRegularFile,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   assertArtifactReadActive,
 } from "../resources/index.js";
 import { isUtf8 } from "node:buffer";
@@ -1334,9 +1334,6 @@ const discoveryFailure = (
     return analysisErrorWithCleanupDependencies(original, cleanup, operation);
   }
   if (cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   return cause;
 };

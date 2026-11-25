@@ -103,6 +103,7 @@ export {
   artifactFileCleanupError,
   projectArtifactCloseFailure,
   withArtifactCleanupFailure,
+  artifactFileCancellationError,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
