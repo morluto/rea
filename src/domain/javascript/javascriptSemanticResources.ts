@@ -1302,7 +1302,10 @@ const immutableAcquisition = (
   ownerCallableId: candidate.ownerCallableId,
   resultBindingId: candidate.resultBindingId,
   linkedResourceIds: [],
-  resolution: candidate.constructorUncertain === true ? "partial" : "complete",
+  resolution: knownCoverage(
+    candidate.constructorUncertain !== true,
+    "the constructor that produced this acquisition is not certain",
+  ),
 });
 
 interface AcquisitionReference {
