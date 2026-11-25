@@ -248,7 +248,7 @@ it.each(["unused compressed input", "wrong declared size"])(
           reason: "integrity",
           integrityCheck:
             fault === "unused compressed input"
-              ? "read-coverage"
+              ? "layout-consistency"
               : "declared-size",
         });
       },
@@ -1374,7 +1374,7 @@ for (const container of ["carchive", "outer-pyz", "inner-pyz"] as const) {
         };
         await expect(consume()).rejects.toMatchObject({
           reason: "integrity",
-          integrityCheck: "read-coverage",
+          integrityCheck: "layout-consistency",
         });
       });
     },
