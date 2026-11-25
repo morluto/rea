@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import { z } from "zod";
 import { keyedArchiveResultSchema } from "../../../dist/domain/apple/keyedArchive.js";
 
@@ -82,9 +82,7 @@ export async function verifyKeyedArchiveIntegerArchives(root) {
     }
 
     const archivePath = join(root, archive.filename);
-    const digest = createHash("sha256")
-      .update(await readFile(archivePath))
-      .digest("hex");
+    const digest = await sha256File(archivePath);
     assert.equal(digest, archive.sha256, `${format} archive digest`);
     archives.push({ format, archive, archivePath, digest });
   }
