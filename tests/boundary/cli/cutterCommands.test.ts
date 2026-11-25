@@ -1,3 +1,4 @@
+import { listenCutterServer } from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
 import { createHmac, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -15,15 +16,8 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
-const listen = async (
-  server: ReturnType<typeof createServer>,
-): Promise<number> => {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral TCP listener");
-  return address.port;
-};
+const listen = (server: ReturnType<typeof createServer>) =>
+  listenCutterServer(server, "Expected an ephemeral TCP listener");
 
 describe("Cutter CLI commands", () => {
   let directory: string | undefined;

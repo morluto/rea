@@ -96,9 +96,10 @@ describe.skipIf(process.platform !== "darwin")(
             exhaustive: false,
           },
           provenance: expect.arrayContaining([
+            // Xcode 26 dyld_info exits 1 after the diagnostic; Xcode 16 exits 0.
             expect.objectContaining({
               tool: "dyld_info",
-              exit: { code: 1, signal: null },
+              exit: { code: expect.toBeOneOf([0, 1]), signal: null },
             }),
           ]),
         });

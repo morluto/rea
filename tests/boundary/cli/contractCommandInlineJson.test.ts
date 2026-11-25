@@ -55,10 +55,7 @@ describe.each(["direct", "routed"])("%s inline JSON admission", (kind) => {
         );
       const registered = cliCommand(cli, "inline-probe")?.definition;
       if (registered === undefined) throw new Error("inline-probe is missing");
-      const parse = (value: unknown) =>
-        (
-          Reflect.get(registered, "options") as { parse(v: unknown): unknown }
-        ).parse(value);
+      const parse = (value: unknown) => registered.options!.parse(value);
       const run = Reflect.get(registered, "run") as (
         value: unknown,
       ) => Promise<unknown>;

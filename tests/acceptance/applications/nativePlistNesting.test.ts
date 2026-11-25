@@ -115,16 +115,17 @@ describe.skipIf(process.platform !== "darwin")(
           }
           if (native !== undefined && native.exitCode !== 0) {
             expect(output.exitCode, output.stderr).toBe(1);
+            // Native commands inspect a private snapshot, so their raw
+            // diagnostics can name a different operand. plutil writes them to
+            // stderr in Xcode 26 and to stdout in Xcode 16.
+            const operandNeutral = (output: string) =>
+              output.includes(path)
+                ? expect.stringContaining(output.replace(path, "").trim())
+                : output;
             const captured_output = {
               exit_code: native.exitCode,
-              stdout: native.stdout,
-              // Native commands inspect a private snapshot, so they can name
-              // a different operand in raw diagnostics.
-              stderr: native.stderr.includes(path)
-                ? expect.stringContaining(
-                    native.stderr.replace(path, "").trim(),
-                  )
-                : native.stderr,
+              stdout: operandNeutral(native.stdout),
+              stderr: operandNeutral(native.stderr),
             };
             // The CLI selects the plist as its target; MCP selects it with
             // the `path` input. Each failure names the input that chose it.

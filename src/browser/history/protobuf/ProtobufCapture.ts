@@ -1,3 +1,4 @@
+import { isRecord } from "../../../kernel/isRecord.js";
 import { unescapeJsonPointerToken } from "../../../domain/jsonPointer.js";
 import { captureBudgets } from "../CaptureBudgets.js";
 import { isAbsolute } from "node:path";
@@ -44,9 +45,7 @@ import { sha256Hex } from "../../../kernel/sha256Hex.js";
 const object = (
   value: JsonValue | undefined,
 ): Readonly<Record<string, JsonValue>> | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : undefined;
+  isRecord(value) ? value : undefined;
 
 /** Exclude the original encoded representation as well as its decoding sidecar. */
 const excludeBody = (

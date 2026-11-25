@@ -8,7 +8,7 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { readClientVersion } from "./verify/clients/version.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
@@ -418,18 +418,12 @@ await withVerifierCleanup(async () => {
   passed = true;
 }, [
   async () => {
-    const receipt = {
+    await publishReceipt({
       client,
       clientVersion,
       mode,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback deterministic OpenAI-compatible endpoint; no live provider claim",
       skillDiscovery:
@@ -446,7 +440,6 @@ await withVerifierCleanup(async () => {
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,
       verifier: await completeVerifierRun(verifier),
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

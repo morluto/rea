@@ -26,6 +26,7 @@ const FIXTURES = {
   "darwinConstant.test.ts": `const onDarwin = process.platform === "darwin";\nit.skipIf(!onDarwin)("runs", () => {});`,
   "darwinArm64.test.ts": `it.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("runs", () => {});`,
   "darwinCases.test.ts": `it.for(["portable", ...(process.platform === "darwin" ? ["plist"] : [])])("%s", () => {});`,
+  "notLinux.test.ts": `it.skipIf(process.platform === "linux")("runs", () => {});`,
   "ungated.test.ts": `it("runs everywhere", () => {});`,
   "linuxOnly.test.ts": `it.skipIf(process.platform !== "linux")("runs", () => {});`,
   "posixHosts.test.ts": `it.skipIf(!["darwin", "linux"].includes(process.platform))("runs", () => {});`,
@@ -41,6 +42,7 @@ const GATED = [
   "darwinConstant.test.ts",
   "darwinRun.test.ts",
   "darwinSkip.test.ts",
+  "notLinux.test.ts",
 ].map((name) => `${DIRECTORY}/${name}`);
 
 const fixtureRepository = async (files: Readonly<Record<string, string>>) => {

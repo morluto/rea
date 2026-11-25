@@ -14,10 +14,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
-import {
-  createGhidraVerifierMcpOperations,
-  resolveGhidraVerifierTimeouts,
-} from "./ghidra-verifier-timeouts.mjs";
+import { createGhidraVerifierMcpOperations } from "./ghidra-verifier-mcp.mjs";
+import { resolveGhidraVerifierTimeouts } from "./ghidra-verifier-timeouts.mjs";
 import {
   requireMcpOperationResult,
   requireMcpToolError,

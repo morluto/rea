@@ -103,6 +103,19 @@ export class ArtifactResourceRetryFailure extends ArtifactReaderFailure {
   }
 }
 
+/** One lifecycle owner for retained resources and abortable inspection work. */
+export interface RetainedResourceScope {
+  retain(
+    owner: {
+      close(): Promise<void>;
+      /** Complete labels authored by this exact owner; the display label is only a fallback. */
+      readonly cleanupResources?: readonly string[] | undefined;
+    },
+    resource: string,
+  ): void;
+  run<T>(operation: () => Promise<T>): Promise<T>;
+}
+
 /** Caller-owned scope that retains failed artifact cleanup for a later close. */
 export class ArtifactResourceScope {
   readonly #pending = new Set<ArtifactResourceOwner>();
@@ -135,6 +148,19 @@ export class ArtifactResourceScope {
         }),
       ),
     ];
+  }
+
+  /** Expose admission and retained close authority to an inspection or verifier. */
+  forCloseOwners(): RetainedResourceScope {
+    return {
+      run: (operation) => this.run(operation),
+      retain: (owner, resource) =>
+        this.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+    };
   }
 
   /** Admit a resource operation while the scope remains open. */

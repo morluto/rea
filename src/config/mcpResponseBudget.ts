@@ -1,6 +1,5 @@
-import { z } from "zod";
-
 import { optionalSettingParser } from "./optionalSetting.js";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 // This override supports clients with larger frames. Keep the configuration
 // parser independent of the SDK's eager server imports; conformance verifies
@@ -34,14 +33,14 @@ export const nodeStringCeilingRecovery = (
 ): string =>
   `REA's reserved single-string limit is ${String(reservedStringCodeUnits)} UTF-16 code units, below Node's single-string ceiling of ${String(nodeStringCeilingCodeUnits)} UTF-16 code units. This release has no runtime override for either limit, and REA_MCP_MAX_RESPONSE_BYTES does not raise them.`;
 
-/** Optional stdio response budget, including room for the protocol envelope. */
-export const mcpResponseBudgetSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u)
-  .transform(Number)
-  .pipe(z.int().safe().min(MINIMUM_RESPONSE_BYTES).max(MAXIMUM_RESPONSE_BYTES));
-
 const budgetConstraint = `REA_MCP_MAX_RESPONSE_BYTES must be a decimal safe integer at least ${String(MINIMUM_RESPONSE_BYTES)} bytes, the default stdio receive-buffer size.`;
+
+/** Optional stdio response budget, including room for the protocol envelope. */
+export const mcpResponseBudgetSchema = positiveDecimalIntegerSchema(
+  MINIMUM_RESPONSE_BYTES,
+  MAXIMUM_RESPONSE_BYTES,
+  budgetConstraint,
+);
 
 /** Parse only the MCP-specific budget without loading unrelated provider settings. */
 export const parseMcpResponseBudget = optionalSettingParser(

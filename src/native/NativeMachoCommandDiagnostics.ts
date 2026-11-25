@@ -39,13 +39,17 @@ const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
   "old arm64e bind opcodes not supported",
 ]);
 
+/**
+ * The settled diagnostic lines of a dyld_info run. Xcode 26 exits 1 after a
+ * refusal; Xcode 16 prints the same sole line and exits 0. A recognized
+ * refusal is never an import or export row, so either exit admits it.
+ */
 const dyldFailureDiagnostics = (
   capture: NativeCommandCapture,
   outputs: readonly string[],
 ): readonly string[] =>
   capture.tool !== "dyld_info" ||
   capture.exitCode === null ||
-  capture.exitCode === 0 ||
   capture.signal !== null
     ? []
     : outputs.flatMap((output) =>
