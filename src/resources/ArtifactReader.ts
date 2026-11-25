@@ -18,6 +18,7 @@ import type { Readable } from "node:stream";
 import type {
   ArtifactCommand,
   ArtifactInventoryCoverage,
+  ArtifactLinkTarget,
   ArtifactTraversalOmissionKind,
 } from "../domain/artifactGraph.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
@@ -27,7 +28,7 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type { MalformedTargetFailure } from "../domain/analysisErrorCore.js";
+import type { MalformedTargetFailure } from "../domain/targetFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -74,6 +75,8 @@ export interface ArtifactEntry {
   readonly unpacked: boolean;
   readonly limitations: readonly string[];
   readonly adapterKey: string;
+  /** A symlink's stored target, when the adapter read it; never followed. */
+  readonly linkTarget?: ArtifactLinkTarget;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
   readonly sourceIdentity?: {
     readonly device: bigint;
@@ -117,6 +120,9 @@ export const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
   ...(entry.sourceIdentity === undefined
     ? {}
     : { sourceIdentity: { ...entry.sourceIdentity } }),
+  ...(entry.linkTarget === undefined
+    ? {}
+    : { linkTarget: { ...entry.linkTarget } }),
 });
 
 /**
@@ -243,6 +249,7 @@ export interface ArtifactReader {
     | "wxapkg"
     | "axml"
     | "arsc"
+    | "tar"
     | "dds"
     | "glb"
     | "ktx"
@@ -250,6 +257,7 @@ export interface ArtifactReader {
     | "uimage"
     | "android-boot-image"
     | "android-ota-payload"
+    | "iso9660"
     | "uefi"
     | "pyinstaller"
     | "dotnet-bundle"

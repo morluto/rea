@@ -13,7 +13,7 @@ import {
 } from "../../domain/apple/machoSliceSelection.js";
 import {
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 
@@ -372,7 +372,7 @@ describe.each(Object.entries(MAPPERS))(
       ]);
       file.bytes.writeUInt32BE(8, 8 + 20 + 12);
       const refused = await refusal(file.bytes, "arm64e");
-      expect(refused).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(refused).toBeInstanceOf(AnalysisTargetFailureError);
       expect(refused).toMatchObject({
         path: "/a.dylib",
         failure: {
@@ -389,7 +389,7 @@ describe.each(Object.entries(MAPPERS))(
         [CPU_ARM64, 2, 0],
       ]);
       const refused = await refusal(file.bytes, "arm64e");
-      expect(refused).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(refused).toBeInstanceOf(AnalysisTargetFailureError);
       expect(refused).toMatchObject({
         path: "/a.dylib",
         failure: { kind: "malformed", format: "macho" },

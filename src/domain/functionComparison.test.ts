@@ -484,6 +484,7 @@ describe("function call relationship coverage", () => {
       coverage: {
         status: "partial",
         limitations: ["Call graph stopped at the read limit."],
+        limited_directions: ["callers", "callees"],
       },
       limitation: "Call graph stopped at the read limit.",
     },
@@ -971,11 +972,13 @@ describe("function comparison", () => {
     const left = observe("c", dossier("return 0;", "0x1000"), "rea-workflow", {
       status: "partial",
       limitations: ["Provider read limit reached."],
+      limited_directions: ["callers", "callees"],
       diagnostics: [diagnostic],
     });
     const right = observe("d", dossier("return 0;", "0x2000"), "rea-workflow", {
       status: "partial",
       limitations: ["Provider read limit reached."],
+      limited_directions: ["callers", "callees"],
       diagnostics: [diagnostic],
     });
     expect(

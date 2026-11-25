@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { createHash } from "node:crypto";
 import { truncate, writeFile } from "node:fs/promises";
@@ -30,18 +31,12 @@ const fixture = async (bytes: Buffer): Promise<string> => {
   return path;
 };
 
-const entries = async (reader: AndroidOtaPayloadArtifactReader) => {
-  const result = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
-};
-
 it("reports the unsupported version at explicit OTA reader admission", async () => {
   const reader = new AndroidOtaPayloadArtifactReader(
     await fixture(v1AndroidOtaPayload()),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "unavailable",
       cause: {
         kind: "unsupported",
@@ -64,7 +59,7 @@ it("applies the manifest allowance only when the declared bytes fit the file", a
     await truncate(path, header.length + manifestSize - offset);
     const reader = new AndroidOtaPayloadArtifactReader(path);
     try {
-      await expect(entries(reader)).rejects.toMatchObject(
+      await expect(collectEntries(reader)).rejects.toMatchObject(
         offset === 0
           ? { reason: "limit", boundary: "capacity" }
           : { reason: "format", cause: { kind: "truncated" } },
@@ -93,7 +88,7 @@ it("keeps a complete manifest without reading a truncated oversized metadata sig
   const reader = new AndroidOtaPayloadArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    expect(await entries(reader)).toMatchObject([{ path: "boot.img" }]);
+    expect(await collectEntries(reader)).toMatchObject([{ path: "boot.img" }]);
     expect(reader.formatMetadata()).toMatchObject({
       blob_truncated: true,
       manifest_size: manifestEnd - 24,
@@ -143,7 +138,7 @@ it("refuses over-budget operation data before reading the sparse carrier body", 
   const reader = new AndroidOtaPayloadArtifactReader(path, admitted);
   const read = vi.spyOn(admitted.handle, "read");
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     if (entry === undefined) throw new Error("Expected the system partition");
     expect(entry.path).toBe("system.img");
     expect(read).toHaveBeenCalled();
@@ -197,7 +192,7 @@ it("cancels a many-frame REPLACE_ZSTD partition", async () => {
     if (yields === 1) controller.abort(reason);
   });
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     await expect(reader.open(entry!, controller.signal)).rejects.toMatchObject({
       reason: "cancelled",
       cause: reason,
@@ -237,14 +232,14 @@ it("preserves cancellation while reconstructing a partition", async () => {
     return result;
   }) as typeof admitted.handle.read);
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     reconstructing = true;
     await expect(reader.open(entry!, controller.signal)).rejects.toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
     reads.mockRestore();
-    const recovered = await entries(reader);
+    const recovered = await collectEntries(reader);
     expect(recovered).toHaveLength(1);
     expect(
       (await buffer(await reader.open(recovered[0]!))).subarray(0, 1)[0],

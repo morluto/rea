@@ -107,7 +107,7 @@ mcpTest(
         code: "unsupported_target",
         details: {
           operation: "inspect_v8_code_cache",
-          format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+          failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
           partial_observation: {
             kind: "file-snapshot-hash",
             path,

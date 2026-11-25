@@ -29,7 +29,7 @@ import {
 
 /** A malformed model header is a malformed target, like every format failure. */
 const MALFORMED_TARGET = {
-  _tag: "AnalysisMalformedTargetError",
+  _tag: "AnalysisTargetFailureError",
   operation: "inspect_model_artifact",
 } as const;
 

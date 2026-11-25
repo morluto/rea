@@ -18,7 +18,7 @@ import {
 } from "./machoTargetSelection.js";
 import {
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
@@ -143,7 +143,7 @@ const selectionError = (
     ? new AnalysisUnsupportedTargetError(operation, path, parsed.detail, {
         cause,
       })
-    : new AnalysisMalformedTargetError(operation, path, parsed, { cause });
+    : new AnalysisTargetFailureError(operation, path, parsed, { cause });
 };
 
 interface FatSlice {

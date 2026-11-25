@@ -107,7 +107,7 @@ cliTest(
     });
     expect(capped.exitCode).toBe(1);
     expect(capped.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       details: {
         reason: "limit",
         boundary: "capacity",

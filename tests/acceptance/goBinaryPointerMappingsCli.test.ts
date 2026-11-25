@@ -58,7 +58,7 @@ cliTest(
     expect(rejected.json).toMatchObject({
       code: "unsupported_target",
       details: {
-        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     });
     const response = await call("inspect_go_binary", { path });

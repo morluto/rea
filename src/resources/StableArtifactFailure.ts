@@ -20,7 +20,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
@@ -90,12 +90,9 @@ export const projectOwnedArtifactInputFailure = (
   // truncated reason, so a cancelled read whose opaque abort reason happens to
   // be a parser failure stays a cancellation.
   if (cause.parseFailure !== undefined)
-    return new AnalysisMalformedTargetError(
-      operation,
-      path,
-      cause.parseFailure,
-      { cause },
-    );
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
+      cause,
+    });
   // Only a path-kind refusal (a symlink, directory or other non-regular file)
   // is the caller's selection. Byte faults without parsed facts are left to
   // the reader's own artifact-operation classification.
