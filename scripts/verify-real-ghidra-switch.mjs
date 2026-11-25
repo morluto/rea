@@ -39,6 +39,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Narrow compiler-shape lane; no cross compiler or game artifact prerequisites.
 const { values } = parseArgs({
@@ -135,10 +136,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const source = join(workspace, "switch.c");
@@ -254,7 +251,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     cleanupFailure = cause;
   }
   if (cleanupFailure !== undefined || primaryFailure !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `Switch verification failed; retained diagnostic workspace: ${workspace}`,
       {
         cause:
@@ -270,7 +267,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
   const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `Switch verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );
@@ -302,7 +299,9 @@ async function verifyTarget(path, sha256, fixtures, variant) {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-real-switch-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-switch-proof", version: "1" }),
+  );
   let opened = false;
   let stderr = "";
   const observations = [];

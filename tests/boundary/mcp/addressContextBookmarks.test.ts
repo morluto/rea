@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
@@ -32,11 +33,7 @@ it.each([
 ] as const)(
   "preserves bookmark identity: %s",
   async (_label, resolves, address, bookmarkAddress, state) => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const identity = createFixtureProviderIdentity();
     const bookmark = { address: bookmarkAddress, name: "review" };
     const directory = await createTestTempDirectory("rea-address-bookmark-");
     const target = join(directory, "fixture.com");

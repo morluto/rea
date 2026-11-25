@@ -1,7 +1,7 @@
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -17,6 +17,7 @@ import {
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
   MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   type InspectKernelModuleInput,
+  type KernelModule,
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -34,25 +35,22 @@ export class KernelModuleProvider implements KernelModulePort {
   readonly identity = KERNEL_MODULE_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        KERNEL_MODULE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      KERNEL_MODULE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
+    let completed: KernelModule | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<KernelModule>(
           input.path,
           input.max_file_bytes,
           {
@@ -62,14 +60,13 @@ export class KernelModuleProvider implements KernelModulePort {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
           (handle) =>
             parseKernelModuleFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -82,7 +79,7 @@ export class KernelModuleProvider implements KernelModulePort {
         return ok(result);
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input, observed));
+      return err(kernelModuleFailure(cause, input, observed, completed));
     }
   }
 }
@@ -102,7 +99,8 @@ const inputBudgetRemediation = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: KernelModule | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -166,6 +164,7 @@ const kernelModuleFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

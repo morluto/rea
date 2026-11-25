@@ -161,7 +161,7 @@ for (const missingSource of [false, true])
       const client = await mcp.connect(server);
       const response = await client.callTool({
         name: "inspect_managed_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       if (missingSource) {
         expect(parseMcpToolError(response)).toMatchObject({
@@ -255,7 +255,7 @@ for (const missingSource of [false, true])
       );
       const refreshedResponse = await client.callTool({
         name: "inspect_managed_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(
         refreshedResponse.isError,

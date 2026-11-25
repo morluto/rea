@@ -1,18 +1,12 @@
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { countedFindings, readBaseline } from "./counted-findings.mjs";
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
 /**
  * `owners` hold the one shared raw-failure classifier. `counts` lists files
  * that predate the rule with their count of per-site classifier functions; a
  * count may only shrink: the rule reports a file above or below its entry.
  */
-const { owners, counts: baseline } = JSON.parse(
-  readFileSync(
-    new URL("./provider-failure-classifier-baseline.json", import.meta.url),
-    "utf8",
-  ),
+const { owners, counts: baseline } = readBaseline(
+  "./provider-failure-classifier-baseline.json",
 );
 const ownerFiles = new Set(owners);
 
@@ -60,34 +54,16 @@ export default {
     },
   },
   create(context) {
-    const filename = relative(
-      root,
-      context.physicalFilename ?? context.filename,
-    ).replaceAll("\\", "/");
-    if (ownerFiles.has(filename)) return {};
-    const classifiers = [];
+    const findings = countedFindings(context, baseline, "classifier");
+    if (ownerFiles.has(findings.filename)) return {};
     const visit = (node) => {
-      if (isClassifier(node)) classifiers.push(node);
+      if (isClassifier(node)) findings.add(node);
     };
     return {
       ArrowFunctionExpression: visit,
       FunctionDeclaration: visit,
       FunctionExpression: visit,
-      "Program:exit"(program) {
-        const allowed = baseline[filename] ?? 0;
-        if (classifiers.length > allowed)
-          for (const node of classifiers)
-            context.report({ node, messageId: "classifier" });
-        else if (classifiers.length < allowed)
-          context.report({
-            node: program,
-            messageId: "stale",
-            data: {
-              allowed: String(allowed),
-              actual: String(classifiers.length),
-            },
-          });
-      },
+      "Program:exit": findings.report,
     };
   },
 };

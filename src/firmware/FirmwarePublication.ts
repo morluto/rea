@@ -480,8 +480,8 @@ const extractionGaps = (
     normalized.depth_limited_paths.length > 0;
   const reRootablePaths = new Map<string, Set<string>>();
   if (ceilingReached)
-    for (const [filePath, file] of [...publishedFiles].sort(
-      ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0),
+    for (const [filePath, file] of [...publishedFiles].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
     )) {
       const size = file.size;
       if (size <= 0 || size > FIRMWARE_LIMITS.inputBytes) continue;

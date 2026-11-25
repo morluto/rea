@@ -91,6 +91,11 @@ import {
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
 import {
+  beginSemanticConsumer,
+  createSemanticObservations,
+  semanticIndexStep,
+} from "./javascriptSemanticConsumer.js";
+import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
 } from "./javascriptSemanticWorkAllowance.js";
@@ -239,6 +244,12 @@ function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (indexedAmbientWriteStates.has(state)) return;
+  yield* semanticIndexStep(state, indexAmbientWritesOnceSteps(state));
+}
+
+function* indexAmbientWritesOnceSteps(
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, void> {
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
@@ -258,6 +269,12 @@ function* indexSemanticMemberMutationFactsSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
+  yield* semanticIndexStep(state, indexMemberMutationFactsOnceSteps(state));
+}
+
+function* indexMemberMutationFactsOnceSteps(
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, void> {
   yield* indexSemanticAmbientWritesSteps(state);
   const candidateDefaults = yield* collectSemanticMemberMutationsSteps(
     state.program,
@@ -306,6 +323,13 @@ export const analyzeParsedJavaScriptSemantics = (
  * phases, so a caller can serve control messages within one large file.
  * Each phase completes before the next starts; results equal the synchronous
  * form.
+ *
+ * `lexicalIndex` continues from the index the static phase built for this
+ * same program instead of collecting its definitions, ambient writes and
+ * member-mutation facts a second time. It must come from
+ * {@link indexJavaScriptBindingsWithReceiversSteps} with the same program,
+ * resolution mode, precision and allowance; any other index is rejected. An
+ * index continues one semantic phase and is rejected by a second.
  */
 export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
@@ -313,14 +337,27 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   expressionNodeBudget?: number,
   precision?: JavaScriptSemanticPrecisionInput,
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+  lexicalIndex?: Pick<JavaScriptBindingIndex, "bindings">,
 ): Generator<void, JavaScriptSemanticIr> {
-  const state = createState(
-    file.program,
-    staticImportResolutionMode,
-    precision,
-    memberMutationAllowance,
-  );
-  yield* collectDefinitionsSteps(file.program, state);
+  let state: JavaScriptSemanticAnalysisState;
+  if (lexicalIndex === undefined) {
+    state = createState(
+      file.program,
+      staticImportResolutionMode,
+      precision,
+      memberMutationAllowance,
+    );
+    yield* collectDefinitionsSteps(file.program, state);
+  } else {
+    // The static phase already collected these definitions from this program.
+    state = sharedLexicalState(
+      lexicalIndex,
+      file.program,
+      staticImportResolutionMode,
+      precision,
+      memberMutationAllowance,
+    );
+  }
   yield* indexSemanticAmbientWritesSteps(state);
   yield* indexSemanticMemberMutationFactsSteps(state);
   const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
@@ -357,9 +394,12 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   const coverage = semanticCoverage(
     parserPartial || loaderCondition !== undefined,
     [
-      ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
+      ...new Set([
+        ...state.observations.valueResourceLimits,
+        ...state.observations.getterResourceLimits,
+      ]),
     ].sort(),
-    [...state.returnedReferenceWidenings].map(range),
+    [...state.observations.returnedReferenceWidenings].map(range),
     state.precision,
   );
   return {
@@ -382,13 +422,13 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
             "The offered semantic node capacity bounded expression dependencies; omitted influence remains unknown.",
           ]
         : []),
-      ...(state.valueResourceLimits.has("alias-selections")
+      ...(state.observations.valueResourceLimits.has("alias-selections")
         ? [semanticResourceLimitReason("alias-selections", state.precision)]
         : []),
-      ...(state.returnedReferenceWidenings.size > 0
+      ...(state.observations.returnedReferenceWidenings.size > 0
         ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
         : []),
-      ...[...state.getterResourceLimits]
+      ...[...state.observations.getterResourceLimits]
         .sort()
         .map((limit) => semanticResourceLimitReason(limit, state.precision)),
       ...(parserPartial
@@ -423,6 +463,48 @@ export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
   readonly receivers: JavaScriptReceiverFacts;
 }
 
+/** Inputs each shareable lexical state was created from. */
+const shareableLexicalStates = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly precision: JavaScriptSemanticPrecisionInput | undefined;
+    readonly memberMutationAllowance:
+      | JavaScriptMemberMutationAllowance
+      | undefined;
+  }
+>();
+
+/**
+ * Admit a lexical index only when a fresh state would have been created from
+ * identical inputs, and start the semantic phase as a new consumer of it, so
+ * continuing from it cannot change semantic results.
+ */
+const sharedLexicalState = (
+  lexicalIndex: Pick<JavaScriptBindingIndex, "bindings">,
+  program: t.Program,
+  staticImportResolutionMode: JavaScriptModuleResolutionMode,
+  precision: JavaScriptSemanticPrecisionInput | undefined,
+  memberMutationAllowance: JavaScriptMemberMutationAllowance | undefined,
+): JavaScriptSemanticAnalysisState => {
+  const state = lexicalIndex.bindings;
+  const inputs = shareableLexicalStates.get(state);
+  if (
+    inputs === undefined ||
+    state.program !== program ||
+    state.staticImportResolutionMode !== staticImportResolutionMode ||
+    inputs.precision !== precision ||
+    inputs.memberMutationAllowance !== memberMutationAllowance
+  )
+    throw new TypeError(
+      "A shared JavaScript lexical index must be built from the same program, resolution mode, precision and allowance, and can continue only one semantic phase",
+    );
+  // The semantic phase appends its own module links and callable facts to
+  // this state, so a second phase would report them twice.
+  shareableLexicalStates.delete(state);
+  beginSemanticConsumer(state);
+  return state;
+};
+
 /**
  * Index bindings and classify receivers from one definitions pass. Receiver
  * facts read the definitions-only phase. Consumers request ambient writes and
@@ -450,6 +532,12 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
     state.bindingsById.set(binding.bindingId, binding);
   }
   yield* collectDefinitionsSteps(program, state);
+  // A host-context index declares a binding the semantic phase does not.
+  if (hostContext === undefined)
+    shareableLexicalStates.set(state, {
+      precision,
+      memberMutationAllowance,
+    });
   const receivers = yield* classifyDefinitionReceiversSteps(program, state);
   let references: readonly JavaScriptSemanticReference[] | undefined;
   return {
@@ -1071,7 +1159,7 @@ const bindingOrigin = (
   // reported resource limit, not a silent absence of the origin.
   const exhausted =
     alias !== undefined && visited.size >= state.precision.alias_selections;
-  if (exhausted) state.valueResourceLimits.add("alias-selections");
+  if (exhausted) state.observations.valueResourceLimits.add("alias-selections");
   const origin =
     alias === undefined
       ? electronRequireOrigin(initializer.node, state)?.origin
@@ -1110,9 +1198,8 @@ const createState = (
     program,
     opaqueEffects: createSemanticOpaqueEffects(),
     staticImportResolutionMode,
-    valueResourceLimits: new Set(),
-    getterResourceLimits: new Set(),
-    returnedReferenceWidenings: new Set(),
+    observations: createSemanticObservations(),
+    indexObservations: createSemanticObservations(),
     parentsByNode: new WeakMap(),
     erasedSyntaxNodes: new WeakSet(),
     scopes: [root],
@@ -1152,7 +1239,14 @@ const globalCodeRoots = new Set([
   "self",
 ]);
 
-function* collectDefinitionsSteps(
+/** The first index step: every lexical scope, binding and callable. */
+const collectDefinitionsSteps = (
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+): Generator<void, void> =>
+  semanticIndexStep(state, collectProgramDefinitionsSteps(program, state));
+
+function* collectProgramDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {

@@ -42,7 +42,7 @@ const fixture = () =>
 const invalidKey = `unexpected_${"x".repeat(6_000)}`;
 const invalidRequest = {
   name: "procedure_pseudo_code",
-  arguments: { [invalidKey]: true },
+  arguments: { detail: "complete", [invalidKey]: true },
 };
 const retainedReference = (reply: CallToolResult): string => {
   const projected = parseMcpToolError(reply).error;

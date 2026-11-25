@@ -1,3 +1,4 @@
+import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { expect, it } from "vitest";
 import {
   changedEvidenceSubject,
@@ -185,7 +186,11 @@ it("pages matching original indices and omits dependency vectors unless selected
     dependencies: [],
     features: [],
   });
-  const source = parent(value);
+  const source = {
+    ...parent(value),
+    normalizedResult: freezeOwnedJsonTreeSnapshot(value),
+    sealedResult: true,
+  };
   const first = projectAnalysisView(source, {
     kind: "rust",
     collection: "packages",
@@ -225,6 +230,47 @@ it("pages matching original indices and omits dependency vectors unless selected
     examined: 1,
     exhausted: true,
     next_offset: null,
+  });
+  const edges = {
+    kind: "rust",
+    collection: "edges",
+    offset: 0,
+    limit: 1,
+  } as const;
+  expect(projectAnalysisView(source, edges)).toMatchObject({
+    ok: true,
+    value: {
+      page: {
+        collection: "edges",
+        rows: [{ index: 0, from_index: 0, to_index: 0 }],
+      },
+      coverage: { total: 1, exhausted: true },
+    },
+  });
+  for (const selection of [{ from_indices: [] }, { to_indices: [1] }])
+    expect(
+      projectAnalysisView(source, { ...edges, ...selection }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        page: { collection: "edges", rows: [] },
+        coverage: { total: 0 },
+      },
+    });
+  expect(
+    projectAnalysisView(source, {
+      kind: "rust",
+      collection: "packages",
+      offset: 0,
+      limit: 1,
+      versions: [],
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      page: { collection: "packages", rows: [] },
+      coverage: { total: 0 },
+    },
   });
 });
 

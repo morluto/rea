@@ -24,6 +24,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const executable = process.env.REA_MITMDUMP_COMMAND;
 if (
@@ -44,10 +45,12 @@ const runtime = await VerifierFixture.open({
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const client = new Client({
-  name: "historical-web-capture-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "historical-web-capture-verifier",
+    version: "1",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -953,7 +956,7 @@ async function inspect(mode, input, errorCategory) {
   if (mode === "mcp") {
     const result = await client.callTool({
       name: "inspect_web_network_capture",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     if (errorCategory !== undefined) {
       const error = requireMcpToolError(result);
@@ -1018,6 +1021,8 @@ async function inspect(mode, input, errorCategory) {
   const args = [
     entrypoint,
     "inspect-web-network-capture",
+    "--detail",
+    "complete",
     input.capture_path,
     input.format,
     "--json",

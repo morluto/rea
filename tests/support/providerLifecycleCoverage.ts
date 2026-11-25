@@ -1243,7 +1243,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/devicetreeCli.test.ts",
-        "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
+        "inspects a relative DTB and preserves the source",
       ),
     ),
     covered(
@@ -1536,6 +1536,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peResources.test.ts"),
   ),
+  "rea-pe-unwind-ranges": inProcess(
+    covered(
+      test(
+        "tests/acceptance/peUnwindRangesCli.test.ts",
+        "reads x64 exception-directory ranges identically over CLI and MCP",
+      ),
+    ),
+    typedFailures("src/native/pe/PeUnwindRangesProvider.test.ts"),
+  ),
   "rea-playwright-browser-scenario": {
     ownership: "process",
     stages: {
@@ -1643,7 +1652,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "reads signed TYPE_INT64 constants and rejects a truncated payload",
       ),
     ),
-    typedFailures("tests/boundary/filesystem/pythonPyc.test.ts"),
+    covered(
+      test(
+        "src/application/python/PythonPycService.test.ts",
+        "retains completed pyc Evidence and the opaque caller reason on late cancellation",
+      ),
+    ),
   ),
   "rea-release-exposure": inProcess(
     covered(
@@ -1663,8 +1677,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     covered(
       test(
-        "src/application/v8CodeCache/V8CodeCacheService.test.ts",
-        "retains a completed V8 code cache observation when the caller cancels as the provider completes",
+        "tests/boundary/filesystem/v8CodeCacheArtifact.test.ts",
+        "retains verified V8 Evidence during $stage",
       ),
     ),
   ),
@@ -1833,7 +1847,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/composition/reverseEngineeringCancellation.test.ts",
-          "waits for a cancelled Rizin process to exit before returning",
+          "waits for a Rizin process cancelled during its %s to exit before returning",
         ),
       ),
       cleanup: covered(

@@ -49,6 +49,8 @@ const analyzeReturnShapesThroughCli = async (
   const cliResponse = await cli.run({
     arguments: [
       "analyze-javascript-application",
+      "--detail",
+      "complete",
       root,
       "--artifact-format",
       "directory",
@@ -101,7 +103,7 @@ export const verifyJavaScriptReturnShapes = async (
     await client.connect(transport);
     const response = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, format: "directory" },
+      arguments: { detail: "complete", input_path: root, format: "directory" },
     });
     expect(response.isError).not.toBe(true);
     const evidence = contract.outputSchema.parse(response.structuredContent);

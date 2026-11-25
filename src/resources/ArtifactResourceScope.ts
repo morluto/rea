@@ -1,4 +1,7 @@
-import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
+import {
+  appendCleanupObservation,
+  type AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JavaScriptSourceAnalysisPort } from "../domain/javascript/javascriptSourceAnalysis.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -314,18 +317,15 @@ export class ArtifactResourceScope {
       hookFailure,
       "close hook",
     );
-    const resources = [...new Set([...retained.resources, ...hook.resources])];
+    const observation = appendCleanupObservation(retained, hook);
     const options = {
       cause: new AggregateError(
         [cleanup, hookFailure],
         "Retained cleanup and a close hook both failed",
       ),
-      cleanup: {
-        reason: `${retained.reason}; ${hook.reason}`,
-        resources,
-      },
+      cleanup: observation,
     };
-    const message = `Artifact cleanup remains incomplete: ${resources.join(", ")}`;
+    const message = `Artifact cleanup remains incomplete: ${observation.resources.join(", ")}`;
     if (cleanup instanceof ArtifactResourceRetryFailure)
       return new ArtifactResourceRetryFailure(
         cleanup.failedOwners.map((owner) => ({

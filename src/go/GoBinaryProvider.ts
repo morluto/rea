@@ -5,7 +5,7 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -32,7 +32,6 @@ import {
   type GoStringLiterals,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -44,7 +43,6 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../domain/binaryContainer.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_go_binary";
 const HEADER_PREFIX_BYTES = 4096;
@@ -81,7 +79,8 @@ const failureFor = (
   cause: unknown,
   path: string,
   budgets: GoAnalysisBudgets,
-  snapshot?: { readonly sha256: string; readonly bytes: number },
+  snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: GoBinary | undefined,
 ): AnalysisError => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -142,16 +141,9 @@ const failureFor = (
           );
         return undefined;
       },
-      unclassified: (failure) =>
-        new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,
@@ -278,16 +270,12 @@ export class GoBinaryProvider implements GoBinaryPort {
   readonly identity = GO_BINARY_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        GO_BINARY_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      GO_BINARY_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read complete compiler/module metadata while preserving original byte identity and source ranges. */
@@ -295,13 +283,14 @@ export class GoBinaryProvider implements GoBinaryPort {
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
+    let completed: GoBinary | undefined;
     let snapshot:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     const budgets = goAnalysisBudgets(input);
     try {
       return await this.#resources.run(async () => {
-        const parsedData = await withStableArtifactHandle(
+        const parsedData = await withStableArtifactHandle<GoBinary>(
           input.path,
           budgets.max_input_bytes,
           {
@@ -311,17 +300,16 @@ export class GoBinaryProvider implements GoBinaryPort {
             onIdentity: (observed) => {
               snapshot = observed;
             },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const selected = await requireSelectedNativeImageFromReader(
               OPERATION,
               input.path,
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               input.architecture,
             );
             const imageOptions = {
@@ -384,7 +372,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         return ok(parsedData);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, budgets, snapshot));
+      return err(failureFor(cause, input.path, budgets, snapshot, completed));
     }
   }
 }

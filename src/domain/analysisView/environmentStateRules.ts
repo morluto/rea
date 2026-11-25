@@ -1,3 +1,5 @@
+import { appendToMapList } from "../appendToMapList.js";
+import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
 import { isRecord } from "../../kernel/isRecord.js";
 import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
@@ -440,6 +442,10 @@ export const isQueryPost = (method: string, path: string): boolean =>
 export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
 
+/** A 2xx record: the only status whose response shows what a request did. */
+export const succeeded = (record: Pick<StateRecordFacts, "status">): boolean =>
+  isSuccessfulHttpStatus(record.status);
+
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
 export const isStateWrite = (
   record: Pick<StateRecordFacts, "method" | "path" | "status">,
@@ -503,9 +509,7 @@ export const apiBaseLengths = (
   for (const template of templates) {
     const segments = segmentsOf(template);
     const first = segments[0] ?? "";
-    const group = groups.get(first);
-    if (group === undefined) groups.set(first, [segments]);
-    else group.push(segments);
+    appendToMapList(groups, first, segments);
   }
   return new Map(
     [...groups.entries()].map(([first, members]) => {

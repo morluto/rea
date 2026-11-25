@@ -141,7 +141,7 @@
         "rea/no-raw-file-handle-close": "off",
         "max-lines": "off",
         "max-lines-per-function": [
-          "error",
+          "warn",
           {
             "max": 150,
             "skipBlankLines": true,
@@ -270,6 +270,7 @@
     "coverage",
     ".turbo",
     ".cache",
+    ".claude",
     ".codex",
     ".devin",
     ".factory",

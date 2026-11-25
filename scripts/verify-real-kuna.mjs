@@ -45,6 +45,7 @@ import {
 } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 const { values } = parseArgs({
   options: {
     targets: { type: "string" },
@@ -217,7 +218,9 @@ const openServer = async (provider, kunaSettings = {}) => {
     },
     stderr: "ignore",
   });
-  const client = new Client({ name: "rea-real-kuna", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-kuna", version: "1" }),
+  );
   let peakKiB = 0;
   const cpu = new Map();
   const sampleOnce = async () => {
@@ -478,6 +481,7 @@ const verifyKuna = async (
       assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
       assert.equal(missing.recovery, undefined);
       const procedure = await cold.callError("procedure_address", {
+        detail: "complete",
         procedure: "rea_missing_procedure_name",
       });
       assert.equal(procedure.code, "invalid_request");
@@ -489,6 +493,7 @@ const verifyKuna = async (
         ),
       );
       const missingAddress = await cold.callError("procedure_address", {
+        detail: "complete",
         procedure: "0x00000001",
       });
       assert.equal(missingAddress.code, "invalid_request");
@@ -525,6 +530,7 @@ const verifyKuna = async (
           }),
       });
       const pseudocode = await cold.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       assert.equal(pseudocode.structured.subject.identity.sha256, sha256);
@@ -546,6 +552,7 @@ const verifyKuna = async (
       );
       assert.match(assembly.value, new RegExp(`:  ; ${address}\\n`, "u"));
       const exported = await cold.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       const recorded = exported.structured.raw_result.source;
@@ -640,6 +647,7 @@ const verifyKuna = async (
     for (const answer of answers)
       if (answer.address !== undefined) {
         const reread = await warm.call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: answer.address,
         });
         assert.equal(
@@ -664,9 +672,11 @@ const measureGhidra = async (path, functions) => {
   try {
     for (const [name, address] of functions) {
       const cold = await server.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       const warm = await server.call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: address,
       });
       answers.push({

@@ -6,6 +6,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { AnalysisCleanupLease } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { withDelegatedCleanupOwner } from "../domain/analysisErrorCleanup.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import type { Result } from "../domain/result.js";
 import {
@@ -47,9 +48,7 @@ export class JebMcpCleanupFailure extends ProviderCleanupError {
         ),
       },
     );
-    this.bindCleanupDependencies([cleanupFailure]).bindCleanupResourceOwner(
-      cleanupFailure,
-    );
+    withDelegatedCleanupOwner(this, cleanupFailure);
   }
 }
 

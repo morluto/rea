@@ -309,7 +309,7 @@ describe("unexpanded ASAR inventory controls", () => {
       asarHeaderBytes('{"files":{not-json}}'),
     );
     await expect(inventoryArtifact(root)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   });
 

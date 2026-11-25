@@ -2,7 +2,7 @@ import {
   completedStableArtifactObservation,
   type StableArtifactSnapshot,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   readStableArtifact,
   withStableArtifactHandle,
   artifactFileCompletion,
@@ -35,7 +35,6 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import type { LimitRef } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -45,7 +44,6 @@ import {
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 import { resolveAppleIpsJoin } from "./AppleIpsMachOJoin.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -54,16 +52,12 @@ export class AppleIpsProvider implements AppleIpsPort {
   readonly identity = APPLE_IPS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        APPLE_IPS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      APPLE_IPS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectAppleIpsInput, options?: ExecutionOptions) {
@@ -326,13 +320,5 @@ const appleIpsFailurePrimary = (
             remediationAction: fileSizeRemediation(input, field),
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(APPLE_IPS_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );

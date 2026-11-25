@@ -8,6 +8,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 cliTest.for([
   ["CLI", "query"],
@@ -39,7 +40,7 @@ cliTest.for([
       await writeFile(path, JSON.stringify(input));
       // A real file argument avoids the host argv limit for this valid JSON.
       const result = await cli.run({
-        arguments: ["capture-browser-scenario", path, "--json"],
+        arguments: completeArguments("capture-browser-scenario", path),
         environment: { HOME: home, REA_LOG_LEVEL: "silent" },
       });
       expect(result.exitCode).toBe(1);
@@ -71,7 +72,7 @@ cliTest.for([
       await client.connect(transport);
       const result = await client.callTool({
         name: "capture_browser_scenario",
-        arguments: input,
+        arguments: { ...input, detail: "complete" },
       });
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result).error).toMatchObject(expected);

@@ -54,6 +54,7 @@ import {
 import {
   abortIfNeeded,
   ArtifactReaderFailure,
+  malformedArtifact,
   artifactParseFailure,
 } from "../../resources/index.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
@@ -157,8 +158,7 @@ export const locateDenoStandalone = async (
   } catch (cause) {
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "format" ||
-        cause.reason === "malformed" ||
+      (cause.reason === "malformed" ||
         cause.reason === "truncated" ||
         cause.reason === "unsupported" ||
         cause.reason === "limit")
@@ -225,12 +225,12 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
   for (const [index, slice] of container.header.slices.entries())
     await scan(
       `slice ${String(index)}`,
-      container.header.rangeIssues[index]?.reason,
+      container.header.rangeIssues[index]?.detail,
       slice,
     );
   const hidden = container.hidden;
   if (hidden?.status === "declared")
-    await scan("hidden slice", hidden.rangeIssue, hidden.declaration);
+    await scan("hidden slice", hidden.rangeIssue?.detail, hidden.declaration);
   // A sibling that could not be examined may declare a different Deno
   // application, so a section found elsewhere cannot stand for the whole
   // universal image. With none found, the image stays with native inventory.
@@ -250,7 +250,7 @@ const locateMachOSlice = async (
 ): Promise<SliceScan> => {
   const table = await readSliceCommandTable(readAt, base, sliceSize);
   if (table.status !== "read")
-    return { found: [], unread: `cannot be read: ${table.reason}` };
+    return { found: [], unread: `cannot be read: ${table.failure.detail}` };
   // A FAT row that misstates the slice's CPU cannot choose how the slice is
   // searched, so the slice stays unread.
   const identityIssue =
@@ -342,7 +342,7 @@ const locateMachOSlice = async (
   if (framed.status !== "framed")
     return {
       found,
-      unread: `load commands cannot be framed: ${framed.reason}`,
+      unread: `load commands cannot be framed: ${framed.failure.detail}`,
     };
   // A damaged or unparsed segment may hold an unread d3n0l4nd section, so the
   // slice is not fully examined and the trailer search cannot stand for it.
@@ -989,8 +989,8 @@ const fixedCString = (bytes: Uint8Array): string => {
 };
 
 const denoCarrierFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
+  malformedArtifact(
+    "deno-standalone",
     `Deno compile carrier is malformed: ${detail}`,
   );
 

@@ -122,7 +122,7 @@ it("keeps caller spelling on a raw observation when a source ID is malformed", a
     path,
     "read_bytes",
     { address: "0x100", length: 4 },
-    { formatHint: "dos-com" },
+    { loadSelection: { format: "dos-com" } },
   );
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected source failure");
@@ -175,7 +175,9 @@ it.each([
     })),
     new InvestigationRecords({ maximumRepresentationBytes: 20000 }),
   );
-  const opened = await session.open(path, { formatHint: "dos-com" });
+  const opened = await session.open(path, {
+    loadSelection: { format: "dos-com" },
+  });
   if (!opened.ok) throw opened.error;
   const args = { address: "0x100", length: 4 };
   const primary = createAnalysisExecutionEvidence(
@@ -215,7 +217,7 @@ it.each([
       "read_bytes",
       args,
       {
-        formatHint: "dos-com",
+        loadSelection: { format: "dos-com" },
         signal: controller.signal,
       },
     );
@@ -328,7 +330,7 @@ it.each([false, true])(
         path,
         "procedure_pseudo_code",
         { procedure: "0x100" },
-        { formatHint: "dos-com", signal: controller.signal },
+        { loadSelection: { format: "dos-com" }, signal: controller.signal },
       );
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected admission failure");

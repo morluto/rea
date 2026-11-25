@@ -392,7 +392,7 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
     await client.connect(clientTransport);
     const failure = await client.callTool({
       name: "procedure_pseudo_code",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(failure.isError).toBe(true);
     expect(parseMcpToolError(failure)).toMatchObject({
@@ -406,7 +406,7 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
     // transport still marks them for target-content tools only.
     const invalidTarget = await client.callTool({
       name: "list_strings",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(invalidTarget.isError).toBe(true);
     expect(invalidTarget._meta).toEqual(UNTRUSTED_TARGET_CONTENT);

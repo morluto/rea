@@ -7,9 +7,9 @@ import {
   readFatContainerHeader,
   readFatContainerTable,
   readMachoHeaderPrefixFacts,
+  type FatContainerHeader,
   type FatContainerTable,
   type MachoHeaderPrefixFacts,
-  type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
 import {
   hasDosMzMagic,
@@ -22,6 +22,10 @@ import {
   PE_RECORD_HEADER_BYTES,
 } from "../domain/binaryTarget.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
+import {
+  ISO9660_DESCRIPTOR_OFFSET,
+  ISO9660_SIGNATURE_BYTES,
+} from "../domain/iso9660/iso9660Structures.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -37,8 +41,15 @@ export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
   /** The last bytes of the stream, when the producer observed its end. */
   readonly suffix?: Buffer;
+  /** The first ISO 9660 descriptor signature, when the stream reached it. */
+  readonly iso9660Descriptor?: Buffer;
+  /** The probe matched an XML plist prolog in the retained prefix. */
+  readonly xmlPlistSignature: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
-  readonly fatSliceHeaders?: FatSliceHeaderEvidence;
+  /** The FAT header decided once for the finished stream size. */
+  readonly fatHeader: FatContainerHeader;
+  /** Thin headers observed at slice offsets; empty unless `fatHeader` parsed. */
+  readonly fatSliceHeadersByOffset: ReadonlyMap<number, MachoHeaderPrefixFacts>;
   readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
   readonly mzWindowsHeaderRecord?: MzWindowsHeaderRecordEvidence;
 }
@@ -86,9 +97,14 @@ const observeFatSliceHeaders = (input: {
   }
 };
 
+const NO_FAT_SLICE_HEADERS: ReadonlyMap<number, MachoHeaderPrefixFacts> =
+  new Map();
+
 const finishClassificationEvidence = (
   prefix: Buffer,
   suffix: Buffer | undefined,
+  iso9660Descriptor: Buffer | undefined,
+  xmlPlistSignature: boolean,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
@@ -114,15 +130,17 @@ const finishClassificationEvidence = (
       );
     }
   }
-  const fatSliceHeaders =
-    finalHeader.state === "parsed"
-      ? { header: finalHeader, sliceHeadersByOffset }
-      : undefined;
   return {
     prefix,
     ...(suffix === undefined ? {} : { suffix }),
+    ...(iso9660Descriptor === undefined ? {} : { iso9660Descriptor }),
+    xmlPlistSignature,
     asarHeader: finishAsar(archiveBytes),
-    ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
+    fatHeader: finalHeader,
+    fatSliceHeadersByOffset:
+      finalHeader.state === "parsed"
+        ? sliceHeadersByOffset
+        : NO_FAT_SLICE_HEADERS,
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
@@ -151,6 +169,28 @@ export const createArtifactClassificationProbe = (
   let mzHeaderChecked = false;
   const suffixBuffer = Buffer.allocUnsafe(ARTIFACT_CLASSIFICATION_SUFFIX_BYTES);
   let suffixLength = 0;
+  // The descriptor lies past the retained prefix; keep its signature window.
+  const isoDescriptor = Buffer.alloc(ISO9660_SIGNATURE_BYTES);
+  let isoDescriptorBytes = 0;
+  const observeIsoDescriptor = (
+    sourceOffset: number,
+    bytes: Uint8Array,
+  ): void => {
+    const start = Math.max(
+      ISO9660_DESCRIPTOR_OFFSET + isoDescriptorBytes,
+      sourceOffset,
+    );
+    const end = Math.min(
+      ISO9660_DESCRIPTOR_OFFSET + ISO9660_SIGNATURE_BYTES,
+      sourceOffset + bytes.length,
+    );
+    if (start >= end) return;
+    isoDescriptor.set(
+      bytes.subarray(start - sourceOffset, end - sourceOffset),
+      start - ISO9660_DESCRIPTOR_OFFSET,
+    );
+    isoDescriptorBytes = end - ISO9660_DESCRIPTOR_OFFSET;
+  };
   const observeSuffix = (bytes: Uint8Array): void => {
     if (bytes.length === 0) return;
     if (bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
@@ -329,6 +369,7 @@ export const createArtifactClassificationProbe = (
         observeRecordWindow(mzWindowsHeaderOffset, streamOffset, bytes);
       }
       observeSuffix(bytes);
+      observeIsoDescriptor(streamOffset, bytes);
       observedBytes += bytes.length;
     },
     finish(archiveBytes: number): ArtifactClassificationEvidence {
@@ -338,6 +379,10 @@ export const createArtifactClassificationProbe = (
         observedBytes === archiveBytes
           ? suffixBuffer.subarray(0, suffixLength)
           : undefined,
+        isoDescriptorBytes === ISO9660_SIGNATURE_BYTES
+          ? Buffer.from(isoDescriptor)
+          : undefined,
+        xml.state === "matched",
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,

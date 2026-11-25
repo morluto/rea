@@ -14,6 +14,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
@@ -48,7 +49,9 @@ Object.assign(environment, {
   TMP: root,
   TEMP: root,
 });
-const client = new Client({ name: "flutter-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "flutter-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],

@@ -1,7 +1,6 @@
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   assertArtifactReadActive,
-  ArtifactReaderFailure,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import {
@@ -79,9 +78,9 @@ import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromReader,
   type ElfProgramDeclaration,
-  type NativeByteSource,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
@@ -227,7 +226,7 @@ export const readElfHardening = (
 
 /** Same ELF hardening read over a random-access handle without buffering the full image. */
 export const readElfHardeningFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage> => {
   assertArtifactReadActive(signal);
@@ -1175,11 +1174,11 @@ function* readFeatureNotes(
     };
   } catch (cause) {
     // A parser budget keeps confirmed PIE/NX/RELRO while note features stay unknown.
+    // Malformed note framing is already the note parser's malformed-target
+    // failure, and cancellation stays a cancellation.
     if (isParseLimit(cause, "elf-notes"))
       return { words: new Map(), searched, incomplete: cause.message };
-    if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    if (cause.reason === "cancelled") throw cause;
-    throw new BinaryFormatFailure("malformed", cause.message);
+    throw cause;
   }
 }
 

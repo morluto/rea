@@ -3,7 +3,7 @@ import { producerLimitControl } from "../domain/producerResourceLimits.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -28,7 +28,6 @@ import {
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readRustBinaryImageFromHandle,
@@ -56,7 +55,6 @@ import {
   type RustProducerLimits,
 } from "../domain/rust/rustResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_rust_binary";
 const HEADER_PREFIX_BYTES = 4096;
@@ -66,16 +64,12 @@ export class RustBinaryProvider implements RustBinaryPort {
   readonly identity = RUST_BINARY_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        RUST_BINARY_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      RUST_BINARY_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read one dependency section and any inferred rustc commit from the selected file. */
@@ -83,6 +77,7 @@ export class RustBinaryProvider implements RustBinaryPort {
     input: InspectRustBinaryInput,
     options?: ExecutionOptions,
   ): Promise<Result<RustBinary, AnalysisError>> {
+    let completed: RustBinary | undefined;
     let snapshot:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
@@ -103,7 +98,7 @@ export class RustBinaryProvider implements RustBinaryPort {
     const limits = resolveRustProducerLimits(selectedLimits.data);
     try {
       return await this.#resources.run(async () => {
-        const parsedData = await withStableArtifactHandle(
+        const parsedData = await withStableArtifactHandle<RustBinary>(
           input.path,
           limits.input_bytes,
           {
@@ -113,17 +108,16 @@ export class RustBinaryProvider implements RustBinaryPort {
             onIdentity: (observed) => {
               snapshot = observed;
             },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const selected = await requireSelectedNativeImageFromReader(
               OPERATION,
               input.path,
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               input.architecture,
             );
             const image = inFile(
@@ -179,7 +173,7 @@ export class RustBinaryProvider implements RustBinaryPort {
         return ok(parsedData);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, limits, snapshot));
+      return err(failureFor(cause, input.path, limits, snapshot, completed));
     }
   }
 }
@@ -378,7 +372,8 @@ const failureFor = (
   cause: unknown,
   path: string,
   limits: RustProducerLimits,
-  snapshot?: { readonly sha256: string; readonly bytes: number },
+  snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: RustBinary | undefined,
 ): AnalysisError => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -458,16 +453,9 @@ const failureFor = (
           );
         return undefined;
       },
-      unclassified: (failure) =>
-        new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

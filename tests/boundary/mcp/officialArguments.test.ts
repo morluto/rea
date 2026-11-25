@@ -182,7 +182,7 @@ describe("official operation arguments", () => {
     expect(calls).toEqual([]);
     const valid = await client.callTool({
       name: "list_procedures",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(valid.isError).not.toBe(true);
     expect(calls).toEqual(["list_procedures"]);

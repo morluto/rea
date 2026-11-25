@@ -38,6 +38,7 @@ import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -70,11 +71,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const baseEnv = {
@@ -125,7 +121,9 @@ async function runPass({ fixture, languageOverride, label, layout }) {
     env,
     stderr: "pipe",
   });
-  const client = new Client({ name: "rea-real-dol-proof", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-dol-proof", version: "1" }),
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
@@ -173,6 +171,7 @@ async function runPass({ fixture, languageOverride, label, layout }) {
           "Leaf function missing from real Ghidra inventory",
         );
         const callees = await call("procedure_callees", {
+          detail: "complete",
           procedure: entry.address,
         });
         assert.ok(
@@ -288,7 +287,7 @@ try {
       fixture,
     );
     const resolved = await parseBinaryTarget(fixture.path, {
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     if (!resolved.ok) throw resolved.error;
     assert.equal(resolved.value.format, "gamecube-dol");
@@ -333,7 +332,7 @@ try {
     },
   ]);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `GameCube DOL verification failed; retained workspace: ${workspace}`,
     { cause },
   );

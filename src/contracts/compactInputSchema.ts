@@ -7,6 +7,7 @@ import {
   COMPACT_SCHEMA_MAX_DEPTH,
   inlineWithinBudget,
   isSchemaObject,
+  pruneSchemaBeyondDepth,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
@@ -95,6 +96,24 @@ export const compactAdvertisedInputSchema = (
     })
   )
     return { ...inline, presentation: "inline" };
+  if (inline !== undefined && serializedBytes(inline.schema) <= budgetBytes) {
+    // Only the branches past the depth limit are elided; the rest of the
+    // validation structure stays advertised instead of a whole reduction.
+    const pruned = pruneSchemaBeyondDepth(inline.schema);
+    if (
+      pruned !== undefined &&
+      serializedBytes(pruned) <= budgetBytes &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      !hasAdvertisedInputDialectViolation(pruned, {
+        skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+      })
+    )
+      return {
+        schema: pruned,
+        guidance: inline.guidance,
+        presentation: "inline",
+      };
+  }
   const reduced = projectToAdvertisedDialect(
     reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION, references),
   );

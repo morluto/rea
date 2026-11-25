@@ -23,26 +23,12 @@ import type {
 } from "../native/peResources.js";
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
 import { peFailure, requirePeExtent } from "./peImageHeaders.js";
-import {
-  readPeResourceLayout,
-  readPeResourceLayoutAt,
-} from "./peResourceLayout.js";
+import { peDirectorySizeAnomaly } from "../native/peHeaderAnomalies.js";
+import { readPeResourceLayoutAt } from "./peResourceLayout.js";
+import type { PrefixedByteSource } from "../byteSource.js";
+import { bufferByteSource } from "../byteSource.js";
 
-/** Random-access byte source for streaming PE resource inventory parsing. */
-export interface PeResourceByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readonly readRange: (offset: number, length: number) => Promise<Buffer>;
-}
-
-const bufferSource = (bytes: Buffer): PeResourceByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(bytes.subarray(offset, offset + length)),
-});
-
-type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
+type PeResourceLayout = Awaited<ReturnType<typeof readPeResourceLayoutAt>>;
 type PeResourceInventory = Omit<PeResources, "artifact">;
 
 type Range = { offset: number; bytes: number };
@@ -78,32 +64,12 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
-/** Attach the selected carrier identity for the public PE resource report. */
-export const parsePeResources = async (
-  bytes: Buffer,
-  artifact: PeResources["artifact"],
-  input: InspectPeResourcesInput,
-  signal?: AbortSignal,
-): Promise<PeResources> =>
-  boundedResourceResult(
-    {
-      artifact,
-      ...(await parsePeResourceInventory(
-        bufferSource(bytes),
-        input.max_entries,
-        signal,
-        readPeResourceLayout(bytes),
-      )),
-    },
-    signal,
-  );
-
 /**
  * Decode PE resources from a verified random-access source without buffering
  * the full PE image in memory.
  */
 export const parsePeResourcesFromSource = async (
-  source: PeResourceByteSource,
+  source: PrefixedByteSource,
   artifact: PeResources["artifact"],
   input: InspectPeResourcesInput,
   signal?: AbortSignal,
@@ -137,7 +103,7 @@ export const readPeResourceEntries = async (
 ): Promise<PeResources["resources"]> =>
   boundedResourceResult(
     await parsePeResourceInventory(
-      bufferSource(bytes),
+      bufferByteSource(bytes),
       maxEntries,
       signal,
       layout,
@@ -152,7 +118,7 @@ export const readPeResourceEntries = async (
  * caller's cancellation rethrows `signal.reason`.
  */
 const parsePeResourceInventory = async (
-  source: PeResourceByteSource,
+  source: PrefixedByteSource,
   maxEntries: number,
   signal: AbortSignal | undefined,
   layout: PeResourceLayout,
@@ -192,12 +158,15 @@ const parsePeResourceInventory = async (
     ensureCapacity(projectedBytes);
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
+  // Farthest tree byte read, relative to the root, to compare with Size.
+  let walked = 0;
   const relative = (at: number, length: number): number => {
     if (!peResourceRangeFits(at, length, layout.size))
       peFailure(
-        "Resource directory offset leaves the declared resource interval.",
+        "Resource directory offset leaves the file-backed resource interval.",
       );
     requirePeExtent(source.size, root + at, length);
+    walked = Math.max(walked, at + length);
     return root + at;
   };
   const recordRange = (
@@ -388,12 +357,19 @@ const parsePeResourceInventory = async (
   return {
     format: layout.format,
     machine: layout.machine,
+    image_base: layout.imageBase,
     directory:
-      layout.size === 0
+      layout.size === 0 || layout.directoryAt === null
         ? null
         : {
             rva: layout.rva,
-            location: { offset: root, bytes: layout.size },
+            location: {
+              offset: root,
+              bytes: Math.max(
+                walked,
+                Math.min(layout.declaredSize, layout.size),
+              ),
+            },
             data_directory_location: { offset: layout.directoryAt, bytes: 8 },
           },
     directories,
@@ -404,6 +380,13 @@ const parsePeResourceInventory = async (
       examined_entries: examined,
       resources: resources.length,
     },
+    header_anomalies:
+      walked > layout.declaredSize
+        ? [
+            ...layout.headerAnomalies,
+            peDirectorySizeAnomaly("resource", 2, layout.declaredSize, walked),
+          ]
+        : [...layout.headerAnomalies],
     limitations: [
       "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
       "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",

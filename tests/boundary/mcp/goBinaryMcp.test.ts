@@ -29,6 +29,7 @@ import {
   createGoBinaryByteStringFixture,
   createGoBinaryDiagnosticFixtures,
   createGoBinaryFixture,
+  createGoBinaryOneDirectoryFixture,
   createGoBinaryPathFailureFixture,
 } from "../../fixtures/go/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -97,7 +98,7 @@ mcpTest(
       });
       inspection = client.callTool({
         name: "inspect_go_binary",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       await goInspection.reached(inspection, "Go inspection");
       closing = client.callTool({
@@ -159,7 +160,7 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
       );
       const response = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       const diagnostic = parseMcpToolError(response);
       expect(diagnostic.error).toMatchObject({
@@ -193,7 +194,7 @@ goMcpTest.skipIf(process.platform === "win32")(
 
     const rejected = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path: selected },
+      arguments: { detail: "complete", path: selected },
     });
     const diagnostic = parseMcpToolError(rejected).error;
     expect(diagnostic).toMatchObject({
@@ -207,7 +208,7 @@ goMcpTest.skipIf(process.platform === "win32")(
 
     const retried = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path: original },
+      arguments: { detail: "complete", path: original },
     });
     expect(retried.isError).not.toBe(true);
   },
@@ -225,7 +226,7 @@ for (const targetKind of ["dangling", "directory"] as const) {
 
       const rejected = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { path: selected },
+        arguments: { detail: "complete", path: selected },
       });
       const diagnostic = parseMcpToolError(rejected).error;
       expect(diagnostic).toMatchObject({
@@ -254,7 +255,7 @@ goMcpTest(
     await writeFile(path, fixture.bytes);
     const response = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     });
     expect(response.isError).not.toBe(true);
     const evidence = evidenceResultOf(goBinarySchema).parse(
@@ -276,9 +277,13 @@ goMcpTest(
       await writeFile(path, fixture.bytes);
       const response = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
-      expect(parseMcpToolError(response)).toMatchObject({
+      expect(
+        response.isError,
+        `${fixture.name} returned a non-error result: ${JSON.stringify(response).slice(0, 2000)}`,
+      ).toBe(true);
+      expect(parseMcpToolError(response), fixture.name).toMatchObject({
         error: {
           code: fixture.code,
           details: {
@@ -288,6 +293,20 @@ goMcpTest(
         },
       });
     }
+    // A declared directory count below 16 is admitted, as the loader admits it.
+    const path = join(root, "one-directory.exe");
+    await writeFile(path, createGoBinaryOneDirectoryFixture().bytes);
+    const admitted = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path },
+    });
+    expect(admitted.isError, JSON.stringify(admitted.content)).not.toBe(true);
+    expect(
+      goBinarySchema.parse(
+        (admitted.structuredContent as { normalized_result: unknown })
+          .normalized_result,
+      ).build_info,
+    ).toMatchObject({ go_version: "go1.26.0" });
   },
 );
 
@@ -333,7 +352,7 @@ goMcpTest(
     });
     const nulPath = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path: "/artifacts/\0program" },
+      arguments: { detail: "complete", path: "/artifacts/\0program" },
     });
     expect(parseMcpToolError(nulPath)).toMatchObject({
       error: {
@@ -348,7 +367,7 @@ goMcpTest(
     });
     await writeFile(path, fixture.bytes);
     const response = await client.callTool(
-      { name: "inspect_go_binary", arguments: { path } },
+      { name: "inspect_go_binary", arguments: { detail: "complete", path } },
       { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
@@ -368,7 +387,7 @@ goMcpTest(
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     const invalid = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path: "relative.bin" },
+      arguments: { detail: "complete", path: "relative.bin" },
     });
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {
