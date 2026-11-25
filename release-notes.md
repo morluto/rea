@@ -252,6 +252,7 @@
 * **evidence:** preserve saved identities with canonicalize 5 ([#8132](https://github.com/morluto/rea/issues/8132)) ([417beaf](https://github.com/morluto/rea/commit/417beaf3a5b486612f94e0af7226d99e5d7031c6))
 * **evidence:** reject unknown fields in comparison record pairs ([#13523](https://github.com/morluto/rea/issues/13523)) ([0eaea65](https://github.com/morluto/rea/commit/0eaea650c0c91574c66e5383073397d652bb42eb))
 * **evm:** decode Solidity metadata with cborg 7 ([#14329](https://github.com/morluto/rea/issues/14329)) ([c9b2df0](https://github.com/morluto/rea/commit/c9b2df0083f0eef00d0e818eef55542e4d1265e9))
+* **evm:** report the locked EVMole engine version ([#14407](https://github.com/morluto/rea/issues/14407)) ([ef4945c](https://github.com/morluto/rea/commit/ef4945cd018aa456e1672be7442eb719a4615d81))
 * **examples:** pin the CI example to the current REA release ([#14201](https://github.com/morluto/rea/issues/14201)) ([75c733a](https://github.com/morluto/rea/commit/75c733acb487791345ce93f43aa077e109136813))
 * **exports:** bind provider caveats to accepted observations ([#13430](https://github.com/morluto/rea/issues/13430)) ([ac3f83f](https://github.com/morluto/rea/commit/ac3f83f0f2172448c5a61872107ec4882d665360))
 * **firmware:** honor the final Android OTA timestamp record ([#13373](https://github.com/morluto/rea/issues/13373)) ([e84668c](https://github.com/morluto/rea/commit/e84668c76be4df40963dbd83f84803ec812f64c5))
