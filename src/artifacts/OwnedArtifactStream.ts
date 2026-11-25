@@ -91,7 +91,24 @@ export const ownArtifactStream = (
     streams?.add(decode);
   }
   let producerComplete = false;
+  let sourceRetired = false;
+  const cancelRetiredSourceDecode = (): boolean => {
+    // Once the source retires its abort listener is gone, while a decoder
+    // paused by a slow consumer can still hold undelivered output. It has
+    // not ended, so the output's final validation has not started.
+    if (
+      decode === undefined ||
+      !sourceRetired ||
+      signal?.aborted !== true ||
+      decode.destroyed ||
+      decode.readableEnded
+    )
+      return false;
+    decode.destroy(cancellationFailure(signal.reason));
+    return true;
+  };
   const onAbort = (): void => {
+    if (cancelRetiredSourceDecode()) return;
     // Active I/O and validation own failure precedence; cancellation also
     // retires buffered output after production completes.
     if (!producerComplete || output.destroyed) return;
@@ -105,6 +122,11 @@ export const ownArtifactStream = (
       resolve();
     });
   });
+  if (decode !== undefined)
+    source.once("close", () => {
+      sourceRetired = true;
+      cancelRetiredSourceDecode();
+    });
   signal?.addEventListener("abort", onAbort, { once: true });
   if (signal?.aborted) onAbort();
   output.once("finish", () => {

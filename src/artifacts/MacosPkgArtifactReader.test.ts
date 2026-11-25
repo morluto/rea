@@ -44,9 +44,10 @@ import {
   buildSpecialMemberPayloadPackage,
   buildTocPastEofPackage,
   truncatedPkgHeader,
+  buildCpioOdc,
+  buildXar,
 } from "./macosPkg/MacosPkg.fixture.js";
 import { parseCpioOdc } from "./macosPkg/CpioOdc.js";
-import { buildCpioOdc, buildXar } from "./macosPkg/MacosPkg.fixture.js";
 
 const writePkg = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-macos-pkg-");
@@ -895,6 +896,35 @@ it("cancels a paused memory-backed payload member before it is read", async () =
     expect(big).toBeDefined();
     const controller = new AbortController();
     const stream = await reader.open(big!, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stream.readableLength).toBeGreaterThan(0);
+    const closed = new Promise<unknown>((resolve) => {
+      stream.once("close", () => resolve(stream.errored));
+    });
+    controller.abort(new Error("caller stopped"));
+    await expect(closed).resolves.toMatchObject({ reason: "cancelled" });
+    expect(stream.destroyed).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("cancels a paused zlib member after its archived range is read", async () => {
+  const decoded = Buffer.alloc(8 * 1024 * 1024, 0x61);
+  const { reader, entries } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "paused.bin", encoding: "application/x-gzip", bytes: decoded },
+      ],
+    }),
+    "paused-zlib.pkg",
+    decoded.length * 2,
+  );
+  try {
+    const member = entries.find((entry) => entry.path === "paused.bin");
+    expect(member).toBeDefined();
+    const controller = new AbortController();
+    const stream = await reader.open(member!, controller.signal);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(stream.readableLength).toBeGreaterThan(0);
     const closed = new Promise<unknown>((resolve) => {
