@@ -1,8 +1,11 @@
+import { decodeMachoFixedName } from "../../domain/apple/appleMachoNames.js";
 import { hasElfMagic } from "../../domain/binaryContainer.js";
 import { hasDosMzMagic } from "../../domain/dosMz.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
+  uniqueArtifactRanges,
+  type ArtifactCarrierRange,
   readArtifactRange as readExact,
 } from "../ArtifactCarrierRange.js";
 import {
@@ -98,13 +101,8 @@ export interface NodeSeaLocation {
   readonly blobLength: number;
 }
 
-interface BlobRange {
-  readonly offset: number;
-  readonly length: number;
-}
-
 interface MachoSliceScan {
-  readonly ranges: readonly BlobRange[];
+  readonly ranges: readonly ArtifactCarrierRange[];
   readonly identityIssue?: string;
 }
 
@@ -283,16 +281,9 @@ export const scanNodeSeaFuse = async (
 const collapseRanges = async (
   carrier: Carrier,
   kind: NodeSeaLocation["carrier"],
-  ranges: readonly BlobRange[],
+  ranges: readonly ArtifactCarrierRange[],
 ): Promise<NodeSeaLocation | undefined> => {
-  const unique: BlobRange[] = [];
-  const seen = new Set<string>();
-  for (const range of ranges) {
-    const key = `${String(range.offset)}:${String(range.length)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(range);
-  }
+  const unique = uniqueArtifactRanges(ranges);
   const chosen = unique[0];
   if (chosen === undefined) return undefined;
   if (unique.length > 1) {
@@ -332,7 +323,7 @@ const collapseRanges = async (
 const locateFatMachO = async (
   carrier: Carrier,
   prefix: Buffer,
-): Promise<readonly BlobRange[]> => {
+): Promise<readonly ArtifactCarrierRange[]> => {
   let bytes = prefix;
   let header = readFatContainerHeader(bytes, carrier.fileSize);
   if (header.state === "needs-data") {
@@ -351,7 +342,7 @@ const locateFatMachO = async (
       return (await locateThinMachO(carrier, 0, carrier.fileSize)).ranges;
     return [];
   }
-  const found: BlobRange[] = [];
+  const found: ArtifactCarrierRange[] = [];
   let identityIssue: string | undefined;
   for (const [index, slice] of header.slices.entries()) {
     if (slice === undefined || header.rangeIssues[index] != null) continue;
@@ -410,7 +401,7 @@ const locateThinMachO = async (
   }
   const commands = await readExact(carrier, base + headerSize, sizeofcmds);
   if (commands === undefined) return EMPTY_MACHO_SLICE;
-  const found: BlobRange[] = [];
+  const found: ArtifactCarrierRange[] = [];
   const cursor = new MachoLoadCommandCursor(framing.value);
   while (cursor.nextOffset !== null) {
     abortIfNeeded(carrier.signal);
@@ -429,7 +420,9 @@ const locateThinMachO = async (
       // and section framing only from the shared fixed-record observation.
       const segment = parsedSegment.ok ? parsedSegment.value : undefined;
       const name =
-        segment === undefined ? undefined : cString(segment.nameBytes, 0, 16);
+        segment === undefined
+          ? undefined
+          : decodeMachoFixedName(segment.nameBytes);
       if (
         segment !== undefined &&
         (name === "NODE_SEA" || name === "__NODE_SEA")
@@ -457,7 +450,7 @@ const locateThinMachO = async (
           if (!parsedSection.ok)
             throw truncatedFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
           const record = parsedSection.value;
-          if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
+          if (decodeMachoFixedName(record.nameBytes) !== SEA_SECTION) continue;
           // Only a named declaration is attributed to SEA. A mismatch
           // cannot supply bytes or block an independently admitted sibling.
           if (identityIssue !== null) return { ranges: [], identityIssue };
@@ -486,7 +479,7 @@ const locateThinMachO = async (
 const locateElfNotes = async (
   carrier: Carrier,
   prefix: Buffer,
-): Promise<BlobRange[]> => {
+): Promise<ArtifactCarrierRange[]> => {
   const header = readElfFixedHeader(prefix, carrier.fileSize);
   if (!header.ok) return [];
   const little = header.value.byteOrder === "little";
@@ -513,7 +506,7 @@ const locateElfNotes = async (
   const phnum = programDeclarations.count;
   const shentsize = sectionDeclarations.width;
   const shnum = sectionDeclarations.count;
-  const found: BlobRange[] = [];
+  const found: ArtifactCarrierRange[] = [];
   let opaque: string | undefined;
   // Each note header takes at least 12 file bytes. The containing program or
   // section header also makes room in this allowance for one short tail read.
@@ -689,7 +682,7 @@ const scanElfNoteTable = async (
   },
   scan: NoteScan,
   alreadyFound: boolean,
-): Promise<BlobRange[] | undefined> => {
+): Promise<ArtifactCarrierRange[] | undefined> => {
   if (
     note.offset === undefined ||
     note.length === undefined ||
@@ -698,7 +691,7 @@ const scanElfNoteTable = async (
   )
     return undefined;
   const alignment = elfNoteAlignment(note.align === 8 ? 8 : 4);
-  const found: BlobRange[] = [];
+  const found: ArtifactCarrierRange[] = [];
   let cursor = 0;
   while (cursor + ELF_NOTE_HEADER_BYTES <= note.length) {
     abortIfNeeded(carrier.signal);
@@ -729,7 +722,8 @@ const scanElfNoteTable = async (
     );
     if (name === undefined)
       return failNoteTable(alreadyFound || found.length > 0);
-    const owner = cString(name, 0, name.length);
+    const nul = name.indexOf(0);
+    const owner = name.toString("latin1", 0, nul < 0 ? name.length : nul);
     if (owner === RESOURCE_NAME) {
       if (framing === "truncated-descriptor")
         throw truncatedFailure(NODE_SEA_ELF_DESCRIPTOR_TRUNCATED);
@@ -769,7 +763,7 @@ const failNoteTable = (
 const locatePeResources = async (
   carrier: Carrier,
   prefix: Buffer,
-): Promise<BlobRange[]> => {
+): Promise<ArtifactCarrierRange[]> => {
   // Probe for the NODE_SEA_BLOB name first so a malformed resource tree in an
   // ordinary PE stays a native-classification concern, not a SEA failure.
   if (
@@ -823,11 +817,4 @@ const locatePeResources = async (
     admitBlobBytes(carrier, range.bytes);
     return [{ offset: range.offset, length: range.bytes }];
   });
-};
-
-const cString = (bytes: Buffer, offset: number, length: number): string => {
-  let end = offset;
-  const limit = Math.min(bytes.length, offset + length);
-  while (end < limit && bytes[end] !== 0) end += 1;
-  return bytes.toString("latin1", offset, end);
 };

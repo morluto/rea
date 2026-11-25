@@ -81,7 +81,7 @@ class UuidlessDyldRunner implements NativeCommandRunner {
     };
     if (this.exitCode === 0 || options.acceptNonZero) return ok(capture);
     return err(
-      new NativeCommandFailure(tool, "nonzero-exit", this.exitCode, undefined, {
+      new NativeCommandFailure(tool, "nonzero-exit", 1, undefined, {
         stdout: capture.stdout,
         stderr: capture.stderr,
         stdoutBytes: capture.stdoutBytes,
@@ -162,8 +162,9 @@ it.each([
   },
 );
 
-it.each([0, 1])(
-  "returns readable Mach-O Evidence when dyld_info reports a missing UUID with exit %i",
+// Xcode 26 dyld_info exits 1 after the diagnostic; Xcode 16 exits 0.
+it.for([1, 0])(
+  "returns readable Mach-O Evidence when dyld_info identifies a missing UUID with exit %i",
   async (exitCode) => {
     const target = await makeTarget("no-uuid");
     const runner = new UuidlessDyldRunner(

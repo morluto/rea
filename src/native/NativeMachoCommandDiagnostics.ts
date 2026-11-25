@@ -39,47 +39,57 @@ const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
   "old arm64e bind opcodes not supported",
 ]);
 
-/** Only one settled diagnostic can describe a refused slice. */
+const dyldFailureDiagnostics = (
+  capture: NativeCommandCapture,
+  outputs: readonly string[],
+  admitsSuccess = false,
+): readonly string[] =>
+  capture.tool !== "dyld_info" ||
+  capture.exitCode === null ||
+  (capture.exitCode === 0 && !admitsSuccess) ||
+  capture.signal !== null
+    ? []
+    : outputs.flatMap((output) =>
+        withoutEchoedPathHeader(output, capture.arguments.at(-1))
+          .split(/\r?\n/u)
+          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
+          .filter(Boolean),
+      );
+
+/** Admit the observed refusal only when it is the sole settled diagnostic. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
+  admitsSuccess = false,
 ): string | null => {
-  if (
-    capture.tool !== "dyld_info" ||
-    capture.exitCode === null ||
-    capture.signal !== null
-  )
-    return null;
-  const operand = nativeCommandOperand(capture);
-  const stdout = withoutEchoedPathHeader(capture.stdout, operand);
-  // Some versions report the missing UUID on stdout and exit successfully.
-  // Compare the whole response without splitting successful symbol listings.
-  if (capture.exitCode === 0)
-    return capture.stderr.trim() === "" &&
-      stdout.trim() === MISSING_UUID_DIAGNOSTIC
-      ? MISSING_UUID_DIAGNOSTIC
-      : null;
-  const diagnostics = [stdout, withoutEchoedPathHeader(capture.stderr, operand)]
-    .flatMap((output) => output.split(/\r?\n/u))
-    .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
-    .filter(Boolean);
+  const diagnostics = dyldFailureDiagnostics(
+    capture,
+    [capture.stdout, capture.stderr],
+    admitsSuccess,
+  );
   return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
 };
+
+/**
+ * Keep missing-UUID admission limited to its observed stdout-only refusal.
+ * Xcode 26 dyld_info exits 1 after it; the Xcode 16 release exits 0 with
+ * the same sole line, which is never an import or export row.
+ */
+export const isMissingUuidDyldFailure = (
+  capture: NativeCommandCapture,
+): boolean =>
+  capture.stderr.trim().length === 0 &&
+  dyldFailureDiagnostic(capture, true) === MISSING_UUID_DIAGNOSTIC;
 
 /** The sole diagnostic when dyld_info refuses the slice itself; nm and the load table still describe it. */
 export const dyldSliceRefusal = (
   capture: NativeCommandCapture,
 ): string | null => {
+  if (isMissingUuidDyldFailure(capture)) return MISSING_UUID_DIAGNOSTIC;
   const diagnostic = dyldFailureDiagnostic(capture);
-  if (diagnostic === MISSING_UUID_DIAGNOSTIC)
-    return capture.stderr.trim() === "" ? diagnostic : null;
   return diagnostic !== null && UNSUPPORTED_SLICE_DIAGNOSTICS.has(diagnostic)
     ? diagnostic
     : null;
 };
-
-export const isMissingUuidDyldFailure = (
-  capture: NativeCommandCapture,
-): boolean => dyldSliceRefusal(capture) === MISSING_UUID_DIAGNOSTIC;
 
 /** Admit the observed dSYM refusal only when no other diagnostic is present. */
 export const isUnbackedTextDyldFailure = (

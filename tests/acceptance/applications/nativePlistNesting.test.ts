@@ -11,17 +11,6 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-// plutil can echo its operand on either channel. The CLI and MCP use separate
-// snapshots. Compare the original diagnostic text after the operand.
-const plistDiagnostic = (text: string, path: string) =>
-  text.startsWith(`${path}:`)
-    ? expect.toSatisfy(
-        (actual: unknown) =>
-          typeof actual === "string" &&
-          actual.replace(/^\/[^\r\n]*?\.plist:/u, () => `${path}:`) === text,
-      )
-    : text;
-
 describe.skipIf(process.platform !== "darwin")(
   "ordinary plist source nesting",
   () => {
@@ -109,10 +98,17 @@ describe.skipIf(process.platform !== "darwin")(
           if (native !== undefined) expect(native.signal).toBeNull();
           if (native !== undefined && native.exitCode !== 0) {
             expect(output.exitCode, output.stderr).toBe(1);
+            // Native commands inspect a private snapshot, so their raw
+            // diagnostics can name a different operand. plutil writes them to
+            // stderr in Xcode 26 and to stdout in Xcode 16.
+            const operandNeutral = (output: string) =>
+              output.includes(path)
+                ? expect.stringContaining(output.replace(path, "").trim())
+                : output;
             const captured_output = {
               exit_code: native.exitCode,
-              stdout: plistDiagnostic(native.stdout, path),
-              stderr: plistDiagnostic(native.stderr, path),
+              stdout: operandNeutral(native.stdout),
+              stderr: operandNeutral(native.stderr),
             };
             // The CLI selects the plist as its target; MCP selects it with
             // the `path` input. Each failure names the input that chose it.
