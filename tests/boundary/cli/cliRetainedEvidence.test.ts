@@ -4,7 +4,9 @@ import {
   lstat,
   mkdir,
   readdir,
+  realpath,
   stat,
+  symlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -30,6 +32,7 @@ import {
   withEvidenceCallerInputPath,
 } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type Output = {
@@ -37,7 +40,7 @@ type Output = {
   readonly evidence_bundle?: {
     readonly path: string;
     readonly bytes: number;
-    readonly sha256: string;
+    readonly record_sha256: string;
   };
   readonly delivery: {
     readonly retained: string;
@@ -109,13 +112,14 @@ it("keeps an over-budget CLI result in the private cache, pages it, and reuses i
   const first = await run();
   expect(parseEvidence(first.summary).operation).toBe("inspect_analysis_view");
   const id = first.delivery.evidence_id;
-  const sha256 = first.evidence_bundle!.sha256;
-  const path = join(directory, `${sha256}.json`);
+  const sha256 = first.evidence_bundle!.record_sha256;
+  // Paths name the cache directory as the filesystem resolves it.
+  const path = join(await realpath(directory), `${sha256}.json`);
   expect(first.delivery).toMatchObject({ retained: "cache-file" });
   expect(first.evidence_bundle).toEqual({
     path,
     bytes: (await stat(path)).size,
-    sha256,
+    record_sha256: sha256,
   });
   expect(first.delivery.next?.arguments.source).toEqual({
     kind: "evidence-file",
@@ -170,9 +174,9 @@ it("keeps an over-budget CLI result in the private cache, pages it, and reuses i
   // Another spelling of the same target records another caller path, so it
   // keeps its own record rather than recovering the first run's.
   const spelled = await runOn(relative(process.cwd(), target));
-  expect(spelled.evidence_bundle!.sha256).not.toBe(sha256);
+  expect(spelled.evidence_bundle!.record_sha256).not.toBe(sha256);
   expect((await files(directory)).sort()).toEqual(
-    [`${sha256}.json`, `${spelled.evidence_bundle!.sha256}.json`].sort(),
+    [`${sha256}.json`, `${spelled.evidence_bundle!.record_sha256}.json`].sort(),
   );
 });
 
@@ -380,3 +384,31 @@ it("withdraws the publication receipt of a bundle the cache discards", async () 
   expect(receipt).toBeUndefined();
   expect(await files(directory)).toEqual([]);
 });
+
+// Windows resolves .. lexically; POSIX resolves it after the link.
+it.skipIf(HOST_PLATFORM.platform === "win32")(
+  "keeps the filesystem meaning of a cache path with .. after a symbolic link",
+  async () => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-retain-dotdot-"),
+    );
+    await mkdir(join(root, "real", "deep"), { recursive: true });
+    await symlink(join(root, "real", "deep"), join(root, "link"));
+    // The kernel resolves link/.. to real; lexical joining would give root.
+    const directory = join(root, "link") + "/../evidence";
+    const kept = await retainCliEvidence({
+      sha256: "e".repeat(64),
+      completeBytes: 10,
+      retention: { directory, capBytes: 1_000 },
+      write: async (path) => {
+        await writeFile(path, "y".repeat(10), { flag: "wx", mode: 0o600 });
+        return ok({ bytes: 10 });
+      },
+    });
+    expect(kept).toMatchObject({
+      ok: true,
+      value: { path: join(root, "real", "evidence", `${"e".repeat(64)}.json`) },
+    });
+    expect(await files(join(root, "evidence"))).toEqual([]);
+  },
+);

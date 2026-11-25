@@ -342,7 +342,9 @@ const retainOverBudgetEvidence = async (
   }
   const receipt = {
     ...bundleReceipt(kept.value.path, kept.value.bytes, input),
-    sha256: kept.value.sha256,
+    // The cache key: the digest of the complete record, not of the file,
+    // which is the bundle that holds it.
+    record_sha256: kept.value.sha256,
   };
   recordCliEvidencePublication(receipt);
   return ok({ path: kept.value.path, receipt });

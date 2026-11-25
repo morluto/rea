@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, readdir, rm, utimes } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  realpath,
+  rm,
+  utimes,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../domain/analysisResourceLimits.js";
@@ -85,14 +93,19 @@ const isOwnedEntry = (stats: { readonly uid: number }): boolean =>
  * directory this user owns, never a symbolic link. Our own directory is
  * tightened to 0700 if something loosened it.
  */
-const admitDirectory = async (directory: string): Promise<boolean> => {
+const admitDirectory = async (
+  directory: string,
+): Promise<string | undefined> => {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const stats = await lstat(directory);
   if (!stats.isDirectory() || stats.isSymbolicLink() || !isOwnedEntry(stats))
-    return false;
+    return undefined;
   if (typeof process.getuid === "function" && (stats.mode & 0o077) !== 0)
     await chmod(directory, 0o700);
-  return true;
+  // The checked directory as the filesystem resolves it, so later paths
+  // keep its meaning even when the selected spelling holds `..` after a
+  // symbolic link, which lexical joining would collapse.
+  return realpath(directory);
 };
 
 /** A regular file this user owns at `path`, its size; undefined when absent. */
@@ -189,12 +202,13 @@ export const retainCliEvidence = async <Committed>(input: {
   if (input.completeBytes > capBytes) return err(tooLarge(input.completeBytes));
   const now = input.now ?? Date.now();
   try {
-    if (!(await admitDirectory(directory)))
+    const admitted = await admitDirectory(directory);
+    if (admitted === undefined)
       return err({
         reason:
           "The retained-Evidence cache directory is not a private directory this user owns.",
       });
-    const path = join(directory, name);
+    const path = join(admitted, name);
     const reuse = async (): Promise<
       Result<RetainedEvidenceFile, RetentionStop<Committed>> | undefined
     > => {
@@ -231,7 +245,7 @@ export const retainCliEvidence = async <Committed>(input: {
             err({ reason: "The retained Evidence file could not be written." }))
           : err(written.error);
     }
-    if (kept.ok) await evict(directory, name, capBytes, now).catch(() => {});
+    if (kept.ok) await evict(admitted, name, capBytes, now).catch(() => {});
     return kept;
   } catch (cause: unknown) {
     return err({
@@ -250,13 +264,14 @@ export const renewRetainedEvidence = async (
   retention: CliEvidenceRetention | undefined,
   now = Date.now(),
 ): Promise<void> => {
-  if (retention === undefined) return;
-  const absolute = resolve(path);
-  if (
-    dirname(absolute) !== resolve(retention.directory) ||
-    !RETAINED_NAME.test(basename(absolute))
-  )
-    return;
+  if (retention === undefined || !RETAINED_NAME.test(basename(path))) return;
+  // Compare the directories as the filesystem resolves them.
+  const [parent, cache] = await Promise.all([
+    realpath(dirname(resolve(path))).catch(() => undefined),
+    realpath(retention.directory).catch(() => undefined),
+  ]);
+  if (parent === undefined || parent !== cache) return;
+  const absolute = join(parent, basename(path));
   const bytes = await ownedFileBytes(absolute).catch(() => undefined);
   if (typeof bytes === "number") await renew(absolute, now).catch(() => {});
 };

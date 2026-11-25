@@ -355,8 +355,9 @@ not, the work is never refused or truncated:
   the bundle as an `evidence-file` source.
 - Without `--evidence_output`, the one-shot CLI keeps the complete Evidence
   in its private retained-Evidence cache and prints the same three fields,
-  with `retained: "cache-file"`. `evidence_bundle` gives the file's path,
-  size and `sha256` digest. `delivery.next` pages it with
+  with `retained: "cache-file"`. `evidence_bundle` gives the bundle file's path
+  and size, and `record_sha256`, the digest of the complete record it holds
+  (the file is the bundle around that record, so its own digest differs). `delivery.next` pages it with
   `rea inspect-analysis-view`, so the analysis never has to run again.
   Composed commands keep the source records the bundle needs, as they do
   for `--evidence_output`.
