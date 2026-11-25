@@ -2334,7 +2334,9 @@ call can use the returned arguments contract. Output schemas, when the
 selected profile lists them, remain in `tools/list`. Search defaults to three results, allows up to
 20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
 request order and reject unknown or excluded names before loading anything.
-Use fewer keywords when no result matches; search requires every word to match.
+Search ranks tools that match all words first, then partial matches by matched
+word count, name matches, and canonical name; try fewer or different keywords
+when no word matches.
 Both reply representations must fit the configured response budget before any
 tools load. An oversized page returns a resource constraint; reduce `limit` or
 request fewer exact names and retry. Input schemas are retained in full within
