@@ -545,15 +545,20 @@ it.each([
   "loads each static gate from its own artifact on attempt %i",
   async (attempt, suffix) => {
     const downloads: string[] = [];
+    const queries: string[] = [];
     const api = createGitHubApi({
       token: "fixture-token",
       fetchImpl: async (url) => {
         downloads.push(String(url));
         throw new Error("stop-before-download");
       },
-      apiRequest: async () => ({
-        total_count: 2,
-        artifacts: [
+      apiRequest: async (_method, endpoint) => {
+        const url = new URL(endpoint, "https://api.github.com");
+        expect(url.pathname).toBe("/repos/owner/rea/actions/runs/10/artifacts");
+        expect(url.searchParams.get("per_page")).toBe("1");
+        const name = url.searchParams.get("name");
+        queries.push(name ?? "");
+        const artifacts = [
           {
             id: 1,
             name: `static-check-reports${suffix}`,
@@ -566,8 +571,9 @@ it.each([
             expired: false,
             workflow_run: { id: 10, head_sha: sha("a") },
           },
-        ],
-      }),
+        ].filter((artifact) => artifact.name === name);
+        return { total_count: artifacts.length, artifacts };
+      },
     });
     const runRecord = { id: 10, run_attempt: attempt, head_sha: sha("a") };
     await expect(
@@ -592,6 +598,11 @@ it.each([
         },
       ),
     ).resolves.toBeNull();
+    expect(queries).toEqual([
+      `static-deep-check-reports${suffix}`,
+      `static-check-reports${suffix}`,
+      "static-check-reports-attempt-3",
+    ]);
     expect(downloads).toEqual([
       "https://api.github.com/repos/owner/rea/actions/artifacts/2/zip",
       "https://api.github.com/repos/owner/rea/actions/artifacts/1/zip",
