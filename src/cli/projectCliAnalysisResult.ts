@@ -167,7 +167,9 @@ const projectErrorRecord = (
     details.secondary_failures,
     context,
   );
-  const remediation = cliTargetFailureRemediation(error, details, context);
+  const remediation =
+    cliTargetFailureRemediation(error, details, context) ??
+    cliInputSchemaRemediation(error, details, context);
   if (
     limit === undefined &&
     relatedFlags === undefined &&
@@ -335,6 +337,41 @@ const cliTargetFailureRemediation = (
         ...remediation,
         action: `${cli}${remediation.action.slice(mcp.length)}`,
       };
+};
+
+/**
+ * The shared input remediation names the MCP operation and tells an MCP
+ * client to refresh tools/list. The CLI spells the command and drops that
+ * client-only clause. A prefixed argument hint stays ahead of the sentence.
+ */
+const cliInputSchemaRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    typeof details.operation !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const needle = `Read the declared input schema or CLI usage for ${details.operation}; if using MCP and the catalog may be stale, call tools/list`;
+  if (!remediation.action.includes(needle)) return undefined;
+  const command = cliCommandForOperation(
+    details.operation,
+    context.commands,
+    context.cliName ?? "rea",
+    context.recordedCommands,
+  );
+  if (command === undefined) return undefined;
+  return {
+    ...remediation,
+    action: remediation.action.replace(
+      needle,
+      `Read the declared input schema or CLI usage for ${command}`,
+    ),
+  };
 };
 
 const projectedSecondaryFailures = (

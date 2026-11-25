@@ -130,6 +130,25 @@ it("passes through successful data, unbound operations and unknown error values"
   expect(projectCliInputFields(unknown, binding)).toEqual(unknown);
 });
 
+it("spells an input refusal with the CLI command and drops the MCP catalog clause", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-pe-resources");
+  if (entry === undefined) throw new Error("Expected inspect-pe-resources");
+  const projected = projectAnalysisError(
+    new AnalysisInputError("inspect_pe_resources", undefined, [
+      { path: ["path"], reason: "invalid_value" },
+    ]),
+  );
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected.remediation.action).toContain("rea inspect-pe-resources");
+  expect(cliProjected.remediation.action).not.toContain("inspect_pe_resources");
+  expect(cliProjected.remediation.action).not.toContain("tools/list");
+});
+
 it("renders related_cli_flags and related_cli_commands from the CLI command registry across command shapes", () => {
   const cli = createCli();
   const entries = cliCommands(cli);
