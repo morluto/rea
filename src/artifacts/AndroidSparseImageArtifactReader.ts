@@ -246,6 +246,7 @@ export class AndroidSparseImageArtifactReader implements ArtifactReader {
     const fileSize = initial.size;
     // Read the fixed header, then only the extension it declares.
     const fixed = await readArtifactFileBytes(
+      "android-sparse-image",
       handle,
       0,
       Math.min(fileSize, ANDROID_SPARSE_FILE_HEADER_BYTES),
@@ -257,6 +258,7 @@ export class AndroidSparseImageArtifactReader implements ArtifactReader {
     if (!parsed.ok) throw parseFailure(parsed.error);
     const header = parsed.value;
     const undecoded = await readArtifactFileBytes(
+      "android-sparse-image",
       handle,
       ANDROID_SPARSE_FILE_HEADER_BYTES,
       header.fileHeaderSize - ANDROID_SPARSE_FILE_HEADER_BYTES,
@@ -352,6 +354,7 @@ class FileWindow {
         : Math.max(READ_WINDOW_BYTES, length);
       this.#start = offset;
       this.#bytes = await readArtifactFileBytes(
+        "android-sparse-image",
         this.handle,
         offset,
         Math.min(this.fileSize - offset, readLength),
