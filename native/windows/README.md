@@ -277,10 +277,18 @@ grant observers access to the private runtime itself.
 
 1. In the owner's non-elevated session, run `npm run verify:windows-private-runtime -- C:\rea-qualification C:\rea-tools\process-boundary.exe`.
    Leave it running; it prints the exact runtime path after checking the owner's reads.
-2. In each of the other two sessions, run `powershell.exe -NoProfile -File C:\rea-tools\private-runtime-read.ps1 -Probe C:\rea-tools\process-boundary.exe -Root "<printed runtime path>"`. The probe requests only `FILE_READ_DATA`; the adjacent control grants the peer exactly that right.
+2. In each of the other two Windows PowerShell sessions, run these commands. Paste the printed path at the prompt, not into the command itself.
+
+   ```powershell
+   $root = Read-Host 'Runtime path'
+   & 'C:\rea-tools\private-runtime-read.ps1' -Probe 'C:\rea-tools\process-boundary.exe' -Root $root
+   ```
+
+   The probe requests only `FILE_READ_DATA`; the adjacent control grants the peer exactly that right.
    Paste each unedited, single-line JSON result into the owner's terminal. The
    adjacent control file must be readable in both sessions. A missing file,
    sharing violation, or failed control read does not count as access denied.
+
 3. The owner reports success only after both identities are accounted for and
    closing the runtime twice leaves no runtime tree or damage to the junction target.
    EOF before both observations fails the check and releases the fixture.

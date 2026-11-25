@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   lstat,
   mkdir,
@@ -12,10 +11,12 @@ import {
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { requireOrdinaryWindowsVerifierCaller } from "./lib/windows-ordinary-user-verifier.mjs";
 import {
   privateArtifacts,
@@ -29,39 +30,36 @@ if (process.platform !== "win32" || process.argv.length !== 4)
 await requireOrdinaryWindowsVerifierCaller();
 const { WindowsPrivateRuntime } =
   await import("../dist/windows/WindowsPrivateRuntime.js");
-const fixture = await VerifierFixture.open({
-  parent: resolve(process.argv[2]),
-  prefix: "rea-private-access-",
-  private: false,
-});
 const byte = "R";
 const probe = resolve(process.argv[3]);
+const commands = await createVerifierCommands();
+const interruption = bindVerifierCommandInterruption(commands);
 
 async function verifyPeers(root) {
   const script = fileURLToPath(
     new URL("./verify/windows/private-runtime-read.ps1", import.meta.url),
   );
-  const owner = JSON.parse(
-    execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-File",
-        script,
-        "-Root",
-        root,
-        "-Probe",
-        probe,
-      ],
-      { encoding: "utf8", timeout: 60_000 },
-    ),
+  const { stdout } = await interruption.exec(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-File",
+      script,
+      "-Root",
+      root,
+      "-Probe",
+      probe,
+    ],
+    { timeout: 60_000, stdin: "closed-pipe" },
   );
+  const owner = JSON.parse(stdout);
   assert.equal(verifyRuntimeAccess(root, owner.sid, owner), "owner");
   const pending = new Set(["SYSTEM", "unrelated user"]);
-  const input = createInterface({ input: process.stdin });
-  const interrupt = () => input.close();
-  process.on("SIGINT", interrupt);
+  const input = createInterface({
+    input: process.stdin,
+    signal: interruption.signal,
+  });
   try {
     console.error(
       `Runtime: ${root}\nRun the read probe in each designated session and paste its JSON line here (SYSTEM and unrelated local user).`,
@@ -74,14 +72,19 @@ async function verifyPeers(root) {
       );
       if (pending.size === 0) return;
     }
+    interruption.throwIfInterrupted();
     throw new Error(`Missing read observations: ${[...pending].join(", ")}`);
   } finally {
-    process.off("SIGINT", interrupt);
     input.close();
   }
 }
 
-await withVerifierFixture(fixture, async () => {
+async function qualify(fixture) {
+  let runtime;
+  const close = fixture.releaseAfter(async () => {
+    await commands.close();
+    await runtime?.close();
+  });
   const parent = join(fixture.path, "parent");
   const moved = join(fixture.path, "renamed");
   const outside = join(fixture.path, "outside");
@@ -93,7 +96,7 @@ await withVerifierFixture(fixture, async () => {
   await writeFile(sentinel, byte);
   const control = join(parent, "control.bin");
   await writeFile(control, byte);
-  execFileSync(
+  await interruption.exec(
     "powershell.exe",
     [
       "-NoProfile",
@@ -110,10 +113,17 @@ await withVerifierFixture(fixture, async () => {
     {
       env: { ...process.env, REA_TEST_CONTROL_FILE: control },
       timeout: 60_000,
+      stdin: "closed-pipe",
     },
   );
-  const runtime = WindowsPrivateRuntime.create(parent, "private-");
-  fixture.releaseAfter(() => runtime.close());
+  try {
+    runtime = WindowsPrivateRuntime.create(parent, "private-");
+  } catch (cause) {
+    fixture.retain(
+      "Runtime creation failed without returning a cleanup handle.",
+    );
+    throw cause;
+  }
   const root = runtime.observation.path;
   await mkdir(join(root, "project"));
   for (const file of privateArtifacts) {
@@ -127,12 +137,23 @@ await withVerifierFixture(fixture, async () => {
     ["EPERM", "EBUSY", "EACCES"].includes(error.code),
   );
   await verifyPeers(root);
-  await runtime.close();
+  await close();
   await runtime.close();
   await assert.rejects(lstat(root), { code: "ENOENT" });
   assert.deepEqual(await readdir(parent), ["control.bin"]);
   assert.equal(await readFile(sentinel, "utf8"), byte);
-});
+}
+try {
+  const fixture = await VerifierFixture.open({
+    parent: resolve(process.argv[2]),
+    prefix: "rea-private-access-",
+    private: false,
+  });
+  await withVerifierFixture(fixture, qualify);
+  interruption.throwIfInterrupted();
+} finally {
+  interruption.finish();
+}
 console.log(
   "Owner and SYSTEM read all five artifacts; the unrelated user was denied. Parent replacement was refused and cleanup preserved the junction target.",
 );
