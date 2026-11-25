@@ -57,6 +57,12 @@ export interface RetainedEvidenceFile {
 export interface RetentionStop<Committed> {
   readonly reason: string;
   readonly committed?: Committed;
+  /**
+   * True when the file was published and remains on disk because a post-write
+   * removal (such as discarding an oversized bundle) failed; the caller must
+   * retain the published file's receipt.
+   */
+  readonly fileRemains?: true;
 }
 
 /** The writer's outcome: the bytes it published, that the name exists, or a stop. */
@@ -207,7 +213,14 @@ export const retainCliEvidence = async <Committed>(input: {
       const written = await input.write(path);
       if (written.ok && written.value.bytes > capBytes) {
         // The bundle, with the sources it cites, outgrew the cache.
-        await rm(path, { force: true });
+        try {
+          await rm(path, { force: true });
+        } catch (cause: unknown) {
+          return err({
+            reason: `The oversized retained-Evidence bundle could not be removed: ${errorMessage(cause)}`,
+            fileRemains: true,
+          });
+        }
         return err(tooLarge(written.value.bytes));
       }
       // Another run kept the same record between the check and the write.

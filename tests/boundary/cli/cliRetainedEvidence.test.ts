@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+  chmod,
   lstat,
   mkdir,
   readdir,
@@ -268,7 +269,38 @@ it("removes records past their age, then the least recently used over the cap", 
     },
   });
   expect(oversized).toMatchObject({ ok: false });
+  if (!oversized.ok) expect(oversized.error.fileRemains).toBeUndefined();
   expect(await files(directory)).not.toContain(named("f"));
+
+  // When removing an oversized bundle fails, retainCliEvidence reports
+  // `fileRemains: true` so the caller keeps the published file's receipt.
+  if (process.platform !== "win32" && process.getuid?.() !== 0) {
+    const stuckDir = join(
+      await createTestTempDirectory("rea-retain-stuck-"),
+      "evidence",
+    );
+    await mkdir(stuckDir, { mode: 0o700 });
+    try {
+      const stuck = await retainCliEvidence({
+        sha256: "9".repeat(64),
+        completeBytes: 100,
+        retention: { directory: stuckDir, capBytes: 500 },
+        now,
+        write: async (path) => {
+          await writeFile(path, "z".repeat(600), { flag: "wx", mode: 0o600 });
+          await chmod(stuckDir, 0o500);
+          return ok({ bytes: 600 });
+        },
+      });
+      expect(stuck).toMatchObject({
+        ok: false,
+        error: { fileRemains: true },
+      });
+      expect(await files(stuckDir)).toContain(named("9"));
+    } finally {
+      await chmod(stuckDir, 0o700);
+    }
+  }
 });
 
 it("keys a retained record by its complete content, not its Evidence ID", async () => {

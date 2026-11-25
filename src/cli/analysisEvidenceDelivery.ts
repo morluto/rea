@@ -332,9 +332,10 @@ const retainOverBudgetEvidence = async (
       });
     },
   });
-  // A write the cache then discarded (or never kept) names no file.
+  // Clear the recorded receipt only when no published file remains on disk.
   if (!kept.ok) {
-    if (kept.error.committed === undefined) clearCliEvidencePublication();
+    if (kept.error.committed === undefined && kept.error.fileRemains !== true)
+      clearCliEvidencePublication();
     return kept;
   }
   const receipt = {
