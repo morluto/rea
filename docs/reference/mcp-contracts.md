@@ -395,8 +395,9 @@ zero-total representation must handle the new `unavailable` status and nullable
 total; historical saved views remain valid.
 
 `procedure_address`, `procedure_callees`, `procedure_callers`,
-`resolve_containing_procedure` and `get_call_graph` also accept `detail: "summary"`
-(complete remains the default). The summary includes the first 64 recorded
+`resolve_containing_procedure`, `get_call_graph` and `xrefs` also accept
+`detail: "summary"`; an omitted `detail` follows the
+[agent result budget](limits-and-recovery.md#agent-result-budget). The summary includes the first 64 recorded
 observations, exact source parameters and provider/profile identity, relationship
 coverage where recorded, and the retained complete parent's ID. Continue with
 `view: {"kind":"native-observation","offset":64,"limit":64}`. Array positions
@@ -408,10 +409,7 @@ limitation and reason IDs index that page's `items.messages` dictionary. Expand
 those references to recover exact text, repeated messages, and absent versus
 empty optional fields. Failed nodes retain their original error.
 
-Retained `xrefs` Evidence also supports `native-observation` address pages and
-`native-context` source caveats. `xrefs` still returns complete Evidence by
-default and does not accept `detail`; when its MCP response exceeds the budget,
-follow the returned continuation to page the retained result. These addresses
+Retained `xrefs` Evidence pages its addresses the same way. These addresses
 remain untyped; paging does not add reference kinds or establish completeness.
 The page tells callers that any additional provider detail recorded in the parent
 requires retrieving or exporting the complete Evidence.

@@ -263,7 +263,10 @@ export const officialOutputSchemas = {
   set_comment: evidenceResultOf(z.boolean()),
   set_inline_comment: evidenceResultOf(z.boolean()),
   unset_bookmark: evidenceResultOf(z.boolean()),
-  xrefs: evidenceResultOf(nativeAddressListSchema),
+  xrefs: analysisDetailOutputSchemaOf(
+    nativeAddressListSchema,
+    nativeObservationSummaryViewResultSchemas.xrefs,
+  ),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 const literalTraceOutput = analysisDetailOutputSchemaOf(
