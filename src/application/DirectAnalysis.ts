@@ -4,13 +4,14 @@ import {
   type DirectEnhancedToolName,
 } from "./oneShotOperationInput.js";
 import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
+import {
+  runInRetainedArtifactScope,
+  selectedArtifactDirectory,
+} from "./artifacts/ArtifactPathInspection.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
-import type { TargetFormatHint } from "../domain/targetFormats.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { NativeLoadSelection } from "../domain/rawBinary.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
@@ -77,12 +78,8 @@ import {
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
-import {
-  AnalysisInputError,
-  cancelledBy,
-  CallerAbort,
-} from "../domain/analysisErrorCore.js";
+import { executeWithNativeSymbolSelection } from "./NativeSymbolSelection.js";
+import { cancelledBy, CallerAbort } from "../domain/analysisErrorCore.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
@@ -126,9 +123,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: TargetFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
   } = {},
@@ -160,26 +155,18 @@ export const runDirectAnalysis = async (
 
 /** How the caller asks an artifact target to be read. */
 export interface ArtifactTargetSelection {
-  readonly formatHint?: TargetFormatHint;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
 }
 
 /** The caller's target interpretation, forwarded unchanged to every open. */
 const targetSelection = (options: {
-  readonly formatHint?: TargetFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
 }) => ({
-  ...(options.formatHint === undefined
+  ...(options.loadSelection === undefined
     ? {}
-    : { formatHint: options.formatHint }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options.entryPoint === undefined
-    ? {}
-    : { entryPoint: options.entryPoint }),
+    : { loadSelection: options.loadSelection }),
   ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
 });
 
@@ -371,9 +358,7 @@ const runAnalysis = async (
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: TargetFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
   },
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
@@ -412,6 +397,39 @@ const runAnalysis = async (
     return collected.result;
   };
   const execute = async (): Promise<Result<Evidence, AnalysisError>> => {
+    // A directory is inventoried as a tree, not opened as a session target.
+    const directory =
+      tool === "inspect_artifact" &&
+      dependencies.inspectArtifactDirectory !== undefined
+        ? await selectedArtifactDirectory(path)
+        : undefined;
+    if (directory !== undefined && dependencies.inspectArtifactDirectory) {
+      const inspectDirectory = dependencies.inspectArtifactDirectory;
+      const execution = await runInRetainedArtifactScope(
+        session.resourceScope,
+        () =>
+          inspectDirectory(
+            directory,
+            arguments_,
+            { signal },
+            session.resourceScope,
+          ),
+      );
+      if (!execution.ok) return execution;
+      const evidence = withEvidenceCallerInputPath(
+        createAnalysisExecutionEvidence(
+          tool,
+          evidenceParameters,
+          execution.value,
+          "observed",
+        ),
+        path,
+      );
+      const captured = captureSources(evidence, execution.value.sourceEvidence);
+      if (!captured.ok)
+        return err(captured.error.retainPartialObservation(evidence));
+      return ok(evidence);
+    }
     let isDirectory = false;
     if (BUNDLE_RESOURCE_OPERATIONS.has(tool)) {
       const inspected = await inspectBundleResourceInput(path);
@@ -584,11 +602,7 @@ const runAnalysis = async (
           return err(recorded.error.retainPartialObservation(evidence));
       }
     }
-    if (
-      tool !== "trace_native_ui_action" &&
-      tool !== "decompile_all" &&
-      snapshotPath !== undefined
-    ) {
+    if (!SNAPSHOT_UNWRITTEN_TOOLS.has(tool) && snapshotPath !== undefined) {
       const snapshot = session.exportAnalysisSnapshot();
       if (!snapshot.ok)
         return err(snapshot.error.retainPartialObservation(evidence));
@@ -678,6 +692,19 @@ const retainFinalCancellation = (
     ? analysisErrorWithCancellation(failure, cancelledBy(tool, signal))
     : failure;
 
+/** Composed commands whose one-shot call never writes the snapshot file. */
+const SNAPSHOT_UNWRITTEN_TOOLS: ReadonlySet<string> = new Set([
+  "decompile_all",
+  "trace_native_ui_action",
+]);
+
+/**
+ * A composed answer is rebuilt, not re-observed: its source reads that the
+ * snapshot holds can still replay without starting the provider.
+ */
+const workflowSnapshotNotSavedLimitation = (reason: string): string =>
+  `Not saved for snapshot replay as a composed answer: ${reason}. The snapshot records this Evidence and the source reads it can replay; repeating the call composes the answer again, starting the provider only for reads the snapshot lacks.`;
+
 const executeAnalysisTool = async (input: {
   readonly session: BinarySession;
   readonly openedTarget: BinaryTarget;
@@ -708,7 +735,13 @@ const executeAnalysisTool = async (input: {
       session,
       input.arguments,
       input.openedTarget,
-      { signal },
+      {
+        signal,
+        // The session reports when a saved one-shot answer cannot replay.
+        ...(input.saveSnapshot
+          ? { snapshotContext: "one-shot-target" as const }
+          : {}),
+      },
     );
     result = retainAnalysisResultSources(
       tool,
@@ -737,13 +770,30 @@ const executeAnalysisTool = async (input: {
       result,
     );
     if (!result.ok) return result;
+    // Mirrors the workflow snapshot record DirectAnalysis keeps afterwards.
+    const workflowReplayRefusal = !input.saveSnapshot
+      ? undefined
+      : SNAPSHOT_UNWRITTEN_TOOLS.has(tool)
+        ? `Not saved: ${tool} does not write analysis snapshots, so --snapshot recorded nothing for this call.`
+        : session.allowsSnapshotReplay(tool) &&
+            evidenceProfile !== undefined &&
+            result.value.cachePolicy !== "live"
+          ? undefined
+          : workflowSnapshotNotSavedLimitation(
+              result.value.cachePolicy === "live"
+                ? "it depends on live provider answers"
+                : "it is not bound to a replayable provider profile",
+            );
     const evidence = createWorkflowEvidence({
       target: input.openedTarget,
       operation: tool,
       parameters: input.evidenceParameters,
       result: result.value.result,
       upstreamProfile: evidenceProfile,
-      upstreamLimitations: result.value.limitations,
+      upstreamLimitations:
+        workflowReplayRefusal === undefined
+          ? result.value.limitations
+          : [...result.value.limitations, workflowReplayRefusal],
       ...(result.value.evidenceLinks === undefined
         ? {}
         : { upstreamEvidenceLinks: result.value.evidenceLinks }),
@@ -755,45 +805,26 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
-  let result = await session.executeForDirectObservation(
+  // A saved one-shot snapshot binds every read to this call's own target.
+  const executionOptions = {
+    signal,
+    ...(input.saveSnapshot
+      ? { snapshotContext: "one-shot-target" as const }
+      : {}),
+  };
+  const result = await executeWithNativeSymbolSelection(
+    session,
     tool,
     input.arguments,
-    input.evidenceParameters,
-    {
-      signal,
-      ...(input.saveSnapshot && tool === "procedure_pseudo_code"
-        ? { snapshotContext: "one-shot-target" as const }
-        : {}),
-    },
-  );
-  if (
-    tool === "xrefs" &&
-    typeof input.arguments.address === "string" &&
-    !result.ok &&
-    result.error instanceof AnalysisInputError &&
-    !result.error.cleanupIncomplete &&
-    result.error.issues.length > 0 &&
-    result.error.issues.every(
-      ({ path, reason }) =>
-        path.length === 1 &&
-        path[0] === "address" &&
-        reason === "invalid_format",
-    )
-  ) {
-    const address = await resolveXrefsAddress(
-      session,
-      input.arguments.address,
-      signal,
-    );
-    if (!address.ok) return address;
-    if (address.value !== input.arguments.address)
-      result = await session.executeForDirectObservation(
+    (arguments_) =>
+      session.executeForDirectObservation(
         tool,
-        { ...input.arguments, address: address.value },
+        arguments_,
         input.evidenceParameters,
-        { signal },
-      );
-  }
+        executionOptions,
+      ),
+    executionOptions,
+  );
   if (!result.ok) return result;
   const evidence = completedOperationEvidence(
     tool,
@@ -836,9 +867,7 @@ const prepareSnapshot = async (options: {
     "readAnalysisSnapshot" | "resolveTarget"
   >;
   readonly path: string;
-  readonly formatHint?: TargetFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;

@@ -126,18 +126,21 @@ API dependency, and independent fixture compiler oracles keep their existing
 TypeScript versions.
 
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
-The build also records `dist/mcp-catalog.json` (compact inputs) from the
-canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. Target-free stdio MCP startup with the default catalog and output
-profiles serves its schemas without constructing analysis validators, including
-when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The build also records `dist/mcp-catalog.json` from the canonical SDK
+registrations, including each tool's compact output advertisement, and binds
+it to the runtime with its SHA-256 digest. Target-free stdio MCP startup with
+the default catalog serves those recorded schemas without constructing
+analysis validators. That includes a family limit (`REA_MCP_TOOL_FAMILIES`)
+and `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` when the catalog contains
+`compactOutputSchemas`. A compact profile whose recorded catalog has no
+compact output schemas falls back to eager composition.
 The internal catalog stores object roots for the SDK's result codec, preserves
 non-object output schemas for legacy wrapping, and retains the complete
 `binary_session` output schema for `rea mcp doctor`.
 The first tool or guided-workflow request materializes the canonical runtime
 on that same SDK server. It preserves the advertised schemas throughout
-materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
-startup use eager composition, as do source runs without recorded artifacts.
+materialization. Initial-target, HTTP, and family-scoped hot/cold startup
+use eager composition, as do source runs without recorded artifacts.
 Compare memory both after discovery and after a completed request; report
 diagnostic GC separately from normal resident memory.
 
@@ -163,7 +166,8 @@ no compiled-runtime prerequisite, not a fixed time budget.
 duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
-`static-deep-check-reports`, including after that gate fails.
+`static-deep-check-reports`, including after that gate fails. On reruns, both
+artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
@@ -676,6 +680,30 @@ Report unexecuted recovery steps explicitly.
 
 Real-provider scripts that start compilers, linkers, readers, or the REA CLI
 follow [Verifier scripts](#verifier-scripts).
+
+### Public-corpus checks
+
+Synthetic fixtures prove the cases you thought of. Published files from
+well-known projects find the ones you didn't: unusual but valid headers,
+large real images and formats REA doesn't recognise yet. Use them for routing,
+parser-robustness and output-size checks, and download them during the check.
+Never commit them. Never execute downloaded files.
+
+| Corpus                                            | Exercises                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| corkami/pocs `PE/bin`                             | PE parser strictness across documented header quirks           |
+| WerWolv/ImHex-Patterns `tests/patterns/test_data` | First-contact acceptance and refusal across many formats       |
+| bkaradzic/bgfx `examples/runtime/shaders`         | Embedded DXBC, DXIL and SPIR-V at a fixed offset               |
+| Godot editor release (win64)                      | Static PE readers on an image over 100 MB                      |
+| x64dbg snapshot with its symbols archive          | 32- and 64-bit PEs with matching PDBs                          |
+| Orama-Interactive/Pixelorama releases             | Godot 3 and 4 `.pck`, embedded packs, a known two-version diff |
+
+For each file record the REA revision, the asset (repository, release tag,
+name, SHA-256), the command, whether it was accepted or refused, the
+suggested next probes, and the output size. Compare facts with an independent
+parser or the format specification where one exists. A count of accepted files
+says nothing about correctness. A refusal is a finding only when REA has a
+reader for that format or the refusal hides facts it already parsed.
 
 ### Checking installers and publisher downloads
 
@@ -1273,8 +1301,8 @@ publish timing history. Fast runs publish `test-timings-fast` and full runs
 publish `test-timings-full`. The build job accepts only verified artifacts from
 successful default-branch CI runs that match its tier. It lists one page of
 matching artifacts and checks up to five producer runs individually. When
-eligible artifacts remain, it can check them against one page of successful CI
-runs. A tier with no qualifying artifact leaves history unset. The build
+eligible artifacts remain, it can check them against up to three pages of
+successful CI runs within the shared 20-second lookup budget. A tier with no qualifying artifact leaves history unset. The build
 downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
@@ -1372,9 +1400,10 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-POSIX native package jobs, documentation checks, Go binary verification, and the
-Apple artifact lane reuse the same workflow's portable Turbo cache
-(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+The build job stages and uploads `rea-build-cache` when a selected POSIX native
+package, Apple artifact, or reusable provider job consumes it. Portable test
+shards download `rea-test-runtime`. Documentation checks restore the
+cross-run Turbo cache. Windows jobs
 (`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
 than Linux's accelerated `tsrs` checker, so they restore and publish a separate
 Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to

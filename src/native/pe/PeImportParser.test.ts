@@ -43,7 +43,7 @@ it("reads named PE32+ imports and a pefile-compatible import hash", async () => 
 });
 
 it.each(["standard", "delay"] as const)(
-  "does not read %s descriptors past the declared directory size",
+  "reads %s descriptors to the null terminator past a short directory Size",
   async (kind) => {
     const bytes = peImportImage(
       kind === "standard"
@@ -61,27 +61,30 @@ it.each(["standard", "delay"] as const)(
             ],
           },
     );
-    const directoryAt = 152 + 112 + (kind === "standard" ? 1 : 13) * 8;
-    const directoryRva = bytes.readUInt32LE(directoryAt);
+    const index = kind === "standard" ? 1 : 13;
+    const directoryAt = 152 + 112 + index * 8;
     const descriptorBytes = kind === "standard" ? 20 : 32;
-    bytes.writeUInt32LE(descriptorBytes, directoryAt + 4);
-
-    const report = await parseWithPositionalParity(bytes);
-    const rows = kind === "standard" ? report.imports : report.delay_imports;
-    const directory =
-      kind === "standard"
-        ? report.import_directory
-        : report.delay_import_directory;
-    expect(rows.map((row) => row.name)).toEqual(["ONE.dll"]);
-    expect(directory?.locations).toHaveLength(1);
-    expect(report.coverage.status).toBe("partial");
-    expect(report.issues).toContainEqual(
-      expect.objectContaining({
-        code: "malformed_entry",
-        location: `0x${(directoryRva + descriptorBytes).toString(16)}`,
-        message: expect.stringContaining("ends before a null descriptor"),
-      }),
-    );
+    // corkami dll.dll declares import Size 0; the loader ignores Size and
+    // reads descriptors until the null one.
+    for (const size of [descriptorBytes, 0]) {
+      bytes.writeUInt32LE(size, directoryAt + 4);
+      const report = await parseWithPositionalParity(bytes);
+      const rows = kind === "standard" ? report.imports : report.delay_imports;
+      const directory =
+        kind === "standard"
+          ? report.import_directory
+          : report.delay_import_directory;
+      expect(rows.map((row) => row.name)).toEqual(["ONE.dll", "TWO.dll"]);
+      expect(directory?.size).toBe(size);
+      expect(report.coverage.status).toBe("complete");
+      expect(report.issues).toEqual([]);
+      expect(report.header_anomalies).toEqual([
+        {
+          code: "directory_size_below_structure",
+          message: expect.stringContaining(`Data directory ${String(index)}`),
+        },
+      ]);
+    }
   },
 );
 

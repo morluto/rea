@@ -9,11 +9,11 @@ import { captureElectronScenario } from "../application/javascript/ElectronActiv
 import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
+import { projectRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
 import {
-  projectRetainedAnalysis,
   requireAnalysisViewRetention,
   type AnalysisViewRetention,
-} from "../application/analysisView/AnalysisViewService.js";
+} from "../application/analysisView/AnalysisViewRetention.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok } from "../domain/result.js";
@@ -109,8 +109,12 @@ export const bindBrowserObservationTools = (
           if (!ready.ok) return ready;
         }
         const analyzed = await analyzeWebBundle(browser, request, options);
-        return analyzed.ok && view !== undefined
-          ? projectRetainedAnalysis(analyzed.value, retention, view)
+        return analyzed.ok && detail === "summary"
+          ? projectRetainedAnalysis(
+              analyzed.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
           : analyzed;
       },
     },

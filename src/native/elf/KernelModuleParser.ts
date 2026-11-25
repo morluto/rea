@@ -496,8 +496,9 @@ const readSourceRange = async (
   const bytes = await source.readRange(offset, length);
   if (bytes.length !== length)
     throw new ArtifactReaderFailure(
-      "format",
+      "integrity",
       "Kernel module ended before the admitted file range.",
+      { integrityCheck: "read-coverage" },
     );
   return bytes;
 };

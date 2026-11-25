@@ -1,11 +1,10 @@
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfDependenciesService } from "./ElfDependenciesService.js";
 import { ELF_DEPENDENCIES_PROVIDER } from "../../domain/investigationProviders.js";
 import type { ElfDependencies } from "../../domain/native/elfDependencies.js";
 import { ok } from "../../domain/result.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -148,27 +147,12 @@ it("rejects complete coverage that still retains table issues", async () => {
 });
 
 it("retains a completed observation if the caller cancels while the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late ELF dependency cancellation" };
-  const service = new ElfDependenciesService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const late = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late ELF dependency cancellation",
+    (inspect) => new ElfDependenciesService({ identity, inspect }),
   );
-  expect(late).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-  if (late.ok) throw new Error("Expected late cancellation");
-  expect(late.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(late.error.cause).toBe(reason);
-  expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_dependencies",
     confidence: "observed",
     subject: {

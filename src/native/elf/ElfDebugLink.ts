@@ -1,14 +1,19 @@
 import { crc32 } from "node:zlib";
 
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
-import { hasElfMagic } from "../../domain/binaryContainer.js";
+import {
+  hasElfMagic,
+  BinaryReader,
+  type ImageSection,
+  BinaryResourceFailure,
+} from "../../domain/binaryContainer.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   zstandardFrameAllowanceCause,
@@ -28,14 +33,9 @@ import {
   MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
   MAX_ELF_DEBUG_LINK_NAME_BYTES,
   type ElfDebugLink,
+  type ElfDebugLinkLimitationCode,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
-import {
-  BinaryReader,
-  type ImageSection,
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
 import {
   readElfImage,
   readElfImageCooperative,
@@ -446,12 +446,7 @@ const observeBuildId = (
       zstandardFrameAllowanceCause(cause) !== undefined
     )
       throw cause;
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
-      return unknownBuildId(
-        "note_tables_malformed",
-        `ELF note tables could not be decoded: ${cause.message}`,
-      );
-    if (cause instanceof BinaryFormatFailure)
+    if (cause instanceof ParseFailureError && cause.kind !== "limit")
       return unknownBuildId(
         cause.kind === "unsupported"
           ? "note_tables_unsupported"
@@ -525,13 +520,18 @@ const finalizeElfDebugLinkReport = (
   debugdata: Report["debugdata"],
   observed: ObservedBuildId,
 ): Report => {
+  const limitationCodes: ElfDebugLinkLimitationCode[] = ["standing_caveats"];
   const limitations: Limitations = [...ELF_DEBUG_LINK_LIMITATIONS];
   if (image.section_names_limitation !== undefined)
     limitations.push(image.section_names_limitation);
   if (observed.limitation !== null) limitations.push(observed.limitation);
+  if (observed.buildId.status === "conflict")
+    limitationCodes.push("multiple_build_ids");
   const filename = debuglink.filename?.text ?? null;
-  if (filename !== null && !debugFileNameIsSingleSegment(filename))
+  if (filename !== null && !debugFileNameIsSingleSegment(filename)) {
+    limitationCodes.push("name_not_single_segment");
     limitations.push(ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION);
+  }
   const lookup_paths = deriveDebugFileLookupPaths({
     binaryPath: artifact.path,
     debuglinkName: filename,
@@ -564,6 +564,7 @@ const finalizeElfDebugLinkReport = (
       status: coverageIncomplete ? "partial" : "complete",
       examined_sections,
     },
+    limitation_codes: limitationCodes,
     limitations,
   };
 };
@@ -881,11 +882,18 @@ export const verifyElfDebugCandidate = (
   const crc = crcCheck(report.debuglink.crc32_hex, candidate.crc32);
   const build = buildIdCheck(report.build_id, read.identity);
   const verification = verificationOf(crc, build);
+  const limitationCodes: ElfDebugLinkLimitationCode[] = [
+    ...report.limitation_codes,
+  ];
   const limitations = [...report.limitations];
-  if (candidate.prefix.length !== candidate.bytes)
+  if (candidate.prefix.length !== candidate.bytes) {
+    limitationCodes.push("candidate_prefix_only");
     limitations.push(ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION);
-  if (read.budgetExceeded)
+  }
+  if (read.budgetExceeded) {
+    limitationCodes.push("candidate_budget_exceeded");
     limitations.push(ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION);
+  }
   if (read.frameAllowance !== undefined)
     limitations.push(
       `Candidate ELF section names could not be decoded because ${read.frameAllowance.failure.detail}.`,
@@ -893,10 +901,14 @@ export const verifyElfDebugCandidate = (
   if (
     verification.status === "matches" &&
     (crc.status === "unavailable" || build.status === "unavailable")
-  )
+  ) {
+    limitationCodes.push("unavailable_check");
     limitations.push(ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION);
-  if (verification.status === "cannot_verify")
+  }
+  if (verification.status === "cannot_verify") {
+    limitationCodes.push("cannot_verify");
     limitations.push(ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION);
+  }
   return {
     ...report,
     candidate: {
@@ -908,6 +920,7 @@ export const verifyElfDebugCandidate = (
       ...read.sections,
     },
     verification,
+    limitation_codes: limitationCodes,
     limitations,
   };
 };
@@ -1102,6 +1115,11 @@ export const unreadableElfDebugCandidate = (report: Report): Report => ({
       reason: "candidate_unreadable",
     },
   },
+  limitation_codes: [
+    ...report.limitation_codes,
+    "candidate_unreadable",
+    "cannot_verify",
+  ],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,

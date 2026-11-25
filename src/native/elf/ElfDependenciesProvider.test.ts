@@ -8,7 +8,10 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { inspectElfDependenciesInputSchema } from "../../domain/native/elfDependencies.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
 import { ElfDependenciesProvider } from "./ElfDependenciesProvider.js";
-import { ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  ParseFailureError,
+  malformedInput,
+} from "../../domain/parseFailure.js";
 
 vi.mock("node:timers/promises", async () => {
   const original = await vi.importActual<typeof import("node:timers/promises")>(
@@ -93,47 +96,55 @@ it("reports a fixed dynamic-symbol ceiling that a raised budget cannot clear", a
   );
 });
 
-it("cancels at a GNU hash checkpoint and remains reusable after cleanup", async () => {
-  const root = await createTestTempDirectory(
-    "rea-elf-dependencies-checkpoint-",
-  );
-  const path = join(root, "program");
-  const bytes = elfDependencyFixture({
-    stripped: true,
-    omitHash: true,
-    gnuHash: true,
-  });
-  await writeFile(path, bytes);
-  const provider = new ElfDependenciesProvider();
-  const controller = new AbortController();
-  const original = await vi.importActual<typeof import("node:timers/promises")>(
-    "node:timers/promises",
-  );
-  vi.mocked(immediate).mockImplementationOnce(async () => {
-    controller.abort();
-    await original.setImmediate();
-  });
-  try {
-    const input = inspectElfDependenciesInputSchema.parse({ path });
-    const cancelled = await provider.inspect(input, {
-      signal: controller.signal,
+// A caller's abort reason is opaque: one that happens to be a parser failure
+// must not turn the cancelled read into a malformed-target refusal.
+it.each([
+  { label: "default", reason: undefined },
+  { label: "parser-failure", reason: malformedInput("elf", "caller reason") },
+])(
+  "cancels at a GNU hash checkpoint with a $label abort reason and remains reusable after cleanup",
+  async ({ reason }) => {
+    const root = await createTestTempDirectory(
+      "rea-elf-dependencies-checkpoint-",
+    );
+    const path = join(root, "program");
+    const bytes = elfDependencyFixture({
+      stripped: true,
+      omitHash: true,
+      gnuHash: true,
     });
-    if (cancelled.ok)
-      throw new Error("Expected cancellation at the hash checkpoint");
-    expect(cancelled.error).toMatchObject({
-      _tag: "AnalysisCancelledError",
-      partialObservation: {
-        kind: "file-snapshot-hash",
-        path,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-        bytes: bytes.length,
-      },
+    await writeFile(path, bytes);
+    const provider = new ElfDependenciesProvider();
+    const controller = new AbortController();
+    const original = await vi.importActual<
+      typeof import("node:timers/promises")
+    >("node:timers/promises");
+    vi.mocked(immediate).mockImplementationOnce(async () => {
+      controller.abort(reason);
+      await original.setImmediate();
     });
-    expect(immediate).toHaveBeenCalledTimes(1);
-    const retried = await provider.inspect(input);
-    if (!retried.ok) throw retried.error;
-    expect(retried.value.imports).toHaveLength(5);
-  } finally {
-    await provider.close();
-  }
-});
+    try {
+      const input = inspectElfDependenciesInputSchema.parse({ path });
+      const cancelled = await provider.inspect(input, {
+        signal: controller.signal,
+      });
+      if (cancelled.ok)
+        throw new Error("Expected cancellation at the hash checkpoint");
+      expect(cancelled.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        partialObservation: {
+          kind: "file-snapshot-hash",
+          path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+      });
+      expect(immediate).toHaveBeenCalledTimes(1);
+      const retried = await provider.inspect(input);
+      if (!retried.ok) throw retried.error;
+      expect(retried.value.imports).toHaveLength(5);
+    } finally {
+      await provider.close();
+    }
+  },
+);

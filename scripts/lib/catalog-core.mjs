@@ -1,8 +1,5 @@
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-
-import canonicalize from "canonicalize";
 
 const load = (root, path) => import(pathToFileURL(join(root, path)).href);
 
@@ -11,14 +8,6 @@ export const names = (contracts) =>
   contracts
     .map(({ name }) => name)
     .sort((left, right) => left.localeCompare(right));
-
-/** Return the stable digest for a generated catalog projection. */
-export const digest = (value) => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Catalog projection is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
 
 /** Throw when two name lists diverge. */
 export const assertSameNames = (label, actual, expected) => {

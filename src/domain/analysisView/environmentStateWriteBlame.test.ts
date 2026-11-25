@@ -1,25 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   FIRST_BOOK,
   SECOND_BOOK,
   THIRD_BOOK,
-  environmentStateViewOf,
   renamedBook,
   type Book,
+  planOf,
 } from "../../../tests/fixtures/environmentStateWrites.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No write plan for ${tool}`);
-  return plan;
-};
 
 /** A book as its item reads show it, with the shelves its write responses leave out. */
 const shelved = (entry: Book): Book => ({

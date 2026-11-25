@@ -23,6 +23,7 @@ import type {
 } from "../native/peResources.js";
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
 import { peFailure, requirePeExtent } from "./peImageHeaders.js";
+import { peDirectorySizeAnomaly } from "../native/peHeaderAnomalies.js";
 import {
   readPeResourceLayout,
   readPeResourceLayoutAt,
@@ -180,12 +181,15 @@ const parsePeResourceInventory = async (
     ensureCapacity(projectedBytes);
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
+  // Farthest tree byte read, relative to the root, to compare with Size.
+  let walked = 0;
   const relative = (at: number, length: number): number => {
     if (!peResourceRangeFits(at, length, layout.size))
       peFailure(
-        "Resource directory offset leaves the declared resource interval.",
+        "Resource directory offset leaves the file-backed resource interval.",
       );
     requirePeExtent(source.size, root + at, length);
+    walked = Math.max(walked, at + length);
     return root + at;
   };
   const recordRange = (
@@ -376,12 +380,19 @@ const parsePeResourceInventory = async (
   return {
     format: layout.format,
     machine: layout.machine,
+    image_base: layout.imageBase,
     directory:
-      layout.size === 0
+      layout.size === 0 || layout.directoryAt === null
         ? null
         : {
             rva: layout.rva,
-            location: { offset: root, bytes: layout.size },
+            location: {
+              offset: root,
+              bytes: Math.max(
+                walked,
+                Math.min(layout.declaredSize, layout.size),
+              ),
+            },
             data_directory_location: { offset: layout.directoryAt, bytes: 8 },
           },
     directories,
@@ -392,6 +403,13 @@ const parsePeResourceInventory = async (
       examined_entries: examined,
       resources: resources.length,
     },
+    header_anomalies:
+      walked > layout.declaredSize
+        ? [
+            ...layout.headerAnomalies,
+            peDirectorySizeAnomaly("resource", 2, layout.declaredSize, walked),
+          ]
+        : [...layout.headerAnomalies],
     limitations: [
       "Static PE32/PE32+ type/name/language resource inventory; payloads other than RT_GROUP_ICON remain opaque.",
       "Icon candidates are resource-table relationships. Language fallback, image decoding and actual shell/window loading are not observed.",
