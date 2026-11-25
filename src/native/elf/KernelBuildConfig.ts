@@ -16,8 +16,8 @@ import {
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 interface ByteSpan {
   readonly size: number;
@@ -35,7 +35,7 @@ const bufferSpan = (bytes: Buffer): ByteSpan => ({
   },
 });
 
-const sourceSpan = (source: NativeByteSource): ByteSpan => ({
+const sourceSpan = (source: ByteSource): ByteSpan => ({
   size: source.size,
   readRange: async (offset, length) => {
     if (offset < 0 || length <= 0 || offset >= source.size)
@@ -46,8 +46,9 @@ const sourceSpan = (source: NativeByteSource): ByteSpan => ({
     const bytes = await source.readRange(offset, clamped);
     if (bytes.length !== clamped)
       throw new ArtifactReaderFailure(
-        "format",
+        "integrity",
         "Kernel image ended before the admitted file range.",
+        { integrityCheck: "read-coverage" },
       );
     return bytes;
   },
@@ -533,6 +534,10 @@ const findConfig = async (
         candidateLen < span.size - gzipAt &&
         (closing < 0 || closing >= gzipAt + candidateLen)
       ) {
+        if (closing < 0) {
+          truncated = true;
+          break;
+        }
         compressedLimit ??= maxCandidateBytes;
         continue;
       }
@@ -891,7 +896,7 @@ const reportFromSearch = async (
       ...search.extraLimitations,
       ...(found === "truncated"
         ? [
-            "An IKCFG_ST gzip member runs past the searched bytes. The config is incomplete and is not reported as absent.",
+            "An IKCFG_ST gzip candidate has incomplete framing in the searched bytes.",
           ]
         : []),
       ...(found === "exhausted"
@@ -1146,23 +1151,14 @@ const parseKernelBuildConfigCore = async (
 };
 
 /**
- * Read a kernel version banner and an embedded IKCFG build config.
- * The caller supplies the already bounded file bytes. Scans yield to the event
- * loop once per TURN_STRIDE bytes and inflation runs off it, so an abort raised
- * while parsing is honored at the next check. One inflate call runs to its
- * output bound once started.
+ * Read a kernel version banner and an embedded IKCFG build config over a
+ * bounded FileHandle without buffering the full kernel image. Scans yield to
+ * the event loop once per TURN_STRIDE bytes and inflation runs off it, so an
+ * abort raised while parsing is honored at the next check. One inflate call
+ * runs to its output bound once started.
  */
-export const parseKernelBuildConfig = async (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelBuildConfigInput,
-  signal?: AbortSignal,
-): Promise<Report> =>
-  parseKernelBuildConfigCore(bufferSpan(bytes), artifact, input, signal);
-
-/** Same inspection over a bounded FileHandle without buffering the full kernel image. */
 export const parseKernelBuildConfigFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   signal?: AbortSignal,

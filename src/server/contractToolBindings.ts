@@ -6,7 +6,7 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
-import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type {
   EvidenceUnknownWriter,
@@ -283,15 +283,22 @@ type AnalysisBinding<Input> = {
   readonly admission: "sdk";
   readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
 } & ExclusiveBinding<"analyze"> &
-  (Input extends { readonly detail: "complete" | "summary" }
+  // A declared detail, required or size-aware optional, selects delivery; an
+  // index signature declares no field.
+  (string extends keyof Input
     ? {
-        readonly detail: "delivery";
-        readonly analyze: AnalysisOperation<Omit<Input, "detail">>;
-      }
-    : {
         readonly detail?: never;
         readonly analyze: AnalysisOperation<Input>;
-      });
+      }
+    : "detail" extends keyof Input
+      ? {
+          readonly detail: "delivery";
+          readonly analyze: AnalysisOperation<Omit<Input, "detail">>;
+        }
+      : {
+          readonly detail?: never;
+          readonly analyze: AnalysisOperation<Input>;
+        });
 
 type AnalysisOperation<Input> = (
   input: Input,
@@ -528,6 +535,7 @@ const createContractBindingHandler = (
       recordEvidence,
       withAdmittedAnalysis,
       binding.viewSource,
+      retention,
     )(contract);
   return createRetainedSummaryToolHandler(
     server,

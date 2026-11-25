@@ -13,11 +13,10 @@ import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js"
 import type { CooperativeElfSectionNameDecoder } from "./elfSectionNameTable.js";
 import {
   readElfDirectoryFromBuffer,
-  readElfDirectoryFromBufferCooperative,
   readElfDirectoryFromReader,
   type ElfSectionDirectory,
-  type NativeByteSource,
 } from "./nativeSectionDirectory.js";
+import { bufferByteSource, type ByteSource } from "../byteSource.js";
 
 const requireElfFileRange = (
   fileSize: number,
@@ -44,7 +43,7 @@ const requireElfFileRange = (
     });
 };
 
-const readElfImageFromDirectorySize = (
+export const readElfImageFromDirectorySize = (
   fileSize: number,
   directory: ElfSectionDirectory,
 ): Extract<BinaryContainer, { format: "elf" }> => {
@@ -195,20 +194,17 @@ export const readElfImageCooperative = async (
   maximumSourceAndDecodedNamesBytes?: number,
   decode?: CooperativeElfSectionNameDecoder,
 ): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
-  readElfImageFromDirectorySize(
-    bytes.length,
-    await readElfDirectoryFromBufferCooperative(
-      bytes,
-      pause,
-      operation,
-      maximumSourceAndDecodedNamesBytes,
-      decode,
-    ),
+  readElfImageFromReader(
+    bufferByteSource(bytes),
+    operation,
+    pause,
+    maximumSourceAndDecodedNamesBytes,
+    decode,
   );
 
 /** Read ELF sections and program mappings positionally without buffering the whole file. */
 export const readElfImageFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
   maximumSourceAndDecodedNamesBytes?: number,

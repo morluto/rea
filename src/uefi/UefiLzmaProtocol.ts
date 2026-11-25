@@ -6,27 +6,17 @@ import { digestSchema } from "../domain/digests.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 
-const decodeFailureReasonSchema = z.enum(["format", "decoder", "output-limit"]);
+const decodeFailureReasonSchema = z.enum([
+  "malformed",
+  "decoder",
+  "output-limit",
+]);
 export type UefiDecodeFailureReason = z.infer<typeof decodeFailureReasonSchema>;
 
 export const LZMA_FRAME_HEADER_BYTES = 8;
 
 export const lzmaStreamRequestSchema = z.strictObject({
   format: z.enum(["lzma", "lzmaf86"]),
-  max_output_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
-});
-
-export type UefiLzmaStreamRequest = z.infer<typeof lzmaStreamRequestSchema>;
-
-export const lzmaRequestSchema = z.strictObject({
-  format: z.enum(["lzma", "lzmaf86"]),
-  payload_path: z.string(),
-  output_path: z.string(),
-  reply_path: z.string(),
   max_output_bytes: z
     .number()
     .int()

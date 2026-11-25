@@ -20,7 +20,10 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -323,15 +326,8 @@ export const projectBatchDecompileView = (
     "batch-decompile",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "batch_decompile Evidence supports summary and batch-decompile views of items or pseudocode.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "batch_decompile Evidence supports summary and batch-decompile views of items or pseudocode.",
     );
   const parsed = checkedBatch(parent);
   if (!parsed.ok) return parsed;

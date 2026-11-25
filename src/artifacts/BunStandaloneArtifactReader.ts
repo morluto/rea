@@ -8,7 +8,7 @@ import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.
 import type {
   BunStandaloneEntryMetadata,
   BunStandaloneMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/packageAndGameMetadata.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {

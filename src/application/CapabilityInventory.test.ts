@@ -153,7 +153,6 @@ it("reports the active resource session's dispatch policy without limiting indep
   };
   const entries = buildCapabilityInventory(resourceStatus, enabledPolicy);
   for (const name of [
-    "inspect_artifact",
     "extract_artifact",
     "trace_dylib_resolution",
     "get_navigation_context",
@@ -170,6 +169,8 @@ it("reports the active resource session's dispatch policy without limiting indep
     "inspect_keyed_archive",
     "inspect_pe_imports",
     "inspect_desktop_application",
+    // A selected path needs no open target.
+    "inspect_artifact",
     "close_binary",
   ])
     expect(entries.find((item) => item.name === name)).toMatchObject({

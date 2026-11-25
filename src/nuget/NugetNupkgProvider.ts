@@ -95,11 +95,10 @@ const nupkgFailure = (
             return undefined;
           if (
             failure.reason !== "path" &&
-            failure.reason !== "format" &&
             failure.reason !== "integrity" &&
             failure.reason !== "cancelled"
           )
-            return translateArtifactFailure(OPERATION, failure);
+            return translateArtifactFailure(OPERATION, input.path, failure);
         }
         return undefined;
       },

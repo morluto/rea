@@ -149,10 +149,31 @@ it("emits actionable procedure lookup remediation on missing function", async ()
     remediationAction: expect.stringContaining("search_procedures"),
   });
   expect((caughtError as any).remediationAction).toContain(
-    'CLI: rea search <path> "missing_fn" --kind procedures --provider ida',
+    "CLI: rea search <path> 'missing_fn' --kind procedures --provider ida",
   );
   expect((caughtError as any).remediationAction).toContain(
     'MCP: use search_procedures with {"pattern":"missing_fn"} or list_procedures',
+  );
+});
+
+it("shell-quotes special characters in CLI recovery commands while keeping JSON for MCP", async () => {
+  const producer = new RecordingIdaMcp(target, "headless");
+  producer.overrideCall = (tool) =>
+    tool === "lookup_funcs"
+      ? [{ query: "$s4Demo3fooyyF", fn: null, error: "Not found" }]
+      : undefined;
+  const runner = new IdaOperationRunner(producer, "modern");
+  let caughtError: unknown;
+  try {
+    await runner.resolve("$s4Demo3fooyyF", "procedure_pseudo_code");
+  } catch (err) {
+    caughtError = err;
+  }
+  expect((caughtError as any).remediationAction).toContain(
+    "CLI: rea search <path> '$s4Demo3fooyyF' --kind procedures --provider ida",
+  );
+  expect((caughtError as any).remediationAction).toContain(
+    'MCP: use search_procedures with {"pattern":"$s4Demo3fooyyF"} or list_procedures',
   );
 });
 

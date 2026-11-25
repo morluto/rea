@@ -1,10 +1,12 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { shellQuote } from "../domain/desktop/shellQuote.js";
 import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import { GhidraRemoteError } from "./protocol.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
   ghidraMissingProgramNames,
@@ -112,7 +114,8 @@ const projectPrimarySessionError = (
   };
   // A refused setting (for example the reply ceiling admitted before launch)
   // is already the caller-facing refusal with its setting and allowed values.
-  if (failure.cause instanceof ConfigurationError) return failure.cause;
+  if (failure.configurationFailure !== undefined)
+    return failure.configurationFailure;
   if (failure.kind === "checkpoint") {
     if (failure.cause instanceof AnalysisError)
       return analysisClientFailureForOperation(
@@ -263,15 +266,18 @@ const projectPrimarySessionError = (
         const inProject =
           source === "existing-project" ? " in this project" : "";
         const isAddress =
-          query !== undefined && /^0x[0-9a-fA-F]+$/i.test(query);
+          query !== undefined &&
+          /^(?:0x[0-9a-fA-F]+|(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+:0x[0-9a-fA-F]+)$/i.test(
+            query,
+          );
         const pattern = query ?? "entry";
         const suggestion = isAddress
-          ? `Ghidra couldn't resolve address${selectorText}${inProject}. Choose an observed procedure entry from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --provider ghidra. MCP: use list_procedures or search_procedures. An inventory miss leaves the function's presence in the artifact unknown.`
-          : `Ghidra couldn't resolve${selectorText}${inProject}. Search the procedure inventory for ${JSON.stringify(pattern)}. If you find a matching entry procedure, retry with its address. CLI: rea search <path> ${JSON.stringify(pattern)} --kind procedures --provider ghidra. MCP: use search_procedures with ${JSON.stringify({ pattern })} or list_procedures. Choose an observed name or address from the current Ghidra inventory. An inventory miss leaves the function's presence in the artifact unknown.`;
+          ? `Ghidra couldn't resolve address${selectorText}${inProject}. Choose an observed procedure entry from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use list_procedures or search_procedures. An inventory miss leaves the function's presence in the artifact unknown.`
+          : `Ghidra couldn't resolve${selectorText}${inProject}. Search the procedure inventory for ${JSON.stringify(pattern)}. If you find a matching entry procedure, retry with its address. CLI: rea search <path> ${shellQuote(pattern)} --kind procedures --provider ghidra. MCP: use search_procedures with ${JSON.stringify({ pattern })} or list_procedures. Choose an observed name or address from the current Ghidra inventory. An inventory miss leaves the function's presence in the artifact unknown.`;
         recovery =
           (entryHint === undefined ? "" : `${entryHint} `) +
           (entryHint !== undefined
-            ? "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown."
+            ? "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown."
             : suggestion) +
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
@@ -285,6 +291,16 @@ const projectPrimarySessionError = (
       {
         ...context,
         related: { operations: relatedOperations },
+        // The bridge sends every matching entry for an ambiguous selector.
+        ...(failure.cause instanceof GhidraRemoteError &&
+        failure.cause.candidates !== undefined
+          ? {
+              ambiguousSelector: {
+                field: ["procedure"],
+                candidates: [...failure.cause.candidates],
+              },
+            }
+          : {}),
         userMessage: failure.message,
         conformsToInputContract: true,
         remediationAction: recovery,
@@ -817,7 +833,7 @@ export const ghidraStartupTimeoutGuidance = (
       ? `use update_analysis_settings with setting ghidra.startup_timeout_ms and action set above ${String(timeoutMs)}, or set REA_GHIDRA_STARTUP_TIMEOUT_MS in the launch environment for future REA processes`
       : `set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment of a new REA invocation, then rerun the command`;
     const retry = continuing
-      ? "Export useful Evidence and resolve any retained cleanup before starting a new provider attempt. Runtime updates apply to the next startup attempt without restarting REA."
+      ? "Export useful Evidence and resolve any retained cleanup before starting a new provider attempt. Runtime updates apply to the next startup attempt without restarting REA. Until the startup deadline changes, later calls in this session return this failure without importing again; close_binary then open_binary retries with unchanged settings."
       : "Resolve any retained cleanup before rerunning.";
     const client = continuing
       ? " The MCP client's tool-call deadline must also allow startup and the query."

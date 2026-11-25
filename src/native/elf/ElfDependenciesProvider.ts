@@ -21,6 +21,7 @@ import {
   MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
   MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
   MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
+  type ElfDependencies,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
@@ -59,12 +60,13 @@ export class ElfDependenciesProvider {
     input: InspectElfDependenciesInput,
     options?: { readonly signal?: AbortSignal },
   ) {
+    let completed: ElfDependencies | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<ElfDependencies>(
           input.path,
           input.max_file_bytes,
           {
@@ -73,6 +75,9 @@ export class ElfDependenciesProvider {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (identity) => {
               observed = identity;
+            },
+            onVerifiedResult: (value) => {
+              completed = value;
             },
           },
           async (handle) => {
@@ -101,7 +106,7 @@ export class ElfDependenciesProvider {
         return ok(result);
       });
     } catch (cause) {
-      return err(elfDependenciesFailure(cause, input, observed));
+      return err(elfDependenciesFailure(cause, input, observed, completed));
     }
   }
 }
@@ -116,6 +121,7 @@ const elfDependenciesFailure = (
   cause: unknown,
   input: InspectElfDependenciesInput,
   observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed?: ElfDependencies,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -192,6 +198,7 @@ const elfDependenciesFailure = (
         ),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

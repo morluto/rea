@@ -181,6 +181,9 @@ const traverseModuleImports = (
         case "ImportExpression":
           record("dynamic-import", node.source);
           break;
+        default:
+          // Other AST nodes declare no module import.
+          break;
       }
     },
   });
@@ -379,10 +382,3 @@ export const createCapturedModuleMatcher = (
     return matchIndexed(url, scripts, index);
   };
 };
-
-/** Match reported URLs without collapsing query or module fragment identity. */
-export const matchCapturedModules = (
-  url: string,
-  scripts: readonly ExportedWebScript[],
-): CapturedModuleCandidate[] =>
-  scripts.length === 0 ? [] : matchLinear(url, scripts);

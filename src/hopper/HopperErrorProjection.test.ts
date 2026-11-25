@@ -576,12 +576,10 @@ describe("Hopper error catalogue", () => {
     });
     const projected = projectAnalysisError(error);
     expect(projected.remediation.action).toContain(
-      "Hopper couldn't resolve the procedure in this document",
+      "Choose an observed procedure name or entry address from the current Hopper document",
     );
     expect(projected.remediation.action).toContain("search_procedures");
-    expect(projected.remediation.action).toContain(
-      "CLI: rea search <path> . --kind procedures --provider hopper",
-    );
+    expect(projected.remediation.action).toContain("list_procedures");
     expect(projected.details?.related_operations).toEqual([
       "search_procedures",
       "list_procedures",

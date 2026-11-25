@@ -1,7 +1,7 @@
 import {
-  AnalysisInputError,
-  type AnalysisInputIssue,
-} from "../analysisErrorCore.js";
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   immutableJsonSnapshotMember,
@@ -24,13 +24,7 @@ import {
   pageViewCoverage as pageCoverage,
 } from "./analysisViewCoverage.js";
 
-const OPERATION = "inspect_analysis_view";
-
 type LayoutName = BinaryLayout["sections"][number]["name"];
-
-const inputError = (
-  issues: readonly AnalysisInputIssue[],
-): AnalysisInputError => new AnalysisInputError(OPERATION, undefined, issues);
 
 const layoutUnknowns = (layout: BinaryLayout): readonly string[] => {
   const unknowns = [
@@ -108,7 +102,7 @@ const selectNamed = <Row extends { readonly name: LayoutName }>(
   }
   if (matches.length === 0)
     return err(
-      inputError([
+      analysisViewInputError([
         {
           path: ["view", "selector", "name"],
           reason: "invalid_value",
@@ -117,7 +111,7 @@ const selectNamed = <Row extends { readonly name: LayoutName }>(
       ]),
     );
   return err(
-    inputError([
+    analysisViewInputError([
       {
         path: ["view", "selector", "name"],
         reason: "invalid_value",
@@ -137,7 +131,7 @@ const selectIndexed = <Row>(
   if (row !== undefined) return ok(row);
   if (rows.length === 0)
     return err(
-      inputError([
+      analysisViewInputError([
         {
           path: ["view", "selector", "index"],
           reason: "invalid_value",
@@ -146,7 +140,7 @@ const selectIndexed = <Row>(
       ]),
     );
   return err(
-    inputError([
+    analysisViewInputError([
       {
         path: ["view", "selector", "index"],
         reason: "out_of_range",
@@ -163,15 +157,6 @@ const pageRows = <Row>(
   offset: number,
   limit: number,
 ): readonly Row[] => rows.slice(offset, offset + limit);
-
-const layoutIncompatible = (detail: string): AnalysisError =>
-  inputError([
-    {
-      path: ["view"],
-      reason: "invalid_value",
-      message: detail,
-    },
-  ]);
 
 const parentFields = (parent: AnalysisViewParent, layout: BinaryLayout) => ({
   parent_evidence_id: parent.evidenceId,
@@ -216,20 +201,18 @@ export const projectBinaryLayoutView = (
 ) => {
   const shared = parentFields(parent, layout);
   if (view.kind === "native")
-    return err(
-      layoutIncompatible("Native views require analyze_function Evidence."),
+    return invalidAnalysisView(
+      "Native views require analyze_function Evidence.",
     );
   if (view.kind === "inventory")
-    return err(
-      layoutIncompatible("Inventory views require artifact Evidence."),
-    );
+    return invalidAnalysisView("Inventory views require artifact Evidence.");
   if (view.kind === "wasm")
-    return err(
-      layoutIncompatible("WASM views require inspect_wasm_artifact Evidence."),
+    return invalidAnalysisView(
+      "WASM views require inspect_wasm_artifact Evidence.",
     );
   if (view.kind === "evm")
-    return err(
-      layoutIncompatible("EVM views require inspect_evm_interface Evidence."),
+    return invalidAnalysisView(
+      "EVM views require inspect_evm_interface Evidence.",
     );
   if (view.kind === "summary") {
     assertOwnedView<SummaryAnalysisView>(view, "summary");
@@ -259,10 +242,8 @@ export const projectBinaryLayoutView = (
   if (view.kind === "item") {
     assertOwnedView<ItemAnalysisView>(view, "item");
     if (view.collection === "modules")
-      return err(
-        layoutIncompatible(
-          "modules collection applies to analyze_javascript_application Evidence.",
-        ),
+      return invalidAnalysisView(
+        "modules collection applies to analyze_javascript_application Evidence.",
       );
     // The validated layout root carries the sealing proof for its collections.
     // Register only the collection used by an exact-name lookup.
@@ -282,17 +263,13 @@ export const projectBinaryLayoutView = (
     });
   }
   if (view.kind !== "page")
-    return err(
-      layoutIncompatible(
-        "Layout views require summary, facet, item or page selections.",
-      ),
+    return invalidAnalysisView(
+      "Layout views require summary, facet, item or page selections.",
     );
   assertOwnedView<PageAnalysisView>(view, "page");
   if (view.collection === "modules")
-    return err(
-      layoutIncompatible(
-        "modules collection applies to analyze_javascript_application Evidence.",
-      ),
+    return invalidAnalysisView(
+      "modules collection applies to analyze_javascript_application Evidence.",
     );
   const rows =
     view.collection === "sections" ? layout.sections : layout.symbols;
@@ -317,9 +294,7 @@ const selectLayoutItem = <Row extends { readonly name: LayoutName }>(
   if ("index" in selector)
     return selectIndexed(collection, rows, selector.index);
   if ("name" in selector) return selectNamed(collection, rows, selector.name);
-  return err(
-    layoutIncompatible(
-      "Section and symbol items are selected by index or exact name.",
-    ),
+  return invalidAnalysisView(
+    "Section and symbol items are selected by index or exact name.",
   );
 };

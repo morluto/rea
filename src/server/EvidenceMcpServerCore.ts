@@ -32,6 +32,7 @@ import {
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
@@ -303,13 +304,14 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     private recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     public delivery: ToolResultDelivery,
     compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
-    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
-      undefined,
-    ),
+    outputSchemaProfile:
+      | McpOutputSchemaProfile
+      | "recorded" = resolveMcpOutputSchemaProfile(undefined),
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
       | undefined = undefined,
+    recordedTools?: ReadonlySet<string>,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -318,6 +320,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.presentation = advertisedToolPresentation(
       outputSchemaProfile,
       compactPresentation,
+      recordedTools,
     );
     this.identity = identity;
   }
@@ -401,9 +404,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 input,
                 normalized(context as ServerContext),
               );
-        const result = await (this.analysisSettings === undefined
-          ? invoke()
-          : this.analysisSettings.run(invoke));
+        let result: Awaited<ReturnType<typeof invoke>>;
+        try {
+          result = await (this.analysisSettings === undefined
+            ? invoke()
+            : this.analysisSettings.run(invoke));
+        } catch (cause: unknown) {
+          // The SDK flattens a thrown handler failure into one text block and
+          // JSON-RPC errors are for protocol faults, so a target failure that
+          // escapes a handler is still returned as a projected tool result.
+          // Its message can name target bytes, so it is marked as such.
+          if (!(cause instanceof AnalysisTargetFailureError)) throw cause;
+          result = this.delivery.toErrorToolResult(cause, true);
+        }
         if (request !== undefined)
           request.projectedErrorEncoding = projectedErrorEncoding(result);
         return result;

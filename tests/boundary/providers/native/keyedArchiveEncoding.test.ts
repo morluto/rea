@@ -59,7 +59,7 @@ it("rejects an incomplete UTF-16 code unit instead of substituting text", async 
       targetSha256: "a".repeat(64),
       parameters: { path: "archive.plist" },
     }),
-  ).rejects.toMatchObject({ reason: "format" });
+  ).rejects.toMatchObject({ reason: "malformed" });
 });
 
 it.each(["utf8-as-utf16", "utf16-as-utf8"] as const)(
@@ -81,6 +81,6 @@ it.each(["utf8-as-utf16", "utf16-as-utf8"] as const)(
         targetSha256: "a".repeat(64),
         parameters: { path: "archive.plist" },
       }),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "malformed" });
   },
 );
