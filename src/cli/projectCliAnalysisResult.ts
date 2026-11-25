@@ -10,6 +10,11 @@ import {
   type TargetFailureRecoveryFacts,
   type TargetFailureSpelling,
 } from "../domain/targetFailure.js";
+import {
+  MCP_INPUT_SCHEMA_SPELLING,
+  renderInputSchemaRemediation,
+  type InputSchemaRemediationSpelling,
+} from "../domain/analysisErrorPresentation.js";
 import type { Result } from "../domain/result.js";
 import {
   cliCommandForOperation,
@@ -340,9 +345,10 @@ const cliTargetFailureRemediation = (
 };
 
 /**
- * The shared input remediation names the MCP operation and tells an MCP
- * client to refresh tools/list. The CLI spells the command and drops that
- * client-only clause. A prefixed argument hint stays ahead of the sentence.
+ * An input refusal's recovery in CLI spelling. Presentation renders the MCP
+ * sentence from the same facts; this replaces that rendering with the command
+ * and drops the catalog-refresh clause. A prefixed argument hint stays ahead
+ * of the sentence.
  */
 const cliInputSchemaRemediation = (
   error: Record<string, JsonValue>,
@@ -356,22 +362,31 @@ const cliInputSchemaRemediation = (
     typeof remediation.action !== "string"
   )
     return undefined;
-  const needle = `Read the declared input schema or CLI usage for ${details.operation}; if using MCP and the catalog may be stale, call tools/list`;
-  if (!remediation.action.includes(needle)) return undefined;
+  const operation = details.operation;
+  const mcp = renderInputSchemaRemediation(
+    operation,
+    MCP_INPUT_SCHEMA_SPELLING,
+  );
+  const index = remediation.action.indexOf(mcp);
+  if (index < 0) return undefined;
   const command = cliCommandForOperation(
-    details.operation,
+    operation,
     context.commands,
     context.cliName ?? "rea",
     context.recordedCommands,
   );
   if (command === undefined) return undefined;
-  return {
-    ...remediation,
-    action: remediation.action.replace(
-      needle,
-      `Read the declared input schema or CLI usage for ${command}`,
-    ),
+  const spelling: InputSchemaRemediationSpelling = {
+    subject: () => command,
+    includeCatalogRefresh: false,
   };
+  const cli = renderInputSchemaRemediation(operation, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${remediation.action.slice(0, index)}${cli}${remediation.action.slice(index + mcp.length)}`,
+      };
 };
 
 const projectedSecondaryFailures = (
