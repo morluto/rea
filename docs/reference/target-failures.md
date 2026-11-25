@@ -69,6 +69,7 @@ The remaining operations move to this vocabulary area by area, and each release 
 Container and inventory readers (ZIP, ASAR, PyInstaller, .NET bundles, Node SEA, Deno and Bun standalones, Godot PCK, UnityFS, wxapkg, FIT, uImage, iNES, Android OTA payloads, ESP images, NTFS `$MFT` streams, firmware record files and others) now report damaged bytes as `malformed` or `truncated`, with the reader's `format`. Before, they reported `artifact_operation_failed` with `details.reason: "format"`. Two other things changed:
 
 - The Playwright trace, NTFS journal, release exposure and web capture operations report a damaged selected file as `unsupported_target`, not `invalid_request`.
+- `inspect_sqlite_database`, `inspect_binary_layout`, `inspect_recorded_crash` and `inspect_evm_interface` also report a damaged selected file as `unsupported_target` (`failure_kind: "malformed"`, with `format` `sqlite`, `elf`, `elf-core` or `evm-bytecode`), not `invalid_request`.
 - A short read after REA measured the file is now an integrity failure with `details.integrity_check: "read-coverage"` (the file changed during the read), not a format error.
 
 Related: [settings, limits and recovery](limits-and-recovery.md) for limit failures, and `docs/user-visible-errors.csv` for every error case and its code.
