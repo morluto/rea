@@ -17,23 +17,12 @@ import {
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { hasElfMagic, BinaryReader } from "../../domain/binaryContainer.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
-import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource, type ByteSource } from "../../domain/byteSource.js";
 
 interface ByteSpan {
   readonly size: number;
   readonly readRange: (offset: number, length: number) => Promise<Buffer>;
 }
-
-const bufferSpan = (bytes: Buffer): ByteSpan => ({
-  size: bytes.length,
-  readRange: (offset, length) => {
-    if (offset < 0 || length <= 0 || offset >= bytes.length)
-      return Promise.resolve(Buffer.alloc(0));
-    return Promise.resolve(
-      bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    );
-  },
-});
 
 const sourceSpan = (source: ByteSource): ByteSpan => ({
   size: source.size,
@@ -1075,7 +1064,7 @@ const bzImageReport = async (
     "file",
     input,
     {
-      span: bufferSpan(member.output),
+      span: bufferByteSource(member.output),
       space: "inflated_payload",
       payload: {
         ...base,
