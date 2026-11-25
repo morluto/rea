@@ -124,13 +124,20 @@ cliTest(
               reason === "malformed"
                 ? "unsupported_target"
                 : "artifact_operation_failed",
-            details: {
-              operation: selection.operation,
-              reason,
-              detail: expect.stringContaining(
-                reason === "malformed" ? fixture.sourcePath : "../outside.js",
-              ),
-            },
+            // A malformed captured source is a target failure on that file;
+            // an escaping manifest path is an artifact operation refusal.
+            details:
+              reason === "malformed"
+                ? {
+                    operation: selection.operation,
+                    failure_kind: "malformed",
+                    path: expect.stringContaining(fixture.sourcePath),
+                  }
+                : {
+                    operation: selection.operation,
+                    reason,
+                    detail: expect.stringContaining("../outside.js"),
+                  },
           });
       }
     }
