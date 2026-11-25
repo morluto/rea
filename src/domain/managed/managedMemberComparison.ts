@@ -13,7 +13,6 @@ import {
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
-  hasCompleteMethodRows,
   managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
@@ -324,12 +323,6 @@ export const compareManagedMembers = (
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
-    leftComplete: scope.left.metadataComplete,
-    rightComplete: scope.right.metadataComplete,
-    leftMethodsComplete:
-      scope.left.metadataComplete && hasCompleteMethodRows(left.result),
-    rightMethodsComplete:
-      scope.right.metadataComplete && hasCompleteMethodRows(right.result),
     scope,
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
