@@ -22,8 +22,20 @@ it.each([
     'const a = x ? "complete" : "partial";\nconst b = y\n  ? "partial"\n  : "complete";',
     2,
   ],
+  // Arrow function with return-type annotation in the true branch does not swallow the ternary `:`.
+  ['const s = flag ? (): string => "partial" : "complete";', 1],
+  [
+    'const s = flag ? (a: number): Record<string, unknown> => ({ a }) : "complete";',
+    1,
+  ],
+  ['const s = flag ? (foo) : "complete";', 1],
+  ['const s = flag ? (foo) : () => "complete";', 0],
   // Non-ternary uses of "complete" are ignored.
   ['type Status<T> = T extends true ? "complete" : "partial";', 0],
+  [
+    'type Status<T> = T extends Record<string, unknown> ? "complete" : "partial";',
+    0,
+  ],
   ['function f(status?: "complete") { return status; }', 0],
   ['const obj = x ? { status: "complete" } : {};', 0],
   ['const obj = { status: "complete" };', 0],

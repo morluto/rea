@@ -7,7 +7,9 @@ import { tokenize } from "./source-tokens.mjs";
 const MENTIONS_COMPLETE = /["'`]complete["'`]/u;
 const OPENERS = new Set(["(", "[", "{"]);
 const CLOSERS = new Set([")", "]", "}"]);
-const STATEMENT_BOUNDARIES = new Set([";", ",", "=", "?"]);
+// `,` is intentionally excluded because generic type arguments (`Record<A, B>`)
+// after `extends` contain commas at the same bracket depth.
+const EXTENDS_BOUNDARIES = new Set([";", "=", "?"]);
 const EXPRESSION_CONTINUATIONS = new Set([
   ".",
   "?.",
@@ -126,6 +128,120 @@ const isCompleteWhenFalseBranch = (source, tokens, start) => {
 };
 
 /**
+ * Distinguishes an arrow-function return-type colon (`(): string => body : alt`)
+ * from a ternary `:` (`(expr) : alt` or `(expr) : () => body`).
+ *
+ * A `:` immediately after `)` is an arrow return-type annotation when:
+ * 1. A `=>` follows at depth 0 (skipping balanced `()`, `[]`, `{}`, `<>`), and
+ * 2. After that `=>`, an unmatched ternary `:` follows at depth 0 before any
+ *    statement/argument boundary.
+ *
+ * @param {readonly import("./source-tokens.d.mts").SourceToken[]} tokens
+ * @param {number} colonIndex
+ * @returns {boolean}
+ */
+const isArrowReturnTypeColon = (tokens, colonIndex) => {
+  if (!isPunct(tokens[colonIndex - 1], ")")) return false;
+  let bracketDepth = 0;
+  let angleDepth = 0;
+  let arrowIndex = -1;
+
+  for (let index = colonIndex + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    if (token.opensSubstitution === true) {
+      bracketDepth += 1;
+      continue;
+    }
+    if (token.kind === "substitution-end") {
+      if (bracketDepth === 0) return false;
+      bracketDepth -= 1;
+      continue;
+    }
+    if (token.kind === "punct" && OPENERS.has(token.text)) {
+      bracketDepth += 1;
+      continue;
+    }
+    if (token.kind === "punct" && CLOSERS.has(token.text)) {
+      if (bracketDepth === 0) return false;
+      bracketDepth -= 1;
+      continue;
+    }
+    if (bracketDepth === 0) {
+      if (isPunct(token, "<")) {
+        angleDepth += 1;
+        continue;
+      }
+      if (isPunct(token, ">") && angleDepth > 0) {
+        angleDepth -= 1;
+        continue;
+      }
+      if (angleDepth === 0) {
+        if (isPunct(token, "=>")) {
+          arrowIndex = index;
+          break;
+        }
+        if (
+          isPunct(token, ";") ||
+          isPunct(token, ",") ||
+          isPunct(token, "?") ||
+          isPunct(token, ":")
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+
+  if (arrowIndex === -1) return false;
+
+  let exprDepth = 0;
+  let nestedTernaries = 0;
+  for (let index = arrowIndex + 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    if (token.opensSubstitution === true) {
+      exprDepth += 1;
+      continue;
+    }
+    if (token.kind === "substitution-end") {
+      if (exprDepth === 0) return false;
+      exprDepth -= 1;
+      continue;
+    }
+    if (token.kind === "punct" && OPENERS.has(token.text)) {
+      exprDepth += 1;
+      continue;
+    }
+    if (token.kind === "punct" && CLOSERS.has(token.text)) {
+      if (exprDepth === 0) return false;
+      exprDepth -= 1;
+      continue;
+    }
+    if (exprDepth > 0) continue;
+    if (isPunct(token, "?")) {
+      const next = tokens[index + 1];
+      if (
+        !isPunct(next, ":") &&
+        !isPunct(next, ",") &&
+        !isPunct(next, ")") &&
+        !isPunct(next, "=")
+      ) {
+        nestedTernaries += 1;
+      }
+      continue;
+    }
+    if (isPunct(token, ":")) {
+      if (nestedTernaries === 0) return true;
+      nestedTernaries -= 1;
+      continue;
+    }
+    if (isPunct(token, ";") || isPunct(token, ",")) return false;
+  }
+  return false;
+};
+
+/**
  * Counts ternary (`? ... : ...`) expressions whose true or false branch
  * evaluates to the string literal `"complete"`.
  *
@@ -197,7 +313,11 @@ export const adhocCompletenessTernaryCount = (content) => {
     if (isPunct(token, ":")) {
       sawExtendsAtDepth[depth] = false;
       const open = ternaryStack.at(-1);
-      if (open !== undefined && open.depth === depth) {
+      if (
+        open !== undefined &&
+        open.depth === depth &&
+        !isArrowReturnTypeColon(tokens, index)
+      ) {
         ternaryStack.pop();
         if (
           isCompleteWhenTrueBranch(content, tokens, open.qIndex + 1, index) ||
@@ -208,7 +328,7 @@ export const adhocCompletenessTernaryCount = (content) => {
       }
       continue;
     }
-    if (token.kind === "punct" && STATEMENT_BOUNDARIES.has(token.text)) {
+    if (token.kind === "punct" && EXTENDS_BOUNDARIES.has(token.text)) {
       sawExtendsAtDepth[depth] = false;
     }
   }
