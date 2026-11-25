@@ -20,9 +20,16 @@ const EXPECTED_BOUNDS: Record<WideCollection, readonly [string, string]> = {
   inferences: ["/api/first", "/api/last"],
 };
 
-const fillWide = <T>(count: number, first: T, middle: T, last: T): T[] => {
-  const items = new Array<T>(count).fill(middle);
+const fillWide = <T>(
+  count: number,
+  first: T,
+  makeMiddle: (index: number) => T,
+  last: T,
+): T[] => {
+  const items = new Array<T>(count);
   items[0] = first;
+  for (let index = 1; index < count - 1; index += 1)
+    items[index] = makeMiddle(index);
   items[count - 1] = last;
   return items;
 };
@@ -80,7 +87,7 @@ const buildWideScriptResult = (
           ? fillWide(
               count,
               makeEdge("./first.js"),
-              makeEdge("./mid.js"),
+              () => makeEdge("./mid.js"),
               makeEdge("./last.js"),
             )
           : [],
@@ -89,7 +96,7 @@ const buildWideScriptResult = (
           ? fillWide(
               count,
               makeFinding("/first", "router"),
-              makeFinding("/mid", "router"),
+              (index) => makeFinding(`/mid-${index}`, "router"),
               makeFinding("/last", "router"),
             )
           : [],
@@ -98,7 +105,7 @@ const buildWideScriptResult = (
           ? fillWide(
               count,
               makeFinding("/api/first", "fetch"),
-              makeFinding("/api/mid", "fetch"),
+              (index) => makeFinding(`/api/mid-${index}`, "fetch"),
               makeFinding("/api/last", "fetch"),
             )
           : [],
@@ -107,7 +114,7 @@ const buildWideScriptResult = (
           ? fillWide(
               count,
               makeWebMcp("firstTool"),
-              makeWebMcp("midTool"),
+              () => makeWebMcp("midTool"),
               makeWebMcp("lastTool"),
             )
           : [],
@@ -118,7 +125,7 @@ const buildWideScriptResult = (
         ? fillWide(
             count,
             makeInference("/api/first"),
-            makeInference("/api/mid"),
+            () => makeInference("/api/mid"),
             makeInference("/api/last"),
           )
         : [],

@@ -1,3 +1,5 @@
+import { hasElfMagic } from "../../domain/binaryContainer.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
@@ -23,7 +25,7 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { constants as bufferConstants } from "node:buffer";
 import {
-  parsePeResources,
+  readPeResourceEntries,
   peResourceLimitBoundary,
 } from "../../domain/pe/peResourceInventory.js";
 import {
@@ -33,13 +35,14 @@ import {
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-  type PeResources,
 } from "../../domain/native/peResources.js";
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactParseFailure,
   artifactReaderLimitFailure,
   artifactFixedLimitFailure,
@@ -80,7 +83,6 @@ import {
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
-import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const RT_RCDATA = 10;
@@ -116,7 +118,10 @@ interface Carrier {
 }
 
 const formatFailure = (message: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", message);
+  malformedArtifact("node-sea", message);
+
+const truncatedFailure = (message: string): ArtifactReaderFailure =>
+  truncatedArtifact("node-sea", message);
 
 const limitFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "memory" });
@@ -164,13 +169,13 @@ export const locateNodeSea = async (
         : await locateFatMachO(carrier, prefix);
     return collapseRanges(carrier, "mach-o", ranges);
   }
-  if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+  if (hasElfMagic(prefix))
     return collapseRanges(
       carrier,
       "elf",
       await locateElfNotes(carrier, prefix),
     );
-  if (prefix[0] === 0x4d && prefix[1] === 0x5a)
+  if (hasDosMzMagic(prefix))
     return collapseRanges(
       carrier,
       "pe",
@@ -196,8 +201,24 @@ export const readNodeSeaBlob = async (
     location.blobOffset,
     location.blobLength,
   );
-  if (bytes === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (bytes === undefined) throw truncatedFailure(NODE_SEA_TRUNCATED);
   return bytes;
+};
+
+const FUSE_PREFIX_BYTES = Buffer.from("NODE_SEA_FUSE_", "ascii");
+
+const isLowerHexByte = (byte: number): boolean =>
+  (byte >= 0x30 && byte <= 0x39) || (byte >= 0x61 && byte <= 0x66);
+
+const isNodeSeaFuseAt = (buffer: Buffer, offset: number): boolean => {
+  if (offset + FUSE_LENGTH > buffer.length) return false;
+  const hashStart = offset + FUSE_PREFIX_BYTES.length;
+  for (let index = 0; index < 32; index += 1) {
+    if (!isLowerHexByte(buffer[hashStart + index]!)) return false;
+  }
+  if (buffer[hashStart + 32] !== 0x3a) return false; // ':'
+  const state = buffer[hashStart + 33];
+  return state === 0x30 || state === 0x31; // '0' | '1'
 };
 
 /**
@@ -209,31 +230,51 @@ export const scanNodeSeaFuse = async (
   fileSize: number,
   signal?: AbortSignal,
 ): Promise<NodeSeaFuseObservation> => {
-  const carrier: Carrier = { handle, fileSize, signal };
   const matches = new Set<string>();
   const overlap = FUSE_LENGTH - 1;
-  let carry: Buffer = Buffer.alloc(0);
+  const chunkSize = 64 * 1024;
+  const scratch = Buffer.allocUnsafe(overlap + chunkSize);
+  let carryLength = 0;
   let position = 0;
   while (position < fileSize) {
-    const length = Math.min(64 * 1024, fileSize - position);
-    const chunk = await readExact(carrier, position, length);
-    if (chunk === undefined)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "Node SEA carrier shrank during the fuse scan",
-        { integrityCheck: "read-coverage" },
+    const length = Math.min(chunkSize, fileSize - position);
+    let filled = 0;
+    while (filled < length) {
+      abortIfNeeded(signal);
+      const observed = await handle.read(
+        scratch,
+        carryLength + filled,
+        length - filled,
+        position + filled,
       );
-    const window = carry.length === 0 ? chunk : Buffer.concat([carry, chunk]);
-    for (const match of window
-      .toString("latin1")
-      .matchAll(/NODE_SEA_FUSE_[0-9a-f]{32}:[01]/gu))
-      if (match[0] !== undefined) {
-        matches.add(match[0]);
+      abortIfNeeded(signal);
+      if (observed.bytesRead === 0)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          "Node SEA carrier shrank during the fuse scan",
+          { integrityCheck: "read-coverage" },
+        );
+      filled += observed.bytesRead;
+    }
+    const windowLength = carryLength + length;
+    const window = scratch.subarray(0, windowLength);
+    let searchFrom = 0;
+    while (searchFrom <= windowLength - FUSE_LENGTH) {
+      const hit = window.indexOf(FUSE_PREFIX_BYTES, searchFrom);
+      if (hit < 0 || hit > windowLength - FUSE_LENGTH) break;
+      if (isNodeSeaFuseAt(window, hit)) {
+        matches.add(window.toString("ascii", hit, hit + FUSE_LENGTH));
         // Two distinct sentinels already establish conflict. The public fact
         // needs no unbounded set of all sentinel-like strings in asset bytes.
         if (matches.size > 1) return observeNodeSeaFuseMatches([...matches]);
+        searchFrom = hit + FUSE_LENGTH;
+      } else {
+        searchFrom = hit + 1;
       }
-    carry = window.subarray(Math.max(0, window.length - overlap));
+    }
+    carryLength = Math.min(overlap, windowLength);
+    if (carryLength > 0)
+      scratch.copyWithin(0, windowLength - carryLength, windowLength);
     position += length;
   }
   return observeNodeSeaFuseMatches([...matches]);
@@ -276,7 +317,7 @@ const collapseRanges = async (
     const hashes = new Set<string>();
     for (const range of unique) {
       const hash = await hashArtifactRange(carrier, range.offset, range.length);
-      if (hash === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+      if (hash === undefined) throw truncatedFailure(NODE_SEA_TRUNCATED);
       hashes.add(hash);
     }
     if (hashes.size !== 1) throw formatFailure(NODE_SEA_DUPLICATE_BLOB);
@@ -398,7 +439,7 @@ const locateThinMachO = async (
         const table = offset + segmentHeader;
         if (nsects > Math.floor((size - segmentHeader) / sectionSize)) {
           if (identityIssue !== null) continue;
-          throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
+          throw truncatedFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
         }
         const admission = admitMachoSegmentCommand(
           segment,
@@ -414,7 +455,7 @@ const locateThinMachO = async (
             little,
           );
           if (!parsedSection.ok)
-            throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
+            throw truncatedFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
           const record = parsedSection.value;
           if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
           // Only a named declaration is attributed to SEA. A mismatch
@@ -428,7 +469,8 @@ const locateThinMachO = async (
           const fileOffset = record.offset;
           // The segment and section bounds admit every nonempty payload.
           // Empty segments can still declare an offset outside the image.
-          if (fileOffset > sliceSize) throw formatFailure(NODE_SEA_TRUNCATED);
+          if (fileOffset > sliceSize)
+            throw truncatedFailure(NODE_SEA_TRUNCATED);
           const length = Number(record.size);
           admitBlobBytes(carrier, length);
           found.push({ offset: base + fileOffset, length });
@@ -437,7 +479,7 @@ const locateThinMachO = async (
     }
   }
   if (found.length > 0 && !cursor.finish().ok)
-    throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
+    throw truncatedFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
   return { ranges: found };
 };
 
@@ -690,7 +732,7 @@ const scanElfNoteTable = async (
     const owner = cString(name, 0, name.length);
     if (owner === RESOURCE_NAME) {
       if (framing === "truncated-descriptor")
-        throw formatFailure(NODE_SEA_ELF_DESCRIPTOR_TRUNCATED);
+        throw truncatedFailure(NODE_SEA_ELF_DESCRIPTOR_TRUNCATED);
       admitBlobBytes(carrier, descsz);
       found.push({ offset: note.offset + cursor + descriptor, length: descsz });
     }
@@ -747,7 +789,7 @@ const locatePeResources = async (
     );
   }
   const bytes = await readExact(carrier, 0, carrier.fileSize);
-  if (bytes === undefined) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (bytes === undefined) throw truncatedFailure(NODE_SEA_TRUNCATED);
   // A native-looking file need not be an admitted PE image. Once the layout
   // is admitted, resource errors remain failures rather than inferred absence.
   let layout: ReturnType<typeof readPeResourceLayout>;
@@ -758,27 +800,18 @@ const locatePeResources = async (
       return [];
     throw cause;
   }
-  let resources: PeResources;
+  let resources: Awaited<ReturnType<typeof readPeResourceEntries>>;
   try {
-    resources = await parsePeResources(
+    resources = await readPeResourceEntries(
       bytes,
-      {
-        path: "<admitted SEA carrier>",
-        sha256: sha256Hex(bytes),
-        bytes: bytes.length,
-      },
-      {
-        path: "/admitted-sea-carrier",
-        max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
-        max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-      },
-      carrier.signal,
       layout,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+      carrier.signal,
     );
   } catch (cause) {
     throw artifactParseFailure(cause, carrier.signal, peResourceLimitBoundary);
   }
-  return resources.resources.flatMap((resource) => {
+  return resources.flatMap((resource) => {
     if (
       resource.type.kind !== "id" ||
       resource.type.id !== RT_RCDATA ||

@@ -142,7 +142,10 @@ it.each([false, true])(
       );
       if (result.ok) throw new Error("Expected version refusal");
       const primary = result.error.cleanupPrimary ?? result.error;
-      expect(primary._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(primary).toMatchObject({
+        _tag: "AnalysisTargetFailureError",
+        failure: { kind: "unsupported", format: "playwright-trace" },
+      });
       expect(primary.secondaryFailures).toHaveLength(1);
       expect(primary.secondaryFailures[0]?._tag).toBe("AnalysisCancelledError");
       expect(primary.secondaryFailures[0]?.cause).toBe(reason);

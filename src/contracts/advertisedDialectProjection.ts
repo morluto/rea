@@ -314,30 +314,41 @@ const factorObjectEnumUnions = (branches: readonly unknown[]): unknown[] => {
   return groups.map((group) => group.branch);
 };
 
-/** `[T, "null"]` becomes the single nullable form: a typed branch or null. */
-const nullableForm = (out: Schema): Schema => {
-  if (
-    !isStringList(out.type) ||
-    out.type.length !== 2 ||
-    !out.type.includes("null")
-  )
-    return out;
-  const { type, description, ...constraints } = out;
-  const nonNull = (type as readonly string[]).find(
-    (member) => member !== "null",
-  )!;
+/** Multi-type lists (`["string", "null"]`, JSON-value lists) become `anyOf` branches per type. */
+const typeListForm = (out: Schema): Schema => {
+  if (!isStringList(out.type)) return out;
+  const { type, description, items, ...constraints } = out;
+  const branches: Schema[] = [];
+  for (const member of type as readonly string[]) {
+    if (member === "null") {
+      branches.push({ type: "null" });
+    } else if (member === "array") {
+      branches.push({
+        type: "array",
+        ...constraints,
+        // An open item schema can require reduced presentation, but it
+        // cannot imply that the array accepts only object items.
+        items: isRecord(items) ? items : {},
+      });
+    } else {
+      branches.push({ type: member, ...constraints });
+    }
+  }
   return {
     ...(description === undefined ? {} : { description }),
-    anyOf: [{ type: nonNull, ...constraints }, { type: "null" }],
+    anyOf: branches,
   };
 };
 
 /** One projection: guidance sentences accumulate while the schema is built. */
 class DialectProjection {
   readonly notes: string[] = [];
+  readonly #seenNotes = new Set<string>();
 
   note(sentence: string): void {
-    if (!this.notes.includes(sentence)) this.notes.push(sentence);
+    if (this.#seenNotes.has(sentence)) return;
+    this.#seenNotes.add(sentence);
+    this.notes.push(sentence);
   }
 
   project(value: unknown, path: string): unknown {
@@ -357,7 +368,7 @@ class DialectProjection {
         `${label(path)} must not be ${source.not.enum.map((item) => JSON.stringify(item)).join(" or ")}.`,
       );
     this.unionKeywords(source, out, path);
-    return nullableForm(out);
+    return typeListForm(out);
   }
 
   /** Name and count constraints are dropped; an object's own cross-field
@@ -505,7 +516,8 @@ class DialectProjection {
         branchNotes.push(projection.notes);
         return isRecord(projected) &&
           Array.isArray(projected.anyOf) &&
-          onlyKeys(projected, ["anyOf"])
+          (onlyKeys(projected, ["anyOf"]) ||
+            onlyKeys(projected, ["anyOf", "type"]))
           ? projected.anyOf
           : [projected];
       }),

@@ -13,7 +13,7 @@ import {
   renderCliDocument,
   renderVersionReport,
   parseCliOutputArguments,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
@@ -379,6 +379,29 @@ describe("CLI output filter slice validation", () => {
         },
       });
       expect(result.stderr).toBe("");
+    },
+  );
+
+  workspaceCliTest(
+    "rejects a nonnumeric slice bound instead of returning no rows",
+    async ({ cli }) => {
+      const result = await cli.run({
+        freshProcess: true,
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,2x].provider.id",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_FILTER",
+          message: expect.stringContaining("nonnumeric slice bound"),
+        },
+      });
     },
   );
 

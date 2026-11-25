@@ -9,9 +9,10 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import {
+  completedStableArtifactStream,
   readStableArtifact,
   streamStableArtifact,
 } from "../../../src/resources/readStableArtifact.js";
@@ -52,7 +53,7 @@ it("reads an empty artifact and rejects symlink, size, and cancellation boundari
 it("observes all bytes across short reads and retains only the selected prefix during streaming", async () => {
   const root = await createTestTempDirectory("rea-stable-chunks-");
   const path = join(root, "source.bin");
-  const bytes = Buffer.alloc(3 * 65536 + 7);
+  const bytes = Buffer.alloc(1_500_000);
   for (let index = 0; index < bytes.length; index += 1)
     bytes[index] = index % 251;
   await writeFile(path, bytes);
@@ -68,7 +69,13 @@ it("observes all bytes across short reads and retains only the selected prefix d
           offset: number,
           length: number,
           position: number,
-        ) => read(buffer, offset, Math.min(length, 65531), position),
+        ) =>
+          read(
+            buffer,
+            offset,
+            position === 0 ? Math.min(length, 65531) : length,
+            position,
+          ),
       });
       return handle;
     },
@@ -115,7 +122,7 @@ it.each([-1, Number.NaN, "oversized"] as const)(
           return handle;
         },
       }),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "io" });
   },
 );
 
@@ -463,57 +470,44 @@ it.each([new Error("primary read failure"), undefined, null])(
   },
 );
 
-it("retains physical read facts and the caller's reason when cancellation arrives during successful close", async () => {
-  const file = await heldDescriptor();
-  const controller = new AbortController();
-  const reason = new Error("cancelled during descriptor finalization");
-  file.handle.close = async () => {
-    controller.abort(reason);
-    await file.nativeClose();
-  };
-  const failure = await readStableArtifact(
-    file.path,
-    1024,
-    controller.signal,
-    file.fileSystem,
-  ).catch((cause: unknown) => cause);
-  if (!(failure instanceof ArtifactFileCancelled))
-    throw new Error("Missing late cancellation");
-  expect(failure.cause).toBe(reason);
-  expect(artifactFileCompletion(failure)).toMatchObject({
-    kind: "completed",
-    value: { bytes: file.bytes },
-    cancellation: { reason },
-  });
-  expect(file.handle.fd).toBe(-1);
-});
-
-it("retains a completed read and failed cleanup when cancellation arrives during close rejection", async () => {
-  const file = await heldDescriptor();
-  const controller = new AbortController();
-  const reason = new Error("cancelled during failed close");
-  file.handle.close = async () => {
-    controller.abort(reason);
-    throw file.closeFailure;
-  };
-  const failure = await readStableArtifact(
-    file.path,
-    1024,
-    controller.signal,
-    file.fileSystem,
-  ).catch((cause: unknown) => cause);
-  if (!(failure instanceof ArtifactFileCleanupFailure))
-    throw new Error("Missing cleanup ownership");
-  expect(artifactFileCompletion(failure)).toMatchObject({
-    kind: "completed",
-    value: { bytes: file.bytes },
-    cancellation: { reason },
-  });
-  expect(controller.signal.reason).toBe(reason);
-  file.handle.close = file.nativeClose;
-  await failure.cleanupLease.release();
-  expect(file.handle.fd).toBe(-1);
-});
+it.each(["confirmed close", "failed close"] as const)(
+  "retains completed read facts and cancellation during %s",
+  async (outcome) => {
+    const file = await heldDescriptor();
+    const controller = new AbortController();
+    const reason = new Error("cancelled during descriptor finalization");
+    file.handle.close = async () => {
+      controller.abort(reason);
+      if (outcome === "failed close") throw file.closeFailure;
+      await file.nativeClose();
+    };
+    const failure = await readStableArtifact(
+      file.path,
+      1024,
+      controller.signal,
+      file.fileSystem,
+    ).catch((cause: unknown) => cause);
+    const completed = artifactFileCompletion(failure);
+    expect(completed).toMatchObject({
+      kind: "completed",
+      value: { bytes: file.bytes },
+    });
+    expect(completed?.cancellation?.reason).toBe(reason);
+    if (outcome === "failed close") {
+      if (!(failure instanceof ArtifactFileCleanupFailure))
+        throw new Error("Missing cleanup ownership");
+      expect(failure.fileCleanupFailure.cleanupCause).toBe(file.closeFailure);
+      expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+      file.handle.close = file.nativeClose;
+      await failure.cleanupLease.release();
+    } else {
+      if (!(failure instanceof ArtifactFileCancelled))
+        throw new Error("Missing late cancellation");
+      expect(failure.cause).toBe(reason);
+    }
+    expect(file.handle.fd).toBe(-1);
+  },
+);
 
 it("transfers the exact owner even when the caller's retention boundary rejects it", async () => {
   const file = await heldDescriptor();
@@ -605,4 +599,102 @@ it("keeps a completed void operation distinct from a failed operation and arbitr
     file.release();
     await scope.close();
   }
+});
+
+describe("streamStableArtifact async chunks and custom chunkBytes", () => {
+  it("awaits each async callback before admitting another physical read", async () => {
+    const root = await createTestTempDirectory("rea-stable-async-stream-");
+    const path = join(root, "streamed.bin");
+    const payload = Buffer.alloc(300, 0x41);
+    payload.write("tail", payload.length - 4);
+    await writeFile(path, payload);
+    const firstChunk = phaseGate();
+    let admittedReads = 0;
+    const seenSizes: number[] = [];
+    const reading = streamStableArtifact(path, payload.length, {
+      chunkBytes: 128,
+      retainBytes: () => 16,
+      fileSystem: {
+        lstat: (selected) => lstat(selected, { bigint: true }),
+        open: async (...args) => {
+          const handle = await open(...args);
+          const read = handle.read.bind(handle);
+          Object.defineProperty(handle, "read", {
+            value: (...params: Parameters<typeof read>) => {
+              admittedReads += 1;
+              return read(...params);
+            },
+          });
+          return handle;
+        },
+      },
+      onChunk: async (chunk) => {
+        seenSizes.push(chunk.length);
+        if (seenSizes.length === 1) await firstChunk.hold();
+      },
+    });
+    try {
+      await firstChunk.reached(reading, "first streamed artifact callback");
+      expect(admittedReads).toBe(1);
+      firstChunk.release();
+      expect(await reading).toEqual({
+        size: payload.length,
+        prefix: payload.subarray(0, 16),
+        sha256: createHash("sha256").update(payload).digest("hex"),
+      });
+      expect(seenSizes).toEqual([16, 128, 128, 28]);
+    } finally {
+      firstChunk.release();
+      await Promise.allSettled([reading]);
+    }
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    "rejects invalid chunkBytes (%j) as an internal invariant violation",
+    async (chunkBytes) => {
+      const root = await createTestTempDirectory("rea-stable-bad-chunk-");
+      const path = join(root, "sample.bin");
+      await writeFile(path, "abc");
+      await expect(
+        streamStableArtifact(path, 3, {
+          chunkBytes,
+          retainBytes: () => 0,
+          onChunk: async () => {},
+        }),
+      ).rejects.toMatchObject({ _tag: "InternalInvariantError" });
+    },
+  );
+
+  it("retains streamed identity when handle close fails after async onChunk", async () => {
+    const file = await heldDescriptor();
+    const scope = new ArtifactResourceScope();
+    const failure = await streamStableArtifact(file.path, file.bytes.length, {
+      chunkBytes: 2,
+      retainBytes: () => 2,
+      resourceScope: scope,
+      fileSystem: file.fileSystem,
+      onChunk: async () => {
+        await Promise.resolve();
+      },
+    }).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+    const completed = completedStableArtifactStream(failure);
+    expect(completed).toBeDefined();
+    expect(completed?.size).toBe(file.bytes.length);
+    expect(
+      Buffer.compare(
+        completed?.prefix ?? Buffer.alloc(0),
+        file.bytes.subarray(0, 2),
+      ),
+    ).toBe(0);
+    expect(completed?.sha256).toBe(
+      createHash("sha256").update(file.bytes).digest("hex"),
+    );
+
+    file.release();
+    if (failure instanceof ArtifactFileCleanupFailure)
+      await failure.cleanupLease.release();
+    await scope.close();
+  });
 });

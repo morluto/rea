@@ -47,7 +47,7 @@ const denseInlineSlots = (
 ): readonly ArrayLiteralSlot[] | undefined => {
   const takeSelection = (): boolean => {
     if (allowance.remaining === 0) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return false;
     }
     allowance.remaining--;

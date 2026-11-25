@@ -175,7 +175,7 @@ describe("DWARF dumper format handling", () => {
       "node scripts/verify-dwarf-units.mjs",
     );
     const module = await importVerifierSource(
-      "../src/composition/binaryDiagnostics.ts",
+      "../src/composition/binaryDiagnostics/dwarfUnits.ts",
       new URL("../../../scripts/verify-dwarf-units.mjs", import.meta.url).href,
     );
     expect(module.createDwarfUnitsService).toBeTypeOf("function");

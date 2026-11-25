@@ -234,9 +234,8 @@ class HopperBridgeTest(unittest.TestCase):
         dossier = bridge["_analyze_function"](doc, {"procedure": "0x1000"})
 
         self.assertEqual(seg.named_addresses_calls, 0)
-        # _instruction_addresses runs once inside _analyze_function; _assembly_lines reuses it.
-        # Note basicBlockIterator is called once in _instruction_addresses and once for CFG blocks.
-        self.assertEqual(proc.block_iter_calls, 2)
+        # The dossier collects instruction addresses and CFG blocks in one traversal.
+        self.assertEqual(proc.block_iter_calls, 1)
         self.assertEqual(
             dossier["assembly"],
             [
@@ -399,6 +398,51 @@ class HopperBridgeTest(unittest.TestCase):
         self.assertIs(projected[0], dirty[0])
         self.assertEqual(projected[1], {"1": ["x", "custom-value"]})
         self.assertEqual(bridge["_json_safe"]({"1": "a", 1: "b"}), {"1": "b"})
+
+    def test_folded_search_inventory_matches_case_insensitively_and_invalidates_on_mutation(self):
+        bridge = load_bridge()
+        seg = FakeSegment(
+            0x1000,
+            0x200,
+            {0x1000: "AuthToken_Alpha", 0x1010: "Straße_Handler"},
+            strings={
+                0x1100: ("AuthToken_Value", b"AuthToken_Value\x00"),
+                0x1120: ("groß_path", "groß_path\x00".encode("utf-8")),
+            },
+        )
+        seg.procedures.extend([FakeProcedure(0x1000, seg, [0x1000]), FakeProcedure(0x1010, seg, [0x1010])])
+        doc = FakeDocument([seg])
+        bridge["_api"] = lambda: FakeApi()
+        bridge["_document"] = lambda name=None: doc
+
+        # Case-insensitive string and procedure search uses cached folded projection.
+        self.assertEqual(
+            [row["address"] for row in bridge["_search_results"](doc, "string", {"pattern": "authtoken", "mode": "literal", "case_sensitive": False})],
+            ["0x1100"],
+        )
+        self.assertEqual(
+            [row["address"] for row in bridge["_search_results"](doc, "string", {"pattern": "GROSS", "mode": "literal", "case_sensitive": False})],
+            ["0x1120"],
+        )
+        self.assertEqual(
+            [row["address"] for row in bridge["_search_results"](doc, "procedure", {"pattern": "STRASSE", "mode": "literal", "case_sensitive": False})],
+            ["0x1010"],
+        )
+        self.assertEqual(
+            [row["address"] for row in bridge["_search_results"](doc, "procedure", {"pattern": "authtoken", "mode": "literal", "case_sensitive": True})],
+            [],
+        )
+        self.assertIn((id(doc), "procedure_folded"), bridge["_search_inventory_cache"])
+        self.assertIn((id(doc), "string_folded"), bridge["_search_inventory_cache"])
+
+        # Invalidation drops both base and folded projections so renamed symbols are observed.
+        seg.names[0x1000] = "Renamed_Target"
+        bridge["_invalidate_search_inventory"](doc)
+        self.assertNotIn((id(doc), "procedure_folded"), bridge["_search_inventory_cache"])
+        self.assertEqual(
+            [row["address"] for row in bridge["_search_results"](doc, "procedure", {"pattern": "renamed_target", "mode": "literal", "case_sensitive": False})],
+            ["0x1000"],
+        )
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   readFieldDefinitionName,
   readFieldDefinitionRow,
@@ -42,24 +43,24 @@ type NativeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
 type NativeImplementation =
   ManagedNativeBoundaryInspection["native_implementations"][number];
 
-type MemberCore = {
+interface MethodCore {
   readonly token: string;
   readonly rowOffset: number;
   readonly name: string;
   readonly flags: number;
-} & (
-  | {
-      readonly kind: "field";
-      readonly implFlags: null;
-      readonly rva: null;
-    }
-  | {
-      readonly kind: "method";
-      readonly implFlags: number;
-      readonly rva: number;
-      readonly implementation: ManagedMethodImplementationFlags;
-    }
-);
+  readonly implFlags: number;
+  readonly rva: number;
+  readonly implementation: ManagedMethodImplementationFlags;
+}
+
+/**
+ * Fixed-width 4-byte mask at MethodDef +4 (ImplFlags u16 | Flags u16 << 16):
+ * - ImplFlags 0x0003: non-IL codeType (native/optil/runtime)
+ * - ImplFlags 0x0004: unmanaged code
+ * - ImplFlags 0x1000: InternalCall
+ * - Flags     0x2000 (<< 16 = 0x2000_0000): PinvokeImpl
+ */
+const NATIVE_METHOD_FLAGS_MASK = 0x2000_1007;
 
 const flagsHex = (value: number): string =>
   `0x${value.toString(16).padStart(4, "0")}`;
@@ -88,49 +89,63 @@ export const parseModuleRefs = (
   return refs;
 };
 
-export const parseFields = (
+/** Decode only Field rows referenced by ImplMap instead of scanning every Field row. */
+export const readReferencedFieldNames = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
+  rows: ReadonlySet<number>,
   issues: ManagedParseIssue[],
-): ReadonlyMap<string, MemberCore> => {
-  const fields = new Map<string, MemberCore>();
-  const table = layout.table(4);
-  for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
+): ReadonlyMap<string, string> => {
+  const names = new Map<string, string>();
+  if (rows.size === 0) return names;
+  for (const row of [...rows].sort((left, right) => left - right)) {
     readManagedValue(() => {
       const definition = readFieldDefinitionRow(bytes, layout, row);
-      const { token, rowOffset, flags } = definition;
-      const name = readFieldDefinitionName(bytes, layout, definition);
-      fields.set(token, {
-        token,
-        rowOffset,
-        kind: "field",
-        name,
-        flags,
-        implFlags: null,
-        rva: null,
-      });
+      names.set(
+        definition.token,
+        readFieldDefinitionName(bytes, layout, definition),
+      );
     }, issues);
   }
-  return fields;
+  return names;
 };
 
-export const parseMethods = (
+/**
+ * Push the native-implementation predicate down to fixed-width MethodDef flags:
+ * read the 4-byte ImplFlags+Flags word first and only decode rows/names for
+ * matching native/runtime/unmanaged/PInvoke methods or ImplMap targets.
+ */
+export const scanNativeMethods = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
+  referencedMethodRows: ReadonlySet<number>,
   issues: ManagedParseIssue[],
-): ReadonlyMap<string, MemberCore> => {
-  const methods = new Map<string, MemberCore>();
+): {
+  readonly methodNames: ReadonlyMap<string, string>;
+  readonly methods: readonly MethodCore[];
+} => {
+  const methodNames = new Map<string, string>();
+  const methods: MethodCore[] = [];
   const table = layout.table(6);
-  for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
+  if (table === undefined || table.rowCount === 0)
+    return { methodNames, methods };
+  const reader = new BinaryReader(bytes, true, "managed-metadata-methods");
+  for (let row = 1; row <= table.rowCount; row += 1) {
+    const rowOffset = table.offset + (row - 1) * table.rowSize;
+    const flagsWord = reader.u32(rowOffset + 4);
+    if (
+      (flagsWord & NATIVE_METHOD_FLAGS_MASK) === 0 &&
+      !referencedMethodRows.has(row)
+    )
+      continue;
     readManagedValue(() => {
       const definition = readMethodDefinitionRow(bytes, layout, row);
-      const { token, rowOffset, rva, implFlags, flags, implementation } =
-        definition;
+      const { token, rva, implFlags, flags, implementation } = definition;
       const name = readMethodDefinitionName(bytes, layout, definition);
-      methods.set(token, {
+      methodNames.set(token, name);
+      methods.push({
         token,
-        rowOffset,
-        kind: "method",
+        rowOffset: definition.rowOffset,
         name,
         flags,
         implFlags,
@@ -139,26 +154,26 @@ export const parseMethods = (
       });
     }, issues);
   }
-  return methods;
+  return { methodNames, methods };
 };
 
-interface ParseImplMapsContext {
-  readonly bytes: Buffer;
-  readonly layout: ManagedMetadataLayout;
-  readonly modules: readonly ModuleRef[];
-  readonly members: ReadonlyMap<string, MemberCore>;
-  readonly issues: ManagedParseIssue[];
+interface ScannedImplMaps {
+  readonly imports: readonly NativeImport[];
+  readonly referencedFieldRows: ReadonlySet<number>;
+  readonly referencedMethodRows: ReadonlySet<number>;
+  readonly issues: readonly ManagedParseIssue[];
 }
 
-export const parseImplMaps = ({
-  bytes,
-  layout,
-  modules,
-  members,
-  issues,
-}: ParseImplMapsContext): readonly NativeImport[] => {
+export const scanImplMaps = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  modules: readonly ModuleRef[],
+): ScannedImplMaps => {
   const moduleNames = new Map(modules.map((module) => [module.token, module]));
   const imports: NativeImport[] = [];
+  const referencedFieldRows = new Set<number>();
+  const referencedMethodRows = new Set<number>();
+  const issues: ManagedParseIssue[] = [];
   const table = layout.table(28);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
@@ -184,6 +199,10 @@ export const parseImplMaps = ({
               ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a Field or MethodDef row"
               : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwarded.reason}`,
         });
+      else if (memberForwarded.table === 4)
+        referencedFieldRows.add(memberForwarded.row);
+      else if (memberForwarded.table === 6)
+        referencedMethodRows.add(memberForwarded.row);
       const memberToken =
         memberForwarded.kind === "valid" ? memberForwarded.token : null;
       const importName = readMetadataString(
@@ -206,8 +225,6 @@ export const parseImplMaps = ({
       const importScopeToken = validImportScope
         ? metadataToken(26, importScopeRow)
         : null;
-      const member =
-        memberToken === null ? undefined : members.get(memberToken);
       imports.push({
         token: metadataToken(28, row),
         row_offset: cursor.start,
@@ -220,7 +237,7 @@ export const parseImplMaps = ({
             : memberForwarded.table === 4
               ? "field"
               : "method",
-        member_name: member?.name ?? null,
+        member_name: null,
         import_name: importName,
         import_scope_token: importScopeToken,
         import_scope_name:
@@ -237,8 +254,24 @@ export const parseImplMaps = ({
       });
     }, issues);
   }
-  return imports;
+  return { imports, referencedFieldRows, referencedMethodRows, issues };
 };
+
+export const resolveImplMapMemberNames = (
+  imports: readonly NativeImport[],
+  fieldNames: ReadonlyMap<string, string>,
+  methodNames: ReadonlyMap<string, string>,
+): readonly NativeImport[] =>
+  imports.map((entry) => {
+    if (entry.member_token === null) return entry;
+    const resolved =
+      entry.member_kind === "field"
+        ? fieldNames.get(entry.member_token)
+        : entry.member_kind === "method"
+          ? methodNames.get(entry.member_token)
+          : undefined;
+    return resolved === undefined ? entry : { ...entry, member_name: resolved };
+  });
 
 const charSet = (flags: number): NativeImport["char_set"] => {
   switch (flags & 0x0006) {
@@ -303,12 +336,11 @@ const throwOnUnmappable = (
 };
 
 export const nativeImplementations = (
-  methods: Iterable<MemberCore>,
+  methods: Iterable<MethodCore>,
   pinvokeTokens: ReadonlySet<string>,
 ): readonly NativeImplementation[] => {
   const implementations: NativeImplementation[] = [];
   for (const method of methods) {
-    if (method.kind !== "method") continue;
     const { codeType, managedKind, pinvokeFlag, internalCall } =
       method.implementation;
     const pinvokeDeclared = pinvokeTokens.has(method.token) || pinvokeFlag;

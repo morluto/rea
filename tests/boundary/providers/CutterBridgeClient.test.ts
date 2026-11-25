@@ -1,3 +1,4 @@
+import { emptyCutterDiscovery } from "../../fixtures/cutterDiscovery.js";
 import {
   authenticatedServer,
   writeDescriptor,
@@ -1261,7 +1262,7 @@ describe("CutterBridgeClient: scenario group 7", () => {
           execution_state: "complete",
           document_generation: 2,
         },
-        raw_result: output,
+        raw_result: null,
         limitations: expect.arrayContaining([
           expect.stringContaining("decimal strings"),
         ]),
@@ -1676,13 +1677,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
 
   it("records known completion and truncated command output", async () => {
     const service = new CutterBridgeService({
-      listSessions: async () => ({
-        sessions: [],
-        bridge_directory: "/private/bridge",
-        discovery_status: "no_live_bridge_found",
-        bridge_directory_security: "private_verified",
-        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
-      }),
+      listSessions: async () => emptyCutterDiscovery(),
       execute: async () => ({
         requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
         output: "partial",

@@ -79,16 +79,24 @@ const observation = (
 ): JsonValue => {
   switch (name) {
     case "lookup_funcs":
-      return z
-        .array(z.string())
-        .parse(args.queries)
-        .map((query) => ({
-          query,
-          fn: fn(
-            query === "helper" || query === "0x2000" ? "0x2000" : "0x1000",
-          ),
-          error: null,
-        }));
+      return (
+        z
+          .array(z.string())
+          .parse(args.queries)
+          // IDA answers "Not found" for a name it does not know; REA's shared
+          // selector owner asks for unknown xrefs names through this lookup.
+          .map((query) => {
+            const address =
+              query === "helper" || query === "0x2000"
+                ? "0x2000"
+                : query === "main" || query === "0x1000"
+                  ? "0x1000"
+                  : undefined;
+            return address === undefined
+              ? { query, fn: null, error: "Not found" }
+              : { query, fn: fn(address), error: null };
+          })
+      );
     case "list_funcs":
       return [
         {

@@ -293,7 +293,7 @@ it("rejects a region that overruns vfs file data", () => {
   } catch (cause) {
     failure = cause;
     expect(cause).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("overruns"),
     });
   }

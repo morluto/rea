@@ -1,5 +1,6 @@
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   artifactFixedLimitFailure,
   normalizeArtifactPath,
   abortIfNeeded,
@@ -473,9 +474,10 @@ const readRange = (
   )
     return undefined;
   if (BigInt(offset) + BigInt(length) > BigInt(fileDataLength))
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      "deno-standalone",
       `Deno compile section is malformed: vfs ${label} region overruns vfs file data`,
+      { field: `vfs.${label}` },
     );
   return { offset, length };
 };

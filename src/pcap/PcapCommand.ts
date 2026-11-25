@@ -12,6 +12,10 @@ import {
 import { randomUUID } from "node:crypto";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
+  pcapProducerLimit,
+  pcapProducerLimitRecovery,
+} from "../domain/pcap/pcapAnalysis.js";
+import {
   AnalysisError,
   type AnalysisCapturedOutput,
   type AnalysisErrorOptions,
@@ -20,9 +24,9 @@ import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   OwnedCommandFailure,
@@ -71,6 +75,12 @@ export interface PcapCommandOutput {
 export interface PcapCommandLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  /**
+   * Set when the caller selected `maxOutputBytes` through
+   * `producer_limits.output_bytes`. Without it, the output budget is the
+   * fixed capture allowance of a version or summary probe.
+   */
+  readonly outputBytesControl?: "producer_limits.output_bytes";
 }
 
 /** Owned process execution shared by version probes and capture reads. */
@@ -128,9 +138,10 @@ export const runPcapCommand = async (options: {
         diagnostic,
       )
     )
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         options.inputPath,
+        "pcap",
         diagnostic,
         details,
       );
@@ -308,11 +319,24 @@ export const runPcapCommand = async (options: {
       timeout: { ms: limits.timeoutMs },
       outputLimit: {
         limits: { max_output_bytes: limits.maxOutputBytes },
-        recovery: fixedAllowanceOptions(
-          "The packet-tool output capture allowance",
-          "capture",
-          { limit: limits.maxOutputBytes, unit: "bytes" },
-        ),
+        ...(limits.outputBytesControl === undefined
+          ? {
+              recovery: fixedAllowanceOptions(
+                "The packet-tool output capture allowance",
+                "capture",
+                { limit: limits.maxOutputBytes, unit: "bytes" },
+              ),
+            }
+          : {
+              recovery: {
+                retryable: false,
+                remediationAction: pcapProducerLimitRecovery(
+                  "output_bytes",
+                  limits.maxOutputBytes,
+                ),
+              },
+              limit: pcapProducerLimit("output_bytes", limits.maxOutputBytes),
+            }),
       },
       memoryLimitBytes: options.nativeBound?.memoryLimitBytes,
       launchUnavailable: (failure, details) => {

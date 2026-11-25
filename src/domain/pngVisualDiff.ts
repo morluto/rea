@@ -7,7 +7,7 @@ import type {
 } from "./webScreenshot.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "./analysisErrorCore.js";
 import { decodeCanonicalBase64 } from "./webScreenshot.js";
 import {
@@ -209,15 +209,17 @@ const parsePng = (
   if (header.colorType === 3 && !sawPalette)
     throw new TypeError("Missing PNG palette");
   if (unsupportedReason !== undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "compare_web_screenshots",
       field,
+      "png",
       unsupportedReason,
     );
   if (!header.supported)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "compare_web_screenshots",
       field,
+      "png",
       "PNG encoding is not supported for pixel comparison.",
     );
   const pixels = BigInt(header.width) * BigInt(header.height);

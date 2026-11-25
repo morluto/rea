@@ -86,12 +86,7 @@ cliTest(
     expect(missing.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [
-          expect.objectContaining({
-            path: ["architecture"],
-            message: expect.stringContaining("architecture"),
-          }),
-        ],
+        issues: [expect.objectContaining({ path: ["architecture"] })],
       },
     });
   },
@@ -124,11 +119,21 @@ cliTest(
       code: "invalid_request",
       details: {
         reason: expect.stringContaining("6502 address width"),
-        related_parameters: ["format", "architecture", "entry_point"],
+        related_parameters: [
+          "format",
+          "architecture",
+          "architecture_variant",
+          "entry_point",
+          "base_address",
+          "vector_table_address",
+        ],
         related_cli_flags: {
           format: "--target-format",
           architecture: "--architecture",
+          architecture_variant: "--architecture-variant",
           entry_point: "--entry-point",
+          base_address: "--base-address",
+          vector_table_address: "--vector-table-address",
         },
       },
     });
@@ -168,8 +173,51 @@ cliTest.for([
         related_cli_flags: {
           format: "--target-format",
           architecture: "--architecture",
+          architecture_variant: "--architecture-variant",
           entry_point: "--entry-point",
+          base_address: "--base-address",
+          vector_table_address: "--vector-table-address",
         },
+        field: "entry_point",
+      },
+    });
+  },
+);
+
+cliTest(
+  "names base_address when an architecture variant omits it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-raw-cli-variant-base-");
+    const path = join(root, "flash.bin");
+    await writeFile(path, Buffer.alloc(0x200));
+    const result = await cli.run({
+      arguments: [
+        "inspect",
+        path,
+        "--target-format",
+        "raw-binary",
+        "--architecture",
+        "arm",
+        "--architecture-variant",
+        "armv7-m",
+        "--entry-point",
+        "0x8000000",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["base-address"],
+            message: expect.stringContaining("requires base_address"),
+          }),
+        ],
       },
     });
   },
@@ -244,8 +292,14 @@ cliTest(
       code: "target_unavailable",
       details: {
         constraint: "directory_requires_file",
-        related_operations: ["analyze_javascript_application"],
+        related_operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "analyze_javascript_application",
+        ],
         related_cli_commands: {
+          inspect_desktop_application: "rea inspect-desktop-application",
+          audit_release_exposure: "rea audit-release-exposure",
           analyze_javascript_application: "rea analyze-javascript-application",
         },
       },
