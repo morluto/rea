@@ -2,16 +2,19 @@
 // Contributed by Hardik Shah <hardik05@gmail.com> (https://fuzzing.in, @hardik05).
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
-import { LldbSessionManager } from "../src/lldb/LldbSessionManager.js";
-
-const exec = promisify(execFile);
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { LldbSessionManager } from "../dist/lldb/LldbSessionManager.js";
 
 if (process.platform !== "darwin") {
   console.log(
@@ -20,7 +23,13 @@ if (process.platform !== "darwin") {
   process.exit(0);
 }
 
+const run = createVerifierRun();
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+
 const fixture = await VerifierFixture.open({ prefix: "rea-lldb-e2e-" });
+commandInterruption.retainWorkspaceIfInterrupted(fixture);
 const tempDir = fixture.path;
 const testSource = join(tempDir, "target.c");
 const targetBinary = join(tempDir, "target");
@@ -73,11 +82,11 @@ try {
 
   if (!sdkPath) {
     try {
-      const { stdout } = await exec("xcrun", ["-find", "clang"]);
+      const { stdout } = await execOwned("xcrun", ["-find", "clang"]);
       if (stdout?.trim()) clangPath = stdout.trim();
     } catch {}
     try {
-      const { stdout } = await exec("xcrun", ["--show-sdk-path"]);
+      const { stdout } = await execOwned("xcrun", ["--show-sdk-path"]);
       if (stdout?.trim()) sdkPath = stdout.trim();
     } catch {}
   }
@@ -88,8 +97,8 @@ try {
   }
   compileArgs.push("-g", "-O0", testSource, "-o", targetBinary);
 
-  await exec(clangPath, compileArgs);
-  await exec("codesign", ["-s", "-", "-v", "-f", targetBinary]);
+  await execOwned(clangPath, compileArgs);
+  await execOwned("codesign", ["-s", "-", "-v", "-f", targetBinary]);
 
   console.log("=== Testing Native REA LLDB Session Manager ===");
   manager = new LldbSessionManager();
@@ -207,9 +216,16 @@ try {
   console.log("\n>>> ALL LLDB SESSION E2E TESTS PASSED SUCCESSFULLY! <<<\n");
 } finally {
   if (manager) {
-    await manager.closeAll().catch(() => undefined);
+    fixture.releaseAfter(() => manager.closeAll());
   }
-  if (fixture) {
-    await fixture.release().catch(() => undefined);
+  fixture.releaseAfter(() => commands.close());
+  fixture.releaseAfter(async () => {
+    const verifierRun = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(verifierRun.process_lineage);
+  });
+  try {
+    await fixture.release();
+  } finally {
+    commandInterruption.finish();
   }
 }

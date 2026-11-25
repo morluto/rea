@@ -89,6 +89,7 @@ if not hasattr(fake_lldb, "SBDebugger"):
     fake_lldb.SBDebugger = MockSBDebugger
     fake_lldb.SBCommandReturnObject = MockSBCommandReturnObject
     fake_lldb.SBError = MockSBError
+    fake_lldb.SBFile = lambda *args: None
     fake_lldb.eStateExited = 10
     fake_lldb.eStateDetached = 11
 
@@ -187,17 +188,45 @@ class ReaLldbSessionDaemonTests(unittest.TestCase):
         capture = session_module._BoundedPipeCapture(16)
         # Write 64 bytes into the pipe
         os.write(capture.w_fd, b"0123456789abcdef" * 4)
-        out, truncated = capture.finish()
+        out, truncated, invalid_utf8 = capture.finish()
         self.assertEqual(out, "0123456789abcdef")
         self.assertEqual(len(out), 16)
         self.assertTrue(truncated)
+        self.assertFalse(invalid_utf8)
 
     def test_bounded_pipe_capture_exact_fit(self):
         capture = session_module._BoundedPipeCapture(16)
         os.write(capture.w_fd, b"0123456789abcdef")
-        out, truncated = capture.finish()
+        out, truncated, invalid_utf8 = capture.finish()
         self.assertEqual(out, "0123456789abcdef")
         self.assertFalse(truncated)
+        self.assertFalse(invalid_utf8)
+
+    def test_bounded_pipe_capture_invalid_utf8_detected(self):
+        capture = session_module._BoundedPipeCapture(64)
+        # Write invalid UTF-8 bytes (e.g. 0xff, 0xfe) into the pipe
+        os.write(capture.w_fd, b"prefix \xff\xfe suffix")
+        out, truncated, invalid_utf8 = capture.finish()
+        self.assertTrue(invalid_utf8)
+        self.assertIn("prefix ", out)
+        self.assertIn("\ufffd", out)
+
+    def test_daemon_execute_command_invalid_utf8(self):
+        daemon = session_module.ReaLldbSessionDaemon()
+        orig_pipe = session_module._BoundedPipeCapture
+        class MockPipe:
+            def __init__(self, *args, **kwargs):
+                self.w_fd = None
+            def finish(self, timeout=0.5):
+                return "output with \ufffd", False, True
+            def close(self):
+                pass
+        session_module._BoundedPipeCapture = MockPipe
+        try:
+            res = daemon.execute_command("memory read")
+            self.assertTrue(res.get("output_invalid_utf8"))
+        finally:
+            session_module._BoundedPipeCapture = orig_pipe
 
 
 if __name__ == "__main__":

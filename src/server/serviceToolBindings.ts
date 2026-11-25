@@ -68,9 +68,11 @@ import {
   bindCutterTools,
   bindFridaTools,
   bindGdbTools,
+  bindLldbTools,
   bindRizinDebugTools,
   type CutterToolOptions,
   type GdbToolOptions,
+  type LldbToolOptions,
   type RizinDebugToolOptions,
 } from "./debuggerToolBindings.js";
 import {
@@ -177,58 +179,6 @@ const prepareRizinCommand =
       service.executeRizinCommandValidated(request.value, { signal }),
     );
   };
-
-/** GDB sessions a manager owns and the session their commands may change. */
-export interface GdbToolOptions {
-  readonly manager: Pick<
-    GdbSessionManager,
-    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
-  >;
-  readonly session: ExternalMutationAdmission | undefined;
-}
-
-/** LLDB sessions a manager owns and the session their commands may change. */
-export interface LldbToolOptions {
-  readonly manager: Pick<
-    LldbSessionManager,
-    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
-  >;
-  readonly session: ExternalMutationAdmission | undefined;
-}
-
-/** The Cutter bridge and the session its commands may change. */
-export interface CutterToolOptions {
-  readonly service: Pick<
-    CutterBridgeService,
-    "listSessions" | "execute" | "retryCleanup"
-  >;
-  readonly session: ExternalMutationAdmission | undefined;
-}
-
-/** The browser observation provider, or why it failed to load. */
-export interface BrowserObservationToolOptions {
-  readonly browser: BrowserObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** Passive Electron observation is independent of active scenario capture. */
-interface ElectronObservationToolOptions {
-  readonly provider: ElectronObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** Existing owned Electron scenario execution and its independent load failure. */
-interface ElectronScenarioToolOptions {
-  readonly provider: ElectronActiveObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** Static JavaScript analysis needs local artifacts, never an Electron runtime. */
-interface JavaScriptApplicationToolOptions {
-  readonly resources: ArtifactResourceScope;
-  readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly settings?: AnalysisSettingsReader;
-}
 
 /** The session native matching reads, and its allowance for each accepted call. */
 export interface NativeFunctionMatchingToolOptions {
@@ -594,141 +544,10 @@ const SERVICE_TOOL_BINDINGS = {
   // Starting GDB may load a selected file without running it, outside mutation admission; a console
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.
-  gdb: (({ manager, session }) => ({
-    start_gdb_session: {
-      admission: "sdk",
-      value: (input, { signal }) =>
-        manager.start(signal, {
-          ...(input.inferior_tty === undefined
-            ? {}
-            : { inferiorTty: input.inferior_tty }),
-          ...(input.executable === undefined
-            ? {}
-            : { executable: input.executable }),
-        }),
-    },
-    gdb_console: {
-      admission: "sdk",
-      session,
-      mutation: {
-        kind: "evidence",
-        detail: "delivery",
-        retryCleanup: () => manager.retryCleanupFailures(),
-        run: async (input, signal) => {
-          const executed = await manager.execute(
-            input.session_id,
-            input.command,
-            signal,
-          );
-          return executed.ok ? ok(executed.value.evidence) : executed;
-        },
-      },
-    },
-    gdb_session_status: {
-      admission: "sdk",
-      value: async (input) => {
-        const status = manager.status(input.session_id);
-        return status === undefined
-          ? err(
-              unknownDebuggerSessionError(
-                GDB_SESSION_TOOLS,
-                "gdb_session_status",
-              ),
-            )
-          : ok({ ...status, recent_mi_records: [...status.recent_mi_records] });
-      },
-    },
-    close_gdb_session: {
-      admission: "sdk",
-      session,
-      mutation: {
-        kind: "owned-cleanup",
-        resource: (input) => input.session_id,
-        run: (input) => manager.close(input.session_id),
-      },
-    },
-  })) satisfies Bind<GdbToolOptions>,
-  lldb: (({ manager, session }) => {
-    const retryCleanup = () => manager.retryCleanupFailures();
-    return {
-      start_lldb_session: {
-        admission: "sdk",
-        session,
-        mutation: {
-          kind: "value",
-          retryCleanup,
-          run: async (input, signal) => {
-            const started = await manager.start(signal, {
-              ...(input.path !== undefined && { path: input.path }),
-              ...(input.args !== undefined && { args: input.args }),
-              ...(input.env !== undefined && { env: input.env }),
-              ...(input.pid !== undefined && { pid: input.pid }),
-              ...(input.stop_at_entry !== undefined && {
-                stop_at_entry: input.stop_at_entry,
-              }),
-              ...(input.disable_aslr !== undefined && {
-                disable_aslr: input.disable_aslr,
-              }),
-              ...(input.breakpoints !== undefined && {
-                breakpoints: input.breakpoints,
-              }),
-            });
-            if (!started.ok) return started;
-            const value: JsonValue = {
-              session_id: started.value.session_id,
-              state: started.value.state,
-              pid: started.value.pid ?? null,
-              target: started.value.target ?? null,
-            };
-            return ok({
-              value,
-              retained: { session_id: started.value.session_id },
-            });
-          },
-        },
-      },
-      lldb_command: {
-        admission: "sdk",
-        session,
-        mutation: {
-          kind: "evidence",
-          retryCleanup,
-          run: async (input, signal) => {
-            const executed = await manager.execute(
-              input.session_id,
-              input.command,
-              signal,
-            );
-            return executed.ok ? ok(executed.value.evidence) : executed;
-          },
-        },
-      },
-      lldb_session_status: {
-        admission: "sdk",
-        value: async (input) => {
-          const status = await manager.status(input.session_id);
-          return status === undefined
-            ? err(
-                unknownDebuggerSessionError(
-                  LLDB_SESSION_TOOLS,
-                  "lldb_session_status",
-                ),
-              )
-            : ok({ ...status });
-        },
-      },
-      close_lldb_session: {
-        admission: "sdk",
-        session,
-        mutation: {
-          kind: "owned-cleanup",
-          resource: (input) => input.session_id,
-          run: (input) => manager.close(input.session_id),
-        },
-      },
-    };
-  }) satisfies Bind<LldbToolOptions>,
   gdb: bindGdbTools satisfies Bind<GdbToolOptions>,
+  // LLDB debugging sessions on macOS Apple Silicon run under external-mutation admission;
+  // each command keeps a failed cleanup owned for the next retry.
+  lldb: bindLldbTools satisfies Bind<LldbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation:

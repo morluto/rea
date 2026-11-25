@@ -80,7 +80,7 @@ class _BoundedPipeCapture:
             except Exception:
                 break
 
-    def finish(self, timeout: float = 0.5) -> tuple[str, bool]:
+    def finish(self, timeout: float = 0.5) -> tuple[str, bool, bool]:
         self.stop_reader.set()
         if self.w_fd is not None:
             try:
@@ -100,7 +100,13 @@ class _BoundedPipeCapture:
             except OSError:
                 pass
             self.r_fd = None
-        return self.captured_bytes.decode("utf-8", errors="replace"), self.truncated
+        invalid_utf8 = False
+        try:
+            text = self.captured_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            invalid_utf8 = True
+            text = self.captured_bytes.decode("utf-8", errors="replace")
+        return text, self.truncated, invalid_utf8
 
     def close(self):
         self.stop_reader.set()
@@ -224,6 +230,7 @@ class ReaLldbSessionDaemon:
         def _read_bounded_output():
             out = ""
             is_truncated = False
+            invalid_utf8 = False
 
             out_size = res.GetOutputSize() if hasattr(res, "GetOutputSize") else 0
             err_size = res.GetErrorSize() if hasattr(res, "GetErrorSize") else 0
@@ -232,9 +239,11 @@ class ReaLldbSessionDaemon:
 
             if pipe_cap:
                 try:
-                    pipe_out, pipe_trunc = pipe_cap.finish()
+                    pipe_out, pipe_trunc, pipe_invalid = pipe_cap.finish()
                     if pipe_trunc:
                         is_truncated = True
+                    if pipe_invalid:
+                        invalid_utf8 = True
                     out = pipe_out
                 except Exception:
                     pass
@@ -255,7 +264,7 @@ class ReaLldbSessionDaemon:
                 out = out[:self.MAX_OUTPUT_CHARS]
                 is_truncated = True
 
-            return out, is_truncated
+            return out, is_truncated, invalid_utf8
 
         try:
             t = threading.Thread(target=_run, daemon=True)
@@ -265,9 +274,9 @@ class ReaLldbSessionDaemon:
             live_pid, live_target = self._get_live_info()
 
             if not t.is_alive():
-                combined, truncated = _read_bounded_output()
+                combined, truncated, invalid_utf8 = _read_bounded_output()
                 state_desc = self._process_state_report()
-                return {
+                resp = {
                     "command": cmd_str,
                     "output": combined,
                     "process_state": state_desc,
@@ -276,6 +285,9 @@ class ReaLldbSessionDaemon:
                     "pid": live_pid,
                     "target": live_target,
                 }
+                if invalid_utf8:
+                    resp["output_invalid_utf8"] = True
+                return resp
 
             # Timed out - interrupt execution safely so command thread does not run unbounded
             try:
@@ -287,14 +299,14 @@ class ReaLldbSessionDaemon:
             t.join(timeout=0.5)
 
             live_pid, live_target = self._get_live_info()
-            partial, truncated = _read_bounded_output()
+            partial, truncated, invalid_utf8 = _read_bounded_output()
             timeout_msg = f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}"
             combined_timeout = f"{partial}\n{timeout_msg}" if partial else timeout_msg
             if len(combined_timeout) > self.MAX_OUTPUT_CHARS:
                 combined_timeout = combined_timeout[:self.MAX_OUTPUT_CHARS]
                 truncated = True
 
-            return {
+            resp = {
                 "command": cmd_str,
                 "output": combined_timeout,
                 "process_state": self._process_state_report(),
@@ -303,6 +315,9 @@ class ReaLldbSessionDaemon:
                 "pid": live_pid,
                 "target": live_target,
             }
+            if invalid_utf8:
+                resp["output_invalid_utf8"] = True
+            return resp
         finally:
             if pipe_cap:
                 pipe_cap.close()

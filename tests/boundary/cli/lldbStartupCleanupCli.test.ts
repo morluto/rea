@@ -285,6 +285,7 @@ class FakeLldbBridge extends EventEmitter {
     private readonly options: {
       readonly initializeError?: string;
       readonly commandDelayMs?: number;
+      readonly commandResult?: Record<string, unknown>;
     } = {},
   ) {
     super();
@@ -340,6 +341,7 @@ class FakeLldbBridge extends EventEmitter {
                     process_state: "stopped",
                     output_truncated: false,
                     completion_status: "complete",
+                    ...this.options.commandResult,
                   },
                 }) + "\n",
               );
@@ -685,6 +687,63 @@ it("propagates cancellation and aborts an in-flight LLDB command", async () => {
   expect(executed.ok).toBe(false);
   if (executed.ok) return;
   expect(executed.error._tag).toBe("AnalysisCancelledError");
+
+  await manager.close(sessionId);
+});
+
+it("refuses LLDB command admission when runtime command deadline setting is invalid", async () => {
+  const fakeBridge = new FakeLldbBridge();
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+    environment: {
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "invalid",
+    },
+  });
+
+  const started = await manager.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const sessionId = started.value.session_id;
+
+  const executed = await manager.execute(sessionId, "version");
+  expect(executed.ok).toBe(false);
+  if (executed.ok) return;
+  expect(executed.error._tag).toBe("ConfigurationError");
+
+  await manager.close(sessionId);
+});
+
+it("records output_invalid_utf8 in command result and evidence when output has decoding loss", async () => {
+  const fakeBridge = new FakeLldbBridge(undefined, {
+    commandResult: { output_invalid_utf8: true },
+  });
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+  });
+
+  const started = await manager.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const sessionId = started.value.session_id;
+
+  const executed = await manager.execute(sessionId, "memory read");
+  expect(executed.ok).toBe(true);
+  if (!executed.ok) return;
+  expect(executed.value.result.output_invalid_utf8).toBe(true);
+  expect(
+    (executed.value.evidence.normalized_result as Record<string, unknown>)
+      .output_invalid_utf8,
+  ).toBe(true);
 
   await manager.close(sessionId);
 });

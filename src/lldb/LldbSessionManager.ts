@@ -23,9 +23,13 @@ import { err, ok, type Result } from "../domain/result.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   debuggerConstructionLimits,
+  parseDebuggerCommandDeadline,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
+  configurableDeadlineGuidance,
   debuggerResourceConstraintError,
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
@@ -73,6 +77,7 @@ const commandResponseSchema = z.object({
   output: z.string(),
   process_state: z.string().optional(),
   output_truncated: z.boolean().optional(),
+  output_invalid_utf8: z.boolean().optional(),
   completion_status: coverageStatusSchema,
   pid: z.number().nullable().optional(),
   target: z.string().nullable().optional(),
@@ -222,7 +227,8 @@ export class LldbSessionManager {
   readonly #sessions: OwnedDebuggerSessionRegistry<ActiveSession>;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #platform: NodeJS.Platform;
-  readonly #commandTimeoutMs: number;
+  readonly #launchCommandDeadline: DebuggerAdmissionLimit;
+  readonly #explicitCommandTimeoutMs: number | undefined;
   readonly #startupTimeoutMs: number;
   readonly #maxSessions: DebuggerAdmissionLimit;
   readonly #maxPendingCommands: DebuggerAdmissionLimit;
@@ -244,8 +250,8 @@ export class LldbSessionManager {
     const limits = debuggerConstructionLimits(this.#environment);
     this.#maxSessions = limits.maxSessions;
     this.#maxPendingCommands = limits.maxPendingCommands;
-    this.#commandTimeoutMs =
-      options.commandTimeoutMs ?? limits.commandDeadline.value;
+    this.#launchCommandDeadline = limits.commandDeadline;
+    this.#explicitCommandTimeoutMs = options.commandTimeoutMs;
     this.#startupTimeoutMs =
       options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
@@ -260,6 +266,30 @@ export class LldbSessionManager {
         this.#stopProcess(session, "LLDB", { platform: this.#platform }),
       stopFailurePrefix: "Owned LLDB shutdown failed",
     });
+  }
+
+  get #commandDeadline(): DebuggerAdmissionLimit {
+    if (this.#explicitCommandTimeoutMs !== undefined) {
+      return {
+        ...this.#launchCommandDeadline,
+        value: this.#explicitCommandTimeoutMs,
+        source: "runtime",
+      };
+    }
+    const override =
+      currentAnalysisOperationSnapshot()?.overrides[
+        "debugger.command_deadline_ms"
+      ];
+    if (override !== undefined) {
+      return {
+        ...this.#launchCommandDeadline,
+        value: override,
+        source: "runtime",
+      };
+    }
+    const parsed = parseDebuggerCommandDeadline(this.#environment);
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
   }
 
   #retryStartupFileCleanup(): Promise<Result<null, AnalysisError>> {
@@ -705,6 +735,10 @@ export class LldbSessionManager {
       );
     }
     if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
+    const accepted = readRuntimeSetting(() => ({
+      deadline: this.#commandDeadline,
+    }));
+    if (!accepted.ok) return accepted;
     if (session.pendingCommandCount >= this.#maxPendingCommands.value) {
       return err(
         debuggerResourceConstraintError(
@@ -732,7 +766,13 @@ export class LldbSessionManager {
       await waitForLldbCommandTurn(previous, signal, "lldb_command");
       acquired = true;
       if (signal?.aborted) return err(cancelledBy("lldb_command", signal));
-      return await this.#executeInTurn(session, sessionId, command, signal);
+      return await this.#executeInTurn(
+        session,
+        sessionId,
+        command,
+        accepted.value.deadline,
+        signal,
+      );
     } catch (cause) {
       if (
         (signal?.aborted && cause === signal.reason) ||
@@ -771,6 +811,7 @@ export class LldbSessionManager {
     session: ActiveSession,
     sessionId: string,
     command: string,
+    deadline: DebuggerAdmissionLimit,
     signal?: AbortSignal,
   ): Promise<
     Result<
@@ -789,7 +830,7 @@ export class LldbSessionManager {
         ]),
       );
     }
-    const timeoutMs = this.#commandTimeoutMs;
+    const timeoutMs = deadline.value;
     const rpcTimeoutMs = Math.min(timeoutMs + 5000, MAX_NODE_TIMER_DELAY_MS);
     const res = await this.#sendSessionRpc(
       commandResponseSchema,
@@ -799,6 +840,7 @@ export class LldbSessionManager {
       rpcTimeoutMs,
       signal,
       "lldb_command",
+      deadline,
     );
 
     if (res.process_state) {
@@ -818,6 +860,9 @@ export class LldbSessionManager {
         ? { process_state: res.process_state }
         : {}),
       output_truncated: res.output_truncated ?? false,
+      ...(res.output_invalid_utf8
+        ? { output_invalid_utf8: true as const }
+        : {}),
       completion_status: res.completion_status ?? "complete",
     };
 
@@ -853,6 +898,9 @@ export class LldbSessionManager {
             ? { process_state: cmdResult.process_state }
             : {}),
           output_truncated: cmdResult.output_truncated,
+          ...(cmdResult.output_invalid_utf8
+            ? { output_invalid_utf8: true as const }
+            : {}),
           completion_status: cmdResult.completion_status,
         },
         rawResult: {
@@ -862,6 +910,9 @@ export class LldbSessionManager {
             ? { process_state: cmdResult.process_state }
             : {}),
           output_truncated: cmdResult.output_truncated,
+          ...(cmdResult.output_invalid_utf8
+            ? { output_invalid_utf8: true as const }
+            : {}),
           completion_status: cmdResult.completion_status,
         },
         limitations: [
@@ -1008,6 +1059,7 @@ export class LldbSessionManager {
     timeoutMs: number,
     signal?: AbortSignal,
     operation: string = method,
+    deadline?: DebuggerAdmissionLimit,
   ): Promise<T> {
     if (signal?.aborted) {
       throw cancelledBy(operation, signal);
@@ -1028,7 +1080,15 @@ export class LldbSessionManager {
           if (onAbort !== undefined && signal !== undefined) {
             signal.removeEventListener("abort", onAbort);
           }
-          reject(new AnalysisTimeoutError(operation, timeoutMs));
+          reject(
+            new AnalysisTimeoutError(
+              operation,
+              timeoutMs,
+              deadline
+                ? configurableDeadlineGuidance("The LLDB command", deadline)
+                : undefined,
+            ),
+          );
         },
         Math.min(timeoutMs, MAX_NODE_TIMER_DELAY_MS),
       );
