@@ -39,14 +39,17 @@ const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
   "old arm64e bind opcodes not supported",
 ]);
 
+/**
+ * The settled diagnostic lines of a dyld_info run. Xcode 26 exits 1 after a
+ * refusal; Xcode 16 prints the same sole line and exits 0. A recognized
+ * refusal is never an import or export row, so either exit admits it.
+ */
 const dyldFailureDiagnostics = (
   capture: NativeCommandCapture,
   outputs: readonly string[],
-  admitsSuccess = false,
 ): readonly string[] =>
   capture.tool !== "dyld_info" ||
   capture.exitCode === null ||
-  (capture.exitCode === 0 && !admitsSuccess) ||
   capture.signal !== null
     ? []
     : outputs.flatMap((output) =>
@@ -59,26 +62,20 @@ const dyldFailureDiagnostics = (
 /** Admit the observed refusal only when it is the sole settled diagnostic. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
-  admitsSuccess = false,
 ): string | null => {
-  const diagnostics = dyldFailureDiagnostics(
-    capture,
-    [capture.stdout, capture.stderr],
-    admitsSuccess,
-  );
+  const diagnostics = dyldFailureDiagnostics(capture, [
+    capture.stdout,
+    capture.stderr,
+  ]);
   return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
 };
 
-/**
- * Keep missing-UUID admission limited to its observed stdout-only refusal.
- * Xcode 26 dyld_info exits 1 after it; the Xcode 16 release exits 0 with
- * the same sole line, which is never an import or export row.
- */
+/** Keep missing-UUID admission limited to its observed stdout-only refusal. */
 export const isMissingUuidDyldFailure = (
   capture: NativeCommandCapture,
 ): boolean =>
   capture.stderr.trim().length === 0 &&
-  dyldFailureDiagnostic(capture, true) === MISSING_UUID_DIAGNOSTIC;
+  dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
 
 /** The sole diagnostic when dyld_info refuses the slice itself; nm and the load table still describe it. */
 export const dyldSliceRefusal = (
