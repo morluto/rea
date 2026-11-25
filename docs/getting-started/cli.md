@@ -343,7 +343,7 @@ rea extract-artifact backup.ab --output-root /absolute/new-output --json
 
 Unencrypted versions 1-5 support plain or zlib-compressed TAR payloads.
 Encrypted archives retain unknown member coverage and refuse extraction.
-See [Android backup archives](../android-backup.md) for selection, provenance
+See [Android backup archives](../guides/android/android-backup.md) for selection, provenance
 and resource bounds.
 
 Inspect an ESP32-family app or bootloader image without esptool:

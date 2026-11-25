@@ -53,6 +53,34 @@ import {
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
+/**
+ * How one adapter names the operation in an input-schema refusal. MCP names
+ * the tool and tells the client to refresh its catalog. The CLI names the
+ * command and omits that client-only clause.
+ */
+export interface InputSchemaRemediationSpelling {
+  readonly subject: (operation: string) => string;
+  readonly includeCatalogRefresh: boolean;
+}
+
+/** The MCP spelling, which is also the adapter-independent one in Evidence. */
+export const MCP_INPUT_SCHEMA_SPELLING: InputSchemaRemediationSpelling = {
+  subject: (operation) => operation,
+  includeCatalogRefresh: true,
+};
+
+/** The input-schema refusal, in one adapter's spelling. */
+export const renderInputSchemaRemediation = (
+  operation: string,
+  spelling: InputSchemaRemediationSpelling,
+): string => {
+  const subject = spelling.subject(operation);
+  const refresh = spelling.includeCatalogRefresh
+    ? "; if using MCP and the catalog may be stale, call tools/list"
+    : "";
+  return `Read the declared input schema or CLI usage for ${subject}${refresh}. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+};
+
 /** Explain how to preserve an observation the session could not retain. */
 export const UNRETAINED_EVIDENCE_EXPORT_GUIDANCE =
   "Unretained Evidence is not included in the exported investigation; if present in this response, save it separately.";
@@ -247,7 +275,7 @@ export const analysisErrorRemediationAction = (
     );
     const baseAction =
       error.remediationAction ??
-      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+      renderInputSchemaRemediation(error.operation, MCP_INPUT_SCHEMA_SPELLING);
     return mistakeRemediation === undefined
       ? baseAction
       : `${mistakeRemediation} ${baseAction}`;

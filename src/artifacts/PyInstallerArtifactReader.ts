@@ -390,12 +390,12 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const cookie =
       this.#admission?.cookie ?? (await this.#cookie(handle, size, signal));
     state.budget = artifactExpansionBudgetBytes(cookie.packageLength);
-    const toc = await this.#toc(handle, cookie, signal);
+    const toc = await this.#toc(handle, cookie, size, signal);
     for (const entry of toc) {
       this.#charge(state, entry.uncompressedSize);
       this.#reserveMetadata(state, { ...entry }, false);
     }
-    const images = await this.#pyzImages(state, handle, cookie, toc);
+    const images = await this.#pyzImages(state, handle, cookie, size, toc);
     const magic = scriptPythonMagic(
       cookie,
       [...images.values()].map((image) => image.archive),
@@ -485,9 +485,10 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   async #toc(
     handle: FileHandle,
     cookie: PyInstallerCookie,
+    fileSize: number,
     signal?: AbortSignal,
   ): Promise<readonly CArchiveEntry[]> {
-    const toc = await readCArchiveToc(handle, cookie, signal);
+    const toc = await readCArchiveToc(handle, cookie, signal, fileSize);
     if (!toc.ok) throw failure(toc.error);
     return toc.value;
   }
@@ -496,6 +497,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     state: ArchiveParseState,
     handle: FileHandle,
     cookie: PyInstallerCookie,
+    fileSize: number,
     toc: readonly CArchiveEntry[],
   ): Promise<ReadonlyMap<CArchiveEntry, PyzImage>> {
     const { signal } = state;
@@ -523,12 +525,14 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const source = spooled ?? {
         handle,
         start: cookie.archiveStart + entry.offset,
+        size: fileSize,
       };
       const parsed = await readPyzArchive(
         source.handle,
         source.start,
         entry.uncompressedSize,
         signal,
+        source.size,
       );
       if (!parsed.ok) throw failure(parsed.error);
       if (parsed.value.kind === "entries")

@@ -84,6 +84,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Static Android APK analysis](guides/android/android-analysis.md)
 - [Apktool resource decoding](guides/android/apktool-resource-analysis.md)
 - [ADB device inspection and acquisition](guides/android/adb-device-analysis.md)
+- [Android ADB backup archives](guides/android/android-backup.md)
 - [Flutter build identification](guides/android/flutter-analysis.md)
 - [Android boot and vendor_boot images](android-boot-image.md)
 - [APK signature schemes](apk-signature.md)

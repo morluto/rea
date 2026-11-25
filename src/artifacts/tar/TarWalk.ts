@@ -5,6 +5,7 @@ import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
   parsePaxRecords,
+  parsePaxUnsignedDecimal,
   parseTarHeaderBlock,
   TAR_BLOCK_BYTES,
   TAR_TYPEFLAGS,
@@ -128,7 +129,8 @@ const skipGnuSparseExtensions = async (
 const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
   for (const key of ["size", "uid", "gid"] as const) {
     const value = records.get(key);
-    if (value !== undefined && decimal(value) === undefined) return key;
+    if (value !== undefined && parsePaxUnsignedDecimal(value) === undefined)
+      return key;
   }
   const mtime = records.get("mtime");
   return mtime !== undefined && paxSeconds(mtime) === undefined
@@ -174,9 +176,6 @@ const mergedPaxBytesDelta = (
   }
   return bytes;
 };
-
-const decimal = (value: string | undefined): bigint | undefined =>
-  value !== undefined && /^[0-9]+$/u.test(value) ? BigInt(value) : undefined;
 
 const typeflagText = (typeflag: number): string =>
   typeflag === 0 ? "\u0000" : String.fromCharCode(typeflag);
@@ -342,7 +341,8 @@ export const walkTar = async (
         );
         break;
       }
-      const declaredSize = decimal(records.get("size")) ?? header.size;
+      const declaredSize =
+        parsePaxUnsignedDecimal(records.get("size")) ?? header.size;
       const size = safeNumber(declaredSize);
       if (size === null || tarPaddedSize(size) > Number.MAX_SAFE_INTEGER) {
         const detail = `member size ${String(declaredSize)} is not a safe byte count`;
@@ -468,8 +468,12 @@ export const walkTar = async (
           size: role.member === "file" ? size : 0,
           typeflag: typeflagText(typeflag),
           mode: header.mode,
-          uid: safeNumber(decimal(records.get("uid")) ?? header.uid),
-          gid: safeNumber(decimal(records.get("gid")) ?? header.gid),
+          uid: safeNumber(
+            parsePaxUnsignedDecimal(records.get("uid")) ?? header.uid,
+          ),
+          gid: safeNumber(
+            parsePaxUnsignedDecimal(records.get("gid")) ?? header.gid,
+          ),
           mtime: safeNumber(paxSeconds(records.get("mtime")) ?? header.mtime),
           uname:
             records.get("uname") ??

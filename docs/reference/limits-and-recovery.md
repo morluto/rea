@@ -496,7 +496,7 @@ encounters that format. Unsupported keys are rejected.
 Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
 [Bun standalone](../bun-standalone.md) for format semantics.
-The [Android backup import](../android-backup.md) has independent encoded payload,
+The [Android backup import](../guides/android/android-backup.md) has independent encoded payload,
 decoded TAR and directory representation allowances.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,

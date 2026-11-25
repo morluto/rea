@@ -123,6 +123,17 @@ describe("offline Android backup reader", () => {
     );
   });
 
+  it("keeps support for an Android backup with legacy v7 TAR headers", async () => {
+    const tar = backupTar([{ path: "file", data: "legacy" }]);
+    tar.fill(0, 257, 265);
+    tarChecksum(tar.subarray(0, 512));
+    await withReader(backupImage(tar), async (reader) => {
+      const [entry] = await list(reader);
+      expect(entry?.path).toBe("file");
+      expect((await content(reader, entry!)).toString()).toBe("legacy");
+    });
+  });
+
   it("retains encrypted directory uncertainty rather than claiming an empty backup", async () => {
     const image = encryptedBackupImage();
     expect(parseAndroidBackupHeader(image)).toMatchObject({
@@ -229,9 +240,13 @@ describe("Android backup refusal and ownership boundaries", () => {
     const badSize = backupTar([{ path: "file" }]);
     badSize.write("77777777777\0", 124, "ascii");
     tarChecksum(badSize.subarray(0, 512));
+    const junkAfterTerminator = backupTar([{ path: "file" }]);
+    junkAfterTerminator.set(Buffer.from("1\0x"), 100);
+    tarChecksum(junkAfterTerminator.subarray(0, 512));
     for (const [tar, reason] of [
       [badChecksum, "malformed"],
       [badSize, "truncated"],
+      [junkAfterTerminator, "malformed"],
     ] as const)
       await withReader(backupImage(tar), async (reader) =>
         expect(list(reader)).rejects.toMatchObject({ reason }),

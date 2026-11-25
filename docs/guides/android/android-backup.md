@@ -18,9 +18,10 @@ repeatable `--occurrence-id` options. MCP uses the same `inspect_artifact` and
 ## Supported input and provenance
 
 Versions 1 through 5 support unencrypted payloads, either plain TAR or
-zlib-compressed TAR. Regular files, directories, USTAR prefixes and local PAX
-headers are supported. PAX path, size, owner and timestamp fields are retained;
-unsupported entry types or PAX attributes produce an explicit refusal.
+zlib-compressed TAR. The reader supports regular files and directories in
+legacy v7 and USTAR TAR headers, with support for USTAR prefixes and local PAX
+headers. Inspection retains PAX path, size, owner and timestamp fields. The
+reader refuses unsupported entry types and PAX attributes.
 
 The archive's SHA-256 identifies the original acquisition. Each member retains
 its original path, content hash and TAR header/data offsets. For compressed
@@ -28,7 +29,14 @@ backups those offsets address the decoded TAR stream, and `source_location`
 is null: they are not physical positions in the compressed carrier. Plain
 backups also retain physical member ranges. Header checksums validate TAR
 headers, not the authenticity of the archived file contents. Stored modes
-are observations; extraction does not restore owners or apply archived modes.
+are observations. Extraction writes member contents without restoring owners
+or applying archived modes.
+
+`compare_artifacts` compares a member's permission bits as format metadata.
+It uses the resolved occurrence path and content identity for path and byte
+comparison. Inspection retains the raw PAX records and TAR offsets for
+provenance. Switching between a USTAR prefix and a PAX path does not change
+the member comparison when the effective path, bytes and mode are the same.
 
 An `AES-256` header is identified as encrypted, with unknown member coverage.
 Its encryption-specific header is not parsed, so `payload_offset` is null;
@@ -46,8 +54,9 @@ and 8 MiB for the directory representation. Set `encoded_bytes`,
 `expanded_bytes` or `directory_bytes` in `artifact_limits.android_backup`
 to change those allowances for the next call. In the CLI, pass the same object
 through `--artifact-limits`. The reader admits four simultaneous member streams.
-Selecting fewer members still requires validation of the full archive. Extraction reuses the existing destination ownership,
-path-safety, durable-readback and cleanup rules.
+Selecting fewer members still requires validation of the full archive.
+Extraction reuses destination ownership, path safety, durable readback and
+cleanup rules.
 
 Tests use authored archives and public CLI/MCP workflows, including compressed
 and plain data, selected extraction, original-file preservation, encrypted

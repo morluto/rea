@@ -1826,6 +1826,7 @@ it("extracts an environment state identically from retained, portable and file M
   const hiddenError = parseMcpToolError(refused).error;
   expect(hiddenError).toMatchObject({
     code: "unsupported_target",
+    retry: "none",
     details: {
       failure_kind: "unsupported",
       format: "evidence",
@@ -2089,6 +2090,7 @@ it("projects an environment manifest identically from retained, portable and fil
   const hiddenError = parseMcpToolError(refused).error;
   expect(hiddenError).toMatchObject({
     code: "unsupported_target",
+    retry: "none",
     details: {
       failure_kind: "unsupported",
       format: "evidence",

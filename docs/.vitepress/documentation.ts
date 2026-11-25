@@ -339,6 +339,11 @@ export const documentationSections = [
         route: "/adb-device-analysis",
       },
       {
+        text: "Android ADB backup archives",
+        source: "guides/android/android-backup.md",
+        route: "/android-backup",
+      },
+      {
         text: "Flutter build identification",
         source: "guides/android/flutter-analysis.md",
         route: "/flutter-analysis",

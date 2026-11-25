@@ -24,6 +24,7 @@ export const hasGzipMagic = (prefix: Uint8Array): boolean =>
 
 /** Header dialect, from the `magic` and `version` fields. */
 export type TarHeaderDialect = "ustar" | "gnu";
+type TarDialect = TarHeaderDialect | "v7";
 
 const headerDialect = (block: Uint8Array): TarHeaderDialect | undefined => {
   const magic = Buffer.from(
@@ -112,8 +113,8 @@ const fieldBytes = (block: Uint8Array, offset: number, length: number) => {
 };
 
 /** One decoded tar header block, before pax or GNU long-name records apply. */
-export interface TarHeaderBlock {
-  readonly dialect: TarHeaderDialect;
+export interface TarHeaderBlock<Dialect extends TarDialect = TarHeaderDialect> {
+  readonly dialect: Dialect;
   readonly name: Uint8Array;
   readonly mode: number;
   readonly uid: bigint;
@@ -127,22 +128,36 @@ export interface TarHeaderBlock {
   readonly gname: Uint8Array;
 }
 
-export type TarHeaderParse =
-  | { readonly state: "header"; readonly header: TarHeaderBlock }
+type TarHeaderParse<Dialect extends TarDialect = TarHeaderDialect> =
+  | { readonly state: "header"; readonly header: TarHeaderBlock<Dialect> }
   | { readonly state: "zero" }
   | { readonly state: "invalid"; readonly reason: string };
 
-/** Decode one 512-byte header block. */
-export const parseTarHeaderBlock = (block: Uint8Array): TarHeaderParse => {
+/** Decode one 512-byte header block. A known TAR envelope may admit v7. */
+export function parseTarHeaderBlock(block: Uint8Array): TarHeaderParse;
+export function parseTarHeaderBlock(
+  block: Uint8Array,
+  allowV7: true,
+): TarHeaderParse<TarDialect>;
+export function parseTarHeaderBlock(
+  block: Uint8Array,
+  allowV7 = false,
+): TarHeaderParse<TarDialect> {
   if (block.length !== TAR_BLOCK_BYTES)
     return { state: "invalid", reason: "header block is incomplete" };
   if (isZeroBlock(block)) return { state: "zero" };
-  const dialect = headerDialect(block);
+  const dialect =
+    headerDialect(block) ??
+    (allowV7 &&
+    isZeroBlock(block.subarray(TAR_MAGIC_OFFSET, TAR_MAGIC_OFFSET + 6))
+      ? "v7"
+      : undefined);
   if (dialect === undefined)
     return {
       state: "invalid",
-      reason:
-        "header has no ustar magic (pre-POSIX v7 headers are unsupported)",
+      reason: allowV7
+        ? "unrecognized TAR header dialect"
+        : "header has no ustar magic (pre-POSIX v7 headers are unsupported)",
     };
   if (!checksumMatches(block))
     return { state: "invalid", reason: "header checksum does not match" };
@@ -189,7 +204,7 @@ export const parseTarHeaderBlock = (block: Uint8Array): TarHeaderParse => {
       gname: fieldBytes(block, 297, 32),
     },
   };
-};
+}
 
 /** Whether a block is a checksum-valid ustar or GNU header. */
 export const hasTarHeader = (prefix: Uint8Array): boolean =>
@@ -292,18 +307,25 @@ export const TAR_TYPEFLAGS = {
 
 export type TarPaxRecords = ReadonlyMap<string, string>;
 
+export const parsePaxUnsignedDecimal = (
+  value: string | undefined,
+): bigint | undefined =>
+  value !== undefined && /^[0-9]+$/u.test(value) ? BigInt(value) : undefined;
+
 /**
  * Parse pax extended-header records: `"<length> <key>=<value>\n"`, where
- * `length` counts the whole record in bytes. Values are UTF-8.
+ * `length` counts the whole record in bytes. Values are UTF-8. Strict
+ * readers also require unique UTF-8 keywords and exact record coverage.
  */
 export const parsePaxRecords = (
   bytes: Uint8Array,
+  { strict = false }: { readonly strict?: boolean } = {},
 ): { readonly records: TarPaxRecords } | { readonly reason: string } => {
   const records = new Map<string, string>();
   let offset = 0;
   while (offset < bytes.length) {
     // Trailing NUL padding ends the records.
-    if (bytes[offset] === 0 && bytes.subarray(offset).every((b) => b === 0))
+    if (!strict && bytes[offset] === 0 && isZeroBlock(bytes.subarray(offset)))
       break;
     const space = bytes.indexOf(0x20, offset);
     if (space === -1 || space - offset > 20)
@@ -325,10 +347,13 @@ export const parsePaxRecords = (
     const value = body.subarray(equals + 1);
     if (!isStrictUtf8(value))
       return { reason: "pax record value is not UTF-8" };
-    records.set(
-      Buffer.from(body.subarray(0, equals)).toString("utf8"),
-      Buffer.from(value).toString("utf8"),
-    );
+    const keyBytes = body.subarray(0, equals);
+    if (strict && !isStrictUtf8(keyBytes))
+      return { reason: "pax record keyword is not UTF-8" };
+    const key = Buffer.from(keyBytes).toString("utf8");
+    if (strict && records.has(key))
+      return { reason: "pax record repeats a keyword" };
+    records.set(key, Buffer.from(value).toString("utf8"));
     offset = end;
   }
   return { records };

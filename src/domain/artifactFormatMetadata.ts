@@ -160,7 +160,7 @@ const declarationsByKind: {
       "Envelope facts come from the carrier bytes, which content comparison covers.",
   },
   "android-backup-entry": {
-    declaration: (metadata) => ({ mode: metadata.mode, pax: metadata.pax }),
+    declaration: (metadata) => ({ mode: metadata.mode }),
   },
   "wxapkg-entry": {
     notCompared:
