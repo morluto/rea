@@ -67,33 +67,44 @@ const isCompleteLiteral = (source, token) => {
 };
 
 const TYPE_CONTINUATIONS = new Set(["|", "&", ".", "[", "<", "=>"]);
+const TYPE_PREFIX_OPERATORS = new Set([
+  "keyof",
+  "typeof",
+  "readonly",
+  "unique",
+  "infer",
+  "extends",
+  "is",
+]);
 
 /**
  * Advances past the type expression immediately following `as` or `satisfies`,
  * stopping at the first token at depth 0 that terminates the type (an unmatched
  * closer, a delimiter `;` / `,` / `?` / `:`, a chained `as` / `satisfies`, an
- * ASI newline that does not continue a type, or a binary expression
- * continuation).
+ * ASI newline when `allowAsi` is true and the type is complete, or a binary
+ * expression continuation).
  *
  * @param {string} source
  * @param {readonly import("./source-tokens.d.mts").SourceToken[]} tokens
  * @param {number} start
  * @param {number} end
+ * @param {boolean} allowAsi
  * @returns {number}
  */
-const skipTypeAnnotation = (source, tokens, start, end) => {
+const skipTypeAnnotation = (source, tokens, start, end, allowAsi) => {
   let index = start;
   let bracketDepth = 0;
   let angleDepth = 0;
   while (index < end) {
     const token = tokens[index];
     if (token === undefined) break;
-    if (bracketDepth === 0 && angleDepth === 0 && index > start) {
+    if (allowAsi && bracketDepth === 0 && angleDepth === 0 && index > start) {
       const previous = tokens[index - 1];
       if (
         previous !== undefined &&
         source.slice(previous.start, token.start).includes("\n") &&
         !TYPE_CONTINUATIONS.has(previous.text) &&
+        !TYPE_PREFIX_OPERATORS.has(previous.text) &&
         !TYPE_CONTINUATIONS.has(token.text)
       ) {
         break;
@@ -186,7 +197,13 @@ const isWrappedCompleteLiteral = (source, tokens, start, end, bounded) => {
       continue;
     }
     if (isId(tokens[index], "as") || isId(tokens[index], "satisfies")) {
-      index = skipTypeAnnotation(source, tokens, index + 1, end);
+      index = skipTypeAnnotation(
+        source,
+        tokens,
+        index + 1,
+        end,
+        !bounded && openParens === 0,
+      );
       continue;
     }
     break;

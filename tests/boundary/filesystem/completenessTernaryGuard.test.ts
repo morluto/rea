@@ -30,6 +30,11 @@ it.each([
     'const s = ok ? "partial" : "complete" as\n  | "complete"\n  | "partial"\nconst n = a + b;',
     1,
   ],
+  ['const s = ok ? ("complete" as keyof\n Keys) : "partial";', 1],
+  [
+    'const s = ok ? "partial" : "complete" as keyof\n  Keys\nconst n = a + b;',
+    1,
+  ],
   ['const s = ok ? ("complete" as const).length : "partial";', 0],
   // Templates with multiple substitutions keep bracket depth balanced.
   ['const s = skipped ? observed.get(`${prefix}:${name}`) : "complete";', 1],
