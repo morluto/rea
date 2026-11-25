@@ -103,7 +103,7 @@ export const registerAndroidCommands = (
       fields: {
         view: {
           description:
-            "JSON android manifest/components/component-summary view; requires --detail summary and --evidence_output",
+            "JSON android manifest/components/component-summary/app-functions view; requires --detail summary and --evidence_output",
         },
       },
       evidenceDelivery: true,

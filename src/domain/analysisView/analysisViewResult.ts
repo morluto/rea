@@ -195,6 +195,7 @@ import {
 } from "./webNetworkCaptureView.js";
 
 import {
+  androidAppFunctionsViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -309,6 +310,7 @@ import {
 } from "./summarySchemas/webSourceLocationSummarySchemas.js";
 
 export {
+  androidAppFunctionsViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -533,6 +535,7 @@ const androidPackageViewResultSchema = z.discriminatedUnion("facet", [
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidAppFunctionsViewResultSchema,
 ]);
 
 const nativeFeatureTracePage = <

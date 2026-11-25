@@ -51,8 +51,13 @@ export const androidIntentFilterSchema = z.strictObject({
 });
 export const androidComponentMetadataSchema = z.strictObject({
   name: z.string().nullable(),
+  // Historical records omitted metadata values and resources; omission stays unknown.
+  value: z.string().nullable().optional(),
+  resource: z.string().nullable().optional(),
   location: androidManifestLocationSchema.nullable(),
 });
+export const observedAndroidComponentMetadataSchema =
+  androidComponentMetadataSchema.required();
 
 export const androidManifestComponentSchema = z.strictObject({
   kind: z.enum(ANDROID_COMPONENT_KINDS),
@@ -78,6 +83,7 @@ export const androidManifestComponentSchema = z.strictObject({
   grant_uri_permissions_declaration: z.string().nullable(),
   intent_filters: z.array(androidIntentFilterSchema),
   meta_data: z.array(androidComponentMetadataSchema),
+  properties: z.array(androidComponentMetadataSchema).optional(),
 });
 export type AndroidManifestComponent = Readonly<
   z.output<typeof androidManifestComponentSchema>
@@ -87,6 +93,24 @@ export const androidManifestComponentsSchema = z.strictObject({
   items: z.array(androidManifestComponentSchema),
   limitations: z.array(z.string()),
 });
+
 export type AndroidManifestComponentInventory = Readonly<
   z.output<typeof androidManifestComponentsSchema>
+>;
+
+/** Current producers retain metadata values and properties; older Evidence may omit them. */
+export const observedAndroidManifestComponentSchema =
+  androidManifestComponentSchema.required().extend({
+    meta_data: z.array(observedAndroidComponentMetadataSchema),
+    properties: z.array(observedAndroidComponentMetadataSchema),
+  });
+export type ObservedAndroidManifestComponent = Readonly<
+  z.output<typeof observedAndroidManifestComponentSchema>
+>;
+export const observedAndroidManifestComponentsSchema =
+  androidManifestComponentsSchema.extend({
+    items: z.array(observedAndroidManifestComponentSchema),
+  });
+export type ObservedAndroidManifestComponentInventory = Readonly<
+  z.output<typeof observedAndroidManifestComponentsSchema>
 >;

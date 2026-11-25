@@ -6,8 +6,8 @@ import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDe
 import {
   ANDROID_COMPONENT_KINDS,
   type AndroidComponentKind,
-  type AndroidManifestComponent,
-  type AndroidManifestComponentInventory,
+  type ObservedAndroidManifestComponent,
+  type ObservedAndroidManifestComponentInventory,
 } from "../domain/android/androidManifestComponents.js";
 
 /** Bounds keep a hostile manifest from exhausting the inspection. */
@@ -32,7 +32,7 @@ const PARTIAL_LIMITATION =
 
 const unavailable = (
   limitation: string,
-): AndroidManifestComponentInventory => ({
+): ObservedAndroidManifestComponentInventory => ({
   status: "unavailable",
   items: [],
   limitations: [limitation],
@@ -149,7 +149,7 @@ export const parseAndroidManifestComponents = (
   coverage: KnownCoverageStatus,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
-): AndroidManifestComponentInventory => {
+): ObservedAndroidManifestComponentInventory => {
   if (coverage === "partial")
     return {
       status: "partial",
@@ -176,7 +176,7 @@ export const parseAndroidManifestComponents = (
   const packageNameBytes =
     packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
-  const items: AndroidManifestComponent[] = [];
+  const items: ObservedAndroidManifestComponent[] = [];
   let truncated = false;
   let applicationSeen = false;
   let unnamed = 0;

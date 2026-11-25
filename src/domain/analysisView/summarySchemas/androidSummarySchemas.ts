@@ -4,6 +4,11 @@ import {
   androidJniViewRequestSchema,
 } from "../../android/androidJniQuery.js";
 import {
+  androidAppFunctionsSchema,
+  androidAppFunctionsSummarySchema,
+} from "../../android/androidAppFunctions.js";
+import {
+  androidAppFunctionsViewRequestSchema,
   androidComponentSummaryViewRequestSchema,
   androidComponentsViewRequestSchema,
   androidManifestViewRequestSchema,
@@ -93,5 +98,16 @@ export const androidComponentSummaryViewResultSchema = z.strictObject({
   facet: z.literal("component-summary"),
   view: androidComponentSummaryViewRequestSchema,
   summary: androidComponentSummarySchema,
+  parent_operation: z.literal("inspect_android_package"),
+});
+
+export const androidAppFunctionsViewResultSchema = z.strictObject({
+  ...viewResultBaseFields,
+  kind: z.literal("android"),
+  facet: z.literal("app-functions"),
+  view: androidAppFunctionsViewRequestSchema,
+  source_status: androidAppFunctionsSchema.shape.status,
+  summary: androidAppFunctionsSummarySchema,
+  app_functions: androidAppFunctionsSchema,
   parent_operation: z.literal("inspect_android_package"),
 });

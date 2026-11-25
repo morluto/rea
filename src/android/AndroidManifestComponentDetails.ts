@@ -4,7 +4,7 @@ import type {
   AndroidManifestComponent,
   androidIntentDataSchema,
   androidIntentFilterSchema,
-  androidComponentMetadataSchema,
+  observedAndroidComponentMetadataSchema,
 } from "../domain/android/androidManifestComponents.js";
 import { isUnqualifiedXmlElement } from "../domain/xmlDocument.js";
 import {
@@ -15,7 +15,7 @@ import {
 
 type Filter = z.output<typeof androidIntentFilterSchema>;
 type Data = z.output<typeof androidIntentDataSchema>;
-type Metadata = z.output<typeof androidComponentMetadataSchema>;
+type Metadata = z.output<typeof observedAndroidComponentMetadataSchema>;
 
 const projectedDataAttributes = new Set([
   "scheme",
@@ -107,6 +107,7 @@ export const createAndroidManifestDetailsReader = (
     }
     const filters: Filter[] = [];
     const metadata: Metadata[] = [];
+    const properties: Metadata[] = [];
     const actions: string[] = [];
     const categories: string[] = [];
     const actionNames = new Set<string>();
@@ -118,10 +119,12 @@ export const createAndroidManifestDetailsReader = (
     for (let index = 0; index < component.childNodes.length; index += 1) {
       const child = component.childNodes.item(index);
       if (!isUnqualifiedXmlElement(child)) continue;
-      if (child.nodeName === "meta-data") {
+      if (child.nodeName === "meta-data" || child.nodeName === "property") {
         if (admit())
-          metadata.push({
+          (child.nodeName === "meta-data" ? metadata : properties).push({
             name: take(androidAttribute(child, "name")),
+            value: take(androidAttribute(child, "value")),
+            resource: take(androidAttribute(child, "resource")),
             location: locationOf(child),
           });
         continue;
@@ -240,6 +243,7 @@ export const createAndroidManifestDetailsReader = (
       grant_uri_permissions_declaration: grantRaw,
       intent_filters: filters,
       meta_data: metadata,
+      properties,
     } satisfies Pick<
       AndroidManifestComponent,
       | "declaration_index"
@@ -252,6 +256,7 @@ export const createAndroidManifestDetailsReader = (
       | "grant_uri_permissions_declaration"
       | "intent_filters"
       | "meta_data"
+      | "properties"
     >;
     return {
       facts,

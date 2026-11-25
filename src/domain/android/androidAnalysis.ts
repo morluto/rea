@@ -4,6 +4,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
+import { androidAppFunctionsSchema } from "./androidAppFunctions.js";
 import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
 import {
   androidViewRequestSchema,
@@ -255,6 +256,14 @@ export const androidResultSchemas = {
     permissions: z.array(z.string()),
     manifest: textCoverage,
     components: androidManifestComponentsSchema,
+    app_functions: androidAppFunctionsSchema.default(() => ({
+      status: "unavailable" as const,
+      services: [],
+      schemas: [],
+      limitations: [
+        "This Evidence predates the AppFunctions inventory; run inspect_android_package again to obtain it.",
+      ],
+    })),
     class_count: z.int().nonnegative(),
     resource_count: z.int().nonnegative(),
     signature_verification: z.literal("not_performed"),

@@ -45,10 +45,16 @@ export const androidComponentSummaryViewRequestSchema = z.strictObject({
   ...componentFilters,
 });
 
+export const androidAppFunctionsViewRequestSchema = z.strictObject({
+  kind: z.literal("android"),
+  facet: z.literal("app-functions"),
+});
+
 export const androidViewRequestSchema = z.discriminatedUnion("facet", [
   androidManifestViewRequestSchema,
   androidComponentsViewRequestSchema,
   androidComponentSummaryViewRequestSchema,
+  androidAppFunctionsViewRequestSchema,
 ]);
 
 export const validateAndroidPackageDelivery = (

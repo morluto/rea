@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
+import { androidAppFunctionsPartialFactsSchema } from "./androidAppFunctions.js";
 import { androidJniPartialFactsSchema } from "./androidJniBindings.js";
 
 const operationSchema = z.enum([
@@ -42,6 +43,7 @@ export const androidPartialObservationSchema = z
       }),
     ),
     jni: androidJniPartialFactsSchema.optional(),
+    app_functions: androidAppFunctionsPartialFactsSchema.optional(),
   })
   .superRefine((observation, context) => {
     if (
@@ -53,6 +55,16 @@ export const androidPartialObservationSchema = z
         path: ["jni"],
         message:
           "Parsed JNI facts belong only to inspect_android_jni_bindings observations",
+      });
+    if (
+      observation.app_functions !== undefined &&
+      observation.operation !== "inspect_android_package"
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["app_functions"],
+        message:
+          "Parsed AppFunctions facts belong only to inspect_android_package observations",
       });
   });
 
