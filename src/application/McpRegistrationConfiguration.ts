@@ -1,8 +1,9 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import type { ClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { err, ok, type Result } from "../domain/result.js";
 import {
-  clientConfigurationValuesEqual,
   clientServerPath,
   clientServerForEdit,
   legacyClientServerPath,
@@ -11,11 +12,18 @@ import {
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
+  type ClientConfigurationEditFailure,
+  type ClientConfigurationParseFailure,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import {
+  admitClientConfigurationCandidate,
   clientConfigurationForWrite,
   mergeClientConfigurationDocuments,
-  readConfigurationFile,
+  readClientConfigurationFiles,
+  readEffectiveClientRegistrationConfiguration,
+  type ClientConfigurationFileError,
+  type ProjectConfigurationReadOptions,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
@@ -25,6 +33,43 @@ import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+
+const registrationLocation = (client: McpRegistrationClient) => ({
+  ...client.setupClient,
+  ...client,
+  name: client.setupClient?.name ?? client.id,
+});
+
+const configurationLayerFailure = (
+  error: ClientConfigurationFileError,
+): Result<never, ConfigurationError> => {
+  if (error.cleanupFailure !== undefined) throw error.cleanupFailure;
+  return err(new ConfigurationError(error.detail));
+};
+
+const registrationDocumentFailure = (
+  client: McpRegistrationClient,
+  error:
+    | ClientConfigurationParseFailure
+    | Exclude<
+        ClientConfigurationEditFailure,
+        { readonly kind: "shadowed_member" }
+      >,
+): Result<never, ConfigurationError> =>
+  error.kind === "document"
+    ? err(error.cause)
+    : err(
+        new ConfigurationError(
+          `Could not register MCP settings at ${client.configPath}: ${error.kind === "serialize" ? errorMessage(error.cause) : error.detail}`,
+          {
+            cause: error.cause,
+            diagnostics: {
+              settings_path: client.configPath,
+              configured: false,
+            },
+          },
+        ),
+      );
 
 /**
  * Merge REA's entry into one selected client document. `platform` is the host
@@ -46,17 +91,33 @@ export const prepareRegistration = async (
   const original = snapshot?.text;
   const empty = serializeClientConfiguration({}, client.format);
   if (!empty.ok)
-    throw new ConfigurationError(
-      "An empty client configuration could not be serialized.",
+    return err(
+      new ConfigurationError(
+        "An empty client configuration could not be serialized.",
+      ),
     );
   const target = parseClientConfiguration(
     original ?? empty.value,
     client.format,
   );
-  const layers = await readRegistrationLayers(client, target);
-  const parsed = clientConfigurationForWrite(target, layers);
-  const paths = client.configPaths ?? [client.configPath];
-  const targetIndex = paths.lastIndexOf(client.configPath);
+  if (!target.ok) return registrationDocumentFailure(client, target.error);
+  const location = registrationLocation(client);
+  const read = await readClientConfigurationFiles(
+    location,
+    undefined,
+    platform,
+    {
+      targetDocument: target.value,
+    },
+  );
+  if (!read.ok) return configurationLayerFailure(read.error);
+  const layers = read.value;
+  const writeDocument = clientConfigurationForWrite(target.value, layers);
+  if (!writeDocument.ok) return writeDocument;
+  const parsed = writeDocument.value;
+  const targetIndex = layers.findLastIndex(
+    ({ sourcePath }) => sourcePath === client.configPath,
+  );
   const inherited = mergeClientConfigurationDocuments(
     layers.slice(0, targetIndex),
     platform,
@@ -69,7 +130,7 @@ export const prepareRegistration = async (
       ? undefined
       : effectiveClientServer(inherited, PRODUCT_IDENTITY.mcpServerKey),
   );
-  if (!desired.ok) throw desired.error;
+  if (!desired.ok) return desired;
   // The client's own settings policy can exclude or override this entry.
   if (client.setupClient !== undefined) {
     const policy = await readClientPolicyBlock(
@@ -77,13 +138,11 @@ export const prepareRegistration = async (
       parsed,
       desired.value,
     );
-    if (!policy.ok)
-      throw (
-        policy.error.cleanupFailure ??
-        new ConfigurationError(policy.error.detail)
-      );
+    if (!policy.ok) return configurationLayerFailure(policy.error);
     if (policy.value !== undefined)
-      throw new ConfigurationError(`${policy.value} No settings were written.`);
+      return err(
+        new ConfigurationError(`${policy.value} No settings were written.`),
+      );
   }
   const updated = withClientServers(
     parsed,
@@ -106,17 +165,43 @@ export const prepareRegistration = async (
     { removeShadowedMembersAt: legacy === undefined ? [] : [legacy] },
   );
   if (!serialized.ok)
-    throw new ConfigurationError(
-      `Client configuration member is shadowed at ${serialized.error.path.join(".")}.`,
-    );
+    return serialized.error.kind === "shadowed_member"
+      ? err(
+          new ConfigurationError(
+            `Client configuration member is shadowed at ${serialized.error.path.join(".")}.`,
+          ),
+        )
+      : registrationDocumentFailure(client, serialized.error);
   const candidate = parseClientConfiguration(serialized.value, client.format);
-  // Native loaders may visit one file at multiple precedence positions. A
-  // physical update changes every occurrence without deduplicating its order.
-  const candidateLayers = layers.map((document, index) =>
-    paths[index] === client.configPath ? candidate : document,
+  if (!candidate.ok)
+    return registrationDocumentFailure(client, candidate.error);
+  const effective = admitClientConfigurationCandidate(
+    location,
+    layers,
+    candidate.value,
+    platform,
   );
-  assertEffectiveLauncher(client, candidateLayers, launcher, platform);
-  return {
+  if (!effective.ok) return configurationLayerFailure(effective.error);
+  const admitted = admitEffectiveLauncher(client, effective.value, launcher);
+  if (!admitted.ok) return admitted;
+  const project = await verifyProjectLauncher(
+    client,
+    launcher,
+    platform,
+    path,
+    {
+      candidates: [
+        {
+          path: client.configPath,
+          original: target.value,
+          replacement: candidate.value,
+        },
+      ],
+      allowMissing: snapshot === undefined,
+    },
+  );
+  if (!project.ok) return project;
+  return ok({
     path,
     client,
     launcher,
@@ -126,53 +211,15 @@ export const prepareRegistration = async (
     parsed,
     updated,
     contents: serialized.value,
-  };
+  });
 };
 
-/** File layers and inline authority remain distinct; only the selected target is replaced. */
-const readRegistrationLayers = async (
+const admitEffectiveLauncher = (
   client: McpRegistrationClient,
-  target: ClientConfigurationDocument,
-): Promise<ClientConfigurationDocument[]> => {
-  const layers: ClientConfigurationDocument[] = [];
-  const paths = client.configPaths ?? [client.configPath];
-  if (!paths.includes(client.configPath))
-    throw new ConfigurationError(
-      "The selected configuration is missing from the native load order.",
-    );
-  for (const path of paths) {
-    if (path === client.configPath) {
-      layers.push(target);
-      continue;
-    }
-    const read = await readConfigurationFile(path, client.format);
-    if (!read.ok)
-      throw (
-        read.error.cleanupFailure ?? new ConfigurationError(read.error.detail)
-      );
-    // Retain an empty layer for missing files so target positions do not shift.
-    if (read.value !== undefined) layers.push(read.value);
-    else {
-      const empty = serializeClientConfiguration({}, client.format);
-      if (!empty.ok)
-        throw new ConfigurationError(
-          "An empty native configuration could not be serialized.",
-        );
-      layers.push(parseClientConfiguration(empty.value, client.format));
-    }
-  }
-  if (client.inlineConfiguration !== undefined)
-    layers.push(client.inlineConfiguration.parsed);
-  return layers;
-};
-
-const assertEffectiveLauncher = (
-  client: McpRegistrationClient,
-  layers: readonly ClientConfigurationDocument[],
+  effective: ClientConfigurationDocument | undefined,
   launcher: ClientRegistrationCommand,
-  platform: NodeJS.Platform,
-): void => {
-  const effective = mergeClientConfigurationDocuments(layers, platform);
+  overridePath?: string,
+): Result<void, ConfigurationError> => {
   const admitted = admitClientStdioConnection(
     effective === undefined
       ? undefined
@@ -187,35 +234,91 @@ const assertEffectiveLauncher = (
     admitted.value.command !== launcher.command ||
     !clientConfigurationValuesEqual(admitted.value.args, launcher.args)
   )
-    throw new ConfigurationError(
-      admitted.ok
-        ? "A higher-priority configuration overrides the selected stdio launcher. Update that source before registering this command."
-        : admitted.error.cause.message,
-      {
-        ...(admitted.ok ? {} : { cause: admitted.error.cause }),
-        diagnostics: {
-          settings_path: client.configPath,
-          ...(client.inlineConfiguration === undefined
-            ? {}
-            : { inline_origin: client.inlineConfiguration.origin }),
+    return err(
+      new ConfigurationError(
+        admitted.ok
+          ? `A higher-priority configuration${overridePath === undefined ? "" : ` at ${overridePath}`} overrides the selected stdio launcher. Update that source before registering this command.`
+          : admitted.error.cause.message,
+        {
+          ...(admitted.ok ? {} : { cause: admitted.error.cause }),
+          diagnostics: {
+            settings_path: client.configPath,
+            ...(overridePath === undefined
+              ? {}
+              : { override_path: overridePath }),
+            ...(client.inlineConfiguration === undefined
+              ? {}
+              : { inline_origin: client.inlineConfiguration.origin }),
+          },
         },
-      },
+      ),
     );
+  return ok(undefined);
 };
+
+const verifyProjectLauncher = async (
+  client: McpRegistrationClient,
+  launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
+  transactionPath: string,
+  proposed?: Pick<ProjectConfigurationReadOptions, "candidates"> & {
+    readonly allowMissing: boolean;
+  },
+): Promise<Result<void, ConfigurationError>> => {
+  const project = client.projectConfiguration;
+  if (project === undefined) return ok(undefined);
+  const effective = await readEffectiveClientRegistrationConfiguration(
+    project.userClient,
+    undefined,
+    platform,
+    {
+      projectDirectory: project.directory,
+      writeTarget: {
+        path: client.configPath,
+        transactionPath,
+        allowMissing: proposed?.allowMissing ?? false,
+      },
+      ...(proposed?.candidates === undefined
+        ? {}
+        : { candidates: proposed.candidates }),
+    },
+  );
+  if (!effective.ok) return configurationLayerFailure(effective.error);
+  const { document, launcherConfigPath } = effective.value;
+  return admitEffectiveLauncher(
+    client,
+    document,
+    launcher,
+    launcherConfigPath === client.configPath ? undefined : launcherConfigPath,
+  );
+};
+
+export type PreparedRegistration = Extract<
+  Awaited<ReturnType<typeof prepareRegistration>>,
+  { readonly ok: true }
+>["value"];
 
 /** Re-admit native layers around the caller's identity-verified target snapshot. */
 export const verifyEffectiveRegistration = async (
-  prepared: Awaited<ReturnType<typeof prepareRegistration>>,
+  prepared: PreparedRegistration,
   targetText: string,
-): Promise<void> => {
+): Promise<Result<void, ConfigurationError>> => {
   const { client, launcher, platform } = prepared;
-  assertEffectiveLauncher(
-    client,
-    await readRegistrationLayers(
-      client,
-      parseClientConfiguration(targetText, client.format),
-    ),
-    launcher,
+  const parsed = parseClientConfiguration(targetText, client.format);
+  if (!parsed.ok) return registrationDocumentFailure(client, parsed.error);
+  const layers = await readClientConfigurationFiles(
+    registrationLocation(client),
+    undefined,
     platform,
+    { targetDocument: parsed.value },
   );
+  if (!layers.ok) return configurationLayerFailure(layers.error);
+  const admitted = admitEffectiveLauncher(
+    client,
+    mergeClientConfigurationDocuments(layers.value, platform),
+    launcher,
+  );
+  return admitted.ok
+    ? verifyProjectLauncher(client, launcher, platform, prepared.path)
+    : admitted;
 };

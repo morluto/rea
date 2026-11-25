@@ -1,0 +1,16 @@
+name: Prepare MinGW x64 cross compiler
+description: Install the POSIX MinGW x64 toolchain from the signed Ubuntu archive.
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/ubuntu-archive
+    # Install and select only the POSIX variant used by the Windows add-on.
+    - uses: ./.github/actions/host-apt-packages
+      with:
+        packages: g++-mingw-w64-x86-64-posix
+        download-timeout-seconds: "120"
+        install-recommends: "false"
+    - shell: bash
+      run: |
+        sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+        x86_64-w64-mingw32-g++ -v

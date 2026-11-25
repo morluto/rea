@@ -3,6 +3,10 @@ import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
 import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
 import {
+  TARGET_FAILURE_PROJECTIONS,
+  type TargetFailure,
+} from "./targetFailure.js";
+import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
@@ -26,6 +30,28 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
     super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
     this.remediationAction = options?.remediationAction;
     this.undecodedContent = options?.undecodedContent ?? false;
+  }
+}
+
+/**
+ * The selected target at `path` could not be read, for the reason its owner
+ * established. The failure's `kind` alone selects the public code, category,
+ * retryability and recovery; see {@link TARGET_FAILURE_PROJECTIONS}.
+ */
+export class AnalysisTargetFailureError extends AnalysisError {
+  readonly _tag = "AnalysisTargetFailureError";
+  readonly failure: TargetFailure;
+  constructor(
+    readonly operation: string,
+    readonly path: string,
+    failure: TargetFailure,
+    options?: AnalysisErrorOptions,
+  ) {
+    super(
+      `${TARGET_FAILURE_PROJECTIONS[failure.kind].title} ${failure.format} target for ${operation} at ${path}: ${failure.detail}`,
+      options,
+    );
+    this.failure = Object.freeze({ ...failure });
   }
 }
 

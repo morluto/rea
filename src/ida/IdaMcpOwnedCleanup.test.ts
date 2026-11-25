@@ -10,25 +10,81 @@ import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 
 class FixtureProcess extends EventEmitter implements ProviderProcessHandle {
   readonly pid = 1;
-  readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   readonly exitCode = null;
   readonly signalCode = null;
+  constructor(readonly stdin = new PassThrough()) {
+    super();
+  }
   kill(): boolean {
     return true;
   }
 }
 
+it("reports startup stderr drained after the handshake write fails", async () => {
+  const diagnostic = "IDA runtime initialization failed\n";
+  const child = new FixtureProcess(
+    new PassThrough({
+      write(_chunk, _encoding, done) {
+        done(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+        // Closing the protocol input and draining stderr are separate events.
+        setImmediate(() => {
+          child.emit("exit", 2, null);
+          child.stderr.write(diagnostic);
+          child.emit("close", 2, null);
+        });
+      },
+    }),
+  );
+  const launcher: OwnedMcpLauncher = async ({ runId }) => ({
+    process: child,
+    ownership: {
+      runId,
+      leaderPid: child.pid,
+      processGroupId: child.pid,
+      expectedParentPid: child.pid,
+    },
+    cleanup: async () => ({ cleaned: true, signaled: false }),
+  });
+  const connection = createIdaMcpConnection(
+    {
+      command: "/opt/ida-mcp/server",
+      args: [],
+      env: {},
+      protocol: "modern",
+      mode: "headless",
+      timeoutMs: 1000,
+    },
+    {},
+    { platform: "darwin", launcher },
+  );
+  try {
+    await expect(connection.connect()).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      capturedOutput: { stderr: diagnostic, truncated: false },
+    });
+  } finally {
+    await connection.close();
+  }
+});
+
 it("keeps a failed handshake's incomplete cleanup observable with the redacted server tail", async () => {
   const child = new FixtureProcess();
+  const credential = "cleanup-fixture-credential";
   let cleanupFails = true;
+  let cleanupAttempts = 0;
+  // A launcher can finish while its process-family cleanup is still unverified.
+  child.stdin.once("finish", () => {
+    child.emit("exit", 0, null);
+    child.emit("close", 0, null);
+  });
   // The server answers initialize with an unsupported protocol version, so the
   // SDK starts close without awaiting it while owned cleanup stays incomplete.
   createInterface({ input: child.stdin }).on("line", (line) => {
     const request = JSON.parse(line) as { id?: number; method?: string };
     if (request.method !== "initialize") return;
-    child.stderr.write("server stopped: missing database\n");
+    child.stderr.write(`server stopped: ${credential}\n`);
     child.stdout.write(
       `${JSON.stringify({
         jsonrpc: "2.0",
@@ -50,10 +106,9 @@ it("keeps a failed handshake's incomplete cleanup observable with the redacted s
       expectedParentPid: child.pid,
     },
     cleanup: async () => {
+      cleanupAttempts += 1;
       if (cleanupFails)
         return { cleaned: false, reason: "ownership verification unavailable" };
-      child.emit("exit", 0, null);
-      child.emit("close", 0, null);
       return { cleaned: true, signaled: false };
     },
   });
@@ -61,7 +116,8 @@ it("keeps a failed handshake's incomplete cleanup observable with the redacted s
     {
       command: "/opt/ida-mcp/server",
       args: [],
-      env: {},
+      env: { FIXTURE_CREDENTIAL: credential },
+      sensitive: { env: ["FIXTURE_CREDENTIAL"], headers: [] },
       protocol: "native",
       mode: "attached",
       timeoutMs: 5000,
@@ -69,17 +125,21 @@ it("keeps a failed handshake's incomplete cleanup observable with the redacted s
     {},
     { platform: "darwin", launcher },
   );
-  await expect(connection.connect()).rejects.toThrow();
+  await expect(connection.connect()).rejects.toMatchObject({
+    diagnostics: { reason: expect.stringContaining("1999-01-01") },
+  });
   const failure: unknown = await connection.close().then(
     () => undefined,
     (cause: unknown) => cause,
   );
   if (!(failure instanceof ProviderCleanupError)) throw failure;
   expect(failure.cleanupIncomplete).toBe(true);
-  expect(failure.capturedOutput?.stderr).toContain(
-    "server stopped: missing database",
+  expect(failure.capturedOutput?.stderr).toBe(
+    "server stopped: [redacted transport credential]\n",
   );
+  expect(cleanupAttempts).toBe(1);
   cleanupFails = false;
   await connection.close();
   expect(failure.cleanupIncomplete).toBe(false);
+  expect(cleanupAttempts).toBe(2);
 });

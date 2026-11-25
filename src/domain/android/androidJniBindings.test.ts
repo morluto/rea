@@ -151,6 +151,31 @@ const project = (
   return result.value;
 };
 
+it("preserves APS2 group/member provenance through binding projection and JSON delivery", () => {
+  const observed = table();
+  const entry = observed.entries[0];
+  if (entry === undefined) throw new Error("fixture");
+  entry.slots.forEach((slot, index) => {
+    if (slot.relocation !== null)
+      slot.relocation = {
+        ...slot.relocation,
+        record_file_offset: 256,
+        packing: { format: "aps2", group_entry_index: index },
+      };
+  });
+  const report = androidJniReportSchema.parse(
+    JSON.parse(
+      JSON.stringify(
+        project([library(0, "arm64-v8a", facts({ tables: [observed] }))]),
+      ),
+    ),
+  );
+  expect(report.bindings[0]?.status).toBe("matched");
+  expect(
+    report.candidates[0]?.table?.entry.slots.map((slot) => slot.relocation),
+  ).toEqual(entry.slots.map((slot) => slot.relocation));
+});
+
 it.each([
   [
     "p.q.Native",

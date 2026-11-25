@@ -68,15 +68,24 @@ Confirmed DOS-only MZ files and declared NE, LE, or LX signatures are outside
 this PE32/PE32+ workflow and return `unsupported_target` with target-selection
 recovery. A recognized non-PE signature does not need a PE COFF header to be
 classified. Unrecognized signatures and truncated PE headers remain malformed
-input. `inspect-pe-resources` uses the same header admission and classifications.
+input. Every static PE reader uses the same
+[header admission](guides/native/binary-diagnostics.md#pe-header-admission);
+this reader does not need section bytes, so a section whose raw data leaves the
+file is not refused here.
 
-The selected file is limited to 64 MiB by default (512 MiB maximum). At most
+The reader reads at most 64 MiB by default (`max_file_bytes`, 512 MiB maximum;
+see [read allowance](reference/limits-and-recovery.md#static-reader-read-allowance)), whatever the file size. At most
 eight `WIN_CERTIFICATE` entries are examined by default. Malformed PE headers,
 truncated certificate entries, and PKCS#7 that is not structurally signedData
-fail without partial success. A security directory that ends in fewer than
-eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
-fails the same way. SignedData must contain at least one `SignerInfo`, and
-each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
+fail without partial success. A security directory that ends before an entry's
+next eight-byte boundary, or leaves fewer than eight header bytes including
+zeros, is truncated and fails the same way. The
+[PE format specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-attribute-certificate-table-image-only)
+requires the sum of the rounded entry lengths to equal the directory size.
+The reader checks the next entry's header and rounded extent before applying
+`max_entries`. Only a framed entry can exhaust the count budget.
+SignedData must contain at least one `SignerInfo`, and each `SignerInfo` must
+carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`.
 Certificate issuer/subject and signer issuer names require nonempty RDN sets
 and exactly two fields (type and value) in each attribute, as defined in
@@ -84,7 +93,9 @@ and exactly two fields (type and value) in each attribute, as defined in
 Malformed name structures fail before their text is reported. Decoded
 certificate name text, serials, validity spellings, and subject key identifiers
 share a 64 KiB budget per PKCS#7 payload, and each payload decodes at most
-16,384 ASN.1 values. Exhausting either fixed allowance returns a nonretryable
+16,384 ASN.1 values nested at most 64 levels deep. Dual-signed Windows binaries
+embed a nested signature and its RFC 3161 timestamp in unsigned attributes, and
+each embedding adds eight levels. Exhausting a fixed allowance returns a nonretryable
 `resource_constraint` error naming it, not an invalid-input error; this release
 has no runtime override, and `max_file_bytes` and `max_entries` do not raise
 it. Unsupported certificate name

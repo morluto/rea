@@ -22,12 +22,22 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
-import { ArtifactOperationError } from "./artifactOperationError.js";
+import {
+  TARGET_FAILURE_PROJECTIONS,
+  targetFailureDetails,
+  targetFailureRetry,
+  type TargetFailureRetry,
+} from "./targetFailure.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "./artifactOperationError.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -59,6 +69,7 @@ import {
   RETRYABLE_CODES,
 } from "./analysisErrorClassification.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { reportedParseLimit } from "./parseFailure.js";
 
 /**
  * Inputs the recovery names, by contract field and operation name. Each
@@ -557,7 +568,13 @@ const projectError = (
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error, callerLifetime),
     retryable:
-      (RETRYABLE_CODES.has(code) &&
+      // `retryable` keeps its contract meaning: the unchanged request may
+      // succeed. For a target failure that is exactly a `backoff` hint.
+      (error instanceof AnalysisTargetFailureError &&
+        code !== "cleanup_incomplete" &&
+        targetFailureRetry(error.failure) === "backoff") ||
+      (!(error instanceof AnalysisTargetFailureError) &&
+        RETRYABLE_CODES.has(code) &&
         error.ownPresentation()?.retryable !== false) ||
       (error instanceof AnalysisCapabilityUnavailableError &&
         error.retryable) ||
@@ -576,6 +593,13 @@ const projectError = (
           ? `${remediation}${retentionGuidance}${publicationRemediation}`
           : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}${publicationRemediation}`,
     },
+    ...(error instanceof AnalysisTargetFailureError &&
+    code !== "cleanup_incomplete"
+      ? { retry: targetFailureRetry(error.failure) }
+      : {}),
+    ...(error instanceof ArtifactOperationError && code === "artifact_changed"
+      ? { retry: TARGET_FAILURE_PROJECTIONS.changed.retry }
+      : {}),
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
@@ -622,6 +646,13 @@ const requestErrorDetails = (
       operation: error.operation,
       path: error.path,
       reason: error.reason,
+    };
+  if (error instanceof AnalysisTargetFailureError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      reason: error.failure.detail,
+      ...targetFailureDetails(error.failure),
     };
   if (error instanceof AnalysisResourceConstraintError)
     return {
@@ -722,15 +753,25 @@ const artifactStateErrorDetails = (
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reason === "integrity" &&
+      integrityCheckMeansChanged(error.integrityCheck)
+        ? { failure_kind: "changed" }
+        : {}),
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
       ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
       ...(error.integrityCheck === undefined
         ? {}
         : { integrity_check: error.integrityCheck }),
+      ...(error.parseFailure === undefined
+        ? {}
+        : targetFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
+      ...(error.parserLimit === undefined
+        ? {}
+        : { reported_limits: reportedParseLimit(error.parserLimit) }),
       ...(error.admission === undefined
         ? {}
         : {
@@ -935,6 +976,7 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.field === undefined ? {} : { field: error.field }),
       ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
       ...(error.probedPaths === undefined
         ? {}
@@ -963,7 +1005,10 @@ export interface AnalysisErrorProjection extends Readonly<
     | "artifact_integrity_mismatch"
     | "artifact_operation_failed"
     | "evidence_integrity_mismatch"
-    | "truncated"
+    | "partial"
+    | "target_integrity_mismatch"
+    | "input_conflict"
+    | "host_io_failed"
     | "process_capture_failed"
     | "cleanup_incomplete"
     | "revision_conflict"
@@ -975,7 +1020,7 @@ export interface AnalysisErrorProjection extends Readonly<
     | "unsupported_provider"
     | "unsupported_target"
     | "integrity_mismatch"
-    | "truncated"
+    | "partial"
     | "cancelled"
     | "timeout"
     | "resource_constraint"
@@ -983,6 +1028,8 @@ export interface AnalysisErrorProjection extends Readonly<
     | "execution_failure";
   readonly message: string;
   readonly retryable: boolean;
+  /** A target failure's retry hint, derived from its kind. */
+  readonly retry?: TargetFailureRetry;
   readonly remediation: Readonly<{
     action: string;
   }>;

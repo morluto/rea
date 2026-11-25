@@ -551,14 +551,14 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         parsed = parseNativeDmgAttachOutput(attached.stdout);
       } catch (cause: unknown) {
         throw new ArtifactReaderFailure(
-          "format",
+          "io",
           "hdiutil returned a malformed attachment plist",
           { cause },
         );
       }
       if (parsed["system-entities"].length === 0)
         throw new ArtifactReaderFailure(
-          "format",
+          "io",
           "hdiutil returned no attached devices",
         );
       this.#attachOutput = parsed;
@@ -654,6 +654,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         )
           throw cause;
         await (this.host.delay ?? delay)(delayMs);
+        this.#throwIfVerificationCancelled(signal);
         if (performance.now() >= deadline) throw cause;
       }
     }
@@ -667,7 +668,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       return parseNativeDmgInfo(info.stdout);
     } catch (cause: unknown) {
       throw new ArtifactReaderFailure(
-        "format",
+        "io",
         "hdiutil info -plist returned malformed image inventory",
         { cause },
       );
@@ -1017,7 +1018,7 @@ const verifyFailureReason = (
     // hdiutil follows AppleLanguages, so en-GB and en-AU spell it "recognised".
     case "image not recognized":
     case "image not recognised":
-      return "format";
+      return "unsupported";
     case "invalid checksum":
     case "image data corrupted":
       return "integrity";

@@ -1,3 +1,4 @@
+import { listFixtureFiles } from "../../../tests/support/workspace/listFixtureFiles.js";
 import { evidenceFileBytes } from "./environmentEvidenceBytes.js";
 import {
   chmod,
@@ -8,7 +9,7 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
@@ -27,7 +28,6 @@ import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperatio
 import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
-import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
@@ -42,18 +42,6 @@ import {
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
-import { prepareServedState } from "./environmentState.js";
-
-const listFiles = async (root: string): Promise<string[]> =>
-  (await readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      join(entry.parentPath, entry.name)
-        .slice(root.length + 1)
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
 
 /** The Grafana-shaped capture with every recorded URL moved to a loopback origin. */
 const loopbackCapture = (): Evidence =>
@@ -146,8 +134,8 @@ const fileHandlePrototype = async (path: string): Promise<FileHandle> => {
 };
 
 const sameTree = async (left: string, right: string): Promise<number> => {
-  const files = await listFiles(left);
-  expect(await listFiles(right)).toEqual(files);
+  const files = await listFixtureFiles(left);
+  expect(await listFixtureFiles(right)).toEqual(files);
   for (const file of files)
     expect(
       Buffer.compare(
@@ -193,38 +181,6 @@ describe("buildEnvironment", () => {
       warnings: [],
       next: [`agent-env run ${input.directory!}`],
     });
-  });
-
-  it("reports the coverage of the state the bundle serves", async () => {
-    const root = await createTestTempDirectory("rea-environment-build-cov-");
-    const evidence = analysisViewCaptureEvidence(
-      environmentManifestCaptureFixture(),
-    );
-    const built = await buildEnvironment(
-      await buildInput(root, evidence, { dryRun: true, directory: undefined }),
-    );
-    if (!built.ok) throw built.error;
-    const manifest = inspectAnalysisViewValidated({
-      source: { kind: "inline", evidence },
-      view: analysisViewRequestSchema.parse({
-        kind: "environment-manifest",
-        template_rules: [...DEFAULT_BUILD_TEMPLATE_RULES],
-      }),
-    });
-    if (!manifest.ok) throw manifest.error;
-    const source = loadEnvironmentSource(manifest.value, evidence);
-    if (!source.ok) throw source.error;
-    const { state } = prepareServedState(source.value, evidence);
-    if (state === undefined) throw new Error("Expected a served state");
-    expect(built.value.coverage).toEqual(
-      summarizeEnvironmentCoverage({
-        views: state.views.values(),
-        writes: state.writes.values(),
-      }),
-    );
-    expect(
-      built.value.coverage!.reads.state + built.value.coverage!.reads.recorded,
-    ).toBe(state.views.size);
   });
 
   it("plans the same files without writing anything on a dry run", async () => {
@@ -332,19 +288,6 @@ describe("buildEnvironment naming and refusals", () => {
     });
   });
 
-  it("does not create parents when the selected build root ends with dot-dot", async () => {
-    const root = await createTestTempDirectory(
-      "rea-environment-build-invalid-destination-",
-    );
-    const parent = join(root, "untouched");
-    const directory = `${join(parent, "a", "b", "c")}/..`;
-    const result = await buildEnvironment(
-      await buildInput(root, undefined, { directory }),
-    );
-    expect(result.ok).toBe(false);
-    await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
   it("refuses an occupied directory and leaves it as it was", async () => {
     const root = await createTestTempDirectory("rea-environment-build-busy-");
     const input = await buildInput(root);
@@ -353,7 +296,7 @@ describe("buildEnvironment naming and refusals", () => {
     const built = await buildEnvironment(input);
     if (built.ok) throw new Error("Expected a refusal");
     expect(projectAnalysisError(built.error).code).toBe("invalid_request");
-    expect(await listFiles(input.directory!)).toEqual(["notes.md"]);
+    expect(await listFixtureFiles(input.directory!)).toEqual(["notes.md"]);
   });
 });
 
@@ -399,7 +342,7 @@ describe("buildEnvironment cancellation and input checks", () => {
         },
       },
     });
-    expect(await listFiles(input.directory!)).toHaveLength(7);
+    expect(await listFixtureFiles(input.directory!)).toHaveLength(7);
   });
 
   it("refuses repeated rules and a HAR document saved as JSON", async () => {

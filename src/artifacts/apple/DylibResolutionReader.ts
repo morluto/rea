@@ -81,6 +81,13 @@ class FilesystemTreeView implements DylibTreeView {
     return pending;
   }
 
+  /** Seed an already-verified Mach-O parse so follow-up resolution skips re-opening the file. */
+  seedImage(path: string, facts: MachoImageFacts, identity: BigIntStats): void {
+    if (this.#images.has(path)) return;
+    this.#images.set(path, Promise.resolve(facts));
+    this.#identities.set(path, identity);
+  }
+
   /** Identity of the file whose header bytes `image()` parsed. */
   identity(path: string): BigIntStats | undefined {
     return this.#identities.get(path);
@@ -272,12 +279,13 @@ const executableRoots = async (
           firstSymlink ??= entry.path;
         }
         return entry.kind === "file"
-          ? files.startsWithMachoMagic(entry)
+          ? files.readMachoIfMagic(entry)
           : undefined;
       },
-      async (entry, macho) => {
-        if (!macho) return;
-        const facts = await view.image(entry.path);
+      async (entry, observed) => {
+        if (observed === undefined) return;
+        view.seedImage(entry.path, observed.facts, observed.identity);
+        const { facts } = observed;
         if (facts.status === "malformed" || facts.status === "unsupported")
           unclassified.push(entry.path);
         else if (
@@ -332,7 +340,7 @@ const requireMachoRoots = async (
   const resolved: string[] = [];
   for (const [index, path] of roots.entries()) {
     const reject = (
-      reason: "path" | "format",
+      reason: "path" | "unsupported",
       message: string,
     ): AnalysisInputError | ArtifactReaderFailure =>
       callerSelected
@@ -354,7 +362,7 @@ const requireMachoRoots = async (
         `Root ${path} is not a regular file in the analyzed root`,
       );
     if ((await view.image(lookup.path)).status === "not-mach-o")
-      throw reject("format", `Root ${path} is not a Mach-O image`);
+      throw reject("unsupported", `Root ${path} is not a Mach-O image`);
     if (!resolved.includes(lookup.path)) resolved.push(lookup.path);
   }
   return resolved;

@@ -147,6 +147,15 @@ export const scenarioNetworkTransactions = (
   }));
 };
 
+export const SCENARIO_NETWORK_COVERAGE_GUIDANCE = {
+  duplicateRequest:
+    "Multiple requests share a transaction ID; network transaction identity remains unknown.",
+  cycle:
+    "Redirect ancestry contains a cycle; network transaction identity remains unknown.",
+  missingPredecessor:
+    "Redirect predecessor evidence is missing; network transaction identity remains unknown.",
+} as const;
+
 /** Missing or cyclic ancestry cannot support an unchanged claim. */
 export const scenarioNetworkCoverageReason = (
   capture: RetainedBrowserScenarioCapture,
@@ -156,22 +165,21 @@ export const scenarioNetworkCoverageReason = (
     capture.events.items,
   );
   if ([...requestCounts.values()].some((count) => count > 1))
-    return "Multiple requests share a transaction ID; network transaction identity remains unknown.";
+    return SCENARIO_NETWORK_COVERAGE_GUIDANCE.duplicateRequest;
   const finished = new Set<number>();
   for (let start = 0; start < nodes.length; start += 1) {
     const path = new Set<number>();
     let index = start;
     while (index >= 0 && !finished.has(index)) {
-      if (path.has(index))
-        return "Redirect ancestry contains a cycle; network transaction identity remains unknown.";
+      if (path.has(index)) return SCENARIO_NETWORK_COVERAGE_GUIDANCE.cycle;
       path.add(index);
       const node = nodes[index];
       if (node === undefined)
-        return "Redirect predecessor evidence is missing; network transaction identity remains unknown.";
+        return SCENARIO_NETWORK_COVERAGE_GUIDANCE.missingPredecessor;
       index = node.predecessor;
     }
     if (index === -2)
-      return "Redirect predecessor evidence is missing; network transaction identity remains unknown.";
+      return SCENARIO_NETWORK_COVERAGE_GUIDANCE.missingPredecessor;
     for (const item of path) finished.add(item);
   }
   return undefined;

@@ -19,14 +19,14 @@ import {
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
-import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
+import type { PyInstallerMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   cookieMetadata,
   scriptPythonMagic,
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { parseMzHeaderEvidence } from "../domain/dosMz.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -67,6 +67,7 @@ const carrierPathDialect = async (
   signal?: AbortSignal,
 ): Promise<CarrierPathDialect> => {
   const prefixRead = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: 0,
     length: Math.min(fileSize, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
     label: "carrier header",
@@ -74,19 +75,20 @@ const carrierPathDialect = async (
   });
   if (!prefixRead.ok) return "unknown";
   const prefix = prefixRead.value;
-  let windowsHeader = parseMzHeaderEvidence(prefix, fileSize).windowsHeader;
+  let windowsHeader = observeMzWindowsHeader(prefix, fileSize);
   if (windowsHeader.state === "signature-needed") {
     const signatureRead = await readPyInstallerBytes(handle, {
+      measuredEnd: fileSize,
       position: windowsHeader.offset,
       length: 4,
       label: "PE signature",
       signal,
     });
     if (!signatureRead.ok) return "unknown";
-    windowsHeader = parseMzHeaderEvidence(prefix, fileSize, {
+    windowsHeader = observeMzWindowsHeader(prefix, fileSize, {
       offset: windowsHeader.offset,
       bytes: signatureRead.value,
-    }).windowsHeader;
+    });
   }
   if (windowsHeader.state === "declared")
     return windowsHeader.signature === "PE" ? "windows" : "unknown";
@@ -202,7 +204,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       );
       if (entry.kind !== "file")
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry is not a regular file: ${entry.path}`,
         );
       if (entry.encrypted)
@@ -214,7 +216,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const read = stored.read;
       if (read === undefined)
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry has no readable bytes: ${entry.path}`,
         );
       const { handle } = await this.#source.readSelectedPath();
@@ -471,7 +473,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const observed = found.value;
     if (observed.state === "absent")
       throw new ArtifactReaderFailure(
-        "format",
+        "unsupported",
         "PyInstaller CArchive cookie was not found",
       );
     if (observed.state === "rejected-candidates")

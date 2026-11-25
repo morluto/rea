@@ -2,7 +2,7 @@ import { Writable } from "node:stream";
 import { expect, it } from "vitest";
 import { decode } from "@toon-format/toon";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -130,10 +130,14 @@ it("only refuses malformed code units in selected TOON output", async () => {
   expect(decode(Buffer.concat(chunks).toString("utf8"))).toBe("retained");
 });
 
-it("refuses malformed code units retained in a TOON token window", async () => {
+it.each([
+  { flags: ["--token-limit", "1000"], selected: { value: "\ud800" } },
+  { flags: ["--token-count"], selected: { ["\udc00"]: "value" } },
+  { flags: ["--full-output", "--token-limit", "1000"], selected: "\ud800" },
+])("reports a typed TOON refusal for $flags", async ({ flags, selected }) => {
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
-    parseCliOutputArguments(["--format", "toon", "--token-limit", "1000"]),
+    parseCliOutputArguments(["--format", "toon", ...flags]),
     new Writable({
       write(chunk: Buffer, _encoding, done) {
         chunks.push(chunk);
@@ -143,10 +147,7 @@ it("refuses malformed code units retained in a TOON token window", async () => {
   );
   if (output === undefined) throw new Error("invalid output settings");
   expect(
-    await output.write(
-      { value: "\ud800" },
-      { command: "fixture", duration: "1ms" },
-    ),
+    await output.write(selected, { command: "fixture", duration: "1ms" }),
   ).toBe(true);
   expect(output.error).toMatchObject({ code: "invalid_request" });
 });

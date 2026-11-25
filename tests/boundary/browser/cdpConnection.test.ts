@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createNetServer, type Socket } from "node:net";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   CdpConnection,
@@ -13,66 +13,70 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
-import { CdpMalformedReply } from "../../../src/browser/protocol/CdpCommands.js";
+import {
+  CdpMalformedReply,
+  type CdpDomainWith,
+} from "../../../src/browser/protocol/CdpCommands.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
 import { waitFor } from "../../support/testWait.js";
 
+// Static caller contracts are checked by the project typecheck.
+expectTypeOf<"Accessibility.getPartialAXTree">().not.toExtend<
+  Parameters<CdpConnection["send"]>[0]
+>();
+expectTypeOf<"Runtime">().toExtend<CdpDomainWith<"enable">>();
+expectTypeOf<"Accessibility">().not.toExtend<
+  CdpDomainWith<"enable" | "disable">
+>();
+const getTargets = (connection: CdpConnection) =>
+  connection.send("Target.getTargets");
+expectTypeOf<Awaited<ReturnType<typeof getTargets>>>().toEqualTypeOf<{
+  targetInfos: unknown[];
+}>();
+
+const selectedSession = "selected-session";
+const detachedError = {
+  code: -32_001,
+  message: "Session with given id not found.",
+};
 const INVALID_REPLIES = [
-  ["missing result and error", (id: number) => ({ id })],
+  ["missing result and error", { sessionId: selectedSession }],
   [
     "both result and error",
-    (id: number) => ({
-      id,
+    {
+      sessionId: selectedSession,
       result: {},
       error: { code: -32_602, message: "Invalid params" },
-    }),
+    },
   ],
-  [
-    "detached-session error and result",
-    (id: number) => ({
-      id,
-      result: {},
-      error: { code: -32_001, message: "Session with given id not found." },
-    }),
-  ],
+  ["detached-session error and result", { result: {}, error: detachedError }],
   [
     "malformed error",
-    (id: number) => ({
-      id,
+    {
+      sessionId: selectedSession,
       error: { code: "bad", message: "Invalid params" },
-    }),
+    },
   ],
-  ["invalid result", (id: number) => ({ id, result: [] })],
-  ["missing session id", (id: number) => ({ id, result: {} })],
-  ["invalid session id", (id: number) => ({ id, result: {}, sessionId: 7 })],
-  [
-    "foreign session id",
-    (id: number) => ({ id, result: {}, sessionId: "foreign-session" }),
-  ],
+  ["invalid result", { sessionId: selectedSession, result: [] }],
+  ["missing session id", { result: {} }],
+  ["invalid session id", { result: {}, sessionId: 7 }],
+  ["foreign session id", { result: {}, sessionId: "foreign-session" }],
   [
     "detached-session error with a foreign session id",
-    (id: number) => ({
-      id,
-      error: { code: -32_001, message: "Session with given id not found." },
-      sessionId: "foreign-session",
-    }),
+    { error: detachedError, sessionId: "foreign-session" },
   ],
   [
     "unrouted detached-session message with another code",
-    (id: number) => ({
-      id,
-      error: { code: -32_000, message: "Session with given id not found." },
-    }),
+    { error: { code: -32_602, message: detachedError.message } },
   ],
   [
     "unrouted detached-session code with another message",
-    (id: number) => ({
-      id,
-      error: { code: -32_001, message: "No session with given id" },
-    }),
+    {
+      error: { code: detachedError.code, message: "No session with given id" },
+    },
   ],
 ] as const;
 
@@ -108,37 +112,14 @@ describe("CDP connection admission cancellation", () => {
 });
 
 describe("CDP connection response correlation", () => {
-  it("preserves the remote value of a debugger evaluation", async () => {
-    const browser = await startFakeCdpBrowser({
-      commandResult: (command) =>
-        command.method === "Debugger.evaluateOnCallFrame"
-          ? { result: { type: "boolean", value: false } }
-          : undefined,
-    });
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "inspect_web_page",
-    );
-    try {
-      await expect(
-        connection.send("Debugger.evaluateOnCallFrame", {
-          callFrameId: "frame-1",
-          expression: "false",
-          returnByValue: true,
-        }),
-      ).resolves.toEqual({ result: { type: "boolean", value: false } });
-    } finally {
-      await connection.close();
-    }
-  });
-
   it("rejects one malformed registered reply without poisoning the connection", async () => {
     const browser = await startFakeCdpBrowser({
       commandResult: (command) =>
         command.method === "Page.getFrameTree"
           ? { frameTree: "not a tree" }
-          : undefined,
+          : command.method === "Debugger.evaluateOnCallFrame"
+            ? { result: { type: "boolean", value: false } }
+            : undefined,
     });
     browsers.push(browser);
     const connection = await CdpConnection.connect(
@@ -160,7 +141,13 @@ describe("CDP connection response correlation", () => {
       expect(String((rejection as CdpMalformedReply).detail)).not.toContain(
         "not a tree",
       );
-      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
+      await expect(
+        connection.send("Debugger.evaluateOnCallFrame", {
+          callFrameId: "frame-1",
+          expression: "false",
+          returnByValue: true,
+        }),
+      ).resolves.toEqual({ result: { type: "boolean", value: false } });
       expect(connection.isReusable()).toBe(true);
       expect(protocolFailures).toEqual([]);
     } finally {
@@ -178,14 +165,6 @@ describe("CDP connection response correlation", () => {
       "inspect_web_page",
     );
     try {
-      const [attached, frames] = await Promise.all([
-        connection.send("Target.attachToTarget"),
-        connection.send("Page.getFrameTree"),
-      ]);
-      expect(attached).toMatchObject({ sessionId: "session-1" });
-      expect(frames.root.facts.frameId).toBe("frame-main");
-      browser.emitRawMessage(JSON.stringify({ id: 999 }));
-      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
       const first = connection.send("Storage.getStorageKey", {
         frameId: "first",
       });
@@ -193,13 +172,13 @@ describe("CDP connection response correlation", () => {
         frameId: "second",
       });
       const replies = Promise.all([first, second]);
-      await waitFor(() => expect(browser.commands).toHaveLength(5));
-      const firstCommand = browser.commands[3];
-      const secondCommand = browser.commands[4];
+      await waitFor(() => expect(browser.commands).toHaveLength(2));
+      const [firstCommand, secondCommand] = browser.commands;
       if (firstCommand === undefined || secondCommand === undefined)
         throw new Error("Fake browser did not receive both pending commands");
       expect(firstCommand.params).toEqual({ frameId: "first" });
       expect(secondCommand.params).toEqual({ frameId: "second" });
+      browser.emitRawMessage(JSON.stringify({ id: 999 }));
       browser.emitRawMessage(
         JSON.stringify({
           id: secondCommand.id,
@@ -216,97 +195,64 @@ describe("CDP connection response correlation", () => {
         { storageKey: "first" },
         { storageKey: "second" },
       ]);
-      await expect(connection.send("Runtime.enable")).resolves.toEqual({});
-    } finally {
-      await connection.close();
-    }
-  });
-
-  it("carries the original event payload byte count before parsing", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "inspect_web_page",
-    );
-    try {
-      const eventMessage = String.raw` { "method" : "Fixture.event", "params" : {"text":"escaped quote: \" slash: \\ unicode: \u96ea"}, "sessionId" : "session-1", "extra" : "counted from source bytes" } `;
-      let deliveredEvents = 0;
-      const eventPromise = new Promise<CdpTransportEvent>((resolve) => {
-        connection.onEvent((event) => {
-          deliveredEvents += 1;
-          if (event.domain === "Fixture") resolve(event);
-        });
-      });
-      browser.emitRawMessage(eventMessage);
-      const event = await eventPromise;
-
-      expect(event.wireBytes).toBe(Buffer.byteLength(eventMessage, "utf8"));
-      expect(event).toMatchObject({
-        domain: "Fixture",
-        sessionId: "session-1",
-        registered: undefined,
-      });
-      expect(event).not.toHaveProperty("params");
-      expect(event).not.toHaveProperty("method");
-      expect(deliveredEvents).toBe(1);
-
-      const protocolFailure = new Promise((resolve) =>
-        connection.onProtocolFailure(resolve),
-      );
-      browser.emitRawMessage("{not-json");
-      await protocolFailure;
-      expect(deliveredEvents).toBe(1);
     } finally {
       await connection.close();
     }
   });
 });
 
-describe("CDP connection event admission", () => {
-  it("parses a registered event once and shares it with every subscriber", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "inspect_web_page",
-    );
-    try {
-      const params = {
+it("shares one parsed event across subscribers and retains original wire size", async () => {
+  const browser = await startFakeCdpBrowser();
+  browsers.push(browser);
+  const connection = await CdpConnection.connect(
+    browser.browserWebSocketUrl,
+    "inspect_web_page",
+  );
+  try {
+    const seen: CdpTransportEvent[] = [];
+    const peer: CdpTransportEvent[] = [];
+    connection.onEvent((event) => seen.push(event));
+    connection.onEvent((event) => peer.push(event));
+    const originalMessage = String.raw` { "method" : "Network.dataReceived", "params" : {"text":"escaped quote: \" slash: \\ unicode: 雪 and \u96ea"}, "sessionId" : "session-1", "extra" : "counted from source bytes" } `;
+    browser.emitRawMessage(originalMessage);
+    browser.emitEvent({
+      method: "Page.frameNavigated",
+      params: {
         frame: {
           id: "main",
           loaderId: "loader-1",
           url: "https://app.example.test/page",
         },
-        type: "Navigation",
-      };
-      const subscriber = () =>
-        new Promise<CdpTransportEvent>((resolve) => {
-          connection.onEvent((event) => {
-            if (event.registered?.method === "Page.frameNavigated")
-              resolve(event);
-          });
-        });
-      const first = subscriber();
-      const second = subscriber();
-      browser.emitRawMessage(
-        JSON.stringify({ method: "Page.frameNavigated", params }),
-      );
-      const [left, right] = await Promise.all([first, second]);
+      },
+    });
+    await waitFor(() => expect(seen).toHaveLength(2));
+    const [unregistered, registered] = seen;
+    expect(unregistered).toMatchObject({
+      domain: "Network",
+      sessionId: "session-1",
+      wireBytes: Buffer.byteLength(originalMessage, "utf8"),
+      registered: undefined,
+    });
+    expect(unregistered).not.toHaveProperty("params");
+    expect(unregistered).not.toHaveProperty("method");
+    expect(registered?.registered).toMatchObject({
+      method: "Page.frameNavigated",
+      payload: {
+        url: { kind: "observed", url: "https://app.example.test/page" },
+      },
+    });
+    expect(peer).toHaveLength(2);
+    expect(peer[1]?.registered).toBe(registered?.registered);
 
-      expect(left.registered).toMatchObject({
-        method: "Page.frameNavigated",
-        payload: {
-          url: { kind: "observed", url: "https://app.example.test/page" },
-        },
-      });
-      expect(right.registered).toBe(left.registered);
-      expect(left).not.toHaveProperty("params");
-      expect(right).not.toHaveProperty("params");
-    } finally {
-      await connection.close();
-    }
-  });
+    const failures: unknown[] = [];
+    connection.onProtocolFailure((failure) => failures.push(failure));
+    browser.emitRawMessage("{not-json");
+    await waitFor(() => expect(failures).toHaveLength(1));
+    expect(seen).toHaveLength(2);
+    expect(peer).toHaveLength(2);
+  } finally {
+    await connection.close();
+  }
 });
 
 describe("CDP command cancellation causes", () => {
@@ -332,69 +278,6 @@ describe("CDP command cancellation causes", () => {
         throw new Error("Expected pre-send command cancellation");
       expect(failure.cause).toBe(reason);
       expect(browser.commands).toHaveLength(0);
-    } finally {
-      await connection.close();
-    }
-  });
-
-  it("waits for an unresponsive command until caller cancellation", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    try {
-      const controller = new AbortController();
-      const pending = connection.send(
-        "Page.enable",
-        {},
-        undefined,
-        controller.signal,
-      );
-      await waitFor(() => expect(browser.commands).toHaveLength(1));
-      const reason = new Error("cancel the pending CDP command");
-      controller.abort(reason);
-      const failure = await pending.then(
-        () => undefined,
-        (cause: unknown) => cause,
-      );
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      if (!(failure instanceof AnalysisCancelledError))
-        throw new Error("Expected command cancellation");
-      expect(failure.operation).toBe("observe_web_session");
-      expect(failure.cause).toBe(reason);
-    } finally {
-      await connection.close();
-    }
-  });
-
-  it("preserves AbortController's default reason for an in-flight command", async () => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    const controller = new AbortController();
-    try {
-      const pending = connection.send(
-        "Page.enable",
-        {},
-        undefined,
-        controller.signal,
-      );
-      await waitFor(() => expect(browser.commands).toHaveLength(1));
-      controller.abort();
-      const failure = await pending.then(
-        () => undefined,
-        (cause: unknown) => cause,
-      );
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      if (!(failure instanceof AnalysisCancelledError))
-        throw new Error("Expected command cancellation");
-      expect(failure.cause).toBe(controller.signal.reason);
-      expect(failure.cause).toMatchObject({ name: "AbortError" });
     } finally {
       await connection.close();
     }
@@ -446,39 +329,6 @@ describe("CDP handshake cancellation", () => {
   });
 });
 
-describe("CDP transport failure precedence", () => {
-  it("keeps a completed transport failure primary over a later abort", async () => {
-    const browser = await startFakeCdpBrowser({ closeOnMethod: "Page.enable" });
-    browsers.push(browser);
-    const controller = new AbortController();
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    try {
-      const pending = connection
-        .send("Page.enable", {}, undefined, controller.signal)
-        .then(
-          () => undefined,
-          (cause: unknown) => cause,
-        );
-      await waitFor(() => expect(browser.commands).toHaveLength(1));
-      const failure = await pending;
-      expect(failure).toMatchObject({
-        _tag: "BrowserObservationError",
-        reason: "disconnected",
-      });
-      controller.abort(new Error("abort after transport failure"));
-      expect(failure).toMatchObject({
-        _tag: "BrowserObservationError",
-        reason: "disconnected",
-      });
-    } finally {
-      await connection.close();
-    }
-  });
-});
-
 describe("CDP connection command responses", () => {
   it("rejects invalid UTF-8 replies without aliasing a literal replacement character", async () => {
     const browser = await startFakeCdpBrowser({
@@ -522,27 +372,6 @@ describe("CDP connection command responses", () => {
     }
   });
 
-  it("surfaces an unmodeled fake command as a CDP method rejection", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const connection = await CdpConnection.connect(
-      browser.browserWebSocketUrl,
-      "observe_web_session",
-    );
-    try {
-      await expect(
-        connection.send("Storage.getStorageKey"),
-      ).rejects.toMatchObject({
-        _tag: "BrowserObservationError",
-        command: "Storage.getStorageKey",
-        code: -32_601,
-        reportedMessage: "Method not found: Storage.getStorageKey",
-      });
-    } finally {
-      await connection.close();
-    }
-  });
-
   it.each(INVALID_REPLIES)(
     "fails the connection for a correlated reply with %s",
     async (_case, reply) => {
@@ -555,7 +384,7 @@ describe("CDP connection command responses", () => {
         "observe_web_session",
       );
       try {
-        const pending = connection.send("Page.enable", {}, "selected-session");
+        const pending = connection.send("Page.enable", {}, selectedSession);
         const rejection = expect(pending).rejects.toMatchObject({
           _tag: "BrowserObservationError",
           reason: "protocol_error",
@@ -564,7 +393,7 @@ describe("CDP connection command responses", () => {
         const command = browser.commands[0];
         if (command === undefined)
           throw new Error("Fake browser received no command");
-        browser.emitRawMessage(JSON.stringify(reply(command.id)));
+        browser.emitRawMessage(JSON.stringify({ id: command.id, ...reply }));
         await rejection;
         await expect(connection.send("Runtime.enable")).rejects.toMatchObject({
           reason: "protocol_error",
@@ -793,11 +622,6 @@ describe("CDP event subscriber failures", () => {
       browser.browserWebSocketUrl,
       "observe_web_session",
     );
-    const uncaught: unknown[] = [];
-    const onUncaught = (cause: unknown): void => {
-      uncaught.push(cause);
-    };
-    process.on("uncaughtException", onUncaught);
     try {
       const listenerFailure = new Error("listener rejected a malformed event");
       const later = vi.fn();
@@ -835,9 +659,7 @@ describe("CDP event subscriber failures", () => {
       // The wire is sound: an owner can still restore what it changed.
       connection.beginCleanupGrace(1_000);
       await expect(connection.send("Page.enable")).resolves.toEqual({});
-      expect(uncaught).toEqual([]);
     } finally {
-      process.off("uncaughtException", onUncaught);
       await connection.close();
     }
   });

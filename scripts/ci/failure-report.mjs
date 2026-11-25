@@ -154,13 +154,11 @@ async function analyzeFailedRun({
   for (const job of failedJobs) {
     let classification;
     try {
-      const evidence = await api.getStaticEvidence(repository, run, job);
       classification = await attributeToMain({
         repository,
         defaultBranch,
         run,
         job,
-        evidence,
         mainCandidates,
         api,
       });
@@ -185,14 +183,14 @@ async function attributeToMain({
   defaultBranch,
   run,
   job,
-  evidence,
   mainCandidates,
   api,
 }) {
   const baseSha = pullRequestBaseSha(run, repository);
-  if (baseSha === null || evidence === null)
-    return outcome("unknown", "no_matching_verified_main_failure");
   let result = outcome("unknown", "no_matching_verified_main_failure");
+  if (baseSha === null || mainCandidates.length === 0) return result;
+  const evidence = await api.getStaticEvidence(repository, run, job);
+  if (evidence === null) return result;
   const candidateFailures = [];
   for (const candidate of mainCandidates) {
     try {
@@ -367,7 +365,6 @@ export function createGitHubApi({
     async getStaticEvidence(repository, run, job) {
       const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
       if (!artifactName) return null;
-      if (run.run_attempt !== 1) return null;
       const page = await request(
         `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
       );

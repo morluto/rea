@@ -272,7 +272,7 @@ export const materializeArtifactInventoryInScope = async (
       occurrence.logical_path === "."
     )
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         `Selected occurrence is not an extractable regular child file: ${occurrence.logical_path} (${occurrence.occurrence_id})`,
       );
     const node = nodes.get(occurrence.artifact_id);
@@ -740,7 +740,7 @@ const createReader = async (
       abortIfNeeded(signal);
       if (
         inventorySourceChanged(cause) ||
-        (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+        (cause instanceof ArtifactReaderFailure && cause.reason === "path")
       )
         throw new ArtifactReaderFailure(
           "integrity",
@@ -804,10 +804,17 @@ const createReader = async (
 };
 
 const preflight = (entry: ArtifactEntry): void => {
-  if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
+  // A directory or other non-byte entry is the caller's selection; an
+  // encrypted member holds bytes REA cannot read.
+  if (entry.kind !== "file" && entry.kind !== "slice")
     throw new ArtifactReaderFailure(
-      "format",
+      "path",
       `Selected artifact entry cannot be read: ${entry.path}`,
+    );
+  if (entry.encrypted)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `Selected artifact entry is encrypted: ${entry.path}`,
     );
 };
 

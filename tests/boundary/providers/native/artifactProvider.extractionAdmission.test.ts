@@ -369,8 +369,9 @@ it("refuses an incomplete PyInstaller detection tail without reporting unsupport
           ok: false,
           error: {
             _tag: "ArtifactOperationError",
-            reason: "format",
-            detail: "CArchive tail is truncated",
+            // The file shrank after its size was admitted: a changed file.
+            reason: "integrity",
+            integrityCheck: "read-coverage",
           },
         });
         expect(detect).toHaveBeenCalledTimes(1);

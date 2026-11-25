@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -14,7 +14,11 @@ import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 const MFT_DEFAULT_RECORD_BYTES = 1024;
 import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
-import { ArtifactFileSource } from "../resources/index.js";
+import {
+  ArtifactFileSource,
+  translateArtifactFailure,
+} from "../resources/index.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 /** A 1 KiB FILE record whose update sequence array covers both sectors. */
 const recordBytes = (options: {
@@ -323,6 +327,51 @@ it("does not finish a traversal when close begins during final source verificati
     expect(calls).toBe(2);
   } finally {
     closeRead.release();
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports a $MFT stream that shrinks during decoding as a changed file, not malformed", async () => {
+  const path = await writeMft(
+    "$MFT",
+    Buffer.concat([recordBytes({}), recordBytes({ index: 1 })]),
+  );
+  const reader = new NtfsMftArtifactReader(path);
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      const admitted = await read.call(this, signal);
+      // The decoder now meets EOF before the admitted length.
+      await truncate(path, MFT_DEFAULT_RECORD_BYTES);
+      return admitted;
+    });
+  try {
+    const failure = await reader
+      .entries()
+      [Symbol.asyncIterator]()
+      .next()
+      .then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+    expect(failure).toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
+    // The public projection names the model's kind: a changed target.
+    expect(
+      projectAnalysisError(
+        translateArtifactFailure("inspect_artifact", failure),
+      ),
+    ).toMatchObject({
+      code: "artifact_changed",
+      retry: "backoff",
+      retryable: true,
+      details: { failure_kind: "changed" },
+    });
+  } finally {
     spy.mockRestore();
     await reader.close();
   }

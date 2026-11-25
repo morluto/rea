@@ -202,7 +202,7 @@ const verifiedExecutables = new Map<
  * Confirm the executable still has the digest its analysis profile committed,
  * so no answer names one Kuna build while another produced it.
  */
-const verifyExecutable = async (
+export const verifyKunaExecutableDigest = async (
   installation: KunaInstallation,
   signal: AbortSignal,
   operation: string,
@@ -242,7 +242,7 @@ export const runKunaCommand = async (
 ): Promise<KunaCommandOutcome> => {
   const { installation } = request;
   try {
-    const changed = await verifyExecutable(
+    const changed = await verifyKunaExecutableDigest(
       installation,
       request.signal,
       request.operation,

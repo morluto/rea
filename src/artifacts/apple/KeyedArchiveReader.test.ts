@@ -303,7 +303,7 @@ describe("inert keyed archive decoding", () => {
         offset: 0,
         limit: 1,
       }),
-    ).toThrow("NSKeyedArchiver");
+    ).toThrow("not a keyed archive");
     expect(() =>
       decodeKeyedArchiveBytes(Buffer.from(buildBinary(archive)), {
         root: "missing",
@@ -680,7 +680,7 @@ describe("binary keyed archive invalid dates", () => {
         }),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(decodeFailure.message),
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

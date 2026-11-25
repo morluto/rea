@@ -32,6 +32,12 @@ type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
   | { readonly kind: "unresolved"; readonly problem: string };
 
+/** The conditions in a pointer's last reference token, when it is a selector. */
+export const lastSelectorOf = (pointer: string): readonly Condition[] =>
+  selectorOf(
+    unescapeJsonPointerToken(pointer.slice(pointer.lastIndexOf("/") + 1)),
+  ) ?? [];
+
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
 
 const own = (record: Record<string, JsonValue>, key: string) =>

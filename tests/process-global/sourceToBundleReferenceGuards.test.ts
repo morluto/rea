@@ -24,13 +24,10 @@ vi.mock(
 );
 afterEach(() => vi.restoreAllMocks());
 
-it("reserves graph validation/hash memory before the owning parser allocates", async () => {
+it("reports graph headroom before invalid reference data", async () => {
   const root = await createTestTempDirectory("rea-source-headroom-");
   const path = join(root, "graph.json");
-  await writeFile(
-    path,
-    JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
-  );
+  await writeFile(path, "{}");
   const actual = await vi.importActual<
     typeof import("../../src/application/JsonAuthenticationHeadroom.js")
   >("../../src/application/JsonAuthenticationHeadroom.js");
@@ -41,7 +38,6 @@ it("reserves graph validation/hash memory before the owning parser allocates", a
         availableBytes: 0,
       }),
   );
-  const parser = vi.spyOn(historicalSourceGraphSchema, "safeParse");
   const resources = new ArtifactResourceScope();
   try {
     expect(
@@ -56,9 +52,27 @@ it("reserves graph validation/hash memory before the owning parser allocates", a
         _tag: "AnalysisResourceConstraintError",
         operation: "compare_source_to_bundle",
         resource: "memory",
+        reportedLimits: { input_path: path },
       },
     });
-    expect(parser).not.toHaveBeenCalled();
+    expect(
+      await resolveSourceToBundleReference(
+        { kind: "file", path },
+        undefined,
+        resources,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "compare_source_to_bundle",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: expect.arrayContaining(["reference"]),
+          }),
+        ]),
+      },
+    });
   } finally {
     await resources.close();
   }

@@ -156,7 +156,6 @@ it("reports the active resource session's dispatch policy without limiting indep
   };
   const entries = buildCapabilityInventory(resourceStatus, enabledPolicy);
   for (const name of [
-    "inspect_artifact",
     "extract_artifact",
     "trace_dylib_resolution",
     "get_navigation_context",
@@ -173,6 +172,8 @@ it("reports the active resource session's dispatch policy without limiting indep
     "inspect_keyed_archive",
     "inspect_pe_imports",
     "inspect_desktop_application",
+    // A selected path needs no open target.
+    "inspect_artifact",
     "close_binary",
   ])
     expect(entries.find((item) => item.name === name)).toMatchObject({
@@ -1292,4 +1293,20 @@ describe("declared contract availability", () => {
         remediation: expect.any(String),
       });
   });
+});
+
+it("isolates mutable client requirements between tools and inventory calls", () => {
+  const status = { open: false, capabilities: [] };
+  const entries = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  const [first, second] = entries;
+  if (first === undefined || second === undefined)
+    throw new Error("Expected multiple capabilities");
+  first.client_requirements.required.push("elicitation_form");
+  expect(second.client_requirements.required).toEqual([]);
+  expect(
+    buildCapabilityInventory(status, { processCaptureEnabled: false })[0]
+      ?.client_requirements.required,
+  ).toEqual([]);
 });

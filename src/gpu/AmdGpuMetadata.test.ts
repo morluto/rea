@@ -3,7 +3,10 @@ import { encode } from "@msgpack/msgpack";
 import { readAmdMetadata } from "./AmdGpuMetadata.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { GpuBufferSource } from "./GpuSource.js";
-import { amdFixture } from "../../tests/fixtures/gpu/codeObjects.js";
+import {
+  amdDescriptorNoteFixture,
+  amdFixture,
+} from "../../tests/fixtures/gpu/codeObjects.js";
 it.each(["\uFEFFkernel", "\uFEFF" + "kernel".repeat(100)])(
   "preserves leading BOMs in MessagePack strings %s",
   (name) => {
@@ -56,6 +59,36 @@ it.each(["array", "map"] as const)(
     );
   },
 );
+const nestedArrays = (depth: number): unknown =>
+  Array.from({ length: depth }).reduce<unknown>((child) => [child], 0);
+
+it("reports the measured nesting allowance for a small, deeply nested value", () => {
+  const admitted = nestedArrays(32);
+  expect(readAmdMetadata(Buffer.from(encode(admitted)))).toEqual(admitted);
+  expect(() => readAmdMetadata(Buffer.from(encode(nestedArrays(33))))).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "amdgpu-metadata-depth", maximum: 32 },
+      }),
+    }),
+  );
+});
+
+it("reports the aggregate value allowance for shallow containers", () => {
+  const values = Array<number>(65536).fill(0);
+  expect(() =>
+    readAmdMetadata(Buffer.from(encode([values, values, values, values]))),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "amdgpu-metadata-values", maximum: 262144 },
+      }),
+    }),
+  );
+});
+
 it("retains an earlier AMD note and kernel when a later note exceeds container capacity", async () => {
   const metadata = Buffer.from(
     encode({
@@ -63,12 +96,7 @@ it("retains an earlier AMD note and kernel when a later note exceeds container c
       "vendor.values": Array<number>(65537).fill(0),
     }),
   );
-  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
-  note.writeUInt32LE(7, 0);
-  note.writeUInt32LE(metadata.length, 4);
-  note.writeUInt32LE(32, 8);
-  note.write("AMDGPU\0", 12);
-  metadata.copy(note, 20);
+  const note = amdDescriptorNoteFixture(metadata);
   const inventory = new GpuInventory({ path: "/fixture", analysis: "kernels" });
   await inventory.inspect(new GpuBufferSource(amdFixture(false, note), null));
   expect(inventory.objects[0]).toMatchObject({
@@ -101,4 +129,21 @@ it("distinguishes an unsupported extension tag from a forbidden MessagePack toke
   expect(() => readAmdMetadata(Buffer.from("c1", "hex"))).toThrow(
     expect.objectContaining({ kind: "malformed" }),
   );
+});
+it("admits unsigned integer map keys only for the schema that declares them", () => {
+  // {0x2c0a: 1}, as in PAL `.registers`.
+  const registers = Buffer.from("81cd2c0a01", "hex");
+  expect(() => readAmdMetadata(registers)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+  expect(readAmdMetadata(registers, "string-or-unsigned")).toEqual({
+    "11274": 1,
+  });
+  // {1: 0, 1: 0} repeats a key; {"1": 0, 1: 0} only collides when normalized.
+  expect(() =>
+    readAmdMetadata(Buffer.from("8201000100", "hex"), "string-or-unsigned"),
+  ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  expect(() =>
+    readAmdMetadata(Buffer.from("82a131000100", "hex"), "string-or-unsigned"),
+  ).toThrow(expect.objectContaining({ kind: "unsupported" }));
 });

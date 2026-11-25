@@ -10,11 +10,11 @@ import {
   NTFS_JOURNAL_PROVIDER,
 } from "../domain/windows/ntfsJournalQuery.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   inspectWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 export const registerNtfsJournalCommand = (

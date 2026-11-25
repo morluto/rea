@@ -273,9 +273,9 @@ cliTest(
       });
       expect(output.exitCode).toBe(1);
       expect(output.json).toMatchObject({
-        code: "artifact_operation_failed",
+        code: "unsupported_target",
         details: {
-          reason: "format",
+          reason: "malformed",
           detail: expect.stringContaining("Keyed archive has no $top roots"),
         },
       });

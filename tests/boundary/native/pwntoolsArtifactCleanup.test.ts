@@ -58,6 +58,7 @@ import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js"
 import { PwntoolsDecoder } from "../../../src/native/pwntools/PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const makeDecoder = () =>
   new PwntoolsDecoder(
@@ -65,6 +66,7 @@ const makeDecoder = () =>
       identity: PWNTOOLS_PROVIDER_IDENTITY,
       operation: "test_pwntools_artifact_read",
       bridge: new URL("file:///unused-bridge.py"),
+      targetFormat: "elf",
       payloadSchema: z.string(),
       project: () => {
         throw new Error("input read should fail before decoder launch");
@@ -79,7 +81,7 @@ const makeDecoder = () =>
   );
 
 it("reports the read failure without stale incomplete-cleanup state when close retry succeeds", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-pwntools-close-retry-"));
+  const root = await createTestTempDirectory("rea-pwntools-close-retry-");
   const path = join(root, "selected.bin");
   await writeFile(path, "selected evidence");
   closeState.fail = false;
@@ -113,12 +115,11 @@ it("reports the read failure without stale incomplete-cleanup state when close r
     closeState.fail = false;
     closeState.failOnce = false;
     await decoder.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it("retains a persistent failed input descriptor and refuses the next acquisition", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-pwntools-held-close-"));
+  const root = await createTestTempDirectory("rea-pwntools-held-close-");
   const path = join(root, "selected.bin");
   await writeFile(path, "selected evidence");
   closeState.fail = true;
@@ -151,12 +152,11 @@ it("retains a persistent failed input descriptor and refuses the next acquisitio
     } catch {
       // The test already asserts persistent cleanup failure before releasing it.
     }
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it("retains selected target identity when cancellation arrives after its completed read", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-pwntools-input-cancel-"));
+  const root = await createTestTempDirectory("rea-pwntools-input-cancel-");
   const path = join(root, "selected.bin");
   await writeFile(path, "selected evidence");
   closeState.inputAbort = new AbortController();
@@ -179,14 +179,13 @@ it("retains selected target identity when cancellation arrives after its complet
   } finally {
     closeState.inputAbort = undefined;
     await decoder.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 // Simulated decoder writes a reply; the selected object is never executed.
 it("retains admitted layout through reply close failure and cancellation, then resolves cleanup", async () => {
   await prepareProcessOwnershipInspection();
-  const root = await mkdtemp(join(tmpdir(), "rea-pwntools-reply-close-"));
+  const root = await createTestTempDirectory("rea-pwntools-reply-close-");
   const path = join(root, "selected.bin");
   await writeFile(path, Buffer.alloc(128));
   const runtime = await PrivateRuntimeRoot.create({
@@ -248,7 +247,6 @@ it("retains admitted layout through reply close failure and cancellation, then r
     closeState.replyFail = false;
     closeState.abort = undefined;
     await provider.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -266,7 +264,7 @@ it.each([
   "admits base core facts before optional debugger enrichment: %s",
   async (scenario) => {
     await prepareProcessOwnershipInspection();
-    const root = await mkdtemp(join(tmpdir(), "rea-pwntools-core-reply-"));
+    const root = await createTestTempDirectory("rea-pwntools-core-reply-");
     const path = join(root, "selected.core");
     const value = recordedCrashFixture(path);
     await writeFile(path, recordedCrashFixtureBytes(value));
@@ -402,7 +400,6 @@ it.each([
       closeState.replyFail = false;
       closeState.abort = undefined;
       await provider.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
