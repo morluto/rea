@@ -6,7 +6,7 @@ import {
   commandEvidenceDetailSchema,
   gdbCommandResultSchema,
 } from "../domain/commandObservation.js";
-import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/gdbCommandSummarySchema.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata, toolEffects } from "./toolEffects.js";
@@ -28,8 +28,13 @@ export const GDB_TOOL_CONTRACTS = [
     ),
     kind: "native-provider",
     description:
-      "Start a persistent caller-supplied GDB session and return its session ID. Linux only; detaching a live inferior during close requires a verified durable output TTY. Startup suppresses init files and auto-loading, preferring MI3. Optional inferior_tty selects a verified terminal for later inferior runs; keep it available after GDB exits so close can detach a live inferior safely. The session belongs to this REA server process.",
+      "Start a persistent caller-supplied GDB session and return its session ID. Linux only; detaching a live inferior during close requires a verified durable output TTY. Startup suppresses init files and auto-loading, preferring MI3. Optional executable hashes and loads an initial file without running it; command Evidence names this initial selection, and later console loads do not rebind it. Omission leaves the session target unknown. Optional inferior_tty selects a verified terminal for later inferior runs; keep it available after GDB exits so close can detach a live inferior safely. The session belongs to this REA server process.",
     inputSchema: z.strictObject({
+      executable: absoluteLocalPathStringSchema
+        .optional()
+        .describe(
+          "Initial file to hash and load, without running it. Later command Evidence retains this initial target identity; it does not establish the current inferior.",
+        ),
       inferior_tty: absoluteLocalPathStringSchema
         .optional()
         .describe(

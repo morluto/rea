@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { compareAndroidDeclarations } from "../application/android/AndroidDeclarationComparisonService.js";
@@ -10,7 +11,6 @@ import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   registerContractCommand,
-  registerContractDocumentCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
 import { ANDROID_TOOL_CONTRACTS } from "../contracts/android/androidToolContracts.js";

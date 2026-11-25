@@ -1,4 +1,7 @@
-import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
+import {
+  inspectMachoSchema,
+  inspectSignatureSchema,
+} from "../../../../src/domain/native/nativeInspection.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -1372,10 +1375,10 @@ it("reads exports from the symbol table without llvm-nm's dyld-info pass", async
   expect(nmCommands(execution.value.result)).toEqual(nmArguments);
 });
 
-it("binds leading-space exports to their exact nm identities", async () => {
-  // Real clang dylib: .globl "  _spaced"; "  _spaced": ret; .globl _spaced; _spaced: ret.
-  // dyld_info separates the address from the literal symbol with two spaces.
-  const names = "  _spaced\n_spaced\n";
+it("merges exact export identities with the first available dyld facts", async () => {
+  // Apple clang captures distinguish both leading spaces and a literal CR.
+  const names =
+    "  _spaced\n_spaced\ntrailing\ntrailing\r\n_nmOnly\n_spaced\n_ambiguous\n_ambiguous [weak-def]\n";
   const { runner, nmArguments } = symbolTableRunner(
     {
       "dyld_info:-exports": [
@@ -1384,40 +1387,10 @@ it("binds leading-space exports to their exact nm identities", async () => {
         "        offset      symbol",
         "        0x000002A0    _spaced",
         "        0x000002A4  _spaced",
-        "",
-      ].join("\n"),
-    },
-    { symbolTable: names, withDyldInfo: names },
-  );
-  const execution = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(await inventoryTarget())
-    .execute("inspect_macho", {});
-  if (!execution.ok) throw execution.error;
-  expect(nmArguments).toHaveLength(1);
-  const exported = (
-    execution.value.result as {
-      exports: { items: { name: string; address: string | null }[] };
-    }
-  ).exports.items;
-  expect(exported).toEqual([
-    expect.objectContaining({ name: "  _spaced", address: "0x1000002a0" }),
-    expect.objectContaining({ name: "_spaced", address: "0x1000002a4" }),
-  ]);
-});
-
-it("keeps an export name ending in a carriage return distinct", async () => {
-  // Captured from a clang executable exporting "trailing\r" and "trailing".
-  const names = "__mh_execute_header\n_main\ntrailing\ntrailing\r\n";
-  const { runner, nmArguments } = symbolTableRunner(
-    {
-      "dyld_info:-exports": [
-        "fixture [arm64]:",
-        "    -exports:",
-        "        offset      symbol",
-        "        0x00000000  __mh_execute_header",
-        "        0x00000338  _main",
         "        0x00000330  trailing",
         "        0x00000328  trailing\r",
+        "        0x000002A8  _spaced",
+        "        0x00000400  _ambiguous [weak-def]",
         "",
       ].join("\n"),
     },
@@ -1428,12 +1401,21 @@ it("keeps an export name ending in a carriage return distinct", async () => {
     .execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(nmArguments).toHaveLength(1);
-  const exported = (
-    execution.value.result as {
-      exports: { items: { name: string; address: string | null }[] };
-    }
-  ).exports.items.filter(({ name }) => name.startsWith("trailing"));
-  expect(exported).toEqual([
+  const { exports } = inspectMachoSchema.parse(execution.value.result);
+  expect(exports.items).toEqual([
+    expect.objectContaining({ name: "  _spaced", address: "0x1000002a0" }),
+    expect.objectContaining({
+      name: "_ambiguous",
+      address: null,
+      source: "nm",
+    }),
+    expect.objectContaining({
+      name: "_ambiguous [weak-def]",
+      address: null,
+      source: "nm",
+    }),
+    expect.objectContaining({ name: "_nmOnly", address: null, source: "nm" }),
+    expect.objectContaining({ name: "_spaced", address: "0x1000002a4" }),
     expect.objectContaining({ name: "trailing", address: "0x100000330" }),
     expect.objectContaining({ name: "trailing\r", address: "0x100000328" }),
   ]);

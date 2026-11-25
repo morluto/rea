@@ -1,14 +1,19 @@
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  preparationHostCapacityFailure,
+} from "../process/OwnedCommand.js";
 import {
   DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
+import { processInspectionFailure } from "./OwnedCommandCleanup.js";
 
 // Provider adapters re-attribute capability errors and keep the original as cause.
 const prerequisiteRefusal = (
@@ -26,6 +31,34 @@ const prerequisiteRefusal = (
   )
     if (current instanceof LinuxOwnedProcessPrerequisiteError) return current;
   return undefined;
+};
+
+/**
+ * The provider's command never started because owned-process preparation
+ * failed first. `ownedProcessPrerequisiteAvailability` recognizes this shape.
+ */
+export const ownershipPreparationError = (
+  providerId: string,
+  operation: string,
+  cause: unknown,
+  capturedOutput?: AnalysisCapturedOutput,
+): ProviderAdapterError => {
+  const preparation = processInspectionFailure(cause);
+  const darwin =
+    preparation instanceof DarwinProcessOwnershipInspectionError
+      ? preparation
+      : undefined;
+  const output = capturedOutput ?? darwin?.capturedOutput;
+  return new ProviderAdapterError(providerId, operation, {
+    cause,
+    ...(output === undefined ? {} : { capturedOutput: output }),
+    diagnostics: {
+      stage: "ownership_preparation",
+      ...(darwin?.compilerOutcome === undefined
+        ? {}
+        : { compiler_outcome: jsonValueSchema.parse(darwin.compilerOutcome) }),
+    },
+  });
 };
 
 // Recognize only failures attributed to owned-process preparation. Cancellation
@@ -54,6 +87,7 @@ const darwinPrerequisiteRefusal = (
     current = current.preparationFailure;
   }
   return current instanceof DarwinProcessOwnershipInspectionError &&
+    preparationHostCapacityFailure(current) === undefined &&
     current.cleanupFailure === undefined &&
     current.cleanupOwner === undefined &&
     current.cancellation === undefined

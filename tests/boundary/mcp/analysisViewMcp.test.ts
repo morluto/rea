@@ -226,7 +226,11 @@ it("preserves native relationship coverage through inline and retained MCP views
       limitations: ["Callees: fixture read limit"],
       diagnostics: ["Fixture relationship diagnostic"],
     },
-    { status: "partial", limitations: ["Historical read limit"] },
+    {
+      status: "partial",
+      limited_directions: ["callers", "callees"],
+      limitations: ["Historical read limit"],
+    },
     {
       status: "unknown",
       limited_directions: ["callees"],
@@ -1259,7 +1263,7 @@ it("reads successive native source pages directly from a completed-result transp
   expect(calls).toEqual(["analyze_function"]);
 });
 
-it("returns a JavaScript summary without graph payloads from a retained reference", async () => {
+it("returns matching JavaScript summaries without graph payloads from inline and retained sources", async () => {
   const { client, session } = await connect();
   const parent = analysisViewJavaScriptEvidence();
   expect(session.recordEvidence(parent).ok).toBe(true);
@@ -1279,10 +1283,23 @@ it("returns a JavaScript summary without graph payloads from a retained referenc
   );
   expect(parsed.normalized_result).toMatchObject({
     kind: "summary",
+    parent_evidence_id: parent.evidence_id,
     parent_operation: "analyze_javascript_application",
     summary: { format: "directory" },
   });
-  expect(parsed.normalized_result).not.toHaveProperty("summary.semantic_graph");
+  for (const field of ["graph", "semantic_graph"])
+    expect(response.structuredContent).not.toHaveProperty(
+      `normalized_result.summary.${field}`,
+    );
+  const inline = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "summary" },
+    },
+  });
+  expect(inline.isError).not.toBe(true);
+  expect(inline.structuredContent).toEqual(response.structuredContent);
   const stale = await client.callTool({
     name: "inspect_analysis_view",
     arguments: {

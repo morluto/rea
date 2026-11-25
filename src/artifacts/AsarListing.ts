@@ -2,7 +2,11 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 
-import { asarDeclaredSizeSchema, asarNodeSchema } from "../domain/asarNode.js";
+import {
+  asarDeclaredSizeSchema,
+  asarNodeSchema,
+  RoundedAsarSize,
+} from "../domain/asarNode.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -47,6 +51,11 @@ const readDeclaredSize = (
   value: unknown,
 ): { readonly size: number | null; readonly limitation?: string } => {
   if (value === undefined) return { size: null };
+  if (value instanceof RoundedAsarSize)
+    return {
+      size: null,
+      limitation: `ASAR entry declares numeric size ${value.excerpt}, which does not exactly represent a non-negative safe integer.`,
+    };
   const parsed = asarDeclaredSizeSchema.safeParse(value);
   if (parsed.success) return { size: parsed.data };
   // JSON.parse has already rounded a number beyond the safe-integer range or

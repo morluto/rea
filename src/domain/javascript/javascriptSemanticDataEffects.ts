@@ -15,6 +15,7 @@ import {
   javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  staticObjectProperty,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -29,6 +30,7 @@ import {
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectIdentity,
+  semanticDefaultHttpProtocol,
   dataEffectArgumentBindingId as argumentBindingId,
   dataEffectLiteralString as literalString,
   dataEffectMemberCallee as memberCallee,
@@ -73,31 +75,56 @@ export const collectJavaScriptSemanticDataEffects = (
     callableStack: [],
     ancestors: [],
   };
-  const configuration = collectConfigurations(program, context);
+  // Candidates that depend on no other collector share one traversal.
+  const configurations = collectConfigurations(context);
+  const candidateRequests = collectRequests(context);
+  const boundaries = collectBoundaries(context);
+  traverseWithContext(
+    program,
+    context,
+    configurations.visit,
+    candidateRequests.visit,
+    boundaries.visit,
+  );
+  const configuration = configurations.output;
   // A fetch or WebSocket the host refuses to construct sends nothing.
-  const requests = collectRequests(program, context).filter(
+  const requests = candidateRequests.output.filter(
     ({ node, operation }) =>
       !hostRefusesJavaScriptRequest(node, operation.method),
+  );
+  // Defaults and response consumers read the completed candidates above.
+  const defaults = collectDefaults(context, configuration);
+  const responseConsumers = collectResponseConsumers(context, requests);
+  traverseWithContext(
+    program,
+    context,
+    defaults.visit,
+    responseConsumers.visit,
   );
   return {
     configurationOperations: [
       ...configuration.map(({ operation }) => operation),
-      ...collectDefaults(program, context, configuration),
+      ...defaults.output,
     ],
     requestOperations: [
       ...requests.map(({ operation }) => operation),
-      ...collectResponseConsumers(program, context, requests),
+      ...responseConsumers.output,
     ],
-    boundaryOperations: collectBoundaries(program, context),
+    boundaryOperations: boundaries.output,
   };
 };
 
+/** One collector's findings and the visitor that gathers them in source order. */
+interface DataEffectCollector<Item> {
+  readonly output: Item[];
+  readonly visit: (node: t.Node) => void;
+}
+
 const collectConfigurations = (
-  program: t.Program,
   context: TraversalContext,
-): ConfigurationCandidate[] => {
+): DataEffectCollector<ConfigurationCandidate> => {
   const output: ConfigurationCandidate[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     const details = configurationDetails(node, context);
     if (details === null) return;
     const operation: JavaScriptSemanticConfigurationOperation = {
@@ -115,8 +142,8 @@ const collectConfigurations = (
       resolution: details.resolution,
     };
     output.push({ node, operation });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 const configurationDetails = (
@@ -207,15 +234,14 @@ const isArrayIndexKey = (key: string): boolean => {
 };
 
 const collectDefaults = (
-  program: t.Program,
   context: TraversalContext,
   configurations: readonly ConfigurationCandidate[],
-): JavaScriptSemanticConfigurationOperation[] => {
+): DataEffectCollector<JavaScriptSemanticConfigurationOperation> => {
   const output: JavaScriptSemanticConfigurationOperation[] = [];
   const configurationsByNode = new Map(
     configurations.map((candidate) => [candidate.node, candidate]),
   );
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (
       !t.isLogicalExpression(node) ||
       (node.operator !== "??" && node.operator !== "||")
@@ -246,16 +272,82 @@ const collectDefaults = (
         : {}),
       resolution: value.status === "literal" ? "complete" : "partial",
     });
-  });
-  return output;
+  };
+  return { output, visit };
+};
+
+/**
+ * RFC 9110 `token` characters, the class `checkIsHttpToken` enforces.
+ *
+ * An empty string passes: Node accepts `method: ""` and falls back to a GET.
+ */
+const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]*$/u;
+
+/**
+ * Whether an options literal carries a `method` Node refuses at the call site.
+ *
+ * `http`/`https` validate `options.method` before the request exists, so a literal outside the
+ * token class throws `ERR_INVALID_HTTP_TOKEN` and no request is created. Measured on Node
+ * 24.22.1: `{method: "BAD METHOD"}` throws, while `{method: "GET"}` and `{method: ""}`
+ * construct a request.
+ *
+ * Only the options-only overload is decided here. Every other shape is left to the caller's
+ * default of keeping the request, because each can put something else in slot 0:
+ *
+ * - A callable is the callback, and slot 1 is then unread:
+ *   `http.request(() => {}, {method: "BAD METHOD"})` builds a GET.
+ * - A falsy `https` head keeps the default options:
+ *   `https.request(null, {method: "BAD METHOD"})` builds a GET.
+ * - The `(url, options)` overload validates a later object, which this reader does not select.
+ *
+ * A literal with a getter or a spread is skipped too, because `Object.assign` may not copy the
+ * syntactic value: `{get x() { this.method = "GET"; }, method: "BAD METHOD"}` builds a request.
+ */
+const rejectsHttpMethodLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  method: JavaScriptSemanticRequestOperation["method"],
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  // `fetch` and `WebSocket` are host globals that do not validate a token.
+  if (method !== "get" && method !== "request") return false;
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const firstValue = unwrapJavaScriptExpression(first).node;
+  // The `(url, options)` overload validates the second argument. A string, a template or a
+  // \`new URL\` proves that overload; anything else leaves slot 1 unselected.
+  const urlTarget =
+    t.isStringLiteral(firstValue) ||
+    t.isTemplateLiteral(firstValue) ||
+    (t.isNewExpression(firstValue) &&
+      isUnmodifiedGlobalReference(firstValue.callee, state, "URL"));
+  const second = node.arguments[1];
+  const options = t.isObjectExpression(firstValue)
+    ? firstValue
+    : urlTarget && second !== undefined && !t.isSpreadElement(second)
+      ? unwrapJavaScriptExpression(second).node
+      : undefined;
+  if (options === undefined || !t.isObjectExpression(options)) return false;
+  // A getter or a spread can replace the member before Node reads it.
+  if (
+    options.properties.some(
+      (property) =>
+        t.isSpreadElement(property) ||
+        (t.isObjectMethod(property) && property.kind !== "method"),
+    )
+  )
+    return false;
+  const lookup = staticObjectProperty(options, "method");
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return !HTTP_TOKEN.test(literal.value);
 };
 
 const collectRequests = (
-  program: t.Program,
   context: TraversalContext,
-): RequestCandidate[] => {
+): DataEffectCollector<RequestCandidate> => {
   const output: RequestCandidate[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (
       !t.isCallExpression(node) &&
       !t.isOptionalCallExpression(node) &&
@@ -266,6 +358,20 @@ const collectRequests = (
     if (identity === null) return;
     const method = identity.method;
     const endpoint = requestEndpoint(node);
+    // An options object may replace both protocol and agent. A callback cannot.
+    const options = node.arguments[1];
+    if (
+      endpoint !== null &&
+      URL.canParse(endpoint) &&
+      (method === "get" || method === "request") &&
+      (options === undefined ||
+        t.isFunctionExpression(options) ||
+        t.isArrowFunctionExpression(options))
+    ) {
+      const protocol = semanticDefaultHttpProtocol(node.callee, context.state);
+      if (protocol !== undefined && new URL(endpoint).protocol !== protocol)
+        return;
+    }
     // `http.get`/`http.request` parse a string target with `new URL` before the
     // request exists, so a literal that is not an absolute URL throws
     // `ERR_INVALID_URL` synchronously — an options object cannot rescue it.
@@ -277,6 +383,9 @@ const collectRequests = (
       !URL.canParse(endpoint)
     )
       return;
+    // `http`/`https` validate `options.method` before the request exists, so a literal
+    // outside the token class throws from the call itself.
+    if (rejectsHttpMethodLiteral(node, method, context.state)) return;
     output.push({
       node,
       operation: {
@@ -302,8 +411,8 @@ const collectRequests = (
         resolution: endpoint === null ? "partial" : "complete",
       },
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 /**
@@ -362,10 +471,9 @@ const settlesToResponse = (
 };
 
 const collectResponseConsumers = (
-  program: t.Program,
   context: TraversalContext,
   requests: readonly RequestCandidate[],
-): JavaScriptSemanticRequestOperation[] => {
+): DataEffectCollector<JavaScriptSemanticRequestOperation> => {
   const requestsByBinding = new Map<string, RequestCandidate[]>();
   for (const request of requests) {
     const bindingIds = [
@@ -383,7 +491,7 @@ const collectResponseConsumers = (
     }
   }
   const output: JavaScriptSemanticRequestOperation[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const member = memberCallee(node);
     if (member === null || !t.isIdentifier(member.object)) return;
@@ -443,19 +551,17 @@ const collectResponseConsumers = (
         .sort(compareUnicodeCodePoints),
       endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
       fields: [],
-      resolution:
-        uniqueRequest === undefined || otherKinds ? "partial" : "complete",
+      resolution: !soleWrite || otherKinds ? "partial" : "complete",
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 const collectBoundaries = (
-  program: t.Program,
   context: TraversalContext,
-): JavaScriptSemanticBoundaryOperation[] => {
+): DataEffectCollector<JavaScriptSemanticBoundaryOperation> => {
   const output: JavaScriptSemanticBoundaryOperation[] = [];
-  traverseWithContext(program, context, (node) => {
+  const visit = (node: t.Node): void => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const details = boundaryDetails(node, context.state);
     if (details === null) return;
@@ -469,8 +575,8 @@ const collectBoundaries = (
       resultBindingId: outerAssignedBinding(node, context),
       resolution: details.resolution,
     });
-  });
-  return output;
+  };
+  return { output, visit };
 };
 
 const boundaryDetails = (

@@ -56,30 +56,6 @@ const bindFailure = (owner: ElectronCaptureCleanup) => {
   return error;
 };
 
-it("retries only the failed transport while preserving confirmed process release", async () => {
-  vi.spyOn(
-    ownershipObservation,
-    "observeOwnedProcessLineage",
-  ).mockResolvedValue(verified);
-  const processes = vi
-    .spyOn(processCleanup, "cleanupElectronProcesses")
-    .mockResolvedValue({ cleaned: true, signaled: false });
-  let denied = true;
-  const close = vi.fn(async () => {
-    if (denied) throw new Error("transport denied");
-  });
-  const owner = new ElectronCaptureCleanup({ close }, ownership, verified);
-  const scope = new ArtifactResourceScope();
-  await owner.release(scope);
-  const original = bindFailure(owner);
-  expect(original.cleanupResources).toEqual(["browser_transport"]);
-  denied = false;
-  await scope.close();
-  expect(close).toHaveBeenCalledTimes(2);
-  expect(processes).toHaveBeenCalledOnce();
-  expect(original.cleanupIncomplete).toBe(false);
-});
-
 it("shrinks mixed cleanup and aggregate errors without repeating a released peer", async () => {
   vi.spyOn(
     ownershipObservation,

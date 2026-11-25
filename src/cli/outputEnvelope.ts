@@ -21,10 +21,11 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
-import { estimateTokenCount, sliceByTokens } from "tokenx";
+import { estimateTokenCount } from "tokenx";
 
-import type { CliOutputFormat } from "../cliOutput.js";
-import { formatCliOutput } from "./cliOutputFormatter.js";
+import { renderCliDocument, type CliOutputFormat } from "./cliOutput.js";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
+import { formatTokenWindow } from "./tokenWindow.js";
 
 /** Suggested commands that follow a document. */
 export interface CallToAction {
@@ -56,7 +57,10 @@ const humanError = ({ code, message }: CliFailure): string =>
   `${code === "UNKNOWN" || code === "COMMAND_NOT_FOUND" ? "Error" : `Error (${code})`}: ${message}`;
 
 /** A blank line, the description, then each command with its aligned comment. */
-const humanCallToAction = ({ description, commands }: CallToAction): string => {
+export const formatCliCallToAction = ({
+  description,
+  commands,
+}: CallToAction): string => {
   const width = Math.max(...commands.map(({ command }) => command.length));
   return [
     "",
@@ -72,30 +76,6 @@ const humanCallToAction = ({ description, commands }: CallToAction): string => {
 const line = (text: string): string =>
   text.endsWith("\n") ? text : `${text}\n`;
 
-const tokenWindow = (
-  text: string,
-  { tokenLimit, tokenOffset }: EnvelopePresentation,
-):
-  | { readonly truncated: false; readonly text: string }
-  | {
-      readonly truncated: true;
-      readonly text: string;
-      readonly nextOffset: number | undefined;
-    } => {
-  if (tokenLimit === undefined && tokenOffset === undefined)
-    return { truncated: false, text };
-  const total = estimateTokenCount(text);
-  const offset = tokenOffset ?? 0;
-  const end = tokenLimit === undefined ? total : offset + tokenLimit;
-  if (offset === 0 && end >= total) return { truncated: false, text };
-  const shown = Math.min(end, total);
-  return {
-    truncated: true,
-    text: `${sliceByTokens(text, offset, end)}\n[truncated: showing tokens ${offset}–${shown} of ${total}]`,
-    nextOffset: shown < total ? shown : undefined,
-  };
-};
-
 /**
  * Render a failure the dispatcher reports itself, such as an unknown command.
  * A person on a terminal reads the error and the suggested commands as text;
@@ -108,19 +88,45 @@ export const renderFailure = (
     command,
     duration,
   }: { readonly command: string; readonly duration: string },
-  cta: CallToAction,
+  cta: CallToAction | undefined,
   presentation: EnvelopePresentation,
 ): string => {
-  if (presentation.human && !presentation.fullOutput)
-    return line(humanError(failure)) + line(humanCallToAction(cta));
   const { format } = presentation;
-  if (presentation.tokenCount)
-    return line(String(estimateTokenCount(formatCliOutput(failure, format))));
-  const meta = { command, cta, duration };
+  const encode = (value: unknown): string =>
+    renderCliDocument(value, format, process.stdout.isTTY === true).replace(
+      /\n$/u,
+      "",
+    );
+  const meta = { command, ...(cta === undefined ? {} : { cta }), duration };
+  const bare = cta === undefined ? failure : { ...failure, cta };
+  if (format === "jsonl")
+    return renderCliDocument(
+      jsonLinesErrorRecord(
+        presentation.fullOutput ? { ok: false, error: failure, meta } : bare,
+      ),
+      "jsonl",
+      false,
+    );
+  if (presentation.tokenCount) {
+    const document = presentation.fullOutput
+      ? { ok: false, error: failure, meta }
+      : bare;
+    return line(String(estimateTokenCount(line(encode(document)))));
+  }
+  if (
+    presentation.human &&
+    !presentation.fullOutput &&
+    presentation.tokenLimit === undefined &&
+    presentation.tokenOffset === undefined
+  )
+    return (
+      line(humanError(failure)) +
+      (cta === undefined ? "" : line(formatCliCallToAction(cta)))
+    );
   if (presentation.fullOutput) {
-    const window = tokenWindow(formatCliOutput(failure, format), presentation);
+    const window = formatTokenWindow(encode(failure), presentation);
     return line(
-      formatCliOutput(
+      encode(
         window.truncated
           ? {
               ok: false,
@@ -133,12 +139,8 @@ export const renderFailure = (
               },
             }
           : { ok: false, error: failure, meta },
-        format,
       ),
     );
   }
-  return line(
-    tokenWindow(formatCliOutput({ ...failure, cta }, format), presentation)
-      .text,
-  );
+  return line(formatTokenWindow(encode(bare), presentation).text);
 };

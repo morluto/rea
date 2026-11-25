@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ghidraProfileInstallationHost } from "./GhidraInstallation.fixture.js";
+import { SUPPORTED_GHIDRA_JAVA_MAJOR } from "./GhidraReleasePolicy.js";
 import { inspectGhidraInstallation } from "./GhidraInstallation.js";
 import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import { describe, expect, it, afterEach } from "vitest";
@@ -238,11 +239,8 @@ it.each([
 // This inert JVM stand-in exercises the real probe process boundary and doctor
 // projection. Its scalar format matches OpenJDK LauncherHelper.printPropertyValue.
 it.skipIf(process.platform === "win32").each([
-  { suffix: "", newline: "\n" },
   { suffix: " ", newline: "\n" },
-  { suffix: "\t", newline: "\n" },
-  { suffix: " \t", newline: "\n" },
-  { suffix: " ", newline: "\r\n" },
+  { suffix: " \t", newline: "\r\n" },
 ])(
   "preserves JDK home and doctor registration with property framing %j",
   async ({ suffix, newline }) => {
@@ -253,7 +251,7 @@ it.skipIf(process.platform === "win32").each([
     const properties = [
       "Property settings:",
       `    java.home = ${home}`,
-      "    java.version = 21.0.11",
+      `    java.version = ${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}.0.1`,
       "    java.vm.name = OpenJDK 64-Bit Server VM",
       `    os.arch = ${process.arch === "arm64" ? "aarch64" : "amd64"}`,
       `    os.name = ${process.platform === "darwin" ? "Mac OS X" : "Linux"}`,
@@ -284,6 +282,21 @@ it.skipIf(process.platform === "win32").each([
     });
   },
 );
+
+it.each([
+  { suffix: "\t", newline: "\n" },
+  { suffix: " \t", newline: "\n" },
+  { suffix: " ", newline: "\r\n" },
+])("reads exact JDK home from property framing %j", ({ suffix, newline }) => {
+  const home = `/selected/jdk${suffix}`;
+  expect(
+    probe({
+      stdout: Buffer.from(
+        [`    java.home = ${home}`, "    java.version = 21", ""].join(newline),
+      ),
+    }),
+  ).toMatchObject({ ok: true, value: { home } });
+});
 
 it.each(["java.home=/selected/jdk", "java.home =\t/selected/jdk"])(
   "keeps nonstandard property framing unresolved: %s",

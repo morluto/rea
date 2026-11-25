@@ -42,6 +42,7 @@ it("applies the ordering rule to domain production files and excludes tests", as
     process.execPath,
     [
       resolve("node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
       "-c",
       config,
       "--format",

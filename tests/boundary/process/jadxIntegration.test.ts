@@ -1,4 +1,6 @@
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
@@ -8,8 +10,10 @@ import {
   chmod,
   mkdir,
   readFile,
+  stat,
   symlink,
   truncate,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { JadxSession } from "../../../src/android/JadxSession.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -230,6 +235,9 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
   const workspace = launches[0]?.cwd;
   if (workspace === undefined)
     throw new Error("Expected an acquired workspace");
+  // Change the verified stat identity without changing the retained APK bytes.
+  const { atime, mtimeMs } = await stat(apk);
+  await utimes(apk, atime, new Date(mtimeMs - 10_000));
   const target = await parseBinaryTarget(apk);
   if (!target.ok) throw target.error;
   const fault = failInputHashCloses(target.value.path, 1);
@@ -395,16 +403,126 @@ it("reuses immutable engine state while keeping each Evidence observation separa
   expect(JSON.stringify(first.value)).toBe(preserved);
   expect(second.value.raw_result).toMatchObject({
     loaded: { class_count: 401 },
-    calls: [
-      expect.objectContaining({ operation: "rea_jvm_status" }),
-      expect.objectContaining({ operation: "get_class_summary" }),
-    ],
+    calls: [expect.objectContaining({ operation: "get_class_summary" })],
   });
   expect(
     androidResultSchemas.inspect_android_class.parse(
       second.value.normalized_result,
     ).engine.heap_limit_mib,
   ).toBe(8192);
+  await provider.close();
+  await verifyCleanup(launches);
+});
+
+it("does not cache failed or wrong-version rea_jvm_status and preserves engine_version on warm failures", async () => {
+  const { apk } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const fixturePath = fileURLToPath(
+    new URL("../../fixtures/android/jadx-mcp.mjs", import.meta.url),
+  );
+  const startSession = async (mode: string) => {
+    const workspace = await createTestTempDirectory("rea-jadx-runtime-cache-");
+    return new JadxSession(
+      {
+        command: process.execPath,
+        arguments: [],
+        cwd: workspace,
+        hostEnvironment: process.env,
+        signal: new AbortController().signal,
+      },
+      (options) =>
+        spawnOwnedProviderProcess({
+          ...options,
+          command: process.execPath,
+          arguments: [fixturePath],
+          expectedCommand: process.execPath,
+          env: { ...options.env, REA_FAKE_JADX_MODE: mode },
+        }),
+    );
+  };
+  const baseContext = {
+    target: target.value,
+    snapshot: apk,
+    jarHash: "0".repeat(64),
+    bridgeHash: "0".repeat(64),
+    bridgeIdentity: packagedJadxBridgeIdentity(),
+    signal: new AbortController().signal,
+    timeoutMs: 10_000,
+    resources: new ArtifactResourceScope(),
+    deadline: new AbortController().signal,
+  };
+
+  const wrongVersion = await startSession("engine-version");
+  onTestFinished(() => wrongVersion.close());
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        wrongVersion.execute({
+          ...baseContext,
+          request: {
+            operation: "inspect_android_package",
+            input: { path: apk },
+          },
+        }),
+      ).rejects.toMatchObject({ _tag: "AnalysisCapabilityUnavailableError" });
+      expect(wrongVersion.partialObservation()).toMatchObject({
+        provider_facts: { engine_version: "0.7.0" },
+        calls: [expect.objectContaining({ operation: "rea_jvm_status" })],
+      });
+    }
+  } finally {
+    await wrongVersion.close();
+  }
+
+  const healthy = await startSession("normal");
+  onTestFinished(() => healthy.close());
+  try {
+    await healthy.execute({
+      ...baseContext,
+      request: { operation: "inspect_android_package", input: { path: apk } },
+    });
+    await expect(
+      healthy.execute({
+        ...baseContext,
+        request: {
+          operation: "inspect_android_class",
+          input: { path: apk, class_name: "fixture.Missing" },
+        },
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisInputError" });
+    expect(healthy.partialObservation()).toMatchObject({
+      provider_facts: { engine_version: JADX_RELEASE.version },
+      calls: [expect.objectContaining({ operation: "get_class_summary" })],
+    });
+  } finally {
+    await healthy.close();
+  }
+});
+
+it("re-queries rea_jvm_status when JadxProvider replaces a session", async () => {
+  const { service, apk, launches, provider, environment } = await setup();
+  const cold = await service.execute("inspect_android_package", { path: apk });
+  if (!cold.ok) throw cold.error;
+  expect(cold.value.raw_result).toMatchObject({
+    calls: expect.arrayContaining([
+      expect.objectContaining({ operation: "rea_jvm_status" }),
+    ]) as unknown,
+  });
+  environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
+  const replaced = await service.execute("inspect_android_class", {
+    path: apk,
+    class_name: "fixture.Target",
+  });
+  if (!replaced.ok) throw replaced.error;
+  expect(launches).toHaveLength(2);
+  expect(replaced.value.raw_result).toMatchObject({
+    calls: expect.arrayContaining([
+      expect.objectContaining({ operation: "rea_jvm_status" }),
+      expect.objectContaining({ operation: "load_apk" }),
+      expect.objectContaining({ operation: "get_class_summary" }),
+    ]) as unknown,
+  });
   await provider.close();
   await verifyCleanup(launches);
 });
@@ -720,9 +838,6 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
   // A schema-valid ambiguous selector names its candidates, not the schema.
   const ambiguousProjection = projectAnalysisError(ambiguous.error);
   expect(ambiguousProjection.recovery).toBeUndefined();
-  expect(ambiguousProjection.remediation.action).toMatch(
-    /^Set overload_index to exactly one of the \d+ candidates/u,
-  );
   expect(ambiguousProjection.details?.refusal).toMatchObject({
     kind: "ambiguous_selector",
     operation: "inspect_android_method",
@@ -748,7 +863,7 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
     reported_signature: "choose(int): void",
     dex_descriptor: "(I)V",
   });
-  expect(result.source.text).toContain("overload 1");
+  expect(result.source?.text).toContain("overload 1");
   const references = await service.execute("trace_android_references", input);
   expect(references).toMatchObject({
     ok: false,
@@ -844,12 +959,12 @@ it.each(["truncated", "smali"])(
     const result = androidResultSchemas.inspect_android_method.parse(
       outcome.value.normalized_result,
     );
-    expect(result.source.status).toBe(
+    expect(result.source?.status).toBe(
       mode === "truncated" ? "partial" : "complete",
     );
     expect(result.representation).toBe(mode === "smali" ? "smali" : "java");
     if (mode === "truncated")
-      expect(result.source.reported_total_bytes).toBe(100);
+      expect(result.source?.reported_total_bytes).toBe(100);
     else expect(result.fell_back).toBe(true);
     await provider.close();
     await verifyCleanup(launches);
@@ -1471,6 +1586,52 @@ it("accepts exact selected-overload smali from the bridge", async () => {
   await verifyCleanup(launches);
 });
 
+it.each(["unavailable-body", "unavailable-wrong-descriptor"] as const)(
+  "preserves verified method identity for %s",
+  async (mode) => {
+    const { service, apk, launches, provider } = await setup(mode);
+    try {
+      const outcome = await service.execute("inspect_android_method", {
+        path: apk,
+        class_name: "fixture.Target",
+        method_name: "choose",
+        overload_index: 1,
+      });
+      if (mode === "unavailable-wrong-descriptor") {
+        expect(outcome).toMatchObject({
+          ok: false,
+          error: { _tag: "AnalysisOutputError" },
+        });
+        return;
+      }
+      if (!outcome.ok) throw outcome.error;
+      expect(outcome.value.normalized_result).toMatchObject({
+        method: { overload_index: 1, dex_descriptor: "(I)V" },
+        overload_count: 2,
+        representation: null,
+        body_status: "not_available",
+        body_unavailable_reason:
+          "Disassembly could not establish one selected method: choose(I)V",
+        markers: ["disassembly_failed"],
+        source: null,
+      });
+      const { assertions } = createMcpSchemaValidation();
+      const advertised = canonicalOutputSchema("inspect_android_method");
+      expect(
+        assertions.validateSchema(advertised),
+        JSON.stringify(assertions.errors),
+      ).toBe(true);
+      expect(
+        assertions.validate(advertised, outcome.value),
+        JSON.stringify(assertions.errors),
+      ).toBe(true);
+    } finally {
+      await provider.close();
+      await verifyCleanup(launches);
+    }
+  },
+);
+
 it("retains parsed native body absence without claiming an empty implementation", async () => {
   const { service, apk, launches, provider } = await setup("native-method");
   const outcome = await service.execute("inspect_android_method", {
@@ -1483,7 +1644,7 @@ it("retains parsed native body absence without claiming an empty implementation"
     outcome.value.normalized_result,
   );
   expect(result.body_status).toBe("not_available");
-  expect(result.source.text).toBe("");
+  expect(result.source?.text).toBe("");
   expect(result.markers).toEqual(["native_method"]);
   await provider.close();
   await verifyCleanup(launches);

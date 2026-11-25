@@ -1,18 +1,13 @@
-import {
-  mkdtemp,
-  open,
-  rm,
-  writeFile,
-  type FileHandle,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, writeFile, type FileHandle } from "node:fs/promises";
+
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { LldbReadbackFiles } from "../../../../src/native/LldbReadbackFiles.js";
 
 it("bounds PID readback while retaining newline-terminated producer fixtures", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-lldb-pid-"));
+  const directory = await createTestTempDirectory("rea-lldb-pid-");
   const values = [
     ["max-safe.pid", String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
     [
@@ -84,6 +79,5 @@ it("bounds PID readback while retaining newline-terminated producer fixtures", a
     readSpy.mockRestore();
     readFileSpy.mockRestore();
     await files.retryCleanup();
-    await rm(directory, { recursive: true, force: true });
   }
 });

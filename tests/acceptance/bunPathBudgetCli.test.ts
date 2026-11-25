@@ -31,7 +31,7 @@ for (const shared of [false, true])
     if (!shared) {
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        code: "truncated",
+        code: "partial",
         retryable: true,
         details: {
           reason: "limit",

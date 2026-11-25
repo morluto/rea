@@ -17,6 +17,37 @@ const format = z.enum([
 ]);
 const index = z.int().min(0);
 
+/**
+ * Why a dconf database view was not read. Callers branch on `kind` and
+ * `code`; `view_error` is the short explanation.
+ */
+export const DCONF_VIEW_FAILURE_KINDS = [
+  "not-installed",
+  "launch-failed",
+  "exited",
+  "descriptor-unavailable",
+  "profile-write",
+  "read-failed",
+  "timeout",
+  "output-limit",
+  "memory-limit",
+  "protocol",
+  "runtime-exhausted",
+  "resource-signal",
+] as const;
+
+const dconfViewFailureSchema = z.strictObject({
+  kind: z.enum(DCONF_VIEW_FAILURE_KINDS),
+  /** Host errno name, such as `EACCES`, or null when the failure was not an errno. */
+  code: z.string().nullable(),
+  /** Child status when `kind` is `exited` or `runtime-exhausted`. */
+  exit_code: z.int().nullable(),
+  /** Executable that was selected, or null before one was chosen. */
+  command: z.string().nullable(),
+  /** Trimmed child stderr, or null when the child wrote none. */
+  stderr: z.string().nullable(),
+});
+
 /** One version of a state file: its content at a checkpoint, read into JSON. */
 const versionSchema = z.strictObject({
   /** Position of the checkpoint in the capture; names can repeat. */
@@ -33,7 +64,12 @@ const versionSchema = z.strictObject({
   view: jsonValueSchema.nullable(),
   /** Why no view was read, or null when the view (possibly `null`) was read. */
   view_error: z.string().nullable(),
+  /** Present when a dconf reader classified the failure. */
+  view_failure: dconfViewFailureSchema.optional(),
 });
+
+export type DconfViewFailure = z.infer<typeof dconfViewFailureSchema>;
+export type DconfViewFailureKind = DconfViewFailure["kind"];
 
 /** How a state file changed between two consecutive versions. */
 const changeSchema = z.strictObject({

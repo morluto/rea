@@ -472,7 +472,8 @@ it.each(["descriptor-first", "workspace-first"])(
     const root = await createTestTempDirectory("rea-firmware-mixed-owner-");
     const path = join(root, "input.bin");
     await writeFile(path, "firmware bytes");
-    fault.selected = "report.json";
+    // Keep the retained descriptor outside the workspace so either owner can release first.
+    fault.selected = path;
     let workspaceBlocked = true;
     let workspacePath = "";
     const close = PrivateRuntimeRoot.prototype.close;
@@ -500,7 +501,27 @@ it.each(["descriptor-first", "workspace-first"])(
     });
     expect(blocked).toMatchObject({
       ok: false,
-      error: { cleanupIncomplete: true },
+      error: {
+        operation: "close_firmware",
+        cleanupIncomplete: true,
+        cause: expect.any(AggregateError),
+        diagnostics: {
+          failures: expect.arrayContaining([
+            {
+              engine: "firmware",
+              operation: "close_firmware",
+              resources: [path],
+              reason: "controlled firmware descriptor close failure",
+            },
+            {
+              engine: "binwalk",
+              operation: "inspect_firmware_regions",
+              resources: [workspacePath],
+              reason: "controlled workspace cleanup failure",
+            },
+          ]),
+        },
+      },
     });
     expect(fault.handles).toHaveLength(1);
     if (order === "descriptor-first") fault.blocked.clear();
@@ -508,6 +529,10 @@ it.each(["descriptor-first", "workspace-first"])(
     const retry = await provider.close().catch((cause: unknown) => cause);
     expect(retry).toBeInstanceOf(AnalysisError);
     expect(result.error.cleanupIncomplete).toBe(true);
+    if (!blocked.ok)
+      expect(blocked.error.cleanupResources).toEqual([
+        order === "descriptor-first" ? workspacePath : path,
+      ]);
     if (order === "workspace-first")
       await expect(access(workspacePath)).rejects.toMatchObject({
         code: "ENOENT",
@@ -768,7 +793,8 @@ it("preserves primitive cancellation before publication commit and rolls back th
   await fixture.context.files.close();
 });
 
-it.each(["caller", "deadline"])(
+// This fixture cancels from the directory fsync that Windows intentionally skips.
+it.skipIf(process.platform === "win32").each(["caller", "deadline"])(
   "preserves %s cancellation during directory sync plus failed close and rollback",
   async (kind) => {
     const controller = new AbortController();
@@ -971,14 +997,7 @@ it.each(["source-first", "tree-first"])(
     const path = join(fixture.context.workspacePath, "payload.bin");
     const bytes = Buffer.from("published bytes");
     await writeFile(path, bytes);
-    const hash = fixture.context.files.hash.bind(fixture.context.files);
-    vi.spyOn(fixture.context.files, "hash").mockImplementation(
-      async (...args) => {
-        const digest = await hash(...args);
-        fault.selected = "payload.bin";
-        return digest;
-      },
-    );
+    fault.selected = "payload.bin";
     const error = await publishFirmwareExtraction({
       ...fixture.context,
       entries: [

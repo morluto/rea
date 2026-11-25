@@ -53,6 +53,12 @@ export const nativeEvidenceEffects = toolEffects({
   mutatesSession: true,
   launchesProcess: true,
 });
+/** Records Evidence and may launch pinned helpers or write temporary files (e.g. DMG mount). */
+export const artifactInspectionEffects = toolEffects({
+  mutatesSession: true,
+  launchesProcess: true,
+  writesFilesystem: true,
+});
 /** Records Evidence and reaches the network through a browser. */
 export const browserEvidenceEffects = toolEffects({
   mutatesSession: true,
@@ -127,7 +133,7 @@ export const annotationsFromEffects = (
  * failure reasons and availability diagnostics) and the adb and apktool
  * client probes (version output and stderr excerpts) can.
  */
-export const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
+const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
   "inspect_analysis_settings",
   "update_analysis_settings",
   "export_evidence_bundle",

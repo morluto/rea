@@ -84,7 +84,7 @@ request ceiling.
 | Symbols          | `list_names` includes address-bearing memory and external symbols, including dynamic symbols, while excluding variable and no-address namespace records. Each item reports primary, dynamic, external, symbol type, and source facts.                                                           |
 | Procedures       | Both non-external and external functions are listed. A local thunk remains distinct from its resolved target; exact and qualified name lookup fails on ambiguity rather than guessing.                                                                                                          |
 | Strings          | Only Ghidra-defined string `Data` is observed. Items report charset, byte length, and whether a required null terminator is missing. The API cannot distinguish a present terminator from fixed/Pascal layouts when no terminator is missing, so that state is named `present_or_not_required`. |
-| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations.                                                                                                                                            |
+| Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations, after any memory-map preparation a lane documents, such as the [RISC-V load layout](ghidra-riscv.md#load-layout).                          |
 | Inventory        | Procedure, symbol, and string listings plus searches return the complete matching collection in one response; callers do not provide offsets or result-count limits.                                                                                                                            |
 | Search           | Literal and Java-regex searches return every match in the immutable provider-defined inventory; string search does not cover every text sequence in artifact bytes. Search waits for a reply or caller cancellation; there are no caller-supplied offsets or result-count limits.               |
 | Analysis state   | The socket is exposed only after default auto-analysis completes. Established operations wait for their reply or caller cancellation; there is no fixed response-size ceiling.                                                                                                                  |
@@ -148,6 +148,9 @@ PDB identity or complete symbol-coverage attestation, and retains an inline
 coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
 budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
 are omitted with an explicit resource limitation, rather than truncated.
+When the CodeView path's text encoding is unknown, the caveat identifies that
+uncertainty and retains the original path bytes in hex when they fit the inline
+locator budget. This observation is independent of Ghidra's reported filename.
 
 Original names and types may be missing even when auto-analysis completes.
 An empty name search does not establish that a function is absent; use
@@ -315,8 +318,8 @@ Runtime updates apply to newly accepted operations on the existing Program.
 They preserve accepted budgets and do not clear cleanup blockers or change the
 client deadline. Transient decompile timeout failures remain uncached so the
 same function can be retried after raising the limit. See the
-[settings design](../design/limits-and-recovery.md) for snapshots, precedence,
-and provider integration.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
 of the packaged bridge scripts. A snapshot replays only under the same
@@ -372,19 +375,23 @@ genuine no-return imports keep their flags. Analysis profiles version this repai
 so snapshots produced before it are not reused. Windows P0 does not run it.
 
 Ghidra applies most loader relocations, but it cannot apply some, such as an
-ELF copy relocation into RELRO (for example musl's `stderr`). Those destinations
-keep their file bytes while the runtime loader writes another object's value.
-Before decompiling, a fresh non-Windows import marks each loaded, initialized,
-non-writable block that holds such an unapplied relocation destination volatile
-in the ephemeral database, so the decompiler cannot fold the on-disk value into
-a constant. Applied relocations such as GOT entries stay foldable, so external
-calls keep their names. Permissions and source `FileBytes` are unchanged; the
-whole block is affected because Ghidra sets volatility per block. A procedure
-that reads an unapplied destination adds a limitation naming the relocation.
-Windows P0 and existing projects (`REA_GHIDRA_PROJECT_PATH`) have no
-database-mutation authority: they add the same limitation, but their pseudocode
-may still show the file-backed value. ELF relocatable objects and core files are
-excluded. Analysis profiles version this behavior.
+ELF copy relocation into RELRO (for example musl's `stderr`) or a TLS slot that
+only the runtime loader fills. Those destinations keep their file bytes while
+the runtime loader writes another value. Before decompiling, a fresh
+non-Windows import marks each such destination in a loaded, initialized,
+non-writable block volatile in the ephemeral database, so the decompiler
+cannot fold the on-disk value into a constant. Volatility is set on the
+destination's own data item (an undefined item of the relocation's length is
+created where nothing is defined), so applied relocations in the same block,
+such as the GOT entries beside a TLS slot, stay foldable and external calls
+keep their names. Only when an instruction or a data item starting before the
+destination occupies it is the whole block marked volatile instead.
+Permissions and source `FileBytes` are unchanged. A procedure that reads an
+unapplied destination adds a limitation naming the relocation. Windows P0 and
+existing projects (`REA_GHIDRA_PROJECT_PATH`) have no database-mutation
+authority: they add the same limitation, but their pseudocode may still show
+the file-backed value. ELF relocatable objects and core files are excluded.
+Analysis profiles version this behavior.
 
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native
@@ -392,9 +399,13 @@ DWARF 4 type-layout object. It proves the admitted operations, external function
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup against real Ghidra 12.1.4. Unit fixtures separately
-cover startup deadlines, process exit, queued cancellation, and malformed wire
-output.
+process/project cleanup. Its namespace-annotation check also needs the host's
+GNU demangler native component (`demangler_gnu_v2_41` under
+`GPL/DemanglerGnu/os/<platform>/`); the Ghidra 12.2 release ships it only for
+`linux_x86_64` and `win_x86_64`, and REA does not build it. Recorded on Ghidra
+12.1.4 (no longer accepted); not yet re-run on 12.2. A 12.2 run on macOS arm64
+stopped at that missing demangler. Unit fixtures separately cover startup deadlines, process
+exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64
 Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set

@@ -30,6 +30,7 @@ import {
   closeEnhancedToolResources,
   connect as connectFixedAnalysis,
 } from "./enhancedToolsHarness.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
 const MAIN_BODY = "int main(void) { return 0; }";
@@ -257,7 +258,10 @@ it.each(["compact"] as const)(
         batch: { total: 6, succeeded: 4, failed: 2 },
         source_provider: parent.provider,
         source_analysis_profile_digest: parent.analysis_profile?.digest,
-        decompiling_provider: { id: "ghidra", version: "12.1.4" },
+        decompiling_provider: {
+          id: "ghidra",
+          version: SUPPORTED_GHIDRA_VERSION,
+        },
         procedures: {
           distinct_resolved: 3,
           unknown_identity: 1,
@@ -476,6 +480,7 @@ it("recovers oversized batches and pages through smaller selections of the paren
   const first = constraint(
     await harness.reply("batch_decompile", {
       addresses: ["main", "emoji", "bodyless"],
+      detail: "complete",
     }),
   );
   const source = first.arguments.source;

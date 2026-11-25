@@ -2,6 +2,22 @@ import { posix, win32 } from "node:path";
 
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
+/**
+ * Whether a caller-selected path names one location without the working
+ * directory. Win32 calls `\tools\x.exe` absolute, but it is rooted on the
+ * current drive, and `C:tools` follows that drive's directory. Only a drive
+ * root (`C:\`) or a complete UNC or device root (`\\server\share\`,
+ * `\\?\C:\`) is independent; win32 parses `///tools`, `\\\tools` and a bare
+ * `\\server` with a single-separator root on the current drive.
+ */
+export const isQualifiedCallerPath = (
+  path: string,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): boolean =>
+  platform === "win32"
+    ? win32.isAbsolute(path) && win32.parse(path).root.length > 1
+    : posix.isAbsolute(path);
+
 /** Append a relative child without collapsing POSIX symlink/.. traversal.
  * Preserve relative parents too: configuration admission owns absolute-path validation.
  * The platform defaults to the running host because most callers then open the

@@ -17,111 +17,62 @@ const input = {
   importMap: null,
   specifiers: ["./dep.js"],
 };
-/** The browser connection completes after the caller cancelled acquisition. */
-const resolveWithLateBrowserConnection = async (
-  cleanupFails: boolean,
-): Promise<void> => {
-  const controller = new AbortController();
-  let closed = false;
-  const provider = new NativeModuleResolver(
-    { REA_BROWSER_EXECUTABLE: "/browser" },
-    () => {
-      controller.abort();
-      return Promise.resolve({
+describe("native module resolver cleanup ownership", () => {
+  it("awaits and closes the late browser connection after cancellation", async () => {
+    for (const cleanupFails of [false, true]) {
+      const controller = new AbortController();
+      const reason = { request: "cancelled during browser handshake" };
+      const cleanup = controlledCleanup({ refused: cleanupFails });
+      const browser = {
         version: () => "fixture",
         newContext: () => {
-          throw new Error("must not acquire context");
+          throw new Error("Unexpected context acquisition after cancellation");
         },
-        close: () => {
-          closed = true;
-          if (cleanupFails)
-            return Promise.reject(new Error("fixture cleanup refusal"));
-          return Promise.resolve();
-        },
+        close: () => cleanup.close(),
+      };
+      const handshake = phaseGate<void, typeof browser>();
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: "/browser" },
+        () => handshake.hold(),
+      );
+      const pending = provider.resolve(input, { signal: controller.signal });
+      onTestFinished(async () => {
+        handshake.release(browser);
+        cleanup.allow();
+        await pending.catch(() => undefined);
+        await provider.close();
       });
-    },
-  );
-  const result = await provider.resolve(input, {
-    signal: controller.signal,
-  });
-  expect(closed).toBe(true);
-  if (result.ok) throw new Error("expected cancelled result");
-  const projected = projectAnalysisError(result.error);
-  expect(projected.code).toBe(
-    cleanupFails ? "cleanup_incomplete" : "cancelled",
-  );
-  if (cleanupFails) {
-    expect(projected.details).toMatchObject({
-      diagnostics: { primary_error: { code: "cancelled" } },
-    });
-  }
-};
-describe("native module resolver cleanup ownership", () => {
-  it("closes a browser whose connection completes after cancellation", () =>
-    resolveWithLateBrowserConnection(false));
-  it("reports failed cleanup of a browser whose connection completes after cancellation", () =>
-    resolveWithLateBrowserConnection(true));
-  it("returns cleanup_incomplete when owned cleanup fails after an engine error", async () => {
-    let launches = 0;
-    let closes = 0;
-    let cleanupAllowed = false;
-    const provider = new NativeModuleResolver(
-      { REA_BROWSER_EXECUTABLE: "/browser" },
-      () => {
-        launches += 1;
-        return Promise.resolve({
-          version: () => "fixture",
-          newContext: () =>
-            Promise.reject(new Error("fixture context failure")),
-          close: async () => {
-            closes += 1;
-            if (!cleanupAllowed)
-              throw new Error("fixture owned cleanup refusal");
-          },
-        });
-      },
-    );
-    const result = await provider.resolve(input);
-    if (result.ok) throw new Error("expected cleanup failure");
-    expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(projectAnalysisError(result.error).details).toMatchObject({
-      diagnostics: {
-        primary_error: {
-          details: {
-            diagnostics: { error_message: "fixture context failure" },
-          },
-        },
-        cleanup_error: {
-          details: { diagnostics: { reason: "fixture owned cleanup refusal" } },
-        },
-      },
-    });
-    const blocked = await provider.resolve(input);
-    expect(blocked.ok).toBe(false);
-    if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(true);
-    expect(launches).toBe(1);
-    await expect(provider.close()).rejects.toMatchObject({
-      cleanupIncomplete: true,
-    });
-    cleanupAllowed = true;
-    await provider.close();
-    await provider.close();
-    expect(closes).toBe(4);
-    expect(launches).toBe(1);
-    expect(result.error.cleanupIncomplete).toBe(false);
-    expect(result.error.cleanupResources).toEqual([]);
-    if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(false);
+      await handshake.reached(pending, "browser handshake");
+      controller.abort(reason);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(await Promise.race([pending, null])).toBeNull();
+      handshake.release(browser);
+
+      const result = await pending;
+      if (result.ok) throw new Error("Expected cancelled result");
+      expect(cleanup.attempts).toBe(1);
+      expect((result.error.cleanupPrimary ?? result.error).cause).toBe(reason);
+      expect(projectAnalysisError(result.error).code).toBe(
+        cleanupFails ? "cleanup_incomplete" : "cancelled",
+      );
+      expect(result.error.cleanupResources).toEqual(
+        cleanupFails ? ["chromium-browser"] : [],
+      );
+      cleanup.allow();
+      await provider.close();
+      expect(cleanup.attempts).toBe(cleanupFails ? 2 : 1);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error).code).toBe("cancelled");
+    }
   });
 });
 
 describe("native module resolver cleanup retry", () => {
   it("retries retained browser cleanup before launching the next resolution", async () => {
     let launches = 0;
-    const cleanup = controlledCleanup({
-      refused: true,
-      failure: new Error("fixture owned cleanup refusal"),
-    });
+    const engineFailure = new Error("fixture context failure");
+    const closeFailure = new Error("fixture owned cleanup refusal");
+    const cleanup = controlledCleanup({ refused: true, failure: closeFailure });
     const retriedClose = phaseGate<number>();
     const completed = completedModuleResolverLauncher(input, async () => {});
     const provider = new NativeModuleResolver(
@@ -131,11 +82,11 @@ describe("native module resolver cleanup retry", () => {
         if (launches > 1) return completed(...args);
         return {
           version: () => "fixture",
-          newContext: () =>
-            Promise.reject(new Error("fixture context failure")),
+          newContext: () => Promise.reject(engineFailure),
           close: () => cleanup.close(() => retriedClose.hold(launches)),
         };
       },
+      "linux",
     );
     let retrying: ReturnType<NativeModuleResolver["resolve"]> | undefined;
     // Release the held close and join the gated request even when an
@@ -148,7 +99,29 @@ describe("native module resolver cleanup retry", () => {
     });
     const first = await provider.resolve(input);
     if (first.ok) throw new Error("expected retained browser cleanup");
-    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(first.error.cleanupResources).toEqual(["chromium-browser"]);
+    expect(first.error.cleanupPrimary).toMatchObject({
+      cause: engineFailure,
+      remediationAction: undefined,
+    });
+    expect(projectAnalysisError(first.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          primary_error: {
+            details: { diagnostics: { error_message: engineFailure.message } },
+          },
+          cleanup_error: {
+            details: { diagnostics: { reason: closeFailure.message } },
+          },
+        },
+      },
+    });
+    const blocked = await provider.resolve(input);
+    if (blocked.ok) throw new Error("expected another retained close refusal");
+    expect(blocked.error.cleanupResources).toEqual(["chromium-browser"]);
+    expect(projectAnalysisError(blocked.error).code).toBe("cleanup_incomplete");
+    expect(launches).toBe(1);
     cleanup.allow();
     retrying = provider.resolve(input);
     // The retained close is still running: no replacement browser yet.
@@ -160,47 +133,41 @@ describe("native module resolver cleanup retry", () => {
     retriedClose.release();
     const retried = await retrying;
     if (!retried.ok) throw retried.error;
-    expect(cleanup.attempts).toBe(2);
     expect(launches).toBe(2);
-    expect(first.error.cleanupIncomplete).toBe(false);
-    expect(first.error.cleanupResources).toEqual([]);
+    for (const { error } of [first, blocked]) {
+      expect(error.cleanupIncomplete).toBe(false);
+      expect(error.cleanupResources).toEqual([]);
+    }
+    await provider.close();
+    await provider.close();
+    expect(cleanup.attempts).toBe(3);
   });
 });
 
 describe("native module resolver shutdown admission", () => {
   it("awaits acquisition and cleanup while refusing queued work during shutdown", async () => {
-    let acquired: () => void = () => {
-      throw new Error("acquisition gate missing");
-    };
-    const acquiring = new Promise<void>((resolve) => {
-      acquired = resolve;
-    });
-    let release: () => void = () => {
-      throw new Error("release gate missing");
-    };
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const acquisition = phaseGate();
+    const cleanup = phaseGate();
     let launches = 0;
-    let closes = 0;
+    const completed = completedModuleResolverLauncher(input, () =>
+      cleanup.hold(),
+    );
     const provider = new NativeModuleResolver(
       { REA_BROWSER_EXECUTABLE: "/browser" },
-      async () => {
+      async (options) => {
         launches += 1;
-        acquired();
-        await released;
-        return {
-          version: () => "fixture",
-          newContext: () =>
-            Promise.reject(new Error("fixture context failure")),
-          close: async () => {
-            closes += 1;
-          },
-        };
+        await acquisition.hold();
+        return completed(options);
       },
     );
     const first = provider.resolve(input);
-    await acquiring;
+    onTestFinished(async () => {
+      acquisition.release();
+      cleanup.release();
+      await first;
+      await provider.close();
+    });
+    await acquisition.reached(first, "browser launch in progress");
     const queued = provider.resolve(input);
     const closing = provider.close();
     let closed = false;
@@ -209,65 +176,49 @@ describe("native module resolver shutdown admission", () => {
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-    release();
-    await first;
-    const blocked = await queued;
-    expect(blocked.ok).toBe(false);
-    if (!blocked.ok) {
+    acquisition.release();
+    await cleanup.reached(first, "physical browser close in progress");
+    expect(closed).toBe(false);
+    cleanup.release();
+    expect(await first).toMatchObject({ ok: true });
+    await closing;
+    expect(closed).toBe(true);
+    for (const blocked of [await queued, await provider.resolve(input)]) {
+      if (blocked.ok) throw new Error("expected shutdown admission refusal");
       expect(blocked.error.cleanupIncomplete).toBe(false);
       expect(blocked.error.cleanupResources).toEqual([]);
       expect(projectAnalysisError(blocked.error).code).toBe(
         "capability_unavailable",
       );
     }
-    await closing;
-    expect(closed).toBe(true);
-    expect([launches, closes]).toEqual([1, 1]);
-    const afterClose = await provider.resolve(input);
-    expect(afterClose.ok).toBe(false);
-    if (!afterClose.ok) {
-      expect(afterClose.error.cleanupIncomplete).toBe(false);
-      expect(afterClose.error.cleanupResources).toEqual([]);
-      expect(projectAnalysisError(afterClose.error).code).toBe(
-        "capability_unavailable",
-      );
-    }
+    expect(launches).toBe(1);
   });
 });
 
 describe("optional native resolution acquisition", () => {
-  it("does not load the browser engine when the selected operation lacks its configuration", async () => {
-    const provider = new NativeModuleResolver({}, () => {
-      throw new Error("must not launch");
-    });
-    const result = await provider.resolve(input);
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "capability_unavailable",
-        message: expect.stringContaining("REA_BROWSER_EXECUTABLE"),
-      });
-  });
-  it.each(["relative/chromium", ""])(
-    "retains an invalid selected browser path %j without launching",
-    async (executable) => {
+  it("distinguishes missing browser configuration from unusable selected paths", async () => {
+    for (const executable of [undefined, "relative/chromium", ""]) {
       const provider = new NativeModuleResolver(
         { REA_BROWSER_EXECUTABLE: executable },
         () => {
-          throw new Error("must not launch");
+          throw new Error("Unexpected browser launch");
         },
       );
       const result = await provider.resolve(input);
-      if (result.ok) throw new Error("expected configuration refusal");
+      if (result.ok) throw new Error("Expected configuration refusal");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "capability_unavailable",
-        details: {
-          reason: "invalid_browser_executable",
-          diagnostics: { executable },
-        },
+        message: expect.stringContaining("REA_BROWSER_EXECUTABLE"),
+        details:
+          executable === undefined
+            ? { reason: "missing_browser_executable" }
+            : {
+                reason: "invalid_browser_executable",
+                diagnostics: { executable },
+              },
       });
-    },
-  );
+    }
+  });
   it("does not acquire a browser after caller cancellation", async () => {
     const controller = new AbortController();
     const reason = { request: "opaque admission cancellation" };
@@ -327,26 +278,6 @@ describe("native resolution Chromium sandbox", () => {
       });
     },
   );
-
-  it("keeps the default recovery for engine failures after a sandboxed launch", async () => {
-    const provider = new NativeModuleResolver(
-      { REA_BROWSER_EXECUTABLE: "/browser" },
-      () =>
-        Promise.resolve({
-          version: () => "fixture",
-          newContext: () =>
-            Promise.reject(new Error("fixture context failure")),
-          close: () => Promise.resolve(),
-        }),
-      "linux",
-    );
-    const result = await provider.resolve(input);
-    if (result.ok) throw new Error("expected engine failure");
-    expect(result.error).toMatchObject({
-      remediationAction: undefined,
-      diagnostics: { error_message: "fixture context failure" },
-    });
-  });
 });
 
 describe("completed native resolution finalization", () => {
@@ -462,47 +393,42 @@ it.each([
 it.each(["caller", "deadline"] as const)(
   "attributes an in-flight SDK rejection to the owned %s stop",
   async (control) => {
+    const controller = new AbortController();
+    const reason = { request: "cancel active browser operation" };
+    const active = phaseGate<undefined, never>();
+    let closes = 0;
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      async () => ({
+        version: () => "controlled-browser",
+        newContext: () => active.hold(undefined),
+        close: async () => {
+          closes += 1;
+          active.reject(new Error("controlled SDK target closed"));
+        },
+      }),
+    );
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
-      const controller = new AbortController();
-      const reason = { request: "cancel active browser operation" };
-      let started!: () => void;
-      const active = new Promise<void>((resolve) => {
-        started = resolve;
-      });
-      let rejectCall!: (cause: unknown) => void;
-      let closes = 0;
-      const provider = new NativeModuleResolver(
-        { REA_BROWSER_EXECUTABLE: "/browser" },
-        async () => ({
-          version: () => "controlled-browser",
-          newContext: () => {
-            started();
-            return new Promise((_resolve, reject) => {
-              rejectCall = reject;
-            });
-          },
-          close: async () => {
-            closes += 1;
-            rejectCall(new Error("controlled SDK target closed"));
-          },
-        }),
-      );
       const pending = provider.resolve(input, { signal: controller.signal });
-      await active;
-      if (control === "caller") controller.abort(reason);
-      else await vi.advanceTimersByTimeAsync(20001);
-      const result = await pending;
-      if (result.ok) throw new Error("expected interrupted active call");
-      expect(projectAnalysisError(result.error).code).toBe(
-        control === "caller" ? "cancelled" : "provider_timeout",
-      );
-      if (control === "caller") expect(result.error.cause).toBe(reason);
-      expect(result.error.partialObservation).toBeUndefined();
-      await provider.close();
-      expect(closes).toBe(1);
+      try {
+        await active.reached(pending, "active SDK call");
+        if (control === "caller") controller.abort(reason);
+        else await vi.advanceTimersByTimeAsync(20001);
+        const result = await pending;
+        if (result.ok) throw new Error("expected interrupted active call");
+        expect(projectAnalysisError(result.error).code).toBe(
+          control === "caller" ? "cancelled" : "provider_timeout",
+        );
+        if (control === "caller") expect(result.error.cause).toBe(reason);
+        expect(result.error.partialObservation).toBeUndefined();
+      } finally {
+        active.reject(new Error("test finished"));
+        await pending.finally(() => provider.close());
+      }
     } finally {
       vi.useRealTimers();
     }
+    expect(closes).toBe(1);
   },
 );

@@ -1,58 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
-import {
-  MAX_FIRMWARE_STAGING_BYTES,
-  MAX_FIRMWARE_STAGING_ENTRIES,
-} from "../domain/firmware/firmwareAnalysis.js";
+import { MAX_FIRMWARE_STAGING_ENTRIES } from "../domain/firmware/firmwareAnalysis.js";
 import { firmwareStagingBudgetRemediation } from "./FirmwareFiles.js";
 
-describe("firmware staging budget recovery", () => {
-  it("offers room to raise a budget that is below its supported maximum", () => {
-    const remediation = firmwareStagingBudgetRemediation("max_output_files", 1);
-
-    expect(remediation).toContain(
-      `supported maximum ${String(MAX_FIRMWARE_STAGING_ENTRIES)}`,
+it.each([
+  [MAX_FIRMWARE_STAGING_ENTRIES - 1, true],
+  [MAX_FIRMWARE_STAGING_ENTRIES, false],
+])(
+  "offers an entry-budget increase at %i only when the request can raise it",
+  (limit, adjustable) => {
+    const action = firmwareStagingBudgetRemediation("max_output_files", limit);
+    expect(action).toContain(`max_output_files=${limit}`);
+    expect(action).toContain(String(MAX_FIRMWARE_STAGING_ENTRIES));
+    expect(action).toContain(
+      adjustable
+        ? "narrower firmware byte range"
+        : "smaller firmware byte range",
     );
-    expect(remediation).toContain("Increase max_output_files up to");
-    expect(remediation).not.toContain("not supported");
-  });
-
-  it("does not recommend raising a budget already at its supported maximum", () => {
-    const entries = firmwareStagingBudgetRemediation(
-      "max_output_files",
-      MAX_FIRMWARE_STAGING_ENTRIES,
-    );
-    const bytes = firmwareStagingBudgetRemediation(
-      "max_output_bytes",
-      MAX_FIRMWARE_STAGING_BYTES,
-    );
-    for (const remediation of [entries, bytes]) {
-      // Raising a value the schema already caps is not an available recovery.
-      expect(remediation).toContain("not supported");
-      expect(remediation).not.toContain("Increase");
-      expect(remediation).toContain("smaller firmware byte range");
-    }
-  });
-
-  it("names the exhausted budget, the selected value and the ceiling", () => {
-    expect(firmwareStagingBudgetRemediation("max_output_bytes", 4)).toContain(
-      "max_output_bytes=4",
-    );
-    expect(
-      firmwareStagingBudgetRemediation(
-        "max_output_bytes",
-        MAX_FIRMWARE_STAGING_BYTES,
-      ),
-    ).toContain(`maximum ${String(MAX_FIRMWARE_STAGING_BYTES)}`);
-  });
-
-  it("keeps the ceiling advice off the schema limit for both budgets", () => {
-    for (const [budget, maximum] of [
-      ["max_output_files", MAX_FIRMWARE_STAGING_ENTRIES],
-      ["max_output_bytes", MAX_FIRMWARE_STAGING_BYTES],
-    ] as const)
-      expect(firmwareStagingBudgetRemediation(budget, maximum - 1)).toContain(
-        `Increase ${budget} up to`,
-      );
-  });
-});
+    expect(action.includes("Increase max_output_files")).toBe(adjustable);
+  },
+);

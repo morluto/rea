@@ -1,12 +1,11 @@
-import { Cli } from "incur";
+import { registerContractDocumentCommand } from "../../../src/cli/contractDocumentCommand.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
 
-import {
-  registerContractCommand,
-  registerContractDocumentCommand,
-} from "../../../src/cli/contractCommand.js";
+import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
 const viewSchema = z.strictObject({ page: z.number().int() }).optional();
@@ -18,10 +17,7 @@ const detailSchema = z.enum(["complete", "summary"]).default("complete");
  * counts as opening its target.
  */
 const harness = () => {
-  const cli = Cli.create("rea-view-delivery-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const opened: string[] = [];
   const logger = pino({ enabled: false });
   const target = {
@@ -120,7 +116,7 @@ const harness = () => {
     args: Record<string, unknown>,
     options: Record<string, unknown>,
   ) => {
-    const registered = Cli.toCommands.get(cli)?.get(command);
+    const registered = cliCommand(cli, command)?.definition;
     if (registered === undefined) throw new Error(`${command} is missing`);
     const parse = (key: "args" | "options", value: unknown) =>
       (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(

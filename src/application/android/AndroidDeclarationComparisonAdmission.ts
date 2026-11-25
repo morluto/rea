@@ -21,8 +21,9 @@ export const readAndroidDeclarationSource = (
   input: unknown,
   path: EvidenceInputPath,
 ) => {
-  const side = path[0] === "left" || path[0] === "right" ? path[0] : undefined;
-  const location = side === undefined ? undefined : { side };
+  const [side] = path;
+  const location =
+    side === "left" || side === "right" ? ({ side } as const) : undefined;
   // Only the Evidence owner's authenticated snapshot proof permits borrowing.
   // A retained selector or an independently frozen JSON object is insufficient.
   if (isImmutableEvidence(input)) return readImmutableEvidence(input, location);

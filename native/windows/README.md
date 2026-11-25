@@ -35,6 +35,15 @@ matches the checkout's `package.json` version. Do not use `latest` or copy files
 from another REA version; the loader verifies the manifest version, ABI,
 architecture, and addon digest before it grants authority.
 
+An unreleased source checkout can require new native operations while retaining
+the last release's package version and ABI. Matching those numbers alone does
+not establish capability compatibility. Build the artifact and manifest from
+that exact checkout for its new operations. Native inspection must affirm each
+required optional control; an older artifact may support other operations while
+refusing the new control. For example, JavaScript source staging requires
+`runtimeWriteTransient: true`. Do not replace it with immutable staging or
+path-based writes to suppress an incompatibility.
+
 From the checkout root, replace `<matching-version>` with the `version` in
 `package.json`:
 

@@ -13,6 +13,7 @@ const script = fileURLToPath(
 const repository = "example/rea";
 const repositoryId = 1;
 const now = Date.now();
+const headSha = "a".repeat(40);
 
 function artifact(id: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -25,6 +26,7 @@ function artifact(id: number, overrides: Record<string, unknown> = {}) {
       repository_id: repositoryId,
       head_repository_id: repositoryId,
       head_branch: "main",
+      head_sha: headSha,
     },
     ...overrides,
   };
@@ -40,6 +42,7 @@ function run(id: number, overrides: Record<string, unknown> = {}) {
     created_at: new Date(now - 120_000).toISOString(),
     head_branch: "main",
     head_repository: { full_name: repository },
+    head_sha: headSha,
     ...overrides,
   };
 }
@@ -52,6 +55,8 @@ async function invoke(
     repository?: string;
     repositoryId?: string;
     tier?: string;
+    successfulRuns?: unknown[];
+    successfulRunPages?: unknown[][];
   } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-test-history-");
@@ -60,7 +65,16 @@ async function invoke(
   const fixture = join(directory, "api.json");
   const calls = join(directory, "api-calls");
   const output = join(directory, "github-output");
-  await writeFile(fixture, JSON.stringify({ artifacts, runs }));
+  await writeFile(
+    fixture,
+    JSON.stringify({
+      artifacts,
+      runs,
+      successfulRunPages: options.successfulRunPages ?? [
+        options.successfulRuns ?? [],
+      ],
+    }),
+  );
   await writeFile(output, "");
   await writeFile(calls, "");
   const fakeGh = join(fakeBin, "gh");
@@ -72,9 +86,11 @@ async function invoke(
       'if [ "$GH_API_ERROR" = "true" ]; then exit 1; fi',
       'if [ "$4" = "repos/example/rea/actions/artifacts" ]; then',
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({artifacts:x.artifacts}));\'',
+      'elif [ "$4" = "repos/example/rea/actions/workflows/ci.yml/runs" ]; then',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({workflow_runs:x.successfulRunPages[Number(process.argv[1].split("=")[1] ?? 1)-1] ?? []}));\' "${12:-page=1}"',
       "else",
       '  run_id="${4##*/}"',
-      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify(x.runs[Number(process.argv[1])] ?? {}));\' "$run_id"',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); const run=x.runs[Number(process.argv[1])]; if(run===null){console.error("gh: Not Found (HTTP 404)"); process.exit(1);} process.stdout.write(JSON.stringify(run ?? {}));\' "$run_id"',
       "fi",
       "",
     ].join("\n"),
@@ -324,4 +340,140 @@ it("selects full-tier history without using a newer fast artifact", async () => 
     run_id: "60",
     artifact_name: "test-timings-full",
   });
+});
+
+it("uses the next valid timing run when one listed run disappears", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(81, { created_at: new Date(now - 30_000).toISOString() }),
+      artifact(80),
+      artifact(79),
+    ],
+    { 81: null, 80: run(80), 79: run(79) },
+    { tier: "full" },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "80",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls).toContain("actions/runs/81");
+  expect(calls).toContain("actions/runs/80");
+  expect(calls).not.toContain("actions/runs/79");
+});
+
+it("finds an older successful timing artifact beyond five unsuccessful runs", async () => {
+  const newest = [107, 106, 105, 104, 103];
+  const { result, calls } = await invoke(
+    [...newest, 102, 101, 100].map((id) =>
+      artifact(id, {
+        created_at: new Date(now - (108 - id) * 1000).toISOString(),
+      }),
+    ),
+    Object.fromEntries(
+      newest.map((id) => [id, run(id, { conclusion: "failure" })]),
+    ),
+    {
+      tier: "full",
+      successfulRuns: [
+        run(999), // A successful run without this timing artifact.
+        run(102, { head_repository: { full_name: "fork/rea" } }),
+        run(100),
+        run(101),
+      ],
+    },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "101",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
+  expect(calls.match(/actions\/workflows\/ci\.yml\/runs/gu)).toHaveLength(1);
+  expect(calls).toContain("branch=main");
+  expect(calls).toContain("status=success");
+});
+
+it("recovers older timing history beyond the first successful run page", async () => {
+  const failed = [107, 106, 105, 104, 103];
+  const { result, calls } = await invoke(
+    [...failed, 102].map((id) => artifact(id)),
+    Object.fromEntries(
+      failed.map((id) => [id, run(id, { conclusion: "failure" })]),
+    ),
+    {
+      tier: "full",
+      successfulRunPages: [
+        Array.from({ length: 100 }, (_, index) => run(400 - index)),
+        [run(102)],
+      ],
+    },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "102",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls).toContain("page=2");
+  expect(calls).not.toContain("page=3");
+});
+
+it.each([
+  [1, 2],
+  [100, 4],
+])(
+  "stops at the page bound with %i unmatched runs per page",
+  async (pageSize, nextPage) => {
+    const failed = [107, 106, 105, 104, 103];
+    const { result, calls } = await invoke(
+      [...failed, 102].map((id) => artifact(id)),
+      Object.fromEntries(
+        failed.map((id) => [id, run(id, { conclusion: "failure" })]),
+      ),
+      {
+        tier: "full",
+        successfulRunPages: Array.from({ length: 4 }, (_, page) =>
+          Array.from({ length: pageSize }, (_, index) =>
+            run(1000 + page * 100 + index),
+          ),
+        ),
+      },
+    );
+    expect(JSON.parse(result.stdout)).toEqual({
+      run_id: "",
+      artifact_name: "",
+    });
+    expect(calls).toContain(`page=${nextPage - 1}`);
+    expect(calls).not.toContain(`page=${nextPage}`);
+  },
+);
+
+it.each([
+  ["the commit SHAs differ", headSha, "b".repeat(40)],
+  ["both commit SHAs are omitted", undefined, undefined],
+  ["both commit SHAs are malformed", "invalid-sha", "invalid-sha"],
+])("skips newer timing history when %s", async (_, artifactSha, runSha) => {
+  const unverifiedArtifact = artifact(51, {
+    created_at: new Date(now - 30_000).toISOString(),
+    workflow_run: { ...artifact(51).workflow_run, head_sha: artifactSha },
+  });
+  const unverifiedRun = run(51, { head_sha: runSha });
+  const [fallback, empty] = await Promise.all([
+    invoke(
+      [unverifiedArtifact, artifact(50)],
+      { 51: unverifiedRun, 50: run(50) },
+      {
+        tier: "full",
+      },
+    ),
+    invoke([unverifiedArtifact], { 51: unverifiedRun }, { tier: "full" }),
+  ]);
+
+  expect(JSON.parse(fallback.result.stdout)).toEqual({
+    run_id: "50",
+    artifact_name: "test-timings-full",
+  });
+  expect(fallback.output).toBe("run-id=50\nartifact-name=test-timings-full\n");
+  expect(JSON.parse(empty.result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(empty.output).toBe("run-id=\nartifact-name=\n");
 });

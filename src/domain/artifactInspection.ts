@@ -6,6 +6,7 @@ import {
   immutableJsonSnapshotMember,
 } from "./immutableJson.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityPairOf,
   artifactSha256PairSchema,
@@ -20,8 +21,17 @@ import {
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
 import { admitRawBinary } from "./rawBinary.js";
+import {
+  isStandaloneArtifactFormat,
+  type StandaloneArtifactFormat,
+} from "./artifactFormatRecognition.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
-import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
+import {
+  evidenceSchema,
+  immutableEvidence,
+  isImmutableEvidence,
+  type Evidence,
+} from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -63,6 +73,7 @@ const inspectionContradictionSchema = z.union([
   inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 const nextProbeSchema = z.strictObject({
@@ -85,6 +96,13 @@ const unexploredBranchSchema = z.strictObject({
 });
 
 /** Provider-neutral inspection result with its atomic source Evidence. */
+const inspectionSubstepFields = {
+  substep_id: prefixedDigestSchema("ais"),
+  operation: z.literal("inventory_artifact"),
+  status: z.literal("completed"),
+  evidence_id: evidenceIdSchema,
+} as const;
+
 export const artifactInspectionResultSchema = z.strictObject({
   inspection_id: prefixedDigestSchema("ai"),
   subject: z.strictObject({
@@ -96,10 +114,7 @@ export const artifactInspectionResultSchema = z.strictObject({
   substeps: z
     .array(
       z.strictObject({
-        substep_id: prefixedDigestSchema("ais"),
-        operation: z.literal("inventory_artifact"),
-        status: z.literal("completed"),
-        evidence_id: evidenceIdSchema,
+        ...inspectionSubstepFields,
         evidence: evidenceSchema.safeExtend({
           operation: z.literal("inventory_artifact"),
           normalized_result: artifactInventoryResultSchema,
@@ -132,9 +147,24 @@ export type ArtifactInspectionResult = z.infer<
   typeof artifactInspectionResultSchema
 >;
 
+/** Native image formats whose execution-free readers inspection proposes. */
+type NativeImageFormat = "pe" | "elf" | "mach-o" | "mach-o-universal";
+
+/**
+ * What target admission parsed from the inventory root's own bytes as a
+ * native image. Inventory may read those bytes as that image or as the
+ * carrier of an embedded package; both are true of the file.
+ */
+export interface ArtifactInspectionRootImage {
+  readonly format: NativeImageFormat;
+  /** Whether a PE declares a CLI header; undefined is unknown. */
+  readonly managed?: boolean | undefined;
+}
+
 /** Project one successful inventory Evidence record into an inspection report. */
 export const createArtifactInspection = (
   inventoryInput: unknown,
+  rootImage?: ArtifactInspectionRootImage,
 ): ArtifactInspectionResult => {
   const inventoryEvidence = parseInventoryEvidence(inventoryInput);
   const inventory = artifactInventoryResultSchema.parse(
@@ -144,8 +174,12 @@ export const createArtifactInspection = (
     inventory,
     inventoryEvidence.evidence_id,
   );
-  const hypotheses = allHypotheses(inventory, inventoryEvidence.evidence_id);
-  const nextProbes = probesFor(inventory);
+  const hypotheses = allHypotheses(
+    inventory,
+    inventoryEvidence.evidence_id,
+    rootImage,
+  );
+  const nextProbes = probesFor(inventory, rootImage);
   const branches = allUnexploredBranches(
     inventory,
     inventoryEvidence.evidence_id,
@@ -208,14 +242,41 @@ export const createArtifactInspection = (
       "Inspection derives bounded static hypotheses and next probes; it does not execute the artifact or claim format-specific semantics.",
     ]),
   };
-  return artifactInspectionResultSchema.parse({
+  return constructedInspectionSchema.parse({
     ...semantic,
     inspection_id: `ai_${digestCanonicalValue(semantic, "Artifact inspection")}`,
   });
 };
 
+/**
+ * The result as constructed here: each substep holds the sealed inventory
+ * Evidence authenticated above. Checking it by seal keeps that snapshot
+ * instead of parsing and copying the complete inventory again, so a session
+ * that records it as a source borrows it too.
+ */
+const constructedInspectionSchema = artifactInspectionResultSchema.safeExtend({
+  substeps: z
+    .array(
+      z.strictObject({
+        ...inspectionSubstepFields,
+        evidence: z.custom<
+          z.infer<
+            typeof artifactInspectionResultSchema
+          >["substeps"][number]["evidence"]
+        >(
+          (value) =>
+            isImmutableEvidence(value as Evidence) &&
+            (value as Evidence).operation === "inventory_artifact",
+          "Expected the sealed inventory_artifact Evidence",
+        ),
+      }),
+    )
+    .min(1),
+});
+
 const parseInventoryEvidence = (input: unknown): Evidence => {
-  const evidence = parseEvidence(input);
+  // Authenticate once and seal, borrowing an already sealed snapshot.
+  const evidence = immutableEvidence(input);
   if (evidence.operation !== "inventory_artifact")
     throw new TypeError(
       "Artifact inspection substep requires inventory_artifact Evidence",
@@ -277,9 +338,11 @@ const observation = (
 const allHypotheses = (
   inventory: ArtifactInventoryResult,
   evidenceId: string,
+  rootImage: ArtifactInspectionRootImage | undefined,
 ): ArtifactInspectionResult["hypotheses"] => {
+  // A parsed CLI header declaration settles this hypothesis.
   const statements =
-    inventory.manifest.root_format === "pe"
+    inventory.manifest.root_format === "pe" && rootImage?.managed === undefined
       ? [
           "The PE artifact may contain managed CLI metadata or native code; inventory bytes alone do not distinguish them.",
         ]
@@ -323,8 +386,42 @@ const contradictions = (
     };
   });
 
+// The format's own reader leads; a carrier's native readers follow, since
+// the file is both; a deep provider binds last.
 const probesFor = (
   inventory: ArtifactInventoryResult,
+  rootImage: ArtifactInspectionRootImage | undefined,
+): ArtifactInspectionResult["next_probes"] => {
+  const probes = uniqueOperations([
+    ...formatProbes(inventory, rootImage),
+    ...(rootImage === undefined ||
+    rootImage.format === inventory.manifest.root_format
+      ? []
+      : nativeImageProbes(rootImage)),
+  ]);
+  return [
+    ...probes.filter(
+      ({ authority }) => authority !== "native-analysis-provider",
+    ),
+    ...probes.filter(
+      ({ authority }) => authority === "native-analysis-provider",
+    ),
+  ];
+};
+
+/** Keep each operation's first, most specific rationale. */
+const uniqueOperations = (
+  probes: ArtifactInspectionResult["next_probes"],
+): ArtifactInspectionResult["next_probes"] =>
+  probes.filter(
+    (probe, index) =>
+      probes.findIndex(({ operation }) => operation === probe.operation) ===
+      index,
+  );
+
+const formatProbes = (
+  inventory: ArtifactInventoryResult,
+  rootImage: ArtifactInspectionRootImage | undefined,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
   // The JavaScript analyzer selects extracted files by source suffix, so a
@@ -368,9 +465,10 @@ const probesFor = (
       : [];
   if (format === "esp-image") return espFlashDumpProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
-  return format === "directory"
-    ? directoryProbes(inventory)
-    : probesForFormat(format);
+  if (format === "directory") return directoryProbes(inventory);
+  if (format === "pe")
+    return nativeImageProbes({ format, managed: rootImage?.managed });
+  return probesForFormat(format);
 };
 
 // An ESP image that its reader found at the start of a flash dump read from
@@ -416,10 +514,11 @@ const fitProbes = (
       entryPoint: image.load,
       fileBytes: row.declared_size,
     });
-    if (!admitted.ok) continue;
+    // A selected entry never leaves admission waiting on a vector-table read.
+    if (!admitted.ok || "admit" in admitted.value) continue;
     rawProbe = {
       operation: "open_binary",
-      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
+      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.load.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
       authority: "native-analysis-provider",
     };
     break;
@@ -469,12 +568,7 @@ const directoryProbes = (
   const members = DIRECTORY_MEMBER_FORMATS.filter((memberFormat) =>
     present.has(memberFormat),
   );
-  const probes = members.flatMap(probesForFormat);
-  return probes.filter(
-    (probe, index) =>
-      probes.findIndex(({ operation }) => operation === probe.operation) ===
-      index,
-  );
+  return uniqueOperations(members.flatMap(probesForFormat));
 };
 
 const probesForFormat = (
@@ -516,30 +610,13 @@ const probesForFormat = (
         authority: "ast-static-analysis",
       },
     ];
-  if (format === "pe")
-    return [
-      {
-        operation: "inspect_managed_artifact",
-        rationale:
-          "Check execution-free CLI metadata before choosing a deep native provider.",
-        authority: "managed-static-analysis",
-      },
-      {
-        operation: "open_binary",
-        rationale:
-          "Open as native code only when managed inspection reports a native or mixed boundary.",
-        authority: "native-analysis-provider",
-      },
-    ];
-  if (["mach-o", "mach-o-universal", "elf"].includes(format))
-    return [
-      {
-        operation: "open_binary",
-        rationale:
-          "Bind one deep native provider before function-level analysis.",
-        authority: "native-analysis-provider",
-      },
-    ];
+  if (
+    format === "pe" ||
+    format === "elf" ||
+    format === "mach-o" ||
+    format === "mach-o-universal"
+  )
+    return nativeImageProbes({ format });
   if (format === "plist")
     return [
       {
@@ -548,7 +625,144 @@ const probesForFormat = (
         authority: "artifact-bytes",
       },
     ];
+  if (format === "uefi" || isStandaloneArtifactFormat(format))
+    return [
+      {
+        ...STANDALONE_FORMAT_READERS[format],
+        authority: "artifact-bytes",
+      },
+    ];
   return [];
+};
+
+/** The dedicated execution-free reader for each single-file format. */
+const STANDALONE_FORMAT_READERS = {
+  uefi: {
+    operation: "inspect_uefi_firmware",
+    rationale:
+      "Map firmware volumes, FFS files, sections and compression without execution.",
+  },
+  sqlite: {
+    operation: "inspect_sqlite_database",
+    rationale:
+      "Read the schema, tables and rows from a read-only snapshot of the database.",
+  },
+  "windows-shortcut": {
+    operation: "inspect_windows_shortcut",
+    rationale:
+      "Read the Shell Link target, arguments and ExtraData without resolving or executing it.",
+  },
+  "python-pyc": {
+    operation: "inspect_python_pyc",
+    rationale:
+      "Decode the pyc header and marshalled code objects without importing or running them.",
+  },
+  devicetree: {
+    operation: "inspect_devicetree",
+    rationale:
+      "Decode the flattened devicetree header, reservations and node tree.",
+  },
+} as const satisfies Record<
+  "uefi" | StandaloneArtifactFormat,
+  { readonly operation: string; readonly rationale: string }
+>;
+
+// A probe names one operation, so each reader is its own row; the rows share
+// one short rationale because each tool's description already says what it
+// reads.
+const STATIC_READER_RATIONALE =
+  "Execution-free header read of the native image; no deep provider.";
+
+const staticReaders = (
+  operations: readonly string[],
+): ArtifactInspectionResult["next_probes"] =>
+  operations.map((operation) => ({
+    operation,
+    rationale: STATIC_READER_RATIONALE,
+    authority: "artifact-bytes",
+  }));
+
+const STATIC_READERS: Readonly<Record<NativeImageFormat, readonly string[]>> = {
+  pe: [
+    "inspect_pe_imports",
+    "inspect_native_exports",
+    "inspect_pe_load_config",
+    "inspect_pe_resources",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+  elf: [
+    "inspect_elf_dependencies",
+    "inspect_native_exports",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+  "mach-o": [
+    "inspect_macho",
+    "inspect_signature",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+  "mach-o-universal": [
+    "inspect_macho",
+    "inspect_signature",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+};
+
+const managedProbe = (
+  rationale: string,
+): ArtifactInspectionResult["next_probes"][number] => ({
+  operation: "inspect_managed_artifact",
+  rationale,
+  authority: "managed-static-analysis",
+});
+
+/**
+ * Execution-free readers for one native image format, then one deep provider
+ * for function-level work. A PE that declares a CLI header leads with managed
+ * inspection and binds the deep provider only for a native or mixed boundary;
+ * an unknown declaration (a directory member) keeps both conditional.
+ */
+const nativeImageProbes = ({
+  format,
+  managed,
+}: {
+  readonly format: NativeImageFormat;
+  readonly managed?: boolean | undefined;
+}): ArtifactInspectionResult["next_probes"] => [
+  ...(format === "pe" && managed === true
+    ? [managedProbe("The PE declares a CLI header; read its managed metadata.")]
+    : []),
+  ...staticReaders(STATIC_READERS[format]),
+  ...(format === "pe" && managed === undefined
+    ? [
+        managedProbe(
+          "Only if the PE declares a CLI header (data directory 14).",
+        ),
+      ]
+    : []),
+  {
+    operation: "open_binary",
+    rationale: deepNativeRationale(format, managed),
+    authority: "native-analysis-provider",
+  },
+];
+
+// A CLI header makes the PE managed code first; a deep native provider adds
+// value only where managed inspection finds native code.
+const MANAGED_NATIVE_BOUNDARY =
+  "only when managed inspection reports a native or mixed boundary";
+
+const deepNativeRationale = (
+  format: NativeImageFormat,
+  managed: boolean | undefined,
+): string => {
+  if (format !== "pe" || managed === false)
+    return "Bind a deep native provider for function-level analysis.";
+  if (managed) return `Bind a deep native provider ${MANAGED_NATIVE_BOUNDARY}.`;
+  return `Bind a deep native provider for function-level analysis; if the PE declares a CLI header, ${MANAGED_NATIVE_BOUNDARY}.`;
 };
 
 const allUnexploredBranches = (
