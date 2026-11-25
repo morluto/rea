@@ -51,12 +51,13 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
   type AbortedSignal,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import {
@@ -827,9 +828,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
                     }),
               };
         if (reply.reason === "unsupported")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            "evm-bytecode",
             reply.message,
             { capturedOutput, diagnostics },
           );
@@ -859,7 +861,20 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             },
           );
         }
-        if (reply.reason === "format" || reply.reason === "selection")
+        // The worker rejected the selected file's bytes, not the request.
+        if (reply.reason === "malformed")
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
+            {
+              kind: "malformed",
+              format:
+                compilerSelection === undefined ? "evm-bytecode" : "solc-json",
+              detail: reply.message,
+            },
+            { capturedOutput, diagnostics },
+          );
+        if (reply.reason === "selection")
           throw new AnalysisInputError(
             OPERATION,
             {
@@ -867,19 +882,12 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               diagnostics,
               conformsToInputContract: true,
               remediationAction:
-                reply.reason === "selection"
-                  ? "Check the exact source-unit and contract keys in the selected compiler output and select an existing contract."
-                  : compilerSelection !== undefined
-                    ? "Select a complete, well-formed solc Standard JSON output with valid bytecode and reference records."
-                    : "Check the selected file contains valid bytecode in the requested raw or hex encoding.",
+                "Check the exact source-unit and contract keys in the selected compiler output and select an existing contract.",
             },
             [
               {
-                path: reply.reason === "selection" ? ["encoding"] : ["path"],
-                reason:
-                  reply.reason === "selection"
-                    ? "invalid_value"
-                    : "invalid_format",
+                path: ["encoding"],
+                reason: "invalid_value",
                 message: reply.message,
               },
             ],

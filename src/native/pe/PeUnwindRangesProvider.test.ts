@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { AnalysisMalformedTargetError } from "../../domain/analysisErrorCore.js";
+import { AnalysisTargetFailureError } from "../../domain/analysisErrorCore.js";
 import {
   inspectPeUnwindRangesInputSchema,
   type PeUnwindRanges,
@@ -364,12 +364,18 @@ describe("x64 PE exception directory refusals and absence", () => {
       { entries: [primary], truncateTo: 0x2400 + 6 },
     ],
   ] satisfies [string, PeUnwindFixtureOptions][])(
-    "refuses %s as a malformed target",
+    "refuses %s as a damaged target",
     async (_name, options) => {
       const result = await inspect(options);
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error).toBeInstanceOf(AnalysisMalformedTargetError);
+      expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+      if (!(result.error instanceof AnalysisTargetFailureError))
+        throw result.error;
+      // A file cut inside the directory is truncated; the rest are malformed.
+      expect(result.error.failure.kind).toBe(
+        "truncateTo" in options ? "truncated" : "malformed",
+      );
     },
   );
 });

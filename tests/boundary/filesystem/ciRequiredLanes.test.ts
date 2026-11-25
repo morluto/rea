@@ -6,7 +6,10 @@ import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { executeWorkflowFixture } from "../../support/workflowGit.js";
+import {
+  executeWorkflowFixture,
+  workflowFixtureEnvironment,
+} from "../../support/workflowGit.js";
 
 const workflow = async (filename = "ci.yml") =>
   z
@@ -969,7 +972,9 @@ it.each([
           new URL("../../../scripts/ci/required.mjs", import.meta.url),
         ),
       ],
-      { env: { ...process.env, CI_JOBS: JSON.stringify(jobs) } },
+      {
+        env: { ...workflowFixtureEnvironment(), CI_JOBS: JSON.stringify(jobs) },
+      },
     );
     if (passes) await expect(execution).resolves.toMatchObject({ stderr: "" });
     else
@@ -997,7 +1002,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify({
             changes: { result: "success", outputs },
             static: { result: "success" },
@@ -1073,7 +1078,12 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
             new URL("../../../scripts/ci/required.mjs", import.meta.url),
           ),
         ],
-        { env: { ...process.env, CI_JOBS: JSON.stringify(needs) } },
+        {
+          env: {
+            ...workflowFixtureEnvironment(),
+            CI_JOBS: JSON.stringify(needs),
+          },
+        },
       ),
     ).rejects.toMatchObject({
       code: 1,
@@ -1130,7 +1140,7 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           GITHUB_EVENT_NAME: event,
           CI_QUALIFICATION_DIRECTORY: "",
           CI_JOBS: JSON.stringify({
@@ -1273,7 +1283,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           GITHUB_EVENT_NAME: "push",
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",

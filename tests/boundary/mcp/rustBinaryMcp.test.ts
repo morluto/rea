@@ -171,7 +171,7 @@ mcpTest(
         code: "unsupported_target",
         details: {
           operation: "inspect_rust_binary",
-          format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+          failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
         },
       });
     } finally {

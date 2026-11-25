@@ -163,7 +163,7 @@ mcpTest(
       });
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "unsupported_target",
-        details: { format_failure: "truncated", format: "beam" },
+        details: { failure_kind: "truncated", format: "beam" },
       });
     } finally {
       await session.close();
@@ -240,7 +240,7 @@ mcpTest(
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "unsupported_target",
         details: {
-          format_failure: "truncated",
+          failure_kind: "truncated",
           format: "beam",
           reason: expect.stringContaining("lambda table is truncated"),
         },

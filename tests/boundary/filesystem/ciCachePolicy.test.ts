@@ -194,6 +194,7 @@ async function verifyPrefixedHashFiles(
     const fileNames = targetPaths.map((path) =>
       path.slice("triggering-source/".length),
     );
+    expect(fileNames.every((name) => !name.includes("/"))).toBe(true);
     const nestedHash = aggregateHashFilesContent(
       await Promise.all(
         targetPaths.map((path) => readFile(join(runnerWorkspace, path))),
@@ -644,12 +645,16 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     ref: "${{ github.workflow_sha }}",
     path: "trusted-retention",
     "persist-credentials": false,
+    "sparse-checkout-cone-mode": false,
+    "sparse-checkout": "/.nvmrc\n/scripts/ci/\n",
   });
   const targetCheckout = checkouts[1];
   expect(targetCheckout?.with).toMatchObject({
     ref: "${{ github.event.workflow_run.head_sha }}",
     path: "triggering-source",
     "persist-credentials": false,
+    "sparse-checkout-cone-mode": false,
+    "sparse-checkout": "/*\n!/*/\n",
   });
   expect(checkouts).toHaveLength(2);
   const setupNode = steps.find(

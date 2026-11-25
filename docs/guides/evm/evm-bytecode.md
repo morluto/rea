@@ -20,7 +20,7 @@ rea inspect-evm-interface ./compiler-output.json solc-json --source-unit contrac
 
 The provider runs on Linux x64 only; other hosts report `capability_unavailable`
 with category `unsupported_provider`. Real verification covers flat legacy
-bytecode on Linux x64 and unchanged bundled EVMole 0.9.4. EOF-style EF00 containers return `unsupported_target`,
+bytecode on Linux x64 and unchanged bundled EVMole 0.9.6. EOF-style EF00 containers return `unsupported_target`,
 with the selected path and format reason. Selected-path resolution errors
 `ENOENT`, `ENOTDIR`, `ELOOP`, and `ENAMETOOLONG` are `invalid_request` path
 issues. Permission, resource, cancellation, provider, and cleanup failures retain
@@ -102,8 +102,9 @@ invalid with raw/hex encoding. The CLI uses positional `solc-json` with
 contract/bytecode/object source ranges, exact object text, diagnostics, link/immutable references and
 recorded metadata. Ranges count UTF-16 code units in the UTF-8-decoded JSON text
 and include JSON syntax. Duplicate properties, malformed objects and invalid
-reference spans fail precisely. Recorded compiler/settings metadata remains
-unauthenticated; source paths and URLs do not trigger reads or acquisition.
+reference spans refuse the selected file as a malformed `solc-json` target
+(`unsupported_target`); a missing source unit or contract is invalid input.
+Recorded compiler/settings metadata remains unauthenticated; source paths and URLs do not trigger reads or acquisition.
 Metadata records its source kind (`string`, `non-string`, or null when absent),
 so malformed non-string values remain evidence. Retained views reject metadata
 or diagnostic interpretations that contradict their raw text, and source ranges

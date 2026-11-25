@@ -1,5 +1,5 @@
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   withStableArtifactHandle,
   yieldArtifactRead,
@@ -56,16 +56,12 @@ export class DwarfUnitsProvider {
   readonly identity = DWARF_UNITS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        DWARF_UNITS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      DWARF_UNITS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(

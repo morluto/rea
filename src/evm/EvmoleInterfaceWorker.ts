@@ -97,7 +97,10 @@ const main = async (): Promise<void> => {
         };
       reply = {
         ok: false,
-        reason: selected.error.reason,
+        reason:
+          selected.error.reason === "format"
+            ? "malformed"
+            : selected.error.reason,
         message: selected.error.message,
         ...(selected.error.limit === undefined
           ? {}
@@ -190,7 +193,7 @@ const main = async (): Promise<void> => {
       ok: false,
       reason:
         cause instanceof EvmCarrierFailure
-          ? "format"
+          ? "malformed"
           : cause instanceof UnsupportedContainer
             ? "unsupported"
             : "decoder",

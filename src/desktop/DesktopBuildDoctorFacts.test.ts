@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, it, vi } from "vitest";
+import { scopeChecksOf } from "../application/Doctor.fixture.js";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
@@ -32,15 +33,6 @@ import {
   defaultBuildComputerArchive,
   resolveBuildComputerEnvironment,
 } from "./BuildComputerEnvironment.js";
-
-/** The explicit scope's checks; an audit-wide report has none. */
-const scopeChecksOf = <Check>(report: {
-  readonly scope_checks?: readonly Check[];
-}): readonly Check[] => {
-  if (report.scope_checks === undefined)
-    throw new Error("Expected an explicit-scope doctor report");
-  return report.scope_checks;
-};
 
 const execute = promisify(execFile);
 

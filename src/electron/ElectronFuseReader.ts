@@ -1,3 +1,4 @@
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
   malformedInput,
@@ -205,7 +206,7 @@ const identifyContainer = async (
 }> => {
   const head = await readAt(0, Math.min(size, 8));
   if (hasMachoMagic(head)) return identifyMacho(readAt, size, head, path);
-  if (isElf(head)) {
+  if (hasElfMagic(head)) {
     const header = await readAt(0, 64);
     const parsed = readElfFixedHeader(Buffer.from(header), size);
     return {
@@ -473,13 +474,6 @@ const readExact = async (
   if (buffer.length !== length) throw new RegularFileChangedError(path);
   return buffer;
 };
-
-const isElf = (head: Uint8Array): boolean =>
-  head.length >= 4 &&
-  head[0] === 0x7f &&
-  head[1] === 0x45 &&
-  head[2] === 0x4c &&
-  head[3] === 0x46;
 
 const identifyPe = async (
   readAt: ReadAt,

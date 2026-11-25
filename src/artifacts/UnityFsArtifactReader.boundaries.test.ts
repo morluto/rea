@@ -124,7 +124,7 @@ describe("UnityFS declared container bounds", () => {
       const reader = new UnityFsArtifactReader(await fixture(bytes));
       try {
         await expect(collectEntries(reader)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
       } finally {
         await reader.close();
@@ -183,7 +183,7 @@ describe("UnityFS declared container bounds", () => {
       const invalid = new UnityFsArtifactReader(await fixture(bytes));
       try {
         await expect(collectEntries(invalid)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
           message: expect.stringContaining(
             "declared data area exceeds the bundle extent",
           ),
@@ -202,7 +202,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();
@@ -318,7 +318,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "truncated",
       });
     } finally {
       await reader.close();
@@ -331,7 +331,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();
@@ -350,7 +350,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();

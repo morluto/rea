@@ -29,6 +29,7 @@ import {
   sourceUnit,
   compilerVersion,
 } from "./fixtures/solidity/compiler-artifacts.mjs";
+import { EVMOLE_PROVIDER_IDENTITY } from "../dist/evm/EvmoleProviderIdentity.js";
 
 const modulePath = process.env.REA_VERIFY_SOLC_MODULE;
 if (!isAbsolute(modulePath ?? ""))
@@ -793,10 +794,12 @@ try {
     await inspect(mode, invalidPath, "solc-json", {
       selection,
       expectedError: true,
+      expectedCategory: "unsupported_target",
     });
     await inspect(mode, duplicatePath, "solc-json", {
       selection,
       expectedError: true,
+      expectedCategory: "unsupported_target",
     });
   }
   const invalidRawInput = {
@@ -922,7 +925,7 @@ console.log(
       status: failures.length === 0 ? "passed" : "failed",
       public_cases: cases,
       compiler: compilerVersion,
-      engine: "evmole@0.9.4",
+      engine: EVMOLE_PROVIDER_IDENTITY.version,
       fixture_target_execution: "not-performed",
       network_observation: "not-measured",
       verifier,

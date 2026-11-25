@@ -51,7 +51,7 @@ export const evmWorkerReplySchema = z.discriminatedUnion("ok", [
     .strictObject({
       ok: z.literal(false),
       reason: z.enum([
-        "format",
+        "malformed",
         "selection",
         "resource",
         "decoder",

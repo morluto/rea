@@ -629,7 +629,7 @@ it("rejects a truncated table of contents", async () => {
     (error: unknown) => error,
   );
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(failure).toMatchObject({ reason: "format" });
+  expect(failure).toMatchObject({ reason: "malformed" });
 });
 
 it("rejects a cookie whose package range is outside the file", async () => {
@@ -638,7 +638,7 @@ it("rejects a cookie whose package range is outside the file", async () => {
   await expect(async () => {
     for await (const entry of reader.entries()) void entry;
   }).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("outside the file"),
   });
   await reader.close();
@@ -1303,7 +1303,7 @@ it("opens selected PYZ modules lazily and permits repeat reads without retaining
     for (let attempt = 0; attempt < 2; attempt += 1)
       expect(await buffer(await reader.open(selected))).toEqual(derived(good));
     await expect(buffer(await reader.open(damaged))).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   } finally {
     await reader.close();

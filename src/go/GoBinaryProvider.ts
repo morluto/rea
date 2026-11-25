@@ -5,7 +5,7 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -280,16 +280,12 @@ export class GoBinaryProvider implements GoBinaryPort {
   readonly identity = GO_BINARY_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        GO_BINARY_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      GO_BINARY_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read complete compiler/module metadata while preserving original byte identity and source ranges. */

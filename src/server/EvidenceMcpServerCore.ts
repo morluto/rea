@@ -32,6 +32,7 @@ import {
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
@@ -403,9 +404,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 input,
                 normalized(context as ServerContext),
               );
-        const result = await (this.analysisSettings === undefined
-          ? invoke()
-          : this.analysisSettings.run(invoke));
+        let result: Awaited<ReturnType<typeof invoke>>;
+        try {
+          result = await (this.analysisSettings === undefined
+            ? invoke()
+            : this.analysisSettings.run(invoke));
+        } catch (cause: unknown) {
+          // The SDK flattens a thrown handler failure into one text block and
+          // JSON-RPC errors are for protocol faults, so a target failure that
+          // escapes a handler is still returned as a projected tool result.
+          // Its message can name target bytes, so it is marked as such.
+          if (!(cause instanceof AnalysisTargetFailureError)) throw cause;
+          result = this.delivery.toErrorToolResult(cause, true);
+        }
         if (request !== undefined)
           request.projectedErrorEncoding = projectedErrorEncoding(result);
         return result;

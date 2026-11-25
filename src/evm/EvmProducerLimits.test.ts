@@ -1,3 +1,4 @@
+import { EVMOLE_VERSION } from "./EvmoleProviderIdentity.js";
 import { createRequire } from "node:module";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -76,7 +77,7 @@ it.each(["hex", "solc-json"] as const)(
     const recovered = await inspect(4096, 1);
     expect(recovered).toMatchObject({
       ok: true,
-      version: "0.9.4",
+      version: EVMOLE_VERSION,
       bytecode: {
         bytes: 5,
         hex: "60006000f3",
@@ -86,7 +87,7 @@ it.each(["hex", "solc-json"] as const)(
     await writeFile(snapshot, "0xzz");
     expect(await inspect(4096, 2)).toMatchObject({
       ok: false,
-      reason: "format",
+      reason: "malformed",
     });
   },
 );
