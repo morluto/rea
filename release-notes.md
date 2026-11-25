@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **errors:** selected-file malformed and truncated refusals add details.failure_kind, and a truncated target's remediation now says to re-acquire the complete file instead of choosing another target. Codes are unchanged. Affected operations: every operation that refuses a selected file's malformed or truncated bytes, including the ELF, PE, Mach-O, DWARF, Go, Rust, BEAM, pyc, devicetree, Apple IPS, kernel module, binary hardening, managed PE/CLI and IL2CPP readers.
 * **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247))
 * **artifacts:** artifactReaderLimitsSchema now requires iso9660 (descriptor_count, directory_depth, record_count, directory_bytes, path_bytes), so saved Evidence records containing effective_limits from prior versions without iso9660 fail parseInventoryPage validation and must be re-inspected.
 * **artifacts:** subject.identity gains a directory kind {kind:"directory",algorithm:"rea-directory-tree",version:1,sha256}. A directory inventory's subject and root sha256 are its tree digest, and a partial walk's subject is {kind:"unknown",reason:"not-observed"}. inspect_artifact no longer requires an open target. Directory symlink occurrences record link_target and compare by it.
@@ -241,6 +242,7 @@
 * **erlang:** require complete positional BEAM reads ([#14045](https://github.com/morluto/rea/issues/14045)) ([2e47bc0](https://github.com/morluto/rea/commit/2e47bc09f357cf6e5bcc6c93f39e4972bd79192e))
 * **erlang:** retain verified BEAM reports through descriptor finalization ([#14062](https://github.com/morluto/rea/issues/14062)) ([2e98c70](https://github.com/morluto/rea/commit/2e98c70c911f5062bad2e3045e557f90cf886d54))
 * **errors:** align unsupported-signature status and split invalid-method-token at its producer ([#14230](https://github.com/morluto/rea/issues/14230)) ([eb6c281](https://github.com/morluto/rea/commit/eb6c281fec68568aa95e7cbef59fe1c9eade99e5))
+* **errors:** raise container reader byte faults as malformed or truncated targets ([#14265](https://github.com/morluto/rea/issues/14265)) ([6f26702](https://github.com/morluto/rea/commit/6f267022ed076d3e0df003f03b426fad8db50c3b))
 * **errors:** refuse corrupt managed, IL2CPP and universal Mach-O bytes as a malformed target ([#14224](https://github.com/morluto/rea/issues/14224)) ([57f4e3c](https://github.com/morluto/rea/commit/57f4e3c4bd7577336f344f5ec5b14a5ea0c9ce6b))
 * **errors:** refuse malformed target bytes as a target, not invalid input ([#14195](https://github.com/morluto/rea/issues/14195)) ([89c1dd3](https://github.com/morluto/rea/commit/89c1dd3c327617275a0792a78a68a043f1a37533))
 * **errors:** split reader path refusals from malformed target bytes ([#14225](https://github.com/morluto/rea/issues/14225)) ([1a43f56](https://github.com/morluto/rea/commit/1a43f56354bcda71cc6a0e7ace27d48680073505))
