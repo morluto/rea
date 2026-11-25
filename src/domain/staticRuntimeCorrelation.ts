@@ -5,7 +5,7 @@ import type { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidence } from "./evidenceValidation.js";
-import { uniqueSorted } from "./canonicalOrdering.js";
+import { firstDuplicateIndex, uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import {
   comparisonSourceEvidenceIds,
@@ -583,16 +583,6 @@ const assertUnique = (
   const duplicateIndex = firstDuplicateIndex(values);
   if (duplicateIndex !== undefined)
     throw callerInputError(input, [...path, duplicateIndex], message);
-};
-
-const firstDuplicateIndex = (values: readonly string[]): number | undefined => {
-  const seen = new Set<string>();
-  const index = values.findIndex((value) => {
-    if (seen.has(value)) return true;
-    seen.add(value);
-    return false;
-  });
-  return index < 0 ? undefined : index;
 };
 
 const OPERATION = "correlate_static_and_runtime";
