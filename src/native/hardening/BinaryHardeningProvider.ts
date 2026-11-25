@@ -5,7 +5,7 @@ import {
   artifactFileCeilingConstraint,
   artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -43,16 +43,12 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
   readonly identity = BINARY_HARDENING_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        BINARY_HARDENING_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      BINARY_HARDENING_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(

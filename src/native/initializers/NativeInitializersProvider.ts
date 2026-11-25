@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
   readStableArtifact,
@@ -59,16 +59,12 @@ export class NativeInitializersProvider implements NativeInitializersPort {
   readonly identity = NATIVE_INITIALIZERS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NATIVE_INITIALIZERS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NATIVE_INITIALIZERS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(

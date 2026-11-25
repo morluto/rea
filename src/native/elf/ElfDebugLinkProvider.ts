@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
   completedStableArtifactStream,
@@ -59,16 +59,12 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
   readonly identity = ELF_DEBUG_LINK_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEBUG_LINK_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEBUG_LINK_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {

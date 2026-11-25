@@ -3,7 +3,7 @@ import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js"
 import { lstat, open } from "node:fs/promises";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
@@ -143,16 +143,12 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
     private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        WINDOWS_SHORTCUT_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      WINDOWS_SHORTCUT_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
