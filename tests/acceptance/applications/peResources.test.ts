@@ -53,7 +53,16 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   const response = await call({ path });
   expect(response.isError).toBe(true);
   expect(response.structuredContent).toBeUndefined();
-  expect(parseMcpToolError(response)).toEqual({ error: result.json });
+  // Both adapters report the same facts; the recovery names each adapter's
+  // own spelling of the operation.
+  const { remediation: mcpRecovery, ...mcpFacts } =
+    parseMcpToolError(response).error;
+  const { remediation: cliRecovery, ...cliFacts } = result.json as {
+    remediation: { action: string };
+  };
+  expect(mcpFacts).toEqual(cliFacts);
+  expect(cliRecovery.action).not.toContain("inspect_pe_resources");
+  expect(typeof mcpRecovery.action).toBe("string");
 };
 
 const expectPeInputFailuresAcrossAdapters = async (input: {
