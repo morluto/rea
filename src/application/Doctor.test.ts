@@ -418,7 +418,9 @@ describe("doctor MCP startup readiness", () => {
       if (scope.pluginClients !== undefined) {
         expect(result.scope.plugin_clients).toEqual(["codex"]);
         expect(
-          result.scope_checks.some(({ name }) => name === "registration:codex"),
+          scopeChecksOf(result).some(
+            ({ name }) => name === "registration:codex",
+          ),
         ).toBe(false);
       }
     },

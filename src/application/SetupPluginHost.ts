@@ -521,7 +521,11 @@ class PluginSetupHost {
         ...(pluginIds.length === 0 ? {} : { plugin_clients: pluginIds }),
       },
       checks: [...report.checks, ...checks],
-      scope_checks: [...report.scope_checks, ...checks],
+      ...(report.scope_checks === undefined && checks.length === 0
+        ? {}
+        : {
+            scope_checks: [...(report.scope_checks ?? []), ...checks],
+          }),
     };
   };
   asHost(): SetupHost {

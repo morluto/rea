@@ -779,7 +779,7 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
   ...(report.scope.plugin_clients === undefined
     ? {}
     : {
-        pluginChecks: report.scope_checks.filter(({ name }) =>
+        pluginChecks: (report.scope_checks ?? []).filter(({ name }) =>
           report.scope.plugin_clients?.some((id) => name === `plugin:${id}`),
         ),
       }),
