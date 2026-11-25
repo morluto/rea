@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Source-only checks for caller-selected, read-only PSP symbol comparison.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
   correlatePspSymbols,
@@ -198,6 +198,18 @@ const fixture = await VerifierFixture.open({
 });
 const scratch = fixture.path;
 try {
+  const commands = await createVerifierCommands();
+  fixture.releaseAfter(() => commands.close());
+  const exec = (file, args, maxBuffer = 4 * 1024 * 1024) =>
+    commands.exec(file, args, { timeout: 15_000, maxBuffer });
+  const assertRefusal = (result, message) =>
+    assert.rejects(result, (error) => {
+      assert.equal(error.name, "VerifierCommandExitError");
+      assert.equal(error.code, 1);
+      assert.equal(error.snapshot.stdout.text, "");
+      assert.match(error.snapshot.stderr.text, message);
+      return true;
+    });
   const symbolsPath = join(scratch, "source.sym");
   const rawInventoryPath = join(scratch, "functions.json");
   const evidencePath = join(scratch, "evidence.json");
@@ -233,29 +245,27 @@ try {
   const command = fileURLToPath(
     new URL("./psp-symbol-correlation.mjs", import.meta.url),
   );
-  const run = (inventoryPath, additions = []) =>
-    spawnSync(
-      process.execPath,
-      [
-        command,
-        "--symbols",
-        symbolsPath,
-        "--inventory",
-        inventoryPath,
-        "--format",
-        "sym",
-        "--source-base",
-        settings.sourceBase,
-        "--analysis-base",
-        settings.analysisBase,
-        "--target-sha256",
-        targetSha256,
-        ...additions,
-      ],
-      { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
-    );
-  const raw = run(rawInventoryPath);
-  assert.equal(raw.status, 0, raw.stderr);
+  const run = (
+    inventoryPath,
+    { symbols = symbolsPath, sha256 = targetSha256, extra = [] } = {},
+  ) =>
+    exec(process.execPath, [
+      command,
+      "--symbols",
+      symbols,
+      "--inventory",
+      inventoryPath,
+      "--format",
+      "sym",
+      "--source-base",
+      settings.sourceBase,
+      "--analysis-base",
+      settings.analysisBase,
+      "--target-sha256",
+      sha256,
+      ...extra,
+    ]);
+  const raw = await run(rawInventoryPath);
   const rawReport = JSON.parse(raw.stdout);
   assert.deepEqual(rawReport.records, report.records);
   assert.deepEqual(
@@ -268,8 +278,7 @@ try {
   });
   assert.equal(rawReport.inventory_target_claim, null);
 
-  const fromEvidence = run(evidencePath);
-  assert.equal(fromEvidence.status, 0, fromEvidence.stderr);
+  const fromEvidence = await run(evidencePath);
   const evidenceReport = JSON.parse(fromEvidence.stdout);
   assert.deepEqual(evidenceReport.input_paths, {
     symbols: symbolsPath,
@@ -278,68 +287,28 @@ try {
   assert.equal(evidenceReport.inventory_target_claim, targetSha256);
   assert.deepEqual(evidenceReport.records, rawReport.records);
 
-  const wrongOperation = run(labelsPath);
-  assert.notEqual(wrongOperation.status, 0);
-  assert.equal(wrongOperation.stdout, "");
-  assert.match(
-    wrongOperation.stderr,
+  await assertRefusal(
+    run(labelsPath),
     /Evidence inventory must come from list_procedures/u,
   );
-
-  const rejectedDigest = run(evidencePath, ["--target-sha256", "b".repeat(64)]);
-  assert.notEqual(rejectedDigest.status, 0);
-  assert.match(rejectedDigest.stderr, /Unknown or repeated flag/u);
-  const wrongTarget = spawnSync(
-    process.execPath,
-    [
-      command,
-      "--symbols",
-      symbolsPath,
-      "--inventory",
-      evidencePath,
-      "--format",
-      "sym",
-      "--source-base",
-      settings.sourceBase,
-      "--analysis-base",
-      settings.analysisBase,
-      "--target-sha256",
-      "b".repeat(64),
-    ],
-    { encoding: "utf8" },
+  await assertRefusal(
+    run(evidencePath, { extra: ["--target-sha256", "b".repeat(64)] }),
+    /Unknown or repeated flag/u,
   );
-  assert.notEqual(wrongTarget.status, 0);
-  assert.equal(wrongTarget.stdout, "");
-  assert.match(wrongTarget.stderr, /Inventory target identity disagrees/u);
-
-  const invalid = spawnSync(
-    process.execPath,
-    [
-      command,
-      "--symbols",
-      invalidSymbolsPath,
-      "--inventory",
-      rawInventoryPath,
-      "--format",
-      "sym",
-      "--source-base",
-      settings.sourceBase,
-      "--analysis-base",
-      settings.analysisBase,
-      "--target-sha256",
-      targetSha256,
-    ],
-    { encoding: "utf8" },
+  await assertRefusal(
+    run(evidencePath, { sha256: "b".repeat(64) }),
+    /Inventory target identity disagrees/u,
   );
-  assert.notEqual(invalid.status, 0);
-  assert.equal(invalid.stdout, "");
-  assert.match(invalid.stderr, /encoded data|utf-8/iu);
+  await assertRefusal(
+    run(rawInventoryPath, { symbols: invalidSymbolsPath }),
+    /encoded data|utf-8/iu,
+  );
 
   // A shell pipe has zero stat size. Feed it a finite over-limit input
   // and bound the child so a broken reader cannot hang or exhaust the runner.
   if (process.platform === "linux") {
     const pipe = (source, bytes) =>
-      spawnSync(
+      exec(
         "bash",
         [
           "-c",
@@ -354,18 +323,14 @@ try {
           settings.analysisBase,
           targetSha256,
         ],
-        { encoding: "utf8", timeout: 15_000, maxBuffer: 1024 * 1024 },
+        1024 * 1024,
       );
 
     for (const [source, bytes] of [
       ["symbols", 1024 * 1024 + 1],
       ["inventory", 32 * 1024 * 1024 + 1],
     ]) {
-      const result = pipe(source, bytes);
-      assert.equal(result.error, undefined, result.error?.message);
-      assert.notEqual(result.status, 0);
-      assert.equal(result.stdout, "");
-      assert.match(result.stderr, /Input exceeds size limit/u);
+      await assertRefusal(pipe(source, bytes), /Input exceeds size limit/u);
     }
   }
 } finally {
