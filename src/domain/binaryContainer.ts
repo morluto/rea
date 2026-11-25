@@ -724,13 +724,12 @@ export const createFileMappingIndex = (
   };
   const access: MappedStringAccess = {
     offset,
-    mappingAt: (address) => {
+    rangeAt: (address, maximum) => {
       const start = offset(address, 1);
       const interval = lastAtOrBelow(boundaries, address);
       return {
-        address,
         offset: start,
-        size: Number((runEnd[interval] as bigint) - address),
+        size: Math.min(maximum, Number((runEnd[interval] as bigint) - address)),
       };
     },
   };
@@ -769,34 +768,12 @@ export interface FileMappingIndex {
 }
 
 interface MappedStringAccess {
-  readonly mappingAt: (address: bigint) => FileMapping | undefined;
+  readonly rangeAt: (
+    address: bigint,
+    maximum: number,
+  ) => Pick<FileMapping, "offset" | "size">;
   readonly offset: (address: bigint, size: number) => number;
 }
-
-/** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
-export const readMappedCString = (
-  bytes: Buffer,
-  mappings: readonly FileMapping[],
-  address: bigint,
-  maximumBytes: number,
-  zeroFills: readonly ZeroFillMapping[],
-): Buffer => {
-  return readMappedString(
-    bytes,
-    {
-      mappingAt: (cursor) =>
-        mappings.find(
-          (range) =>
-            range.address <= cursor &&
-            cursor < range.address + BigInt(range.size),
-        ),
-      offset: (cursor, size) =>
-        mappedFileOffset(mappings, cursor, size, zeroFills),
-    },
-    address,
-    maximumBytes,
-  );
-};
 
 const readMappedString = (
   bytes: Buffer,
@@ -808,19 +785,7 @@ const readMappedString = (
   let length = 0;
   while (length <= maximumBytes) {
     const cursor = address + BigInt(length);
-    const mapping = access.mappingAt(cursor);
-    if (mapping === undefined) {
-      access.offset(cursor, 1);
-      throw new BinaryMappingFailure(
-        "unmapped",
-        "String range is not file mapped",
-      );
-    }
-    const size = Math.min(
-      maximumBytes + 1 - length,
-      Number(mapping.address + BigInt(mapping.size) - cursor),
-    );
-    const offset = mapping.offset + Number(cursor - mapping.address);
+    const { offset, size } = access.rangeAt(cursor, maximumBytes + 1 - length);
     const chunk = bytes.subarray(offset, offset + size);
     const terminator = chunk.indexOf(0);
     const consumed = terminator < 0 ? size : terminator + 1;
@@ -847,19 +812,7 @@ const readMappedStringFromReader = async (
   let length = 0;
   while (length <= maximumBytes) {
     const cursor = address + BigInt(length);
-    const mapping = access.mappingAt(cursor);
-    if (mapping === undefined) {
-      access.offset(cursor, 1);
-      throw new BinaryMappingFailure(
-        "unmapped",
-        "String range is not file mapped",
-      );
-    }
-    const size = Math.min(
-      maximumBytes + 1 - length,
-      Number(mapping.address + BigInt(mapping.size) - cursor),
-    );
-    const offset = mapping.offset + Number(cursor - mapping.address);
+    const { offset, size } = access.rangeAt(cursor, maximumBytes + 1 - length);
     const chunk = await readPrefix(offset, size);
     if (chunk.length === 0 || chunk.length > size)
       throw new BinaryFormatFailure(
