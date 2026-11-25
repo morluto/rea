@@ -20,6 +20,10 @@ import {
 } from "../../support/cli/cliCommandSessionFrames.mjs";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
+import {
+  COMPLETE_DETAIL,
+  completeApplicationAnalysis,
+} from "../../support/completeDetail.js";
 
 // Inert process models exercise escalation without waiting for real I/O.
 const MOCK_SHUTDOWN_GRACE_MS = 1;
@@ -116,6 +120,32 @@ test("reads a CLI session frame delivered one byte at a time", () => {
   });
   for (const byte of encoded) reader(Buffer.from([byte]));
   expect(frames).toEqual([{ id: 7, note: "x".repeat(64) }]);
+});
+
+test("reports an incomplete response frame when worker stdout ends", async () => {
+  const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
+    spawnWorker: () =>
+      asCliProcess(
+        respondingProcess(42, (request, child) => {
+          const response = encodeCliSessionFrame({
+            id: request.id,
+            exitCode: 0,
+          });
+          child.stdout.end(response.subarray(0, -1));
+          child.exitCode = 0;
+          child.emit("exit", 0, null);
+          child.stdout.once("end", () => child.emit("close", 0, null));
+        }),
+      ),
+  });
+  try {
+    await expect(
+      session.run(command(["--version"], { PATH: "/usr/bin" })),
+    ).rejects.toThrow(/CLI session ended with an incomplete frame/u);
+  } finally {
+    await session.close();
+  }
 });
 
 test("stops an unready shared CLI process when the session closes", async () => {
@@ -860,7 +890,7 @@ test("keeps a malformed JSON command's failure status and serves the next comman
     "app.mjs": "export function current() { return 1; }\n",
   });
   const recovered = await session.run(
-    command(["analyze-javascript-application", root, "--json"], environment),
+    command(completeApplicationAnalysis(root), environment),
   );
   expect(recovered.exitCode, recovered.stderr).toBe(0);
   expect(recovered.json).toMatchObject({
@@ -902,7 +932,7 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
     "app.mjs": "export function current() { return 1; }\n",
   });
   const analyzed = await session.run(
-    command(["analyze-javascript-application", root, "--json"], {
+    command(completeApplicationAnalysis(root), {
       PATH: process.env.PATH ?? "",
       REA_LOG_LEVEL: "silent",
     }),
@@ -922,15 +952,6 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
   expect(session.processId()).toBeUndefined();
 });
 
-const requireSharedCli = (cli: {
-  sharedCliRun?: (invocation: CliInvocation) => Promise<CliResult>;
-}): ((invocation: CliInvocation) => Promise<CliResult>) => {
-  const run = cli.sharedCliRun;
-  if (run === undefined)
-    throw new Error("cliTest did not provide a shared CLI session");
-  return run;
-};
-
 const normalized = (result: CliResult) =>
   z
     .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
@@ -938,6 +959,7 @@ const normalized = (result: CliResult) =>
 
 const analyzeArguments = (root: string): readonly string[] => [
   "analyze-javascript-application",
+  ...COMPLETE_DETAIL,
   root,
   "--format",
   "json",
@@ -957,12 +979,12 @@ const writeApplication = async (prefix: string): Promise<string> => {
 cliTest(
   "matches a fresh CLI process and reuses that process for the same environment",
   async ({ cli, cliCommandSession }) => {
-    const sharedCliRun = requireSharedCli(cli);
     const fresh = await cli.run({
+      freshProcess: true,
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const shared = await sharedCliRun({
+    const shared = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -971,7 +993,7 @@ cliTest(
     expect(shared.stderr).toBe(fresh.stderr);
     const pid = cliCommandSession.processId();
     expect(pid).toEqual(expect.any(Number));
-    const again = await sharedCliRun({
+    const again = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -979,10 +1001,11 @@ cliTest(
     expect(cliCommandSession.processId()).toBe(pid);
 
     const freshInvalid = await cli.run({
+      freshProcess: true,
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "not-a-level" },
     });
-    const sharedInvalid = await sharedCliRun({
+    const sharedInvalid = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "not-a-level" },
     });
@@ -992,7 +1015,7 @@ cliTest(
     expect(sharedInvalid.stderr).toBe(freshInvalid.stderr);
     expect(cliCommandSession.processId()).not.toBe(pid);
 
-    const restored = await sharedCliRun({
+    const restored = await cli.run({
       arguments: ["--version"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -1005,13 +1028,13 @@ cliTest(
 cliTest(
   "reuses one CLI process across JavaScript application directories",
   async ({ cli, cliCommandSession }) => {
-    const sharedCliRun = requireSharedCli(cli);
     const firstRoot = await writeApplication("rea-shared-cli-");
     const fresh = await cli.run({
+      freshProcess: true,
       arguments: analyzeArguments(firstRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const shared = await sharedCliRun({
+    const shared = await cli.run({
       arguments: analyzeArguments(firstRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });
@@ -1022,10 +1045,11 @@ cliTest(
 
     const secondRoot = await writeApplication("rea-shared-cli-next-");
     const freshNext = await cli.run({
+      freshProcess: true,
       arguments: analyzeArguments(secondRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const sharedNext = await sharedCliRun({
+    const sharedNext = await cli.run({
       arguments: analyzeArguments(secondRoot),
       environment: { REA_LOG_LEVEL: "silent" },
     });

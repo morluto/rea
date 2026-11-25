@@ -1,6 +1,7 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it, vi } from "vitest";
 import { AndroidAnalysisService } from "./AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "./AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../ports/android/AndroidAnalysisPort.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
@@ -9,7 +10,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 
 it("retains the selected subject in bounded search Evidence", () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
@@ -17,6 +18,7 @@ it("retains the selected subject in bounded search Evidence", () => {
   const relationshipCoverage = {
     status: "unknown",
     reason: "Class search does not inspect calls",
+    limited_directions: ["callers", "callees"] as ["callers", "callees"],
   } as const;
   const source = createEvidence(
     {
@@ -66,8 +68,9 @@ it.each(["omitted", "null", "explicit"] as const)(
     const relationshipCoverage = {
       status: "unknown",
       reason: "Calls were not inspected",
+      limited_directions: ["callers", "callees"] as ["callers", "callees"],
     } as const;
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "read_dex",
       parameters: {},
       result: { inventory: true },
@@ -122,7 +125,7 @@ it.each(["omitted", "null", "explicit"] as const)(
       expect(evidence).toMatchObject({
         subject:
           subjectKind === "null"
-            ? null
+            ? { identity: { kind: "unknown", reason: "not-observed" } }
             : { local_path: subjectKind === "omitted" ? path : explicit.path },
       });
     }

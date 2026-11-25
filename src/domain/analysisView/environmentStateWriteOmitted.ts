@@ -1,4 +1,5 @@
 import {
+  succeeded,
   ownMember,
   at,
   isObject,
@@ -11,11 +12,10 @@ import {
   type StateRecordFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import {
-  succeeded,
-  type CheckOutcome,
-  type ReadBodies,
-  type SimulatedState,
+import type {
+  CheckOutcome,
+  ReadBodies,
+  SimulatedState,
 } from "./environmentStateWriteChecks.js";
 
 /**

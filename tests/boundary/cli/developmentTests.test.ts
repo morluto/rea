@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 const run = (
   root: string,
@@ -49,18 +50,17 @@ const commit = (root: string, message: string) =>
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-development-tests-");
-  await mkdir(join(root, "scripts", "lib"), { recursive: true });
   await mkdir(join(root, "src"));
-  for (const path of [
-    "scripts/run-development-tests.mjs",
-    "scripts/run-exact-tests.mjs",
-    "scripts/run-exclusive.mjs",
-    "scripts/run-exclusive-command.mjs",
-    "scripts/lib/development-tests.mjs",
-    "scripts/lib/test-projects.mjs",
-    "scripts/lib/windows-owned-command.mjs",
-  ])
-    await copyFile(join(process.cwd(), path), join(root, path));
+  // The runner spawns the exact-test and exclusive-lock scripts.
+  await copyScriptsWithImports(
+    [
+      "scripts/run-development-tests.mjs",
+      "scripts/run-exact-tests.mjs",
+      "scripts/run-exclusive.mjs",
+      "scripts/run-exclusive-command.mjs",
+    ],
+    root,
+  );
   await symlink(
     join(process.cwd(), "node_modules"),
     join(root, "node_modules"),
@@ -68,9 +68,12 @@ const fixture = async () => {
   );
   await writeFile(join(root, "package.json"), '{"type":"module"}\n');
   await writeFile(join(root, ".gitignore"), "node_modules\nselected.txt\n");
+  // Disable Vitest's disk module cache in nested fixture configs; root/node_modules
+  // symlinks the parent workspace's node_modules, so a lockfile mismatch would
+  // otherwise clear the parent runner's node_modules/.vitest-cache mid-run.
   await writeFile(
     join(root, "vitest.config.mjs"),
-    'export default { test: { projects: [{ test: { name: "domain", include: ["src/**/*.test.ts"] } }] } };\n',
+    'export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["src/**/*.test.ts"] } }] } };\n',
   );
   await writeFile(join(root, "src/value.ts"), "export const value = 1;\n");
   await writeFile(
@@ -143,7 +146,7 @@ describe("development test runner symlink aliases", () => {
         kind === "file" ? "src/value.test.ts" : "src/domain/value.test.ts";
       await writeFile(
         join(root, "vitest.config.mjs"),
-        `export default { test: { projects: [{ test: { name: "domain", include: ["${includedSelection}"] } }] } };\n`,
+        `export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["${includedSelection}"] } }] } };\n`,
       );
 
       await expect(
@@ -166,8 +169,8 @@ describe("development test runner symlink aliases", () => {
 describe("development test runner prerequisite ownership", () => {
   it("prepares artifacts for filesystem aliases without folding distinct filenames", async () => {
     const root = await fixture();
-    const canonical = "tests/boundary/mcp/deferredRuntime.test.ts";
-    const selected = "tests/boundary/mcp/DEFERREDRuntime.test.ts";
+    const canonical = "tests/boundary/mcp/guidanceMcp.test.ts";
+    const selected = "tests/boundary/mcp/GUIDANCEMcp.test.ts";
     await mkdir(join(root, "tests/boundary/mcp"), { recursive: true });
     await writeFile(
       join(root, canonical),
@@ -192,7 +195,7 @@ describe("development test runner prerequisite ownership", () => {
         paths: [path],
         needsBuild: true,
         artifactTasks:
-          path === canonical || sameFile ? ["artifacts:mcp-catalog"] : [],
+          path === canonical || sameFile ? ["artifacts:skills"] : [],
         vitestArguments: ["run", path],
       });
     }
@@ -309,7 +312,7 @@ describe("development test runner exact selection", () => {
     );
     await writeFile(
       join(root, "vitest.config.mjs"),
-      'export default { test: { projects: [{ test: { name: "domain", include: ["src/value.test.ts"] } }] } };\n',
+      'export default { test: { fsModuleCache: false, projects: [{ test: { name: "domain", fsModuleCache: false, include: ["src/value.test.ts"] } }] } };\n',
     );
     await expect(
       testCommand(root, "focused", "src/value.test.ts", "src/excluded.test.ts"),
@@ -345,7 +348,7 @@ describe("development test runner exact selection", () => {
     );
     await writeFile(
       join(root, "vitest.config.mjs"),
-      'export default { test: { projects: ["domain", "evaluation"].map(name => ({ test: { name, env: { REA_TEST_PROJECT: name }, include: ["src/value.test.ts"] } })) } };\n',
+      'export default { test: { fsModuleCache: false, projects: ["domain", "evaluation"].map(name => ({ test: { name, fsModuleCache: false, env: { REA_TEST_PROJECT: name }, include: ["src/value.test.ts"] } })) } };\n',
     );
     await testCommand(root, "focused", "src/value.test.ts");
     for (const name of ["domain", "evaluation"])
@@ -434,7 +437,6 @@ describe("development test runner cancellation", () => {
         await closed;
       }
     },
-    20_000,
   );
 });
 
@@ -510,7 +512,7 @@ describe("development test runner public CLI", () => {
     expect(changed.stdout).toContain("1 passed");
     const focused = await testCommand(root, "focused", "src/value.test.ts");
     expect(focused.stdout).toContain("1 passed");
-  }, 60_000);
+  });
 
   it("reports a missing comparison base and rejects missing or compiled-boundary paths", async () => {
     const root = await fixture();

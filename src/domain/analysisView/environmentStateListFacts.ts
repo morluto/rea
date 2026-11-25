@@ -56,7 +56,8 @@ export const listFacts = (
             listsIds(value, items, field)
           )
             listing.add(name);
-      const counted = itemTotals(parent, plan.pointer).filter(
+      const totals = itemTotals(parent, plan.pointer);
+      const counted = totals.filter(
         ([, value]) => recordedItemCount(value) !== undefined,
       );
       counting.set(
@@ -69,8 +70,9 @@ export const listFacts = (
       // the number listed, or a next page, shows it is partial.
       if (
         !startsAtBeginning(record.query) ||
-        counted.some(
-          ([, value]) => recordedItemCount(value) !== items.length,
+        totals.some(
+          ([, value]) =>
+            value !== undefined && recordedItemCount(value) !== items.length,
         ) ||
         hasContinuation(parent, plan.pointer)
       )

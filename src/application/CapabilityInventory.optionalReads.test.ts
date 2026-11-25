@@ -2,9 +2,10 @@ import { expect, it } from "vitest";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "./CapabilityInventory.js";
 import { EnhancedTools } from "./EnhancedTools.js";
+import type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const inventory = (
@@ -41,38 +42,41 @@ const inventory = (
 
 it.each([
   {
-    tool: "batch_decompile",
+    call: { name: "batch_decompile", input: { addresses: ["entry"] } },
     optional: "address_name",
     required: "procedure_pseudo_code",
-    input: { addresses: ["entry"] },
   },
   {
-    tool: "get_objc_classes",
+    call: { name: "get_objc_classes", input: { pattern: "" } },
     optional: "inspect_native_dispatch_metadata",
     required: "list_names",
-    input: {},
   },
   {
-    tool: "analyze_swift_types",
+    call: { name: "analyze_swift_types", input: {} },
     optional: "list_names",
     required: "list_procedures",
-    input: {},
   },
   {
-    tool: "trace_feature",
+    call: {
+      name: "trace_feature",
+      input: { query: "needle", case_sensitive: false },
+    },
     optional: "resolve_containing_procedure",
     required: "search_strings",
-    input: { query: "needle" },
   },
   {
-    tool: "binary_overview",
+    call: { name: "binary_overview", input: {} },
     optional: "list_segments",
     required: "current_document",
-    input: {},
   },
-] as const)(
-  "reports the effects of $tool's dispatched optional $optional read without requiring it for readiness",
-  async ({ tool, optional, required, input }) => {
+] satisfies {
+  call: ValidatedEnhancedCall;
+  optional: string;
+  required: string;
+}[])(
+  "reports the effects of $call.name's dispatched optional $optional read without requiring it for readiness",
+  async ({ call, optional, required }) => {
+    const tool = call.name;
     const calls: string[] = [];
     const tools = new EnhancedTools({
       execute: async (operation) => {
@@ -108,7 +112,7 @@ it.each([
         return ok(createAnalysisExecution(value, provider));
       },
     });
-    const result = await tools.execute(tool, input);
+    const result = await tools.executeValidated(call);
     expect(result.ok).toBe(true);
     expect(calls).toContain(optional);
     const operations = [...new Set(calls)].filter(

@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import {
   artifactCli,
   artifactCliEvidence,
@@ -16,9 +15,16 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
-const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-interface-builder-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-interface-builder-",
+});
+const fixtureRoot = fixture.path;
 const appPath = join(fixtureRoot, "Fixture.app");
 const resourcesPath = join(appPath, "Contents", "Resources");
 const executablePath = join(appPath, "Contents", "MacOS", "Fixture");
@@ -78,7 +84,7 @@ const decodedButtonBooleans = (result) => {
 };
 
 let report;
-try {
+await withVerifierFixture(fixture, async () => {
   await mkdir(join(appPath, "Contents", "MacOS"), { recursive: true });
   await mkdir(resourcesPath, { recursive: true });
   await writeFile(
@@ -95,9 +101,7 @@ try {
     appPath,
   );
   const decoded = evidence.normalized_result;
-  const executableSha256 = createHash("sha256")
-    .update(await readFile(executablePath))
-    .digest("hex");
+  const executableSha256 = await sha256File(executablePath);
   await withBundleResourcesMcp(appPath, async (client) => {
     const mcp = await artifactMcpResult(client, "decode_interface_builder");
     assert.deepEqual(
@@ -217,7 +221,5 @@ try {
     hierarchy_complete: decoded.documents[0].hierarchy_complete,
     truncated: decoded.graph.truncated,
   };
-} finally {
-  await rm(fixtureRoot, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

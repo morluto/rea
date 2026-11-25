@@ -38,6 +38,7 @@ for (const encodedCredential of [false, true])
         registration,
         JSON.stringify({
           url: endpoint,
+          protocol: "native",
           headers: { Authorization: "Bearer fixture-secret" },
         }),
       );
@@ -61,7 +62,9 @@ for (const encodedCredential of [false, true])
         provider_id: "ida",
       });
       if (opened.isError) throw new Error(JSON.stringify(opened));
-      const failure = parseMcpToolError(await call("list_procedures", {}));
+      const failure = parseMcpToolError(
+        await call("list_procedures", { detail: "complete" }),
+      );
       expect(failure.error).toMatchObject({
         code: "execution_failure",
         details: { diagnostics: { endpoint: expectedEndpoint } },

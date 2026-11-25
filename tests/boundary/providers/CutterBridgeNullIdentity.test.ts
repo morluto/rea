@@ -1,11 +1,15 @@
+import {
+  listenCutterServer as listen,
+  windowsDescriptorReaderFixture,
+} from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 
@@ -17,23 +21,9 @@ let server: ReturnType<typeof createServer> | undefined;
 afterEach(async () => {
   if (server !== undefined)
     await new Promise<void>((resolve) => server?.close(() => resolve()));
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
   server = undefined;
   directory = undefined;
 });
-
-const listen = async (
-  listener: ReturnType<typeof createServer>,
-): Promise<number> => {
-  await new Promise<void>((resolve) =>
-    listener.listen(0, "127.0.0.1", resolve),
-  );
-  const address = listener.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral IPv4 listener");
-  return address.port;
-};
 
 const bridgeServer = (
   currentFile: string | null,
@@ -115,15 +105,7 @@ const clientFor = (bridgeDirectory: string): CutterBridgeClient =>
     ? new CutterBridgeClient(
         { REA_CUTTER_BRIDGE_DIR: bridgeDirectory },
         {
-          windowsPrivateReader: {
-            verifyDirectory: () => true,
-            readDescriptor: (root, name, maxBytes) => {
-              const bytes = readFileSync(join(root, name));
-              if (bytes.byteLength > maxBytes)
-                throw new Error("Descriptor too large");
-              return bytes;
-            },
-          },
+          windowsPrivateReader: windowsDescriptorReaderFixture(),
         },
       )
     : new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: bridgeDirectory });
@@ -148,7 +130,7 @@ const writeDescriptor = async (port: number): Promise<void> => {
 };
 
 it("preserves a live Cutter status that explicitly has no active document", async () => {
-  directory = await mkdtemp(join(tmpdir(), "rea-cutter-null-status-"));
+  directory = await createTestTempDirectory("rea-cutter-null-status-");
   server = bridgeServer(null, 2);
   await writeDescriptor(await listen(server));
 
@@ -162,7 +144,7 @@ it("preserves a live Cutter status that explicitly has no active document", asyn
 });
 
 it("preserves a null active document returned after a Cutter command", async () => {
-  directory = await mkdtemp(join(tmpdir(), "rea-cutter-null-command-"));
+  directory = await createTestTempDirectory("rea-cutter-null-command-");
   server = bridgeServer(null, 2);
   await writeDescriptor(await listen(server));
 

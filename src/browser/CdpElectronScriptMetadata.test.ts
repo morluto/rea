@@ -5,7 +5,7 @@ import { inspectElectronPageInputSchema } from "../domain/javascript/electronObs
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
-import type { CdpConnection } from "./CdpConnection.js";
+import { receiveCdpEvent, type CdpConnection } from "./CdpConnection.js";
 import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
@@ -30,7 +30,7 @@ describe("Electron script metadata byte admission", () => {
       ["suffix", ""],
     ]) {
       ingestElectronScriptEvent({
-        event: {
+        event: receiveCdpEvent({
           method: "Debugger.scriptParsed",
           params: {
             scriptId,
@@ -38,7 +38,7 @@ describe("Electron script metadata byte admission", () => {
             executionContextId: 7,
             executionContextAuxData: { frameId },
           },
-        },
+        }),
         scripts,
         executionContextFrames: new Map<string, CdpContextFrameClaim>([
           ["7", { state: "observed", frameId: "context-frame" }],

@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { readResponseValues } from "./BrowserScenarioResponseValues.js";
@@ -71,3 +71,57 @@ it.each([
     expect(secrets.redact("unrelated value")).toBe("unrelated value");
   },
 );
+
+describe("browser scenario cursor redaction", () => {
+  it("redacts multiple occurrences, longest-match overlaps, percent case escapes, and reconstructed secrets", () => {
+    const resolved = BrowserScenarioSecrets.resolve(
+      browserScenarioSchema.parse({
+        browser: { mode: "launch", executable_path: "/fixture/chrome" },
+        start_url: { url: "https://example.test/" },
+        secrets: [
+          { secret_id: "short", environment_variable: "SHORT_SECRET" },
+          { secret_id: "long", environment_variable: "LONG_SECRET" },
+          { secret_id: "pct", environment_variable: "PCT_SECRET" },
+          { secret_id: "outer", environment_variable: "OUTER_SECRET" },
+        ],
+        actions: [
+          {
+            step_id: "save",
+            action: "request",
+            method: "GET",
+            path: "/value",
+            save: [{ name: "token", json_pointer: "/token", secret: true }],
+          },
+        ],
+      }),
+      {
+        SHORT_SECRET: "alpha-secret",
+        LONG_SECRET: "alpha-secret-extended",
+        PCT_SECRET: "tok/en",
+        OUTER_SECRET: "pre[REDACTED:short]post",
+      },
+    );
+    if (!resolved.ok) throw resolved.error;
+    const secrets = resolved.value;
+
+    const clean = "nothing-sensitive-present&foo=bar";
+    expect(secrets.redact(clean)).toBe(clean);
+
+    const multi =
+      "first=alpha-secret&second=alpha-secret-extended&url=tok%2fen&upper=tok%2Fen";
+    const redactedMulti = secrets.redact(multi);
+    expect(redactedMulti).toBe(
+      "first=[REDACTED:short]&second=[REDACTED:long]&url=[REDACTED:pct]&upper=[REDACTED:pct]",
+    );
+
+    const sanitized = secrets.sanitizeUrl(
+      "https://example.test/?q=tok%2Fen&long=alpha-secret-extended",
+    );
+    expect(sanitized.redacted).toBe(true);
+    expect(sanitized.url).not.toContain("tok");
+    expect(sanitized.url).not.toContain("alpha-secret");
+
+    // When marker substitution forms another declared secret, the post-replacement check wipes the output.
+    expect(secrets.redact("prealpha-secretpost")).toBe("");
+  });
+});

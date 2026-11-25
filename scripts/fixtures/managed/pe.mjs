@@ -1,5 +1,54 @@
 import { Buffer } from "node:buffer";
 
+/**
+ * @typedef {{
+ *   readonly body?: Buffer;
+ *   readonly flags?: number;
+ *   readonly implFlags?: number;
+ *   readonly name: string;
+ *   readonly rva?: number;
+ * }} ManagedPeFixtureMethod
+ */
+/**
+ * @typedef {{
+ *   readonly cliFlags?: number;
+ *   readonly corruptMetadataSignature?: boolean;
+ *   readonly fieldName?: string;
+ *   readonly fields?: readonly {
+ *     readonly name: string;
+ *     readonly flags?: number;
+ *     readonly signature?: Buffer;
+ *   }[];
+ *   readonly constants?: readonly {
+ *     readonly typeCode: number;
+ *     readonly padding?: number;
+ *     readonly parentRaw?: number;
+ *     readonly value: Buffer;
+ *   }[];
+ *   readonly ilBody?: Buffer;
+ *   readonly machine?: number;
+ *   readonly metadataValidMaskExtra?: bigint;
+ *   readonly methodImplFlags?: number;
+ *   readonly methodName?: string;
+ *   readonly methods?: readonly ManagedPeFixtureMethod[];
+ *   readonly mvid?: Buffer;
+ *   readonly pinvoke?: {
+ *     readonly importName?: string;
+ *     readonly mappingFlags?: number;
+ *     readonly memberRow?: number;
+ *     readonly moduleName?: string;
+ *   };
+ *   readonly readyToRun?: boolean;
+ *   readonly references?: readonly string[];
+ *   readonly resourceData?: Buffer;
+ *   readonly targetFramework?: string | null;
+ *   readonly secondType?: { readonly name: string; readonly firstField: number };
+ *   readonly typeName?: string;
+ *   readonly typeNamespace?: string;
+ * }} ManagedPeFixtureOptions
+ */
+/** A method whose metadata row has an RVA. @typedef {ManagedPeFixtureMethod & { readonly rva: number }} PlacedFixtureMethod */
+
 const textEncoder = new TextEncoder();
 
 const DEFAULT_MVID = Buffer.from([
@@ -7,13 +56,17 @@ const DEFAULT_MVID = Buffer.from([
   0xdd, 0xee, 0xff,
 ]);
 
+/** @param {number} value */
 const align4 = (value) => (value + 3) & ~3;
+/** @param {string} value */
 const cString = (value) => Buffer.from(`${value}\0`, "utf8");
 
 class StringHeap {
+  /** @type {Buffer[]} */
   #chunks = [Buffer.from([0])];
   #size = 1;
 
+  /** @param {string} value */
   add(value) {
     if (value.length === 0) return 0;
     const index = this.#size;
@@ -29,9 +82,11 @@ class StringHeap {
 }
 
 class BlobHeap {
+  /** @type {Buffer[]} */
   #chunks = [Buffer.from([0])];
   #size = 1;
 
+  /** @param {Buffer} value */
   add(value) {
     if (value.length === 0) return 0;
     if (value.length > 0x7f)
@@ -47,30 +102,44 @@ class BlobHeap {
   }
 }
 
+/** @param {number} value */
 const u16 = (value) => {
   const bytes = Buffer.alloc(2);
   bytes.writeUInt16LE(value, 0);
   return bytes;
 };
 
+/** @param {number} value */
 const u32 = (value) => {
   const bytes = Buffer.alloc(4);
   bytes.writeUInt32LE(value, 0);
   return bytes;
 };
 
+/** @param {Buffer} [mvid] */
 const guidHeap = (mvid = DEFAULT_MVID) => {
   if (mvid.length !== 16)
     throw new RangeError("Managed PE fixture MVID must be 16 bytes");
   return Buffer.from(mvid);
 };
 
+/** @param {number} name */
 const moduleRow = (name) =>
   Buffer.concat([u16(0), u16(name), u16(1), u16(0), u16(0)]);
 
+/**
+ * @param {number} name
+ * @param {number} namespace
+ */
 const typeRefRow = (name, namespace) =>
   Buffer.concat([u16(0), u16(name), u16(namespace)]);
 
+/**
+ * @param {number} name
+ * @param {number} namespace
+ * @param {number} fieldList
+ * @param {number} methodList
+ */
 const typeDefRow = (name, namespace, fieldList, methodList) =>
   Buffer.concat([
     u32(0x0010_0001),
@@ -81,9 +150,23 @@ const typeDefRow = (name, namespace, fieldList, methodList) =>
     u16(methodList),
   ]);
 
+/**
+ * @param {number} name
+ * @param {number} signature
+ * @param {number} [flags]
+ */
 const fieldRow = (name, signature, flags = 0x0001) =>
   Buffer.concat([u16(flags), u16(name), u16(signature)]);
 
+/**
+ * @param {{
+ *   readonly flags?: number;
+ *   readonly implFlags?: number;
+ *   readonly name: number;
+ *   readonly rva: number;
+ *   readonly signature: number;
+ * }} row
+ */
 const methodDefRow = ({
   flags = 0x0016,
   implFlags = 0,
@@ -100,11 +183,22 @@ const methodDefRow = ({
     u16(0),
   ]);
 
+/**
+ * @param {number} name
+ * @param {number} signature
+ */
 const memberRefRow = (name, signature) =>
   Buffer.concat([u16((1 << 3) | 1), u16(name), u16(signature)]);
 
+/** @param {number} name */
 const moduleRefRow = (name) => Buffer.concat([u16(name)]);
 
+/**
+ * @param {number} importName
+ * @param {number} importScope
+ * @param {number} mappingFlags
+ * @param {number} [memberRow]
+ */
 const implMapRow = (importName, importScope, mappingFlags, memberRow = 1) =>
   Buffer.concat([
     u16(mappingFlags),
@@ -113,6 +207,7 @@ const implMapRow = (importName, importScope, mappingFlags, memberRow = 1) =>
     u16(importScope),
   ]);
 
+/** @param {number} name */
 const assemblyRow = (name) =>
   Buffer.concat([
     u32(0x0000_8004),
@@ -126,6 +221,10 @@ const assemblyRow = (name) =>
     u16(0),
   ]);
 
+/**
+ * @param {number} name
+ * @param {number} keyOrToken
+ */
 const assemblyRefRow = (name, keyOrToken) =>
   Buffer.concat([
     u16(8),
@@ -139,12 +238,15 @@ const assemblyRefRow = (name, keyOrToken) =>
     u16(0),
   ]);
 
+/** @param {number} value */
 const customAttributeRow = (value) =>
   Buffer.concat([u16((1 << 5) | 14), u16((1 << 3) | 3), u16(value)]);
 
+/** @param {number} name */
 const manifestResourceRow = (name) =>
   Buffer.concat([u32(0), u32(2), u16(name), u16(0)]);
 
+/** @param {string} value */
 const fixedStringAttributeBlob = (value) => {
   const bytes = Buffer.from(textEncoder.encode(value));
   if (bytes.length > 0x7f)
@@ -152,6 +254,11 @@ const fixedStringAttributeBlob = (value) => {
   return Buffer.concat([Buffer.from([1, 0, bytes.length]), bytes, u16(0)]);
 };
 
+/**
+ * @param {number} relativeOffset
+ * @param {number} size
+ * @param {string} name
+ */
 const metadataStreamHeader = (relativeOffset, size, name) => {
   const named = cString(name);
   const paddedName = Buffer.alloc(align4(named.length));
@@ -159,6 +266,12 @@ const metadataStreamHeader = (relativeOffset, size, name) => {
   return Buffer.concat([u32(relativeOffset), u32(size), paddedName]);
 };
 
+/**
+ * @param {Buffer} tables
+ * @param {Buffer} strings
+ * @param {Buffer} guid
+ * @param {Buffer} blob
+ */
 const metadataRoot = (tables, strings, guid, blob) => {
   const version = Buffer.from("v4.0.30319\0\0", "utf8");
   const header = Buffer.concat([
@@ -200,6 +313,10 @@ const metadataRoot = (tables, strings, guid, blob) => {
   return root;
 };
 
+/**
+ * @param {ReadonlyMap<number, readonly Buffer[]>} rows Rows by metadata table number.
+ * @param {bigint} [extraValidMask]
+ */
 const tablesStream = (rows, extraValidMask = 0n) => {
   let valid = extraValidMask;
   for (const table of rows.keys()) valid |= 1n << BigInt(table);
@@ -231,7 +348,11 @@ export const alternateMvid = Buffer.from([
   0xff, 0x11, 0x22,
 ]);
 
-/** Build a source-owned PE/CLI fixture without committing compiled binaries. */
+/**
+ * The fixture's methods: the caller's, or one method from the single-method options.
+ * @param {ManagedPeFixtureOptions} options
+ * @returns {readonly ManagedPeFixtureMethod[]}
+ */
 const managedFixtureMethods = (options) =>
   options.methods ?? [
     {
@@ -242,10 +363,17 @@ const managedFixtureMethods = (options) =>
     },
   ];
 
+/**
+ * @param {ManagedPeFixtureOptions} options
+ * @param {readonly PlacedFixtureMethod[]} methods
+ */
 const buildManagedMetadata = (options, methods) => {
   const strings = new StringHeap();
   const blobs = new BlobHeap();
-  const stringsForMethods = methods.map((method) => strings.add(method.name));
+  const namedMethods = methods.map((method) => ({
+    method,
+    name: strings.add(method.name),
+  }));
   const moduleName = strings.add("Fixture.dll");
   const assemblyName = strings.add("Fixture.Managed");
   const attributeName = strings.add("TargetFrameworkAttribute");
@@ -253,8 +381,12 @@ const buildManagedMetadata = (options, methods) => {
   const constructorName = strings.add(".ctor");
   const typeName = strings.add(options.typeName ?? "Program");
   const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
+  const secondType = options.secondType;
   const fields = options.fields ?? [{ name: options.fieldName ?? "counter" }];
-  const fieldNames = fields.map((field) => strings.add(field.name));
+  const namedFields = fields.map((field) => ({
+    field,
+    name: strings.add(field.name),
+  }));
   const pinvokeModuleName =
     options.pinvoke === undefined
       ? null
@@ -269,9 +401,9 @@ const buildManagedMetadata = (options, methods) => {
     strings.add(name),
   );
   const tokenBlob = blobs.add(Buffer.from("b77a5c561934e089", "hex"));
-  const fieldRows = fields.map((field, index) =>
+  const fieldRows = namedFields.map(({ field, name }) =>
     fieldRow(
-      fieldNames[index],
+      name,
       blobs.add(field.signature ?? Buffer.from([0x06, 0x08])),
       field.flags,
     ),
@@ -290,46 +422,56 @@ const buildManagedMetadata = (options, methods) => {
       options.targetFramework ?? ".NETCoreApp,Version=v8.0",
     ),
   );
-  const methodRows = methods.map((method, index) =>
+  const methodRows = namedMethods.map(({ method, name }) =>
     methodDefRow({
-      name: stringsForMethods[index],
+      name,
       signature: methodSignature,
       rva: method.rva,
       flags: method.flags ?? 0x0016,
       implFlags: method.implFlags ?? 0,
     }),
   );
+  // Rows by metadata table number; the stream orders tables by number.
+  /** @type {Map<number, Buffer[]>} */
   const rows = new Map([
     [0, [moduleRow(moduleName)]],
     [1, [typeRefRow(attributeName, attributeNamespace)]],
-    [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
+    [
+      2,
+      [
+        typeDefRow(typeName, typeNamespace, 1, 1),
+        ...(secondType === undefined
+          ? []
+          : [
+              typeDefRow(
+                strings.add(secondType.name),
+                typeNamespace,
+                secondType.firstField,
+                methods.length + 1,
+              ),
+            ]),
+      ],
+    ],
     [4, fieldRows],
     [6, methodRows],
     [10, [memberRefRow(constructorName, constructorSignature)]],
-    ...(constantRows.length === 0 ? [] : [[11, constantRows]]),
     [12, [customAttributeRow(attributeBlob)]],
-    ...(pinvokeModuleName === null
-      ? []
-      : [[26, [moduleRefRow(pinvokeModuleName)]]]),
-    ...(pinvokeImportName === null
-      ? []
-      : [
-          [
-            28,
-            [
-              implMapRow(
-                pinvokeImportName,
-                1,
-                options.pinvoke?.mappingFlags ?? 0x0344,
-                options.pinvoke?.memberRow ?? 1,
-              ),
-            ],
-          ],
-        ]),
     [32, [assemblyRow(assemblyName)]],
     [35, referenceStringIndexes.map((name) => assemblyRefRow(name, tokenBlob))],
     [40, [manifestResourceRow(resourceName)]],
   ]);
+  if (constantRows.length > 0) rows.set(11, constantRows);
+  if (pinvokeModuleName !== null)
+    rows.set(26, [moduleRefRow(pinvokeModuleName)]);
+  if (pinvokeImportName !== null)
+    rows.set(28, [
+      implMapRow(
+        pinvokeImportName,
+        1,
+        options.pinvoke?.mappingFlags ?? 0x0344,
+        options.pinvoke?.memberRow ?? 1,
+      ),
+    ]);
   const metadata = metadataRoot(
     tablesStream(rows, options.metadataValidMaskExtra ?? 0n),
     strings.toBuffer(),
@@ -340,8 +482,18 @@ const buildManagedMetadata = (options, methods) => {
   return metadata;
 };
 
+/**
+ * @param {number} value
+ * @param {number} boundary
+ */
 const align = (value, boundary) => Math.ceil(value / boundary) * boundary;
 
+/**
+ * File offsets of each part; a method with RVA zero has no mapped body (`null`).
+ * @param {ManagedPeFixtureOptions} options
+ * @param {readonly ManagedPeFixtureMethod[]} methods
+ * @param {number} metadataLength
+ */
 const managedFixtureLayout = (options, methods, metadataLength) => {
   const resourceLength =
     4 + (options.resourceData ?? Buffer.from("resource-data")).length;
@@ -354,6 +506,7 @@ const managedFixtureLayout = (options, methods, metadataLength) => {
     0x0900,
     align(resourceOffset + resourceLength, 0x200),
   );
+  /** @type {(number | null)[]} */
   const methodOffsets = [];
   let nextMethodOffset = Math.max(
     0x0a00,
@@ -377,6 +530,11 @@ const managedFixtureLayout = (options, methods, metadataLength) => {
   return { metadataOffset, resourceOffset, readyToRunOffset, methodOffsets };
 };
 
+/**
+ * @param {ManagedPeFixtureOptions} options
+ * @param {readonly PlacedFixtureMethod[]} methods
+ * @param {Buffer} metadata
+ */
 const buildManagedImage = (options, methods, metadata) => {
   const resourceData = options.resourceData ?? Buffer.from("resource-data");
   const resourceDirectory = Buffer.concat([
@@ -389,11 +547,12 @@ const buildManagedImage = (options, methods, metadata) => {
     metadataOffset + metadata.length,
     resourceOffset + resourceDirectory.length,
     readyToRunOffset + (options.readyToRun === true ? 4 : 0),
-    ...methodOffsets.flatMap((offset, index) =>
-      offset === null
+    ...methods.flatMap((method, index) => {
+      const offset = methodOffsets[index];
+      return offset === null || offset === undefined
         ? []
-        : [offset + (methods[index].body ?? retOnlyIlBody).length],
-    ),
+        : [offset + (method.body ?? retOnlyIlBody).length];
+    }),
     0x1000,
   );
   const imageSize = align(contentEnd, 0x200);
@@ -446,7 +605,7 @@ const buildManagedImage = (options, methods, metadata) => {
   }
   methods.forEach((method, index) => {
     const offset = methodOffsets[index];
-    if (offset === null) return;
+    if (offset === null || offset === undefined) return;
     (method.body ?? retOnlyIlBody).copy(image, offset);
   });
   metadata.copy(image, metadataOffset);
@@ -454,7 +613,10 @@ const buildManagedImage = (options, methods, metadata) => {
   return image;
 };
 
-/** Build a source-owned PE/CLI fixture without committing compiled binaries. */
+/**
+ * Build a source-owned PE/CLI fixture without committing compiled binaries.
+ * @param {ManagedPeFixtureOptions} [options]
+ */
 export const buildManagedPeFixture = (options = {}) => {
   const methods = managedFixtureMethods(options);
   const provisionalMetadata = buildManagedMetadata(
@@ -468,11 +630,22 @@ export const buildManagedPeFixture = (options = {}) => {
   );
   const methodsWithRvas = methods.map((method, index) => ({
     ...method,
-    rva: method.rva ?? 0x2000 + (layout.methodOffsets[index] - 0x0200),
+    rva: method.rva ?? bodyRva(layout.methodOffsets[index]),
   }));
   const metadata = buildManagedMetadata(options, methodsWithRvas);
   return buildManagedImage(options, methodsWithRvas, metadata);
 };
+/**
+ * The RVA of a method body the layout placed. A method without an RVA always
+ * has a placed body; only an explicit RVA of zero has none.
+ * @param {number | null | undefined} offset
+ */
+const bodyRva = (offset) => {
+  if (offset === null || offset === undefined)
+    throw new RangeError("Managed PE fixture method body was not placed");
+  return 0x2000 + (offset - 0x0200);
+};
+
 export const buildNativePeFixture = () => {
   const image = buildManagedPeFixture();
   const cliDirectory = 0x84 + 20 + 96 + 14 * 8;

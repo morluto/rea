@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { copyAndHash } from "../../../../src/kuna/KunaCommand.js";
 import {
   MACHO_LOAD_COMMAND_PREFIX,
@@ -78,7 +78,11 @@ it("keeps load commands that span stream chunks from the hashed copy", async () 
   const last = entry("0x100083e70");
   const first = entry("0x100080000");
   const placed = placeKunaInventory([first, last], layout);
-  expect(placed.data).toEqual(new Map([[last, "__TEXT,__s999"]]));
+  expect(placed.data).toEqual(
+    new Map([
+      [last, { kind: "data", region: "__TEXT,__s999", codePossible: true }],
+    ]),
+  );
   expect(placed.unplaced.size).toBe(0);
 
   // Without a request nothing is kept, and a file shorter than the probe

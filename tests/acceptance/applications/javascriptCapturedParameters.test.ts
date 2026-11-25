@@ -9,6 +9,7 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { verifyJavaScriptReturnShapes } from "../../fixtures/javascriptReturnShapes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const source = `
 export function captured(x) { const saved=x; x=2; return {type:"ok",value:saved}; }
@@ -67,7 +68,6 @@ cliTest(
       },
     );
   },
-  120_000,
 );
 
 cliTest(
@@ -133,7 +133,6 @@ console.log(JSON.stringify([captured(5),assigned(5),between(5),intermediate(5),n
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -180,7 +179,6 @@ console.log(JSON.stringify([delayed(),incoming(5),delayedPrivate(),staticField()
         );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -246,7 +244,6 @@ console.log(JSON.stringify([optionalCall(null),optionalCall(receiver),optionalCa
       "app.ts",
     );
   },
-  120_000,
 );
 
 cliTest(
@@ -310,7 +307,6 @@ console.log(JSON.stringify([objectOrder(),bothSides(),arrayOrder(),computedOrder
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -361,7 +357,6 @@ console.log(JSON.stringify([read(),captured(object=>{object.value=3;})]));`,
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -431,7 +426,6 @@ console.log(JSON.stringify([objectPresent(),objectMissing(),arrayPresent(),array
         );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -450,7 +444,7 @@ cliTest(
         `export function read(x) { ${body} }`,
       );
       const response = await cli.run({
-        arguments: ["analyze-javascript-application", directory, "--json"],
+        arguments: completeApplicationAnalysis(directory),
       });
       expect(response.exitCode, response.stderr).toBe(0);
       evidence.push(parseEvidence(response.json));
@@ -508,5 +502,4 @@ cliTest(
       await harness.close();
     }
   },
-  120_000,
 );

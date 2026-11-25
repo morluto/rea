@@ -44,6 +44,7 @@ mcpTest.skipIf(process.platform === "win32")(
       const captureResponse = await client.callTool({
         name: "inspect_web_network_capture",
         arguments: {
+          detail: "complete",
           capture_path: selected,
           format: "har",
           sensitive_values: ["unrelated marked value"],

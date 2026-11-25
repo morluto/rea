@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ELECTRON_FUSE_STATE_BYTES } from "../domain/electron/electronFuses.js";
@@ -12,97 +12,74 @@ import {
   thinMacho,
   universalFuseImage,
 } from "../../tests/fixtures/electron/fuseImage.js";
-import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
 
-describe("assertNodeCliInspectArgumentsSupported", () => {
-  it("rejects thin Mach-O binary when EnableNodeCliInspectArguments fuse is disabled", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const binaryPath = join(root, "disabled-app");
-    const image = thinFuseImage(OBSIDIAN_FUSE_BYTES); // index 3 is disabled
-    await writeFile(binaryPath, image.bytes);
+const thinWithInspectState = (state: "enabled" | "removed") => {
+  const fuses: number[] = [...OBSIDIAN_FUSE_BYTES];
+  fuses[3] = ELECTRON_FUSE_STATE_BYTES[state];
+  return thinFuseImage(fuses).bytes;
+};
 
-    const error: unknown = await assertNodeCliInspectArgumentsSupported(
-      binaryPath,
-    ).catch((cause: unknown) => cause);
-    if (!(error instanceof AnalysisUnsupportedTargetError))
-      throw new Error("Expected unsupported target error", { cause: error });
-    expect(error.operation).toBe("capture_electron_scenario");
-    expect(error.path).toBe(binaryPath);
-    expect(error.message).toContain("EnableNodeCliInspectArguments");
-    expect(error.remediationAction).toContain("inspect_electron_page");
+describe("Electron inspect argument preflight", () => {
+  it.each([
+    ["disabled.exe", peFuseImage(OBSIDIAN_FUSE_BYTES).bytes],
+    ["disabled-elf", elfFuseImage(OBSIDIAN_FUSE_BYTES).bytes],
+    ["removed-macho", thinWithInspectState("removed")],
+  ] as const)(
+    "refuses %s with its caller path and passive recovery",
+    async (name, bytes) => {
+      const root = await createTestTempDirectory("rea-fuse-preflight-");
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      await expect(
+        assertNodeCliInspectArgumentsSupported(path),
+      ).rejects.toMatchObject({
+        _tag: "AnalysisTargetFailureError",
+        operation: "capture_electron_scenario",
+        path,
+        related: { operations: ["inspect_electron_page"] },
+      });
+    },
+  );
+
+  it("admits enabled fuses and leaves unavailable fuse facts undecided", async () => {
+    const root = await createTestTempDirectory("rea-fuse-preflight-");
+    for (const [name, bytes] of [
+      ["enabled-macho", thinWithInspectState("enabled")],
+      [
+        "without-sentinel",
+        thinMacho(0x0100000c, Buffer.from("no-sentinel-bytes-here")),
+      ],
+      ["unsupported.sh", "#!/bin/sh\necho hello"],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      await expect(
+        assertNodeCliInspectArgumentsSupported(path),
+        name,
+      ).resolves.toBeUndefined();
+    }
   });
 
-  it("passes when EnableNodeCliInspectArguments fuse is enabled", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const binaryPath = join(root, "enabled-app");
-    const enabledFuses = [...OBSIDIAN_FUSE_BYTES];
-    enabledFuses[3] = ELECTRON_FUSE_STATE_BYTES.enabled;
-    const image = thinFuseImage(enabledFuses);
-    await writeFile(binaryPath, image.bytes);
-
-    await expect(
-      assertNodeCliInspectArgumentsSupported(binaryPath),
-    ).resolves.toBeUndefined();
-  });
-
-  it("passes when binary contains no fuse sentinel (fuse state unknown)", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const binaryPath = join(root, "stock-node");
-    const image = thinMacho(0x0100000c, Buffer.from("no-sentinel-bytes-here"));
-    await writeFile(binaryPath, image);
-
-    await expect(
-      assertNodeCliInspectArgumentsSupported(binaryPath),
-    ).resolves.toBeUndefined();
-  });
-
-  it("passes gracefully when fuse reader throws a format or reading failure", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const nonMachoPath = join(root, "script.sh");
-    await writeFile(nonMachoPath, "#!/bin/sh\necho hello");
-
-    await expect(
-      assertNodeCliInspectArgumentsSupported(nonMachoPath),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects Windows PE binary when EnableNodeCliInspectArguments fuse is disabled", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const binaryPath = join(root, "disabled-pe.exe");
-    const image = peFuseImage(OBSIDIAN_FUSE_BYTES);
-    await writeFile(binaryPath, image.bytes);
-
-    await expect(
-      assertNodeCliInspectArgumentsSupported(binaryPath),
-    ).rejects.toThrow(AnalysisUnsupportedTargetError);
-  });
-
-  it("rejects Linux ELF binary when EnableNodeCliInspectArguments fuse is disabled", async () => {
-    const root = await createTestTempDirectory("rea-fuse-preflight-");
-    const binaryPath = join(root, "disabled-elf");
-    const image = elfFuseImage(OBSIDIAN_FUSE_BYTES);
-    await writeFile(binaryPath, image.bytes);
-
-    await expect(
-      assertNodeCliInspectArgumentsSupported(binaryPath),
-    ).rejects.toThrow(AnalysisUnsupportedTargetError);
-  });
-
-  it("rethrows when signal is aborted during reading", async () => {
+  it("preserves caller cancellation during the fuse read", async () => {
     const controller = new AbortController();
-    const readFuseImage = vi.fn(async () => {
-      controller.abort();
-      throw new Error("aborted during read");
-    });
-
-    await expect(
-      assertNodeCliInspectArgumentsSupported("/nonexistent/binary", {
+    const reason = new Error("cancel during fuse read");
+    const failure: unknown = await assertNodeCliInspectArgumentsSupported(
+      "/nonexistent/binary",
+      {
         signal: controller.signal,
-        readFuseImage,
-      }),
-    ).rejects.toThrow();
-    expect(readFuseImage).toHaveBeenCalledOnce();
+        readFuseImage: async () => {
+          controller.abort(reason);
+          throw new Error("read interrupted");
+        },
+      },
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("Expected a fuse read cancellation", { cause: failure });
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cause).toBe(reason);
   });
 
   it("rejects macOS app bundle when framework binary has disabled inspect fuse", async () => {
@@ -127,14 +104,13 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
     const frameworkBinary = join(frameworkDir, "Electron Framework");
     await writeFile(frameworkBinary, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
 
-    const error: unknown = await assertNodeCliInspectArgumentsSupported(
-      launcherBinary,
-    ).catch((cause: unknown) => cause);
-    if (!(error instanceof AnalysisUnsupportedTargetError))
-      throw new Error("Expected unsupported target error", { cause: error });
-    expect(error.operation).toBe("capture_electron_scenario");
-    expect(error.path).toBe(launcherBinary);
-    expect(error.message).toContain("EnableNodeCliInspectArguments");
+    await expect(
+      assertNodeCliInspectArgumentsSupported(launcherBinary),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      operation: "capture_electron_scenario",
+      path: launcherBinary,
+    });
   });
 
   it("evaluates matching architecture slice in universal Mach-O binary", async () => {
@@ -151,7 +127,7 @@ describe("assertNodeCliInspectArgumentsSupported", () => {
     } else {
       await expect(
         assertNodeCliInspectArgumentsSupported(binaryPath),
-      ).rejects.toThrow(AnalysisUnsupportedTargetError);
+      ).rejects.toThrow(AnalysisTargetFailureError);
     }
   });
 });

@@ -1,25 +1,32 @@
+import { QueuedProviderClose } from "../../providers/QueuedProviderClose.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import {
+  HOST_PLATFORM,
+  type HostPlatform,
+} from "../../platform/HostPlatform.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { JavaScriptRecoveryPort } from "../../application/javascript/JavaScriptRecoveryPort.js";
+import type { JavaScriptRecoveryPort } from "../../ports/javascript/JavaScriptRecoveryPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "../../application/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+} from "../../ports/AnalysisProvider.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  artifactFileCancellationError,
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {
   javascriptRecoveryResultSchema,
   type JavaScriptRecoveryInput,
@@ -30,7 +37,6 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   checkRecoveryCancellation,
   checkRecoveryDeadline,
-  recoveryFailureMessage,
   recoveryInputFailure,
   snapshotRecoveryInputs,
 } from "./RecoveryFiles.js";
@@ -43,6 +49,7 @@ import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js
 import { prepareWakaruExecution } from "./WakaruExecution.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 import { WakaruReportReadFailure } from "./WakaruReport.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -56,8 +63,7 @@ interface PendingRecoveryCleanup {
 export class WakaruProvider implements JavaScriptRecoveryPort {
   readonly #resources = new ArtifactResourceScope();
   #tail: Promise<void> = Promise.resolve();
-  #closing = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #closeState = new QueuedProviderClose();
   #pendingCleanup:
     | {
         readonly resources: PendingRecoveryCleanup;
@@ -70,6 +76,8 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       Record<string, string | undefined>
     > = process.env,
     readonly launcher?: WakaruLauncher,
+    /** The host Wakaru runs on; selects the supported-host gate and environment rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Recover selected scripts using validated reports and verified output bytes. */
@@ -77,9 +85,12 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     input: JavaScriptRecoveryInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (this.#closing) return Promise.resolve(err(this.#closedError()));
+    if (this.#closeState.requested)
+      return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(() =>
-      this.#closing ? err(this.#closedError()) : this.#recover(input, options),
+      this.#closeState.requested
+        ? err(this.#closedError())
+        : this.#recover(input, options),
     );
     this.#tail = operation.then(
       () => undefined,
@@ -103,7 +114,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     // Capture configuration after queue/cleanup admission; later requests may select updates.
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      this.host.platform,
+    );
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failed: { readonly cause: unknown } | undefined;
@@ -113,6 +127,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       checkRecoveryCancellation(options?.signal);
       const engine = await resolveWakaruCommand(
         environment,
+        this.host,
         this.#resources,
         options?.signal,
       );
@@ -133,7 +148,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
         throw recoveryInputFailure(
           "output_directory",
-          `Cannot create new recovery directory ${input.output_directory}: ${recoveryFailureMessage(cause)}`,
+          `Cannot create new recovery directory ${input.output_directory}: ${errorMessage(cause)}`,
           cause,
         );
       }
@@ -167,8 +182,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled" &&
         primary.cleanup === undefined
-          ? new AnalysisCancelledError(OPERATION, {
-              cause: artifactFileCancellationCause(primary),
+          ? artifactFileCancellationError(OPERATION, primary, {
               ...(primary.partialObservation === undefined
                 ? {}
                 : { partialObservation: primary.partialObservation }),
@@ -192,7 +206,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           residuals.push(tree.outputRoot);
           cleanupFailures.push({
             resource: tree.outputRoot,
-            reason: recoveryFailureMessage(cause),
+            reason: errorMessage(cause),
           });
         }
       }
@@ -209,7 +223,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           residuals.push(failedRoot);
           cleanupFailures.push({
             resource: failedRoot,
-            reason: recoveryFailureMessage(cause),
+            reason: errorMessage(cause),
           });
         }
       }
@@ -258,7 +272,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
             ? failure
             : new ProviderAdapterError("wakaru", OPERATION, {
                 cause: failure,
-                diagnostics: { reason: recoveryFailureMessage(failure) },
+                diagnostics: { reason: errorMessage(failure) },
                 ...(failure instanceof ArtifactReaderFailure &&
                 failure.partialObservation !== undefined
                   ? { partialObservation: failure.partialObservation }
@@ -269,7 +283,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
               });
         failure = analysisErrorWithCancellation(
           analysisFailure,
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+          cancelledBy(OPERATION, signal),
         );
       }
       if (residuals.length > 0) {
@@ -283,7 +297,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
             previous_error:
               failure instanceof WakaruCleanupFailure
                 ? (failure.diagnostics?.previous_error ?? null)
-                : recoveryFailureMessage(failure),
+                : errorMessage(failure),
             cleanup_failures: cleanupFailures,
           },
           {
@@ -330,7 +344,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           ? failure
           : new ProviderAdapterError("wakaru", OPERATION, {
               cause: failure,
-              diagnostics: { reason: recoveryFailureMessage(failure) },
+              diagnostics: { reason: errorMessage(failure) },
               ...(reportFailure === undefined
                 ? {}
                 : { capturedOutput: reportFailure.capturedOutput }),
@@ -345,17 +359,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    this.#closePromise ??= this.#tail
-      .then(async () => {
-        const failure = await this.#retire();
-        if (failure !== undefined) throw failure;
-      })
-      .catch((cause: unknown) => {
-        this.#closePromise = undefined;
-        throw cause;
-      });
-    return this.#closePromise;
+    return this.#closeState.closeAfter(this.#tail, () => this.#retire());
   }
 
   async #retire(): Promise<ProviderCleanupError | undefined> {
@@ -369,7 +373,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       const error = new ProviderCleanupError(
         "wakaru",
         pending.lease.cleanupResources ?? [],
-        { reason: recoveryFailureMessage(cause) },
+        { reason: errorMessage(cause) },
         { operation: OPERATION, cause },
       ).bindCleanupResourceOwner(pending.lease);
       pending.lease.bindCleanupError(error);

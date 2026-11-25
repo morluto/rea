@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { nativeValueTraceSchema } from "../native/nativeValueTrace.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -8,7 +8,7 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -40,15 +40,8 @@ export const projectNativeValueTraceView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native value trace Evidence supports the summary view; retrieve parent Evidence for graph nodes and edges.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native value trace Evidence supports the summary view; retrieve parent Evidence for graph nodes and edges.",
     );
   assertOwnedView<SummaryAnalysisView>(view, "summary");
   const parsed = readTrace(parent);
@@ -77,7 +70,7 @@ export const projectNativeValueTraceView = (
       truncated: trace.truncated,
       limitation_count: trace.limitations.length,
     },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       [...parent.limitations, ...trace.limitations],
       parent.evidenceId,

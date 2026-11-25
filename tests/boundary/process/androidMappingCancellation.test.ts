@@ -1,13 +1,12 @@
+import { createHash } from "node:crypto";
 import { stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 it.each(
   (["caller", "deadline"] as const).flatMap((first) =>
@@ -23,7 +22,8 @@ it.each(
       { REA_JADX_OPERATION_TIMEOUT_MS: "2000" },
     );
     const mapping = join(dirname(apk), "mapping.txt");
-    await writeFile(mapping, "example.Original -> fixture.Target:\n");
+    const mappingText = "example.Original -> fixture.Target:\n";
+    await writeFile(mapping, mappingText);
     // Resolve the actual APK admission before the descriptor seam is active.
     const target = await parseBinaryTarget(apk);
     if (!target.ok) throw target.error;
@@ -124,6 +124,12 @@ it.each(
       expect(primary.cause).toBe(
         first === "caller" ? callerReason : deadlineReason,
       );
+      expect(primary.partialObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path: mapping,
+        bytes: Buffer.byteLength(mappingText),
+        sha256: createHash("sha256").update(mappingText).digest("hex"),
+      });
       const expectedCode =
         first === "caller" ? "cancelled" : "provider_timeout";
       if (cleanupFails) {
@@ -150,7 +156,7 @@ it.each(
       try {
         await pending;
         await provider.close();
-        await verifyJadxFixtureCleanup(launches);
+        await expectProviderLaunchCleanup(launches);
       } finally {
         close.mockRestore();
         clock.mockRestore();

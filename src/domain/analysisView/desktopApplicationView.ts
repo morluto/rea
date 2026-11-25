@@ -6,12 +6,16 @@ import {
   desktopCandidateSchema,
   desktopComponentSchema,
   desktopProbeSchema,
+  desktopDeferredProbeSchema,
   desktopFamilySchema,
   desktopCoverageSchema,
   type DesktopApplication,
 } from "../desktopApplication.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -22,7 +26,9 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { ok, err } from "../result.js";
+import { pickFields, selectViewRows } from "./selectViewRows.js";
+import { ok } from "../result.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 // Bound diagnostic context independently of the retained report size. Previews
 // are display values; stable file IDs select the original paths and all issues.
@@ -137,13 +143,17 @@ export const desktopSummarySchema = z.strictObject({
       example: desktopProbeSchema,
     }),
   ),
+  /** Probes counted rather than listed: one bounded group per operation and reason. */
+  deferred_probes: z.array(desktopDeferredProbeSchema),
 });
 
 type DesktopCollection = z.infer<typeof desktopViewRequestSchema>["collection"];
 type DesktopViewRow = DesktopApplication[DesktopCollection][number];
 
 // Only immutable authenticated parent objects are reused. They are not live filesystem caches.
-const validatedParents = new WeakSet<object>();
+const readDesktopApplication = createAnalysisViewResultReader(
+  desktopApplicationSchema,
+);
 export const projectDesktopApplicationView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -152,53 +162,20 @@ export const projectDesktopApplicationView = (
     SummaryAnalysisView | z.output<typeof desktopViewRequestSchema>
   >(admitted, "summary", "desktop-application");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Desktop directory Evidence supports summary and desktop-application views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Desktop directory Evidence supports summary and desktop-application views.",
     );
-  const key =
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null
-      ? parent.normalizedResult
-      : undefined;
-  const reusable =
-    parent.sealedResult === true && key !== undefined && Object.isFrozen(key);
-  let report =
-    reusable && validatedParents.has(key)
-      ? (key as DesktopApplication)
-      : undefined;
-  if (report === undefined) {
-    const parsed = parseAnalysisViewResult(desktopApplicationSchema, parent);
-    if (!parsed.ok) return parsed;
-    report = parsed.value;
-    if (reusable) {
-      // The schema has no coercions or transforms. Borrow the validated frozen
-      // owner value instead of retaining a second unaccounted copy of its files.
-      report = key as DesktopApplication;
-      validatedParents.add(key);
-    }
-  }
-  const subject = parent.subject;
+  const parsed = readDesktopApplication(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const subject = evidenceFileTarget(parent);
   if (
     subject === undefined ||
-    subject === null ||
     subject.format !== "directory" ||
-    subject.digest.sha256 !== report.root.snapshot_sha256
+    subject.sha256 !== report.root.snapshot_sha256
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Parent must identify the same examined directory snapshot.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Parent must identify the same examined directory snapshot.",
     );
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -292,14 +269,13 @@ export const projectDesktopApplicationView = (
         candidates: report.candidates.map(summarizeBasis),
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
+        deferred_probes: report.deferred_probes,
       },
-      coverage: completeWithinViewCoverage(
-        report.files.length,
-        report.files.length,
-      ),
+      coverage: completeWithinViewCoverage(report.files.length),
     });
   }
-  let rows: readonly DesktopViewRow[] = report[view.collection];
+  const rows: readonly DesktopViewRow[] = report[view.collection];
+  let matches: ((row: DesktopViewRow) => boolean) | undefined;
   if (view.collection === "files" || view.collection === "omissions") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
     const ids = view.collection === "files" ? view.file_ids : view.omission_ids;
@@ -311,18 +287,17 @@ export const projectDesktopApplicationView = (
       selected !== undefined ||
       withIssues !== undefined
     )
-      rows = report[view.collection].filter(
-        (row) =>
-          (paths === undefined || paths.has(row.path)) &&
-          (selected === undefined ||
-            selected.has("file_id" in row ? row.file_id : row.omission_id)) &&
-          (withIssues === undefined ||
-            ("issues" in row && hasProbeIssues(row) === withIssues)),
-      );
-  }
-  if (view.collection === "candidates" && view.families !== undefined) {
+      matches = (row) =>
+        (paths === undefined || ("path" in row && paths.has(row.path))) &&
+        (selected === undefined ||
+          ("file_id" in row
+            ? selected.has(row.file_id)
+            : "omission_id" in row && selected.has(row.omission_id))) &&
+        (withIssues === undefined ||
+          ("issues" in row && hasProbeIssues(row) === withIssues));
+  } else if (view.collection === "candidates" && view.families !== undefined) {
     const selected = new Set(view.families);
-    rows = report.candidates.filter((row) => selected.has(row.family));
+    matches = (row) => "family" in row && selected.has(row.family);
   }
   const idField = {
     files: "file_id",
@@ -335,21 +310,21 @@ export const projectDesktopApplicationView = (
     view.fields === undefined
       ? undefined
       : new Set<string>([idField, ...view.fields]);
-  const items = rows
-    .slice(view.offset, view.offset + view.limit)
-    .map((row) =>
-      fields === undefined
-        ? row
-        : Object.fromEntries(
-            Object.entries(row).filter(([field]) => fields.has(field)),
-          ),
-    );
+  const selected = selectViewRows(rows, view, matches, (row) =>
+    fields === undefined
+      ? row
+      : pickFields(row as Record<string, unknown>, fields),
+  );
   return ok({
     kind: "desktop-application" as const,
     view,
     ...shared,
     source_coverage: report.coverage,
-    items: desktopViewItemsSchema.parse(items),
-    coverage: pageViewCoverage(view.offset, items.length, rows.length),
+    items: desktopViewItemsSchema.parse(selected.rows),
+    coverage: pageViewCoverage(
+      view.offset,
+      selected.rows.length,
+      selected.total,
+    ),
   });
 };

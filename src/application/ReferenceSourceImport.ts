@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
@@ -10,8 +11,8 @@ import {
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
+import { appendCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
 import type {
   ReferenceSourceExclusionKind,
@@ -46,8 +47,6 @@ const cancelled = (
   ...(signal?.aborted === true ? { cause: signal.reason } : {}),
   ...(partial === undefined ? {} : { partial }),
 });
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 const deduplicateRelationships = (
   relationships: HistoricalSourceGraphInput["relationships"],
@@ -208,7 +207,12 @@ export const importReferenceSource = async (
 
   const read = readResult.value;
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, exclusions, options.signal);
+    parseReferenceSourceEntries(
+      read,
+      exclusions,
+      options.signal,
+      options.memberMutationAllowance,
+    );
 
   if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 
@@ -274,7 +278,10 @@ const combineReadFailures = (
       ? metadata
       : inventory;
   const other = primary === inventory ? metadata : inventory;
-  const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
+  const cleanup =
+    other?.cleanup === undefined
+      ? primary.cleanup
+      : appendCleanupObservation(primary.cleanup, other.cleanup);
   const message =
     other === undefined || other.code === "cancelled"
       ? primary.message
@@ -302,17 +309,5 @@ const combineReadFailures = (
     ...(secondaryCancellation === undefined ? {} : { secondaryCancellation }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),
-  };
-};
-
-const mergeCleanup = (
-  first: AnalysisCleanupObservation | undefined,
-  second: AnalysisCleanupObservation | undefined,
-): AnalysisCleanupObservation | undefined => {
-  if (first === undefined) return second;
-  if (second === undefined) return first;
-  return {
-    reason: `${first.reason}; ${second.reason}`,
-    resources: [...new Set([...first.resources, ...second.resources])],
   };
 };

@@ -1,29 +1,34 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import {
   artifactCli,
   artifactMcpResult,
   artifactMcpCall,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import {
   assertKeyedArchiveIntegerResult,
   verifyKeyedArchiveIntegerArchives,
 } from "./keyed-archive-integers.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
     "Real Foundation keyed archive verification requires macOS and Xcode Swift tools",
   );
-const root = await mkdtemp(join(tmpdir(), "rea-keyed-fixture-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-keyed-fixture-" });
+const root = fixture.path;
 let report;
-try {
+await withVerifierFixture(fixture, async () => {
   const archive = join(root, "model.plist");
   await promisify(execFile)("/usr/bin/xcrun", [
     "swift",
@@ -38,9 +43,7 @@ try {
     archive,
   ]);
   const graph = await artifactCli("inspect-keyed-archive", archive);
-  const digest = createHash("sha256")
-    .update(await readFile(archive))
-    .digest("hex");
+  const digest = await sha256File(archive);
   assert.equal(graph.archive_sha256, digest);
   assert.equal(graph.target_sha256, digest);
   await withArtifactMcp(archive, async (client) => {
@@ -58,7 +61,15 @@ try {
       name: "inspect_keyed_archive",
       arguments: { path: "../other.plist" },
     });
-    assert.equal(invalid.isError, true);
+    // Standalone archives reject a path other than the admitted basename.
+    // KeyedArchiveReader throws AnalysisInputError; classification is invalid_request.
+    assert.partialDeepStrictEqual(requireMcpToolError(invalid), {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_keyed_archive",
+        issues: [{ path: ["path"], reason: "invalid_value" }],
+      },
+    });
   });
   const xml = join(root, "model.xml.plist");
   await promisify(execFile)("/usr/bin/plutil", [
@@ -223,7 +234,5 @@ try {
     cyclic_identity: true,
     target_classes_instantiated_by_reader: false,
   };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

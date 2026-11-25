@@ -1,11 +1,11 @@
+import { registerMcpClientOnHost } from "../../tests/fixtures/mcpRegistration.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
-import { registerMcpClient } from "./McpClientRegistration.js";
 import {
   mcpClientRegistrationProfile,
   type McpRegistrationClient,
@@ -62,7 +62,7 @@ it.each([
   "preserves non-selector $format metadata through native document publication",
   async ({ format, id, text, key, metadata }) => {
     const { path } = await settingsFixture(text);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, format, id),
       launcher,
       undefined,
@@ -132,7 +132,7 @@ it.each([
     const original = JSON.stringify({ mcpServers: { rea: previous } }) + "\n";
     const { path } = await settingsFixture(original);
     expect(
-      await registerMcpClient(
+      await registerMcpClientOnHost(
         clientFor(path, "json", id),
         launcher,
         undefined,
@@ -197,7 +197,7 @@ it.each([
       }) + "\n";
     const { path } = await settingsFixture(original);
     expect(
-      await registerMcpClient(
+      await registerMcpClientOnHost(
         clientFor(path, "json", id),
         launcher,
         undefined,

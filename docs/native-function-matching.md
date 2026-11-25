@@ -70,6 +70,15 @@ them. They do not prove source addition/removal. `source_coverage` explicitly ke
 inventory completeness unknown and separately counts known byte fingerprints and
 resolved correspondence. Provider limitations remain accessible.
 
+`source_coverage.status` is scoped by `scope: "provider-observed-inputs"`.
+`complete-within-inputs` means every supplied inventory row was paired: no
+`only_left`, `only_right` or `unresolved` rows remain. It does not say the
+inventories cover either binary; `left_inventory_completeness` and
+`right_inventory_completeness` stay `unknown`, so a function missing from both
+inventories is outside this result. `partial` means at least one supplied row
+remains unpaired (`only_left`/`only_right`) or unresolved (repeated candidates
+that cannot be paired uniquely).
+
 Default `detail: "summary"` retains complete matching Evidence in MCP and returns
 counts, both identities and coverage. Query its `parent_evidence_id`:
 
@@ -113,13 +122,26 @@ the same analysis-profile identity. Empty leaf-function buckets are excluded.
 dossier link preserves the full supporting facts. Group membership does not
 assert that every member pair is a candidate or equivalent.
 
-CLI uses the same service and JSON input:
+CLI uses the same service and JSON input. `rea list-procedures` produces each
+`list_procedures` inventory. `search --kind procedures` returns a pattern-filtered
+`search_procedures` result, which matching refuses as an inventory.
 
 ```bash
+rea list-procedures left.exe --provider ghidra \
+  --detail summary --evidence_output left-bundle.json --json
+rea list-procedures right.exe --provider ghidra \
+  --detail summary --evidence_output right-bundle.json --json
+# request.json: {"left": {"kind": "retained-evidence", "evidence_id": "<left parent_evidence_id>"},
+#                "right": {"kind": "retained-evidence", "evidence_id": "<right parent_evidence_id>"}}
 rea match-native-functions request.json \
   --source_bundle left-bundle.json --source_bundle right-bundle.json \
   --evidence_output matching-bundle.json --json
 ```
+
+Each summary's `normalized_result.parent_evidence_id` names the complete
+inventory in its bundle. Without `--detail summary`, `list-procedures --json`
+prints the complete Evidence, which the request can carry inline as `left` or
+`right`.
 
 `source_bundle` resolves exact references from authenticated local bundles.
 Default summary requires `evidence_output`, retaining full matching Evidence and

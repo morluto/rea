@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
-import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import type { AnalysisOperation } from "../../../src/ports/AnalysisProvider.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/process/RegularFileRead.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -19,6 +19,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.each(
   [true, false].flatMap((supported) =>
@@ -141,6 +142,86 @@ it.each([true, false])(
   },
 );
 
+it.each([
+  { closeMode: "clean", cancelAt: 1 },
+  { closeMode: "retry", cancelAt: 1 },
+  { closeMode: "retry", cancelAt: 2 },
+  { closeMode: "retained", cancelAt: 1 },
+  { closeMode: "retained", cancelAt: 2 },
+  { closeMode: "retained", cancelAt: null },
+])(
+  "preserves the Info.plist descriptor outcome (close=$closeMode, cancelAt=$cancelAt)",
+  async ({ closeMode, cancelAt }) => {
+    const root = await createTestTempDirectory("rea-bundle-plist-close-");
+    const bundle = join(root, "Fixture.app");
+    const contents = join(bundle, "Contents");
+    const plist = join(contents, "Info.plist");
+    const programs = join(contents, "MacOS");
+    await mkdir(programs, { recursive: true });
+    await writeFile(
+      plist,
+      "<plist><dict><key>CFBundleExecutable</key><string>target.hop</string></dict></plist>",
+    );
+    await writeFile(join(programs, "target.hop"), "database bytes");
+
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = { caller: "cancel during bundle metadata close" };
+    const nativeClose = OwnedFileHandle.prototype.close;
+    const owners: OwnedFileHandle[] = [];
+    let exerciseClose = true;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (exerciseClose) {
+          owners.push(this);
+          if (owners.length === cancelAt) controller.abort(reason);
+          if (
+            closeMode === "retained" ||
+            (closeMode === "retry" && owners.length === 1)
+          )
+            throw new Error("controlled Info.plist close denial");
+        }
+        await nativeClose.call(this);
+      });
+    try {
+      const result = await parseBinaryTarget(bundle, {
+        resources,
+        signal: controller.signal,
+      });
+      if (result.ok)
+        throw new Error("Expected bundle metadata finalization failure");
+      const retainedClose = closeMode === "retained";
+      expect(result.error.cleanupIncomplete).toBe(retainedClose);
+      const selectedPlist = await realpath(plist);
+      expect(resources.cleanupResources).toEqual(
+        retainedClose ? [selectedPlist] : [],
+      );
+      expect(owners).toHaveLength(closeMode === "clean" ? 1 : 2);
+      expect(owners.every((owner) => owner === owners[0])).toBe(true);
+      if (cancelAt !== null) {
+        const primary = result.error.cleanupPrimary ?? result.error;
+        expect(primary._tag).toBe("AnalysisCancelledError");
+        expect(primary.cause).toBe(reason);
+      }
+      if (retainedClose) {
+        expect(result.error.cleanup?.resources).toEqual([selectedPlist]);
+        expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+      }
+      exerciseClose = false;
+      await resources.retryCleanup();
+      expect(owners[0]?.handle.fd).toBe(-1);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect((await parseBinaryTarget(bundle, { resources })).ok).toBe(true);
+    } finally {
+      exerciseClose = false;
+      await resources.close();
+      await Promise.all(owners.map((owner) => owner.close()));
+      close.mockRestore();
+    }
+  },
+);
+
 it("retries target and provider owners independently through the same MCP connection", async () => {
   const directory = await createTestTempDirectory("rea-target-mcp-close-");
   const first = join(directory, "first.hop");
@@ -163,7 +244,7 @@ it("retries target and provider owners independently through the same MCP connec
     execute,
     close: async () => {
       if (!providerAllowed) return err(providerFailure);
-      providerFailure.resolveCleanup();
+      releaseOwnedCleanup(providerFailure);
       return ok(null);
     },
   }));

@@ -1,24 +1,19 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import * as artifact from "../../scripts/lib/artifact-e2e.mjs";
+import { createOwnedMcpStdioTransport } from "../../scripts/lib/owned-mcp-stdio.mjs";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 const [mode, target] = process.argv.slice(2);
 assert.ok(
   [
-    "healthy",
     "corrupt",
-    "reuse",
-    "concurrent",
     "reconnect",
-    "missing-schema",
     "duplicate-first",
     "duplicate-last",
     "override",
-    "request-options",
     "cancel-finalization",
     "failure-cancel-finalization",
   ].includes(mode),
@@ -41,7 +36,6 @@ const request = Client.prototype.request;
 let catalogRequests = 0;
 let corruptedReplies = 0;
 let toolCalls = 0;
-let connection = 0;
 const toolTimeouts = [];
 Client.prototype.request = async function (input, options) {
   if (input.method === "tools/list") catalogRequests++;
@@ -50,24 +44,7 @@ Client.prototype.request = async function (input, options) {
     toolTimeouts.push(options?.timeout ?? null);
   }
   const result = await request.call(this, input, options);
-  if (
-    mode === "override" &&
-    input.method === "tools/call" &&
-    input.params.name === "binary_session"
-  ) {
-    corruptedReplies++;
-    return { ...result, structuredContent: { result: 777 } };
-  }
   if (input.method === "tools/list") {
-    if (mode === "missing-schema")
-      return {
-        ...result,
-        tools: result.tools.map((tool) => {
-          if (tool.name !== "open_bundle_resources") return tool;
-          const { outputSchema: _schema, ...withoutSchema } = tool;
-          return withoutSchema;
-        }),
-      };
     if (mode === "duplicate-first" || mode === "duplicate-last") {
       const listed = result.tools.find(
         (tool) => tool.name === "open_bundle_resources",
@@ -85,21 +62,6 @@ Client.prototype.request = async function (input, options) {
             : [...result.tools, duplicate],
       };
     }
-    if (mode === "reconnect" && connection === 2)
-      return {
-        ...result,
-        tools: result.tools.map((tool) =>
-          tool.name === "binary_session"
-            ? {
-                ...tool,
-                outputSchema: {
-                  type: "object",
-                  required: ["__rea_second_connection"],
-                },
-              }
-            : tool,
-        ),
-      };
   }
   if (
     mode !== "corrupt" ||
@@ -122,63 +84,60 @@ Client.prototype.request = async function (input, options) {
   };
 };
 
-const status = async (client) => {
-  const result = await artifact.artifactMcpCall(client, {
-    name: "binary_session",
-    arguments: {},
-  });
+const status = async (client, options) => {
+  const result = await artifact.artifactMcpCall(
+    client,
+    { name: "binary_session", arguments: {} },
+    options,
+  );
   assert.notEqual(result.isError, true, JSON.stringify(result));
 };
 
-async function standaloneConnections() {
+async function reconnect() {
   const client = new Client({ name: "artifact-binding-probe", version: "1" });
-  let firstVersion;
-  for (
-    connection = 1;
-    connection <= (mode === "reconnect" ? 2 : 1);
-    connection++
-  ) {
-    const transport = new StdioClientTransport({
+  for (const warmReuse of [true, false]) {
+    const transport = await createOwnedMcpStdioTransport({
       command: process.execPath,
-      args: [
+      arguments: [
         fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
         "mcp",
       ],
-      env: {
+      hostEnvironment: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         REA_LOG_LEVEL: "silent",
       },
-      stderr: "pipe",
+      expectedCommand: null,
     });
     await withVerifierCleanup(async () => {
       await client.connect(transport);
-      const version = client.getServerVersion();
-      assert.ok(version);
-      if (firstVersion !== undefined) {
-        assert.notEqual(version, firstVersion);
-        assert.equal(version.name, firstVersion.name);
-        assert.equal(version.version, firstVersion.version);
+      const before = catalogRequests;
+      if (warmReuse) {
+        await Promise.all([
+          status(client, { timeout: 12_345 }),
+          status(client),
+        ]);
+        await status(client);
+      } else {
+        await status(client);
       }
-      firstVersion = version;
-      if (mode === "concurrent")
-        await Promise.all([status(client), status(client)]);
-      else await status(client);
+      assert.equal(
+        catalogRequests - before,
+        1,
+        "Expected one catalog read per connection",
+      );
     }, [() => client.close(), () => transport.close()]);
   }
 }
 
 let error;
 try {
-  if (mode === "concurrent" || mode === "reconnect")
-    await standaloneConnections();
+  if (mode === "reconnect") await reconnect();
   else
     await artifact.withBundleResourcesMcp(
       target,
       async (client) => {
         if (mode === "failure-cancel-finalization")
           throw new Error("work failed before cancellation");
-        if (mode === "reuse")
-          await Promise.all([status(client), status(client)]);
         if (mode === "override")
           await artifact.artifactMcpCall(
             client,
@@ -190,12 +149,6 @@ try {
                 outputSchema: { type: "object" },
               },
             },
-          );
-        if (mode === "request-options")
-          await artifact.artifactMcpCall(
-            client,
-            { name: "binary_session", arguments: {} },
-            { timeout: 12_345 },
           );
       },
       { signal: controller.signal },

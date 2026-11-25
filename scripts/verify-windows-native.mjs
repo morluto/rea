@@ -8,7 +8,6 @@ import {
   access,
   copyFile,
   mkdir,
-  mkdtemp,
   readFile,
   rename,
   readdir,
@@ -17,19 +16,26 @@ import {
   writeFile,
   open,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 import { verifyWindowsJobMemoryLimit } from "./lib/windows-job-memory-limit.mjs";
 import { verifyVolumeRootAppendLease } from "./lib/windows-volume-root-append-lease.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
     "Windows native conformance requires a real Windows x64 host.",
   );
 const packageRoot = resolve(process.argv[2] ?? ".");
+const { quoteWindowsProcessArgument: quote } = await import(
+  pathToFileURL(join(packageRoot, "dist/windows/WindowsOwnedProcess.js"))
+);
 const { requireWindowsNativeAuthority } = await import(
   pathToFileURL(join(packageRoot, "dist/windows/WindowsNativeLoader.js"))
 );
@@ -45,10 +51,15 @@ const { PrivateRuntimeRoot } = await import(
 );
 const { PrivateRuntimeRootUnavailableError } = await import(
   pathToFileURL(
-    join(packageRoot, "dist/process/PrivateRuntimeRootUnavailableError.js"),
+    join(packageRoot, "dist/domain/privateRuntimeRootUnavailableError.js"),
   )
 );
-const workspace = await mkdtemp(join(tmpdir(), "rea-native-conformance-"));
+// Windows children write beneath the root; a private root's DELETE handle would block them.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-native-conformance-",
+  private: false,
+});
+const workspace = fixture.path;
 // A pwsh caller can supply module paths incompatible with Windows PowerShell.
 // Each independent observer must discover its own module path.
 const windowsPowerShellEnvironment = Object.fromEntries(
@@ -134,8 +145,6 @@ assert.doesNotMatch(
 const environment = Object.entries(process.env)
   .filter(([, value]) => value !== undefined)
   .map(([key, value]) => `${key}=${value}`);
-const quote = (value) =>
-  `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
 const delay = () => new Promise((resolve) => setTimeout(resolve, 25));
 const exists = (path) =>
   access(path).then(
@@ -215,7 +224,7 @@ const wait = async (child) => {
   throw new Error("Owned job did not settle within the fixture deadline.");
 };
 const report = { ok: false, artifact: "verified", controls: {}, processes: {} };
-await withVerifierCleanup(async () => {
+await withVerifierFixture(fixture, async () => {
   try {
     // Exercise the loader in a process whose image is not named node.exe. The
     // ordinary Windows lane otherwise cannot detect eager Node-API imports.
@@ -405,12 +414,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       await assert.rejects(rejected, /Runtime snapshot is still pending/u);
       const completed = await accepted;
       assert.equal(completed.source.requestedPath, requestedSource);
-      assert.equal(
-        completed.sha256,
-        createHash("sha256")
-          .update(await readFile(source))
-          .digest("hex"),
-      );
+      assert.equal(completed.sha256, await sha256File(source));
       assert.equal(
         await exists(join(snapshotOwner.observation.path, "rejected.bin")),
         false,
@@ -563,12 +567,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         /pending/u,
       );
       const snapshot = await pending;
-      assert.equal(
-        snapshot.sha256,
-        createHash("sha256")
-          .update(await readFile(source))
-          .digest("hex"),
-      );
+      assert.equal(snapshot.sha256, await sha256File(source));
       assert.equal(snapshot.source.requestedPath, source);
       await assert.rejects(
         writeFile(join(runtime.path, "inputs", "target.bin"), "replace"),
@@ -1036,7 +1035,7 @@ writeFileSync(${JSON.stringify(ownerPidFile)},String(child.pid));setInterval(()=
     );
     throw cause;
   }
-}, [() => rm(workspace, { recursive: true, force: true })]);
+});
 report.ok = true;
 if (process.argv[4] !== undefined)
   await writeFile(process.argv[4], `${JSON.stringify(report)}\n`);

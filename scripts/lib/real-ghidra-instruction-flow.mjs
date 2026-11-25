@@ -44,6 +44,7 @@ export async function verifyGhidraInstructionFlow(call, names, cli, target) {
       );
     if (procedure === undefined) continue;
     const before = await call("resolve_containing_procedure", {
+      detail: "complete",
       address: procedure.address,
     });
     const instructions = await inspectFunction(call, procedure.address);
@@ -65,6 +66,7 @@ export async function verifyGhidraInstructionFlow(call, names, cli, target) {
     }
     assert.deepEqual(
       await call("resolve_containing_procedure", {
+        detail: "complete",
         address: procedure.address,
       }),
       before,

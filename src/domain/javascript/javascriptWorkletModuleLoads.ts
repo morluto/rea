@@ -4,9 +4,12 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  ambientPathMayHaveChanged,
+  opaqueCodeMayChangeGlobalRead,
+} from "./javascriptSemanticEffectLog.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -41,13 +44,13 @@ const prototypeMemberMayHaveChanged = (
   member: string,
 ): boolean =>
   owners.some((owner) =>
-    [member, "__proto__"].some((key) => {
-      const path = ["global", owner, "prototype", key];
-      return (
-        bindings.ambientWrites.covers(path) ||
-        bindings.ambientEscapes.covers(path)
-      );
-    }),
+    [member, "__proto__"].some((key) =>
+      ambientPathMayHaveChanged(
+        bindings,
+        ["global", owner, "prototype", key],
+        "contents",
+      ),
+    ),
   );
 
 /**
@@ -61,7 +64,7 @@ const inheritedAddModuleMayHaveChanged = (
   prototypes: readonly string[],
 ): boolean =>
   prototypeMemberMayHaveChanged(bindings, prototypes, "addModule") ||
-  semanticOpaqueGlobalMayHaveChanged(callee, bindings);
+  opaqueCodeMayChangeGlobalRead(callee, bindings, "Worklet");
 
 /**
  * Prove the called `CSS.<worklet>.addModule` path. Like
@@ -82,7 +85,7 @@ const isCssWorkletReceiver = (
         worklet,
         "addModule",
       ]) &&
-      !bindings.ambientWrites.covers([
+      !ambientPathMayHaveChanged(bindings, [
         "global",
         "CSS",
         worklet,
@@ -92,13 +95,11 @@ const isCssWorkletReceiver = (
   );
 
 const audioContextMayHaveChanged = (
-  index: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  index: Pick<JavaScriptBindingIndex, "mayObserve">,
   site: t.Node,
   context: t.Node,
 ): boolean =>
-  AUDIO_CONTEXT_PATHS.some((path) =>
-    index.referenceMayHaveChangedAt(site, context, path),
-  );
+  AUDIO_CONTEXT_PATHS.some((path) => index.mayObserve(site, context, path));
 
 /**
  * Prove the receiver of `<context>.audioWorklet.addModule()`: a context that an
@@ -113,7 +114,7 @@ const isAudioWorkletReceiver = (
   node: t.CallExpression | t.OptionalCallExpression,
   callee: t.MemberExpression | t.OptionalMemberExpression,
   bindings: JavaScriptSemanticAnalysisState,
-  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  index?: Pick<JavaScriptBindingIndex, "mayObserve">,
 ): boolean | undefined => {
   const worklet = unwrapJavaScriptExpression(callee.object).node;
   if (
@@ -167,7 +168,7 @@ const isAudioWorkletReceiver = (
 const isWorkletModuleLoad = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
-  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  index?: Pick<JavaScriptBindingIndex, "mayObserve">,
 ): boolean | undefined => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;

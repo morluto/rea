@@ -473,6 +473,9 @@ export type JavaScriptApplicationGraph = z.infer<
 /** Build one normalized application entity and derive all semantic IDs. */
 export const createJavaScriptApplicationNode = (
   input: unknown,
+  qualifyEvidence?: (
+    evidence: ApplicationGraphEvidence,
+  ) => ApplicationGraphEvidence,
 ): ApplicationNode => {
   const parsed = applicationNodeInputSchema.parse(input);
   // These properties are newly parsed and exclusively owned. Authenticate
@@ -485,7 +488,9 @@ export const createJavaScriptApplicationNode = (
     .map((observation) => {
       const semantic = {
         ...observation,
-        evidence: normalizeEvidence(observation.evidence),
+        evidence: normalizeEvidence(
+          qualifyEvidence?.(observation.evidence) ?? observation.evidence,
+        ),
         identifier_strategy: OBSERVATION_IDENTIFIER_STRATEGY,
       };
       return applicationNodeObservationSchema.parse({
@@ -552,12 +557,17 @@ export const mergeJavaScriptApplicationNodes = (
 /** Build one normalized directed relationship and derive its semantic ID. */
 export const createJavaScriptApplicationEdge = (
   input: unknown,
+  qualifyEvidence?: (
+    evidence: ApplicationGraphEvidence,
+  ) => ApplicationGraphEvidence,
 ): ApplicationEdge => {
   const parsed = applicationEdgeInputSchema.parse(input);
   freezeJsonSnapshot(parsed.properties);
   const semantic = {
     ...parsed,
-    evidence: normalizeEvidence(parsed.evidence),
+    evidence: normalizeEvidence(
+      qualifyEvidence?.(parsed.evidence) ?? parsed.evidence,
+    ),
     identifier_strategy: EDGE_IDENTIFIER_STRATEGY,
   };
   return applicationEdgeSchema.parse({

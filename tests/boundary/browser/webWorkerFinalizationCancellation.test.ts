@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { expect } from "vitest";
+import { processTest } from "../../support/process/processFixture.js";
 
-import { expect, it } from "vitest";
-
-it.each([
+processTest.for([
   [false, false, false],
   [true, false, false],
   [false, true, false],
@@ -11,7 +9,7 @@ it.each([
   [false, true, true],
 ])(
   "retains completed web worker facts when cancellation arrives during final job cleanup (cleanup failure: %s; prior failure: %s; stop cleanup failure: %s)",
-  async (failCleanup, priorFailure, stopCleanupFailure) => {
+  async ([failCleanup, priorFailure, stopCleanupFailure], { processes }) => {
     const loaderUrl = new URL(
       "../../../scripts/lib/verifier-source-loader.mjs",
       import.meta.url,
@@ -108,11 +106,12 @@ it.each([
     process.stdout.write(JSON.stringify({ ...observed, rootRemoved,
       childExited: child.exitCode !== null || child.signalCode !== null }));
   `;
-    const { stdout } = await promisify(execFile)(
+    const { stdout, stderr, exitCode } = await processes.run(
       process.execPath,
       ["--input-type=module", "--eval", script],
-      { timeout: 20_000 },
+      { timeoutMs: 20_000 },
     );
+    expect(exitCode, stderr).toBe(0);
     const observed: unknown = JSON.parse(stdout);
     expect(observed).toEqual({
       primaryOutput: priorFailure,

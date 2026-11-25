@@ -1,6 +1,6 @@
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { z } from "zod";
-import { evidenceSubjectIdentity } from "../evidence.js";
+import { evidenceTargetIdentity } from "../evidence.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
@@ -17,7 +17,10 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   pageViewCoverage,
   unavailableViewCoverage,
@@ -262,15 +265,8 @@ export const projectNativeObservationView = (
     view.kind !== "native-observation" &&
     view.kind !== "native-context"
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Use summary, native-observation or native-context with this source.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Use summary, native-observation or native-context with this source.",
     );
   assertOwnedView<
     | SummaryAnalysisView
@@ -286,7 +282,7 @@ export const projectNativeObservationView = (
     digest: digestCanonicalValue(
       {
         ...context.value,
-        subject: evidenceSubjectIdentity(context.value.subject),
+        subject: evidenceTargetIdentity(context.value),
       },
       "Native source context",
     ),

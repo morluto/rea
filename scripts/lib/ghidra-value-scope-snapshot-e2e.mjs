@@ -5,32 +5,24 @@ import { join } from "node:path";
 
 import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.js";
 import { createAnalysisProfile } from "../../dist/domain/analysisProfile.js";
-import {
-  createAnalysisSnapshotEntry,
-  parseAnalysisSnapshot,
-  serializeAnalysisSnapshot,
-  snapshotBinding,
-  snapshotTarget,
-} from "../../dist/domain/analysisSnapshot.js";
-import { createEvidence } from "../../dist/domain/evidence.js";
-import { createEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
+import { serializeAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
+import { createLegacyGhidraSnapshot } from "./ghidra-legacy-snapshot-e2e.mjs";
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
   requireMcpToolError,
 } from "./mcp-verifier-results.mjs";
 
-/** A pre-scope dossier must not be replayed into a newly qualified trace. */
+/** A dossier from an earlier bridge must not be replayed into a newly qualified trace. */
 export async function verifyLegacyValueScopeSnapshot(
   client,
   { target, procedure, observed, env },
 ) {
-  const { value_flow_effect_scope: scope, ...legacyParameters } =
-    observed.analysis_profile.parameters;
-  const legacyProfile = createAnalysisProfile(
-    observed.provider,
-    legacyParameters,
-  );
+  const { producer } = observed.analysis_profile.parameters;
+  const legacyProfile = createAnalysisProfile(observed.provider, {
+    ...observed.analysis_profile.parameters,
+    producer: { ...producer, sources_sha256: "0".repeat(64) },
+  });
   const parsed = await parseBinaryTarget(target.path, {
     cwd: process.cwd(),
     hostArchitecture: process.arch,
@@ -44,39 +36,11 @@ export async function verifyLegacyValueScopeSnapshot(
     value.includes("LOAD and STORE") && value.includes("address varnodes");
   assert.ok(flow.limitations.some(describesScope));
   flow.limitations = flow.limitations.filter((value) => !describesScope(value));
-  const evidence = createEvidence(nativeTarget, observed.provider, {
-    operation: observed.operation,
-    parameters: observed.parameters,
+  const snapshot = createLegacyGhidraSnapshot({
+    nativeTarget,
+    observed,
     result,
-    rawResult: result,
-    analysisProfile: legacyProfile,
-    limitations: observed.limitations,
-    locations: observed.locations,
-  });
-  const binding = snapshotBinding(legacyProfile);
-  const identity = snapshotTarget(nativeTarget);
-  const snapshot = parseAnalysisSnapshot({
-    target: identity,
-    binding,
-    entries: [
-      createAnalysisSnapshotEntry({
-        target: identity,
-        binding,
-        operation: observed.operation,
-        parameters: observed.parameters,
-        execution: {
-          result,
-          rawResult: result,
-          provider: observed.provider,
-          analysisProfile: legacyProfile,
-          limitations: observed.limitations,
-          locations: observed.locations,
-          subject: nativeTarget,
-        },
-      }),
-    ],
-    workflow_entries: [],
-    evidence_bundle: createEvidenceBundle([evidence]),
+    legacyProfile,
   });
   const path = join(env.TMPDIR, `legacy-value-scope-${randomUUID()}.json`);
   await writeFile(path, serializeAnalysisSnapshot(snapshot), { flag: "wx" });
@@ -95,7 +59,7 @@ export async function verifyLegacyValueScopeSnapshot(
       },
     });
     assert.equal(reply.isError, true);
-    assert.equal(scope, "pcode-load-store-explicit-v1");
+    assert.match(producer.sources_sha256, /^[0-9a-f]{64}$/u);
     const error = requireMcpToolError(reply);
     assert.equal(error.code, "evidence_integrity_mismatch");
     assert.deepEqual(error.details.binding_mismatch.profile_digest, {
