@@ -6,7 +6,14 @@ import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { createHash, randomBytes } from "node:crypto";
-import { rename, unlink, writeFile, type FileHandle } from "node:fs/promises";
+import {
+  rename,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync, Inflate } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
@@ -469,7 +476,13 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     );
     await reader.prepareContainer(hash(bytes));
     await reader.prepareContainer(hash(bytes));
+    const before = await stat(path);
     await writeFile(path, archive(Buffer.from("other")));
+    // The replacement keeps the carrier size, and filesystems with coarse
+    // timestamps can leave mtime unchanged within one tick. Move mtime 10 s
+    // forward (more than a 2 s FAT tick) so the mutation is observable
+    // independently of timestamp granularity.
+    await utimes(path, before.atime, new Date(before.mtimeMs + 10_000));
     await expect(reader.prepareContainer(hash(bytes))).rejects.toMatchObject({
       reason: "integrity",
     });
