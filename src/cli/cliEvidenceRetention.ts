@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, rm, utimes } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../domain/analysisResourceLimits.js";
+import type { Evidence } from "../domain/evidence.js";
+import { jsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -24,24 +27,42 @@ export const cliRetainedEvidenceDirectory = (
 ): string => reaCacheDirectory(environment, platform, "evidence");
 
 /**
- * A retained bundle is named by its complete record's Evidence ID, a SHA-256
- * content digest, so one record has one file: a repeat run reuses it and a
- * written file is never overwritten. The cache key is the record itself,
- * which covers every input that affected the result.
+ * The cache key: the SHA-256 of the complete record's exact JSON. The
+ * Evidence ID leaves out caller-input paths and local subject metadata, so
+ * two runs with the same semantic result can differ in what they record;
+ * hashing the whole record keeps each invocation's own record.
  */
-const RETAINED_NAME = /^ev_[0-9a-f]{64}\.json$/u;
+export const retainedEvidenceDigest = (evidence: Evidence): string => {
+  const hash = createHash("sha256");
+  for (const part of jsonParts(evidence)) hash.update(part, "utf8");
+  return hash.digest("hex");
+};
 
-/** One retained record: its file, size, and whether it was already there. */
+/** A retained bundle is named by its record's digest, so one record has one file. */
+const RETAINED_NAME = /^[0-9a-f]{64}\.json$/u;
+
+/** One retained record: its file, size, digest and whether it was already there. */
 export interface RetainedEvidenceFile {
   readonly path: string;
   readonly bytes: number;
+  readonly sha256: string;
   readonly reused: boolean;
 }
 
-/** The writer's outcome: the bundle it published, or that the name exists. */
-export type RetentionWrite = Result<
+/**
+ * Why nothing was retained. `committed` carries the writer's failure when
+ * the file was published but a later step (staging cleanup, cancellation)
+ * failed: its caller reports that failure and its cleanup owner.
+ */
+export interface RetentionStop<Committed> {
+  readonly reason: string;
+  readonly committed?: Committed;
+}
+
+/** The writer's outcome: the bytes it published, that the name exists, or a stop. */
+export type RetentionWrite<Committed> = Result<
   { readonly bytes: number },
-  "exists" | string
+  "exists" | RetentionStop<Committed>
 >;
 
 const isMissing = (cause: unknown): boolean =>
@@ -82,11 +103,19 @@ const ownedFileBytes = async (
     : "foreign";
 };
 
+/** Renew a retained record's age: it was used now. Its bytes never change. */
+const renew = async (path: string, now: number): Promise<void> => {
+  const used = new Date(now);
+  await utimes(path, used, used);
+};
+
 /**
  * Remove retained records unused for longer than the maximum age, then the
  * least recently used until the directory fits `capBytes`. Only regular files
- * named like a retained record are considered, never the record just kept,
- * and a file that cannot be removed is left for a later run.
+ * named like a retained record are considered, never the record just kept.
+ * Each removal first checks that the record was not used since it was
+ * listed, so a concurrent run's renewal keeps it; a file that cannot be
+ * removed is left for a later run.
  */
 const evict = async (
   directory: string,
@@ -102,87 +131,119 @@ const evict = async (
       continue;
     entries.push({ name, bytes: stats.size, used: stats.mtimeMs });
   }
-  const remove = (name: string) =>
-    rm(join(directory, name), { force: true }).then(
+  const remove = async (entry: (typeof entries)[number]): Promise<boolean> => {
+    const path = join(directory, entry.name);
+    const current = await lstat(path).catch(() => undefined);
+    if (current === undefined || current.mtimeMs !== entry.used) return false;
+    return rm(path, { force: true }).then(
       () => true,
       () => false,
     );
+  };
   let total = 0;
   const live: typeof entries = [];
-  for (const entry of entries)
-    if (
+  for (const entry of entries) {
+    const expired =
       entry.name !== keep &&
-      now - entry.used > CLI_RETAINED_EVIDENCE_MAX_AGE_MS
-    )
-      await remove(entry.name);
-    else {
-      live.push(entry);
-      total += entry.bytes;
-    }
+      now - entry.used > CLI_RETAINED_EVIDENCE_MAX_AGE_MS;
+    if (expired && (await remove(entry))) continue;
+    live.push(entry);
+    total += entry.bytes;
+  }
   live.sort((left, right) => left.used - right.used);
   for (const entry of live) {
     if (total <= capBytes) break;
     if (entry.name === keep) continue;
-    if (await remove(entry.name)) total -= entry.bytes;
+    if (await remove(entry)) total -= entry.bytes;
   }
 };
 
 /**
- * Keep one over-budget record recoverable in the private cache. A record
- * larger than the cache, an unusable directory, or a failed write retains
- * nothing and says why; it never fails the analysis. `write` publishes the
- * bundle with the Evidence bundle writer, which creates the file exclusively
- * (0600) and refuses an existing name.
+ * Keep one over-budget record recoverable in the private cache. A record or
+ * bundle larger than the cache, an unusable directory, or a failed write
+ * retains nothing and says why; it never fails the analysis. `write`
+ * publishes the bundle with the Evidence bundle writer, which creates the
+ * file exclusively (0600) and refuses an existing name.
  */
-export const retainCliEvidence = async (input: {
-  readonly evidenceId: string;
+export const retainCliEvidence = async <Committed>(input: {
+  readonly sha256: string;
   readonly completeBytes: number;
   readonly retention: CliEvidenceRetention;
-  readonly write: (path: string) => Promise<RetentionWrite>;
+  readonly write: (path: string) => Promise<RetentionWrite<Committed>>;
   readonly now?: number;
-}): Promise<Result<RetainedEvidenceFile, string>> => {
+}): Promise<Result<RetainedEvidenceFile, RetentionStop<Committed>>> => {
   const { directory, capBytes } = input.retention;
-  const name = `${input.evidenceId}.json`;
+  const { sha256 } = input;
+  const name = `${sha256}.json`;
   if (!RETAINED_NAME.test(name))
-    return err(`Evidence ID ${input.evidenceId} is not a content digest.`);
-  if (input.completeBytes > capBytes)
-    return err(
-      `The complete Evidence (${String(input.completeBytes)} bytes) is larger than the retained-Evidence cache (${String(capBytes)} bytes).`,
-    );
+    return err({ reason: `${sha256} is not a SHA-256 digest.` });
+  const tooLarge = (bytes: number) => ({
+    reason: `The complete Evidence (${String(bytes)} bytes) is larger than the retained-Evidence cache (${String(capBytes)} bytes).`,
+  });
+  if (input.completeBytes > capBytes) return err(tooLarge(input.completeBytes));
   const now = input.now ?? Date.now();
   try {
     if (!(await admitDirectory(directory)))
-      return err(
-        `${directory} is not a private directory this user owns, so nothing was retained.`,
-      );
+      return err({
+        reason:
+          "The retained-Evidence cache directory is not a private directory this user owns.",
+      });
     const path = join(directory, name);
     const reuse = async (): Promise<
-      Result<RetainedEvidenceFile, string> | undefined
+      Result<RetainedEvidenceFile, RetentionStop<Committed>> | undefined
     > => {
       const bytes = await ownedFileBytes(path);
       if (bytes === undefined) return undefined;
       if (bytes === "foreign")
-        return err(`${path} exists and is not a retained Evidence file.`);
-      // A use refreshes the record's age; its bytes are never rewritten.
-      const used = new Date(now);
-      await utimes(path, used, used);
-      return ok({ path, bytes, reused: true });
+        return err({
+          reason:
+            "A file that is not a retained Evidence record holds its name.",
+        });
+      await renew(path, now);
+      return ok({ path, bytes, sha256, reused: true });
     };
     let kept = await reuse();
     if (kept === undefined) {
       const written = await input.write(path);
+      if (written.ok && written.value.bytes > capBytes) {
+        // The bundle, with the sources it cites, outgrew the cache.
+        await rm(path, { force: true });
+        return err(tooLarge(written.value.bytes));
+      }
       // Another run kept the same record between the check and the write.
       kept = written.ok
-        ? ok({ path, bytes: written.value.bytes, reused: false })
+        ? ok({ path, bytes: written.value.bytes, sha256, reused: false })
         : written.error === "exists"
-          ? ((await reuse()) ?? err(`${path} could not be written.`))
+          ? ((await reuse()) ??
+            err({ reason: "The retained Evidence file could not be written." }))
           : err(written.error);
     }
     if (kept.ok) await evict(directory, name, capBytes, now).catch(() => {});
     return kept;
   } catch (cause: unknown) {
-    return err(
-      `The retained-Evidence cache could not be used: ${errorMessage(cause)}`,
-    );
+    return err({
+      reason: `The retained-Evidence cache could not be used: ${errorMessage(cause)}`,
+    });
   }
+};
+
+/**
+ * A read through `rea inspect-analysis-view` uses a retained record, so it
+ * renews the record's age as a repeat run does. Only a record file in this
+ * invocation's cache directory is touched; anything else is left alone.
+ */
+export const renewRetainedEvidence = async (
+  path: string,
+  retention: CliEvidenceRetention | undefined,
+  now = Date.now(),
+): Promise<void> => {
+  if (retention === undefined) return;
+  const absolute = resolve(path);
+  if (
+    dirname(absolute) !== resolve(retention.directory) ||
+    !RETAINED_NAME.test(basename(absolute))
+  )
+    return;
+  const bytes = await ownedFileBytes(absolute).catch(() => undefined);
+  if (typeof bytes === "number") await renew(absolute, now).catch(() => {});
 };

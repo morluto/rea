@@ -1,4 +1,7 @@
-import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
+import {
+  explicitValuesOccurIn,
+  redactExplicitText,
+} from "../domain/explicitSensitiveValues.js";
 import {
   cliPublicationInvocation,
   recordCliEvidencePublication,
@@ -18,6 +21,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
+import type { RetentionStop } from "./cliEvidenceRetention.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   cliEvidenceDeliveryInputError,
@@ -185,33 +189,15 @@ export const publishCliAnalysisEvidence = async (
     return projectFailure(inputError);
   }
   const overBudget = budgetDelivery(complete, input);
-  if (evidenceOutput === undefined) {
-    if (overBudget === undefined) return complete;
-    const summary = await overBudgetSummary(complete);
-    if (summary === undefined) return complete;
-    const retained = await retainOverBudgetEvidence(
-      complete,
-      closureInput,
-      overBudget({ kind: "not-retained" }).complete_bytes,
-    );
-    return retained?.ok === true
-      ? {
-          summary,
-          evidence_bundle: retained.value.receipt,
-          delivery: deliveryJson(
-            overBudget({ kind: "cache-file", path: retained.value.path }),
-          ),
-        }
-      : {
-          summary,
-          delivery: deliveryJson(
-            overBudget({
-              kind: "not-retained",
-              ...(retained === undefined ? {} : { reason: retained.error }),
-            }),
-          ),
-        };
-  }
+  if (evidenceOutput === undefined)
+    return overBudget === undefined
+      ? complete
+      : deliverRetainedSummary(
+          complete,
+          closureInput,
+          overBudget,
+          projectFailure,
+        );
   const outputPath = absoluteCallerPath(evidenceOutput);
   const published = await publishDeliveredEvidence(
     complete,
@@ -244,6 +230,55 @@ export const publishCliAnalysisEvidence = async (
 };
 
 /**
+ * An over-budget result without --evidence_output: its summary, with the
+ * complete Evidence kept in the private cache when that is on, and the
+ * rerun arguments otherwise. An operation without a summary view keeps
+ * complete delivery.
+ */
+const deliverRetainedSummary = async (
+  complete: Evidence,
+  input: CliEvidencePublication,
+  overBudget: (recovery: AgentBudgetRecovery) => AgentBudgetDelivery,
+  projectFailure: (error: AnalysisError) => JsonValue,
+): Promise<JsonValue> => {
+  const summary = await overBudgetSummary(complete);
+  if (summary === undefined) return complete;
+  const retained = await retainOverBudgetEvidence(
+    complete,
+    input,
+    overBudget({ kind: "not-retained" }).complete_bytes,
+  );
+  // The file was saved, but a later step failed: report that failure and
+  // its cleanup owner, as a requested --evidence_output bundle does.
+  if (retained?.ok === false && retained.error.committed !== undefined)
+    return projectFailure(retained.error.committed);
+  return retained?.ok === true
+    ? {
+        summary,
+        evidence_bundle: retained.value.receipt,
+        delivery: deliveryJson(
+          overBudget({ kind: "cache-file", path: retained.value.path }),
+        ),
+      }
+    : {
+        summary,
+        delivery: deliveryJson(
+          overBudget({
+            kind: "not-retained",
+            ...(retained === undefined
+              ? {}
+              : {
+                  reason: redactExplicitText(
+                    retained.error.reason,
+                    input.sensitiveValues ?? [],
+                  ),
+                }),
+          }),
+        ),
+      };
+};
+
+/**
  * Keep an over-budget result this invocation was not told to save in the
  * private retained-Evidence cache, so it pages without a rerun. Undefined
  * when retention is off (--no-retain, or the setting is 0); a failure says
@@ -254,14 +289,25 @@ const retainOverBudgetEvidence = async (
   input: CliEvidencePublication,
   completeBytes: number,
 ): Promise<
-  | Result<{ readonly path: string; readonly receipt: JsonValue }, string>
+  | Result<
+      { readonly path: string; readonly receipt: JsonValue },
+      RetentionStop<AnalysisError>
+    >
   | undefined
 > => {
   const { retention } = cliPublicationInvocation();
   if (retention === undefined) return undefined;
-  const { retainCliEvidence } = await import("./cliEvidenceRetention.js");
-  const kept = await retainCliEvidence({
-    evidenceId: complete.evidence_id,
+  // A cache under a path that holds a value marked sensitive is never used,
+  // so neither its path nor a failure naming it reaches the output.
+  if (revealsSensitiveValue(retention.directory, input))
+    return err({
+      reason:
+        "The retained-Evidence cache path contains a value marked sensitive, so nothing was retained.",
+    });
+  const { retainCliEvidence, retainedEvidenceDigest } =
+    await import("./cliEvidenceRetention.js");
+  const kept = await retainCliEvidence<AnalysisError>({
+    sha256: retainedEvidenceDigest(complete),
     completeBytes,
     retention,
     write: async (path) => {
@@ -276,16 +322,20 @@ const retainOverBudgetEvidence = async (
         const { bytes } = published.value.receipt as { readonly bytes: number };
         return ok({ bytes });
       }
-      const { error } = published.error;
-      return err(
-        error instanceof EvidenceFileError && error.reason === "exists"
-          ? "exists"
-          : error.message,
-      );
+      const { error, committed } = published.error;
+      if (error instanceof EvidenceFileError && error.reason === "exists")
+        return err("exists");
+      return err({
+        reason: redactExplicitText(error.message, input.sensitiveValues ?? []),
+        ...(committed ? { committed: error } : {}),
+      });
     },
   });
   if (!kept.ok) return kept;
-  const receipt = bundleReceipt(kept.value.path, kept.value.bytes, input);
+  const receipt = {
+    ...bundleReceipt(kept.value.path, kept.value.bytes, input),
+    sha256: kept.value.sha256,
+  };
   recordCliEvidencePublication(receipt);
   return ok({ path: kept.value.path, receipt });
 };

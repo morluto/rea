@@ -355,34 +355,41 @@ not, the work is never refused or truncated:
   the bundle as an `evidence-file` source.
 - Without `--evidence_output`, the one-shot CLI keeps the complete Evidence
   in its private retained-Evidence cache and prints the same three fields,
-  with `retained: "cache-file"`. `evidence_bundle` gives the file's path and
-  size, and `delivery.evidence_id` is its digest. `delivery.next` pages it
-  with `rea inspect-analysis-view`, so the analysis never has to run again.
+  with `retained: "cache-file"`. `evidence_bundle` gives the file's path,
+  size and `sha256` digest. `delivery.next` pages it with
+  `rea inspect-analysis-view`, so the analysis never has to run again.
+  Composed commands keep the source records the bundle needs, as they do
+  for `--evidence_output`.
   - **Location:** `rea/evidence` under the user cache directory
     (`~/Library/Caches` on macOS, `XDG_CACHE_HOME` or `~/.cache` elsewhere).
     The directory is created `0700` and must be a real directory the user
     owns, never a symbolic link; files are created exclusively as `0600` by
     the Evidence bundle writer.
-  - **Key and lifetime:** each file is named by the complete record's
-    Evidence ID, a content digest that covers every input that shaped the
-    result. A repeat run reuses the file and never rewrites it; using a
-    record renews its age. Each retention removes records unused for 7 days,
-    then the least recently used until the cache fits
-    `delivery.cli_retained_evidence_bytes` (default 268,435,456 bytes, launch
-    seed `REA_CLI_RETAINED_EVIDENCE_BYTES`). A record larger than the cache
-    is not kept.
+  - **Key and lifetime:** each file is named by the SHA-256 of the complete
+    record's exact JSON, so it covers every input and caller choice the
+    record holds, including caller paths the Evidence ID leaves out. A
+    repeat run reuses the file and never rewrites it. A repeat run, or a
+    `rea inspect-analysis-view` read of the file, renews its age. Each
+    retention removes records unused for 7 days, then the least recently
+    used until the cache fits `delivery.cli_retained_evidence_bytes`
+    (default 268,435,456 bytes, launch seed
+    `REA_CLI_RETAINED_EVIDENCE_BYTES`), skipping any record used since it
+    was listed. A record or bundle larger than the cache is not kept.
   - **Opt out:** `--no-retain` for one run, or
     `REA_CLI_RETAINED_EVIDENCE_BYTES=0` for every run that environment
     reaches. An invalid seed also retains nothing, and settings inspection
     reports it. The MCP server ignores this setting: its session retains
     over-budget Evidence instead.
-  - **Fallback:** when nothing is kept (opted out, too large, or the save
-    failed), the CLI writes nothing and prints `{"summary", "delivery"}`
+  - **Fallback:** when nothing is kept (opted out, too large, a cache path
+    that holds a value marked sensitive, or the save failed), the CLI writes
+    nothing and prints `{"summary", "delivery"}`
     with `retained: "not-retained"`. `delivery.retention_failure` says why a
     save failed, and `delivery.rerun` gives the arguments to add to the
     original command as argv arrays: `complete` (`["--detail", "complete"]`)
     and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
-    analysis never fails because of retention. Caller inputs are never
+    analysis never fails because of retention. A save that published the
+    file but then failed (staging cleanup or cancellation) reports that
+    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
     echoed, since they can carry access credentials; the note names both.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
