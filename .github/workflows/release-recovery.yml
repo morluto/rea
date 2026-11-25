@@ -126,7 +126,7 @@ jobs:
           RELEASE_PR: ${{ needs.verify.outputs.release_pr }}
         run: >-
           node scripts/release-notes.mjs publication --repository "$GITHUB_REPOSITORY"
-          --source "$RELEASE_SOURCE" --pr "$RELEASE_PR"
+          --source "$RELEASE_SOURCE" --pr "$RELEASE_PR" --target-branch main
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         if: steps.github.outputs.published == 'false'
         with:

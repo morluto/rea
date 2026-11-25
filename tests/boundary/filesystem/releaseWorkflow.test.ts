@@ -482,6 +482,15 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     run: "node scripts/ci/release-attempt.mjs publish",
     env: { RELEASE_BRANCH: "${{ inputs.release_branch }}" },
   });
+  const authorizationNotes = authorization.steps.find((step) =>
+    step.run?.includes("release-notes.mjs publication"),
+  );
+  expect(authorizationNotes?.env?.RELEASE_TARGET_BRANCH).toBe(
+    releaseActions[0]?.step.with?.["target-branch"],
+  );
+  expect(authorizationNotes?.run).toContain(
+    '--target-branch "$RELEASE_TARGET_BRANCH"',
+  );
   const notesIndex = tag.steps.findIndex((step) =>
     step.run?.includes("release-notes.mjs publication"),
   );
@@ -502,6 +511,12 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
   );
   expect(tag.steps[notesIndex]?.run).toContain('--source "$GITHUB_SHA"');
   expect(tag.steps[notesIndex]?.run).toContain('--pr "$RELEASE_PR"');
+  expect(tag.steps[notesIndex]?.run).toContain(
+    '--target-branch "$RELEASE_TARGET_BRANCH"',
+  );
+  expect(tag.steps[notesIndex]?.env?.RELEASE_TARGET_BRANCH).toBe(
+    tag.steps[tagIndex]?.with?.["target-branch"],
+  );
   expect(publish.needs).toBe("authorize-npm");
   expect(workflow.jobs["verify-npm"].needs).toBe("publish");
   expect(tag.needs).toBe("verify-npm");

@@ -641,6 +641,38 @@ it("checks the live merged PR and exact Git snapshot before either publication r
       commits: 3,
     });
   }
+  const branchArgs = [
+    "publication",
+    "--repository",
+    "fixture/rea",
+    "--source",
+    source,
+    "--pr",
+    "1399",
+    "--target-branch",
+    "main",
+  ];
+  // Matching source alone does not establish the selected release route.
+  await writeFile(
+    prFile,
+    JSON.stringify({
+      ...pr,
+      base: { ref: "release/6.4.0" },
+      head: {
+        ...pr.head,
+        ref: "release-please--branches--release/6.4.0--components--rea-agents",
+      },
+    }),
+  );
+  await expect(f.invoke(branchArgs)).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      "Expected exactly one merged Release Please PR",
+    ),
+  });
+  await writeFile(prFile, JSON.stringify(pr));
+  expect(JSON.parse((await f.invoke(branchArgs)).stdout)).toMatchObject({
+    status: "verified",
+  });
   // Worktree edits cannot substitute for the reviewed source.
   await writeFile(join(f.directory, "CHANGELOG.md"), "unreviewed working text");
   await f.invoke([
