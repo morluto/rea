@@ -97,7 +97,7 @@ describe("arsc malformed extents", () => {
       declaredSize: 24,
     });
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -111,7 +111,7 @@ describe("arsc malformed extents", () => {
     expect(type).toBeGreaterThan(spec);
     bytes.writeUInt8(9, type + 8);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -122,7 +122,7 @@ describe("arsc malformed extents", () => {
     const headerSize = bytes.readUInt16LE(type + 2);
     bytes.writeUInt32LE(0x7fffff00, type + headerSize);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -137,7 +137,7 @@ describe("arsc malformed extents", () => {
       tailChunks: [mystery],
     });
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -154,7 +154,9 @@ describe("arsc malformed extents", () => {
     await withReader(
       Buffer.concat([header, pool.subarray(12)]),
       async (reader) => {
-        await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "malformed",
+        });
       },
     );
   });
@@ -335,7 +337,7 @@ describe("arsc entry layouts", () => {
     expect(type).toBeGreaterThan(0);
     bytes.writeUInt8(0x03, type + 9);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -352,7 +354,7 @@ describe("arsc entry layouts", () => {
     const entryBase = type + entriesStart;
     bytes.writeUInt16LE(4, entryBase + 8); // Res_value.size below 8
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -379,7 +381,7 @@ describe("arsc entry layouts", () => {
       ],
     });
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 
@@ -390,7 +392,7 @@ describe("arsc entry layouts", () => {
       values: ARSC_BASIC_VALUES,
     });
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 

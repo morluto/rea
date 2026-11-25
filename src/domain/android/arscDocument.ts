@@ -77,7 +77,7 @@ export interface ArscDocumentImage {
 }
 
 const formatFailure = (message: string): Result<never, RegionDecodeFailure> =>
-  err({ kind: "format", message });
+  err({ kind: "malformed", message });
 
 const limitFailure = (message: string): Result<never, RegionDecodeFailure> =>
   err({ kind: "limit", message, boundary: "capacity" });
@@ -818,7 +818,7 @@ export const createArscDecoder = (
   fileBytes: number,
 ): Result<RegionDecoder<ArscDocumentImage>, RegionDecodeFailure> => {
   if (!Number.isSafeInteger(fileBytes) || fileBytes < 0)
-    return err({ kind: "format", message: "invalid file size" });
+    return err({ kind: "malformed", message: "invalid file size" });
   if (fileBytes > ARSC_MAX_FILE_BYTES)
     return err({
       kind: "limit",

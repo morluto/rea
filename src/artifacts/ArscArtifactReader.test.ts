@@ -168,7 +168,7 @@ describe("ArscArtifactReader", () => {
     // The global pool is the first chunk at offset 12; flip its type.
     bytes.writeUInt16LE(0x0200, 12);
     await withReader(bytes, async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 });
