@@ -17,6 +17,7 @@ import {
   type CliCommandFailure,
 } from "./argumentErrors.js";
 import { parseCliArgv } from "./argvParser.js";
+import { commandCancellationStatus } from "./commandCancellation.js";
 import { cliCommand, cliCommands } from "./commandRegistry.js";
 import { withCliEvidencePublication } from "./cliEvidencePublication.js";
 import { rebindLoggedCliFailure } from "../cliLogging.js";
@@ -104,6 +105,9 @@ export const runCliCommand = async (
     entry.definition.options?.shape.sensitiveValue === undefined
       ? []
       : declaredSensitiveValues(global.command);
+  // A signal cancellation attests its conventional status on the command
+  // outcome; the final exit decision must not overwrite it with a failure.
+  let cancellationStatus: 130 | 143 | 149 | undefined;
   const report = (failure: CliCommandFailure) => {
     writer(options)(
       renderCliCommandFailure(redactCliCommandFailure(failure, sensitive), {
@@ -115,7 +119,7 @@ export const runCliCommand = async (
         cta,
       }),
     );
-    exit(options, 1);
+    exit(options, cancellationStatus ?? 1);
   };
   try {
     const parsed = parseCliArgv(global.command.slice(1), entry.definition);
@@ -129,6 +133,7 @@ export const runCliCommand = async (
           ...parsed.value,
           formatExplicit: controls.formatExplicit,
         });
+        cancellationStatus = commandCancellationStatus(rawValue);
         const value = projectCliCommandOutput(rawValue, {
           operations: entry.operations,
           commands: cliCommands(cli),
@@ -147,8 +152,9 @@ export const runCliCommand = async (
           });
       }),
     );
-    if (output.error !== undefined) exit(options, 1);
+    if (output.error !== undefined) exit(options, cancellationStatus ?? 1);
   } catch (cause: unknown) {
+    cancellationStatus ??= commandCancellationStatus(cause);
     // A started or failed destination retains ownership; never write a second
     // diagnostic into a partial document or replace a publication receipt.
     if (output.handled) throw cause;
