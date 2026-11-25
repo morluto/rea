@@ -190,9 +190,10 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
 }
 
 /**
- * The root is the caller's selection: a non-directory is an unsupported
- * target, and host failures keep the shared target-unavailable/access-denied
- * classification instead of becoming artifact I/O faults.
+ * The root is the caller's selection: a path that is not a directory is a
+ * selection failure, and host failures keep the shared
+ * target-unavailable/access-denied classification instead of becoming
+ * artifact I/O faults.
  */
 const selectedRootFailure = (
   path: string,
