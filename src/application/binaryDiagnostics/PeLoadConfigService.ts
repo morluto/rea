@@ -117,10 +117,9 @@ const structureRange = (
 
 const validReport = (
   report: PeLoadConfig,
-  input: { max_callbacks: number; max_file_bytes: number },
+  input: { max_callbacks: number },
 ): boolean => {
   if (
-    report.artifact.bytes > input.max_file_bytes ||
     report.examined_callbacks !== (report.tls?.callbacks.length ?? 0) ||
     report.examined_callbacks > input.max_callbacks ||
     report.bits !== (report.format === "pe32" ? 32 : 64)

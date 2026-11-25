@@ -27,15 +27,18 @@ import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
 it.each([
   {
     length: [0x80, 0x80, 0x80, 0x80, 0x08],
+    reason: "malformed",
     message: "Invalid .NET bundle string length",
   },
   {
+    // A valid length that runs past the file is a truncated manifest.
     length: [0xff, 0xff, 0xff, 0xff, 0x07],
+    reason: "truncated",
     message: "Truncated .NET bundle manifest",
   },
 ])(
-  "reports malformed bundle ID length $length as a format failure",
-  async ({ length, message }) => {
+  "reports bundle ID length $length as a $reason manifest",
+  async ({ length, reason, message }) => {
     const root = await createTestTempDirectory("rea-dotnet-invalid-string-");
     const path = join(root, "host.exe");
     const fixture = dotnetBundleFixture([
@@ -48,7 +51,7 @@ it.each([
     try {
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
-      ).rejects.toMatchObject({ reason: "format", message });
+      ).rejects.toMatchObject({ reason, message });
     } finally {
       await handle.close();
     }
@@ -75,7 +78,7 @@ it("reports a truncated manifest before the metadata budget", async () => {
         metadata_bytes: rowStart - fixture.headerOffset,
       }),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: "Truncated .NET bundle manifest",
     });
   } finally {
@@ -107,7 +110,7 @@ it.each(["bundle ID", "entry path"] as const)(
         : fixture.fields.entries[1]!.offset;
     for (const [content, reason] of [
       [fixture.bytes, "limit"],
-      [fixture.bytes.subarray(0, end), "format"],
+      [fixture.bytes.subarray(0, end), "truncated"],
     ] as const) {
       await writeFile(path, content);
       const handle = await open(path, "r");
@@ -155,7 +158,7 @@ it.each([
     try {
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
-      ).rejects.toMatchObject({ reason: "format" });
+      ).rejects.toMatchObject({ reason: "malformed" });
     } finally {
       await handle.close();
     }
@@ -321,7 +324,7 @@ it.each([
         BigInt(fixture.headerOffset + 1),
         member.offset,
       );
-    await expect(read()).rejects.toMatchObject({ reason: "format" });
+    await expect(read()).rejects.toMatchObject({ reason: "malformed" });
   },
 );
 
@@ -539,9 +542,9 @@ it.each([
         { path: "one", bytes: Buffer.from("first") },
         { path: "two", bytes: Buffer.from("second"), declaredOffset: 1025 },
       ]).bytes,
-    "format",
+    "malformed",
   ],
-  ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "format"],
+  ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "truncated"],
   ...(["count", "config-offset", "member-size"] as const).map(
     (field) =>
       [
@@ -568,7 +571,7 @@ it.each([
             );
           return fixture.bytes;
         },
-        "format",
+        "malformed",
       ] as const,
   ),
   [
@@ -583,7 +586,7 @@ it.each([
       fixture.bytes.writeInt32LE(0x7fff_ffff, fixture.fields.entryCount);
       return fixture.bytes;
     },
-    "format",
+    "malformed",
   ],
   [
     "uncompressed member crossing the manifest above the member allowance",
@@ -595,7 +598,7 @@ it.each([
           declaredSize: 600 * 1024 * 1024,
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "expanded budget",
@@ -634,7 +637,7 @@ it.each([
           declaredSize: 6,
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "corrupt deflate",
@@ -647,7 +650,7 @@ it.each([
           storedBytes: Buffer.from([255, 255, 255]),
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "trailing deflate bytes",
@@ -663,7 +666,7 @@ it.each([
           ]),
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "prefix collision",
@@ -681,7 +684,7 @@ it.each([
       bytes[bytes.length - 1] = 255;
       return bytes;
     },
-    "format",
+    "malformed",
   ],
 ] as const)(
   "rejects %s without publishing output",
@@ -1012,7 +1015,7 @@ it.each([3, 4])(
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
       ).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("configuration location disagrees"),
       });
     } finally {
@@ -1123,8 +1126,59 @@ it.each(["pe", "elf"] as const)(
         integrityPolicy: "fail",
         resourceScope: new ArtifactResourceScope(),
       }),
-    ).rejects.toMatchObject({ _tag: "AnalysisUnsupportedTargetError" });
+    ).rejects.toMatchObject({ _tag: "AnalysisTargetFailureError" });
     await expect(access(outputRoot)).rejects.toThrow();
+  },
+);
+
+it.each(["pe", "elf"] as const)(
+  "keeps a %s host native when DOTNET_BUNDLE_SIGNATURE has an out-of-bounds offset while direct reader fails closed",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-dotnet-oob-offset-");
+    for (const [label, offset] of [
+      ["past-size-minus-12", (size: number) => BigInt(size - 11)],
+      ["u64-max", () => 0xffffffffffffffffn],
+    ] as const) {
+      const path = join(root, `${format}-${label}.bin`);
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeBigUInt64LE(offset(fixture.bytes.length), 536);
+      if (format === "elf") writeMinimalElfHeader(fixture.bytes);
+      await writeFile(path, fixture.bytes);
+
+      const handle = await open(path, "r");
+      try {
+        expect(
+          await findDotnetBundleHeader(handle, fixture.bytes.length),
+        ).toBeUndefined();
+      } finally {
+        await handle.close();
+      }
+
+      const inventory = await inventoryArtifact(path, {
+        resourceScope: new ArtifactResourceScope(),
+      });
+      expect(inventory.manifest.root_format).toBe(format);
+      expect(inventory.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(inventory.occurrences.map((entry) => entry.logical_path)).toEqual([
+        ".",
+      ]);
+
+      const reader = new DotnetBundleArtifactReader(path);
+      try {
+        await expect(
+          (async () => {
+            for await (const _entry of reader.entries()) {
+              /* consume */
+            }
+          })(),
+        ).rejects.toMatchObject({
+          reason: "unsupported",
+          message: "Selected file has no .NET bundle header",
+        });
+      } finally {
+        await reader.close();
+      }
+    }
   },
 );
 

@@ -320,3 +320,43 @@ export const denoStandaloneEntryMetadataSchema = z.strictObject({
 export type DenoStandaloneEntryMetadata = z.infer<
   typeof denoStandaloneEntryMetadataSchema
 >;
+
+/** What the tar walk observed about the archive, independent of member bytes. */
+export const tarMetadataSchema = z.strictObject({
+  kind: z.literal("tar"),
+  /** `gzip` when the tar stream is the RFC 1952 decompression of the file. */
+  compression: z.enum(["none", "gzip"]),
+  /** Header dialects seen, from each header's magic: POSIX ustar or GNU. */
+  dialects: z.array(z.enum(["gnu", "ustar"])),
+  pax_headers: offset,
+  member_count: offset,
+  /** Bytes of the tar stream examined; for gzip, the decompressed bytes. */
+  tar_stream_bytes: offset,
+  /**
+   * `end-marker`: a zero block ended the archive. `eof`: the stream ended at a
+   * header boundary without one. `malformed` and `truncated` stopped the walk.
+   */
+  end_state: z.enum(["end-marker", "eof", "malformed", "truncated"]),
+  /** Tar-stream offset of the end marker or of the failure. */
+  end_offset: offset,
+  trailing_nonzero_bytes: offset,
+});
+export type TarMetadata = z.infer<typeof tarMetadataSchema>;
+
+/** One tar header's declared fields after pax and GNU long-name records apply. */
+export const tarEntryMetadataSchema = z.strictObject({
+  kind: z.literal("tar-entry"),
+  /** Tar-stream offsets; for gzip, offsets in the decompressed stream. */
+  header_offset: offset,
+  data_offset: offset,
+  typeflag: z.string().length(1),
+  /** Permission bits, including set-ID and sticky bits. */
+  mode: z.int().min(0).max(0o7777),
+  uid: offset.nullable(),
+  gid: offset.nullable(),
+  /** Seconds since the epoch, negative before 1970; null past a safe integer. */
+  mtime: z.int().nullable(),
+  uname: z.string().nullable(),
+  gname: z.string().nullable(),
+  link_name: z.string().nullable(),
+});

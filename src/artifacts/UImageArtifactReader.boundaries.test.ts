@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import {
   artifactPreparationRecoveryCases,
   artifactReaderLifecycleCases,
@@ -24,11 +25,6 @@ const fixture = async (bytes: Buffer): Promise<string> => {
   );
   await writeFile(path, bytes);
   return path;
-};
-const entries = async (reader: UImageArtifactReader) => {
-  const result = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
 };
 
 it.each([
@@ -95,7 +91,7 @@ it("preserves cancellation during payload CRC admission", async () => {
       })(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     reads.mockRestore();
-    const recovered = await entries(reader);
+    const recovered = await collectEntries(reader);
     expect(recovered).toHaveLength(1);
     expect(
       (await buffer(await reader.open(recovered[0]!))).equals(
@@ -122,7 +118,7 @@ it("admits a multi-image count before scanning the remaining payload", async () 
   const reader = new UImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
     });
@@ -166,7 +162,7 @@ it("rejects a source changed after its header and CRC were prepared", async () =
   const path = await fixture(bytes),
     reader = new UImageArtifactReader(path);
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     await writeFile(path, Buffer.concat([bytes, Buffer.from([0])]));
     await expect(reader.open(entry!)).rejects.toMatchObject({
       reason: "integrity",
@@ -181,7 +177,7 @@ it("checks a multi-chunk stored payload incrementally and preserves read cancell
   const path = await fixture(bytes);
   const reader = new UImageArtifactReader(path);
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const controller = new AbortController(),
       reason = new Error("cancel member bytes");
     const stream = await reader.open(entry!, controller.signal);
@@ -217,7 +213,9 @@ it("reports impossible over-cap component extents as malformed", async () => {
     await fixture(buildUImage({ type: 4, payload })),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+    await expect(collectEntries(reader)).rejects.toMatchObject({
+      reason: "malformed",
+    });
   } finally {
     await reader.close();
   }

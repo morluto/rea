@@ -1,19 +1,24 @@
 import {
   resolveEvidenceInput,
-  resolvePairedEvidenceSources,
+  resolveEvidenceSource,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
+import type { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import type { EvidenceFileReadOptions } from "../analysisView/evidenceFileSource.js";
-import { artifactComparisonInputSchema } from "../../contracts/artifactComparisonContracts.js";
+import {
+  artifactComparisonInputSchema,
+  type artifactPathSourceSchema,
+} from "../../contracts/artifactComparisonContracts.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
 import {
   compareArtifacts,
   type ArtifactComparisonResult,
 } from "../../domain/artifactComparison.js";
+import { readArtifactInspectionSources } from "../../domain/artifactInspection.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
 import {
   EvidenceIntegrityError,
@@ -42,6 +47,12 @@ const OPERATION = "compare_artifacts";
 export interface ArtifactComparisonSources {
   readonly left: Evidence;
   readonly right: Evidence;
+  /**
+   * Authenticated source records reachable from `left` and `right`, including
+   * nested `inspect_artifact` inventories and linked records from input bundles
+   * or the session ledger.
+   */
+  readonly sourceEvidence?: readonly Evidence[];
 }
 
 /** A completed comparison and the derived Evidence citing both complete inputs. */
@@ -50,14 +61,30 @@ export interface ArtifactComparisonOutcome {
   readonly evidence: Evidence;
 }
 
+/** A caller-selected path inventoried in place for one comparison side. */
+export type ArtifactPathSource = z.output<typeof artifactPathSourceSchema>;
+
+/** How a comparison reads its sources: Evidence files, and paths to inventory. */
+export interface ArtifactComparisonSourceOptions extends EvidenceFileReadOptions {
+  /**
+   * Inventory a selected path and return its complete inventory Evidence.
+   * Absent, path sources are refused.
+   */
+  readonly inventoryPath?: (
+    source: ArtifactPathSource,
+    signal: AbortSignal | undefined,
+  ) => Promise<Result<Evidence, AnalysisError>>;
+}
+
 /**
- * Select both sides through the shared paired-source owner, authenticate them,
- * then resolve a summary to its exact retained parent inventory.
+ * Select both sides: inventory a path in place, or authenticate Evidence
+ * through the shared source owner and resolve a summary to its exact
+ * retained parent inventory.
  */
 export const resolveArtifactComparisonSources = async (
   input: unknown,
   evidenceById: EvidenceLookup | undefined,
-  options: EvidenceFileReadOptions = {},
+  options: ArtifactComparisonSourceOptions = {},
 ): Promise<Result<ArtifactComparisonSources, AnalysisError>> => {
   const request = parseAnalysisInput(
     OPERATION,
@@ -66,19 +93,128 @@ export const resolveArtifactComparisonSources = async (
     options.signal,
   );
   if (!request.ok) return request;
-  return resolvePairedEvidenceSources(request.value, evidenceById, {
-    ...options,
-    operation: OPERATION,
-    resolveEvidence: (candidate, related, side) => {
-      const authenticated = readEvidence(candidate);
-      return authenticated.ok
-        ? resolveArtifactComparisonEvidence(authenticated.value, related, [
-            side,
-          ])
-        : authenticated;
-    },
+  const resolveSide = async (
+    side: "left" | "right",
+  ): Promise<
+    Result<
+      { readonly evidence: Evidence; readonly sources: readonly Evidence[] },
+      AnalysisError
+    >
+  > => {
+    const source = request.value[side];
+    if ("kind" in source && source.kind === "path") {
+      if (options.inventoryPath === undefined)
+        return err(
+          new AnalysisInputError(OPERATION, undefined, [
+            {
+              path: [side, "kind"],
+              reason: "invalid_value",
+              message:
+                "This adapter cannot inventory a path source; supply inventory Evidence instead.",
+            },
+          ]),
+        );
+      const inventoried = await options.inventoryPath(source, options.signal);
+      return inventoried.ok
+        ? ok({
+            evidence: inventoried.value,
+            sources: collectLinkedSources(inventoried.value, evidenceById),
+          })
+        : inventoried;
+    }
+    let linkedSources: readonly Evidence[] = [];
+    const resolved = await resolveEvidenceSource(source, side, evidenceById, {
+      ...options,
+      operation: OPERATION,
+      resolveEvidence: (candidate, related) => {
+        const authenticated = readEvidence(candidate);
+        if (!authenticated.ok) return authenticated;
+        const owner = resolveArtifactComparisonEvidence(
+          authenticated.value,
+          related,
+          [side],
+        );
+        if (!owner.ok) return owner;
+        linkedSources = collectLinkedSources(owner.value, related);
+        return owner;
+      },
+    });
+    return resolved.ok
+      ? ok({ evidence: resolved.value, sources: linkedSources })
+      : resolved;
+  };
+  const left = await resolveSide("left");
+  if (!left.ok) return left;
+  const right = await resolveSide("right");
+  // The completed left inventory survives the right side's failure.
+  if (!right.ok)
+    return err(
+      right.error.retainArgumentObservation("left", left.value.evidence),
+    );
+  return ok({
+    left: left.value.evidence,
+    right: right.value.evidence,
+    sourceEvidence: deduplicateEvidence([
+      ...left.value.sources,
+      ...right.value.sources,
+    ]),
   });
 };
+
+/**
+ * The complete source closure for a comparison: every linked record collected
+ * for `left` and `right` (including nested `inspect_artifact` inventories),
+ * dependencies before dependents and deduplicated by `evidence_id`.
+ */
+export const artifactComparisonSourceEvidence = (
+  sources: ArtifactComparisonSources,
+): readonly Evidence[] =>
+  deduplicateEvidence(
+    sources.sourceEvidence !== undefined
+      ? [...sources.sourceEvidence, sources.left, sources.right]
+      : [
+          ...collectLinkedSources(sources.left, undefined),
+          ...collectLinkedSources(sources.right, undefined),
+        ],
+  );
+
+/**
+ * Collect every authenticated record reachable from `root` via `evidence_links`,
+ * preferring exact records from `lookup` (input bundle or ledger) and falling
+ * back to nested `inspect_artifact` substep inventories. Dependencies precede
+ * the records that cite them.
+ */
+const collectLinkedSources = (
+  root: Evidence,
+  lookup: EvidenceLookup | undefined,
+): Evidence[] => {
+  const visited = new Set<string>();
+  const collected: Evidence[] = [];
+  const visit = (record: Evidence): void => {
+    if (visited.has(record.evidence_id)) return;
+    visited.add(record.evidence_id);
+    const embedded =
+      record.operation === "inspect_artifact"
+        ? readArtifactInspectionSources(record.normalized_result)
+        : undefined;
+    const embeddedById =
+      embedded !== undefined && embedded.ok
+        ? new Map(embedded.value.map((source) => [source.evidence_id, source]))
+        : undefined;
+    for (const linkId of record.evidence_links) {
+      if (visited.has(linkId)) continue;
+      const linked = lookup?.(linkId) ?? embeddedById?.get(linkId);
+      if (linked !== undefined && linked.evidence_id === linkId) visit(linked);
+    }
+    collected.push(record);
+  };
+  visit(root);
+  return collected;
+};
+
+const deduplicateEvidence = (records: readonly Evidence[]): Evidence[] => [
+  ...new Map(records.map((record) => [record.evidence_id, record])).values(),
+];
 
 /** Compare resolved inventories and derive Evidence citing both complete owners. */
 export const compareArtifactEvidence = ({
@@ -163,24 +299,8 @@ export const resolveArtifactComparisonEvidence = (
   const authenticated = readEvidence(selected.value);
   if (!authenticated.ok) return authenticated;
   const owner = authenticated.value;
-  const identity = evidenceTargetIdentity(evidence);
-  const ownerIdentity = evidenceTargetIdentity(owner);
-  const target = evidenceSubjectTarget(evidence.subject);
-  if (
-    identity === null ||
-    ownerIdentity === null ||
-    target === undefined ||
-    !sameTargetIdentity(identity, ownerIdentity)
-  )
-    return mismatch();
-  // The ledger preserves its original display path; summary delivery may use a
-  // later caller-selected alias for this same authenticated owner identity.
-  // The alias names the whole target, selection included.
-  const { name: _name, ...aliasTarget } = target;
-  const presentation = rebindEvidenceToTargetPath(owner, {
-    ...aliasTarget,
-    path: summary.data.artifact.path,
-  });
+  const presentation = summaryPresentation(evidence, owner, summary.data);
+  if (presentation === undefined) return mismatch();
   const reprojected = inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: parentId },
@@ -193,6 +313,38 @@ export const resolveArtifactComparisonEvidence = (
   // owner refuses earlier projections instead of rebuilding them.
   if (reprojected.value.evidence_id !== evidence.evidence_id) return mismatch();
   return ok(owner);
+};
+
+/**
+ * The owner as the summary presented it. A local owner may be presented at a
+ * later caller-selected alias of the same identity. An owner whose identity
+ * is unknown, such as a partial directory walk, has no alias to rebind: the
+ * exact reprojection alone binds the summary to it.
+ */
+const summaryPresentation = (
+  summary: Evidence,
+  owner: Evidence,
+  view: { readonly artifact: { readonly path: string } },
+): Evidence | undefined => {
+  const ownerIdentity = evidenceTargetIdentity(owner);
+  if (ownerIdentity?.kind === "unknown") return owner;
+  const identity = evidenceTargetIdentity(summary);
+  const target = evidenceSubjectTarget(summary.subject);
+  if (
+    identity === null ||
+    ownerIdentity === null ||
+    target === undefined ||
+    !sameTargetIdentity(identity, ownerIdentity)
+  )
+    return undefined;
+  // The ledger preserves its original display path; summary delivery may use a
+  // later caller-selected alias for this same authenticated owner identity.
+  // The alias names the whole target, selection included.
+  const { name: _name, ...aliasTarget } = target;
+  return rebindEvidenceToTargetPath(owner, {
+    ...aliasTarget,
+    path: view.artifact.path,
+  });
 };
 
 const mismatch = (): Result<never, EvidenceIntegrityError> =>
@@ -216,7 +368,7 @@ export const artifactComparisonExecution = (
   const { comparison, evidence } = compared.value;
   return ok({
     evidence,
-    sources: [left, right],
+    sources: artifactComparisonSourceEvidence(sources),
     unknown: artifactUnknownInput(
       left,
       right,

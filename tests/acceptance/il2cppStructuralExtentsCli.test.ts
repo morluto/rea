@@ -50,7 +50,7 @@ cliTest(
         code: "unsupported_target",
         details: {
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "il2cpp-metadata",
           reason: expect.stringContaining(
             `record-size-mismatch: section ${name}`,

@@ -927,7 +927,7 @@ describe("dSYM diagnostic admission", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe(
-      accepted ? "AnalysisUnsupportedTargetError" : "AnalysisOutputError",
+      accepted ? "AnalysisTargetFailureError" : "AnalysisOutputError",
     );
     expect(result.error.capturedOutput).toMatchObject({
       stdout,

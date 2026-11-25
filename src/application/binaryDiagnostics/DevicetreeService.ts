@@ -1,12 +1,13 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
 } from "../../domain/firmware/devicetree.js";
 import type { Result } from "../../domain/result.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_devicetree";
@@ -38,24 +39,7 @@ export class DevicetreeService {
           report.nodes.length <= input.max_nodes &&
           report.coverage.examined_properties <= input.max_properties,
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
-            {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-              ],
-            },
-          ),
+          observedFileEvidence(value, identity, OPERATION, parameters),
       },
       rawInput,
       options,

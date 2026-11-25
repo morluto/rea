@@ -4,6 +4,7 @@ import type { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
+import { isRecord } from "../kernel/isRecord.js";
 import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
@@ -16,7 +17,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { sliceTextByTokenWindow } from "./tokenWindow.js";
+import { formatTokenWindow } from "./tokenWindow.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -81,6 +82,111 @@ const resultMeta = (metadata: CliResultOutputMetadata) => ({
     ? {}
     : { cli_controls: { ...metadata.cliControls } }),
 });
+
+/** CLI-only issue tracker URL appended to human-TTY refusal hints. */
+const CLI_ISSUE_REPORT_URL = "https://github.com/morluto/rea/issues";
+
+const ISSUE_HINT_ERROR_CODES: ReadonlySet<AnalysisErrorProjection["code"]> =
+  new Set(["unsupported_target", "target_unavailable", "execution_failure"]);
+
+const shouldAppendIssueReportHint = (
+  projection: AnalysisErrorProjection,
+): boolean =>
+  ISSUE_HINT_ERROR_CODES.has(projection.code) ||
+  projection.details?.reason === "file_format_rejected" ||
+  projection.details?.constraint === "file_format_rejected";
+
+/**
+ * Interactive terminal presentation gate for command-execution failures:
+ * activates only when stdout is a TTY and no explicit format, full-output,
+ * token, or filter control was requested.
+ */
+const isHumanTerminalFailurePresentation = (
+  options: ParsedCliOutputArguments,
+  destination: Writable,
+): boolean =>
+  isTerminalOutput(destination) &&
+  !options.formatExplicit &&
+  !options.fullOutput &&
+  !options.tokenCount &&
+  !options.tokenWindow &&
+  options.filterOutput === undefined;
+
+/**
+ * Render an `AnalysisErrorProjection` as concise plain text for a human
+ * reading an interactive terminal. Never used for piped output, explicit
+ * machine formats, or MCP responses.
+ */
+const renderHumanAnalysisError = (
+  projection: AnalysisErrorProjection,
+): string => {
+  const lines: string[] = [`Error (${projection.code}): ${projection.message}`];
+  const action = projection.remediation.action.trim();
+  if (action.length > 0 && action !== projection.message.trim())
+    lines.push(`Next step: ${action}`);
+  if (shouldAppendIssueReportHint(projection))
+    lines.push(
+      `If this refusal is unexpected, please report it at ${CLI_ISSUE_REPORT_URL}`,
+    );
+  return `${lines.join("\n")}\n`;
+};
+
+/**
+ * Concise human-TTY rendering prints only code, message, and remediation.
+ * Bypass it whenever the failure carries preserved local evidence, inline
+ * observations, published bundle receipts/errors, or incomplete-cleanup
+ * resource records that would otherwise be dropped before exit.
+ */
+const hasPreservedFailureEvidence = (
+  projection: AnalysisErrorProjection,
+): boolean => {
+  if (projection.code === "cleanup_incomplete") return true;
+  const details = projection.details;
+  if (details === undefined) return false;
+  if (
+    details.partial_observation !== undefined ||
+    details.completed_observation !== undefined ||
+    details.argument_observations !== undefined ||
+    details.captured_output !== undefined ||
+    details.cleanup === "incomplete"
+  )
+    return true;
+  const diagnostics = details.diagnostics;
+  if (
+    isRecord(diagnostics) &&
+    (diagnostics.evidence_bundle !== undefined ||
+      diagnostics.evidence_bundle_error !== undefined)
+  )
+    return true;
+  const secondary = details.secondary_failures;
+  if (Array.isArray(secondary)) {
+    for (const item of secondary) {
+      const parsed = analysisErrorProjectionSchema.safeParse(item);
+      if (parsed.success && hasPreservedFailureEvidence(parsed.data))
+        return true;
+    }
+  }
+  return false;
+};
+
+const resolveHumanFailureProjection = (
+  value: unknown,
+  metadata: CliResultOutputMetadata,
+  options: ParsedCliOutputArguments,
+  destination: Writable,
+): AnalysisErrorProjection | undefined => {
+  if (!isHumanTerminalFailurePresentation(options, destination))
+    return undefined;
+  const candidate = metadata.failure
+    ? value
+    : cliOperationFailurePayload(value);
+  if (candidate === undefined || isCliCompletedFailureReport(value))
+    return undefined;
+  const parsed = analysisErrorProjectionSchema.safeParse(candidate);
+  if (!parsed.success || hasPreservedFailureEvidence(parsed.data))
+    return undefined;
+  return parsed.data;
+};
 
 /** Optional executable-owned result surface for one CLI invocation. */
 export interface CliResultOutput {
@@ -249,15 +355,19 @@ export const createCliResultOutput = (
       ownsDocument && selectedMetadata.cta !== undefined
         ? { ...selectedMetadata, cta: undefined }
         : selectedMetadata;
+    let renderedHumanFailure = false;
     try {
       const written = await writeResult(
         value,
         presentedMetadata,
         operationFailure,
+        () => {
+          renderedHumanFailure = true;
+        },
       );
       if (
         metadata.cta !== undefined &&
-        (!written || !ownsDocument) &&
+        (!written || (!ownsDocument && !renderedHumanFailure)) &&
         error === undefined &&
         !options.fullOutput &&
         !options.tokenCount
@@ -312,12 +422,33 @@ export const createCliResultOutput = (
     value: unknown,
     metadata: CliResultOutputMetadata,
     reportedFailure: unknown,
+    onHumanFailure: () => void,
   ): Promise<boolean> {
     completed = {
       metadata,
       receipt: cliEvidencePublicationReceipt(),
       originalFailure: cliOperationFailureIdentity(value),
     };
+    const humanFailure = resolveHumanFailureProjection(
+      value,
+      metadata,
+      options,
+      destination,
+    );
+    if (humanFailure !== undefined) {
+      onHumanFailure();
+      handled = true;
+      try {
+        await writeOutputText(
+          destination,
+          renderHumanAnalysisError(humanFailure),
+        );
+      } catch (cause: unknown) {
+        failed = true;
+        throw cause;
+      }
+      return true;
+    }
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
@@ -520,14 +651,21 @@ export const createCliResultOutput = (
       return true;
     };
     if (
-      (format === "toon" || format === "md") &&
+      format === "md" &&
       !options.tokenCount &&
-      (!options.tokenWindow || format === "md" || failureReported) &&
-      (format === "md"
-        ? containsUnrepresentableMarkdown(selected)
-        : containsUnpairedSurrogate(selected))
+      containsUnrepresentableMarkdown(selected)
     )
       return refuseUnrepresentableText();
+    if (format === "toon") {
+      // Scalar strings can be counted or sliced directly. Structured TOON
+      // documents must be representable before the encoder can produce text.
+      const usesRawString =
+        typeof selected === "string" &&
+        !failureReported &&
+        (options.tokenCount ? !options.fullOutput : options.tokenWindow);
+      if (!usesRawString && containsUnpairedSurrogate(selected))
+        return refuseUnrepresentableText();
+    }
     const filtered =
       (format === "json" || format === "jsonl") &&
       ownsFilteredOutput &&
@@ -613,7 +751,7 @@ export const createCliResultOutput = (
             isTerminalOutput(destination),
           ))
             formatted += part;
-        } else formatted = formatCliOutput(tokenValue, format);
+        } else formatted = `${formatCliOutput(tokenValue, format)}\n`;
         const count = estimateTokenCount(formatted);
         handled = true;
         try {
@@ -650,38 +788,31 @@ export const createCliResultOutput = (
         format === "md" && !options.fullOutput ? document : filtered,
         format,
       );
-      const window = sliceTextByTokenWindow(
-        formatted,
-        options.tokenOffset ?? 0,
-        options.tokenLimit,
-      );
+      const window = formatTokenWindow(formatted, options);
       // Keep the established empty human/agent presentation. Nonempty text
       // already belongs to this formatter, even when the whole result fits.
       if (!window.truncated && !options.fullOutput && formatted === "")
         return false;
 
-      const sliced = window.truncated
-        ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`
-        : formatted;
+      if (format === "toon" && hasUnpairedSurrogate(window.text))
+        return refuseUnrepresentableText();
       const outputDocument = options.fullOutput
         ? formatCliOutput(
             window.truncated
               ? {
                   ok: true,
-                  data: sliced,
+                  data: window.text,
                   meta: {
                     ...resultMeta(metadata),
-                    ...(window.end < window.total
-                      ? { nextOffset: window.end }
-                      : {}),
+                    ...(window.nextOffset === undefined
+                      ? {}
+                      : { nextOffset: window.nextOffset }),
                   },
                 }
               : { ok: true, data: filtered, meta },
             format,
           )
-        : sliced;
-      if (format === "toon" && hasUnpairedSurrogate(outputDocument))
-        return refuseUnrepresentableText();
+        : window.text;
       handled = true;
       try {
         await writeOutputText(
@@ -752,14 +883,17 @@ const fullFailureEnvelope = (
   if (tokenLimit === undefined && tokenOffset === undefined)
     return { ok: false, error: failure, meta };
   const formatted = formatCliOutput(failure, format);
-  const offset = tokenOffset ?? 0;
-  const window = sliceTextByTokenWindow(formatted, offset, tokenLimit);
+  const window = formatTokenWindow(formatted, { tokenOffset, tokenLimit });
   if (!window.truncated) return { ok: false, error: failure, meta };
-  const nextOffset = window.end < window.total ? window.end : undefined;
   return {
     ok: false,
-    error: `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`,
-    meta: { ...meta, ...(nextOffset === undefined ? {} : { nextOffset }) },
+    error: window.text,
+    meta: {
+      ...meta,
+      ...(window.nextOffset === undefined
+        ? {}
+        : { nextOffset: window.nextOffset }),
+    },
   };
 };
 

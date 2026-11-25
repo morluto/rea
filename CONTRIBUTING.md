@@ -398,7 +398,7 @@ dependencies. The ignored outputs are `docs/public/product-catalog.json`,
 `docs/verification/managed-conformance-*.json`, and `skills/`. Edit authored
 skill instructions in `.agents/skills/reverse-engineer-anything/`, where Skills
 can discover the public bundle directly from a clean checkout. `verify:package`
-installs that bundle with Skills 1.7.2 using default repository-root discovery
+installs that bundle with Skills 1.9.0 using default repository-root discovery
 and checks every installed file, alongside the packaged setup checks.
 CI validates generated outputs and retains them as artifacts; do not commit
 them. Reviewed source metadata, including

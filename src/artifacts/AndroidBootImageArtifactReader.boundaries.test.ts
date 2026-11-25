@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -8,6 +9,7 @@ import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  malformedArtifact,
 } from "../resources/index.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
@@ -24,12 +26,6 @@ const fixture = async (bytes: Buffer): Promise<string> => {
   );
   await writeFile(path, bytes);
   return path;
-};
-
-const entries = async (reader: AndroidBootImageArtifactReader) => {
-  const result = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
 };
 
 it("does not publish preparation metadata or coverage after carrier mutation", async () => {
@@ -72,8 +68,8 @@ it.each(["invalid", "cancelled"] as const)(
         if (refuse) {
           refuse = false;
           if (mode === "invalid")
-            throw new ArtifactReaderFailure(
-              "malformed",
+            throw malformedArtifact(
+              "android-boot-image",
               "injected preparation failure",
             );
           controller.abort(new Error("cancel final preparation validation"));
@@ -97,7 +93,7 @@ it.each(["invalid", "cancelled"] as const)(
       });
       expect(onCoverage).not.toHaveBeenCalled();
       expect(reader.formatMetadata()).toBeUndefined();
-      expect(await entries(reader)).toHaveLength(2);
+      expect(await collectEntries(reader)).toHaveLength(2);
       expect(reader.formatMetadata()).toMatchObject({
         header_version: 0,
         component_count: 2,
@@ -151,7 +147,7 @@ it("inventories a vendor ramdisk table at its 4096-entry allowance", async () =>
   const admitted = await openRegularFile(path, { symlinks: "reject" });
   const reader = new AndroidBootImageArtifactReader(path, admitted);
   try {
-    const listed = await entries(reader);
+    const listed = await collectEntries(reader);
     expect(
       listed.filter((entry) => entry.path.startsWith("vendor_ramdisk")),
     ).toHaveLength(4096);
@@ -167,7 +163,7 @@ it("rejects an excessive vendor ramdisk count before reading the table", async (
   const reader = new AndroidBootImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    const failure: unknown = await entries(reader).then(
+    const failure: unknown = await collectEntries(reader).then(
       () => undefined,
       (cause: unknown) => cause,
     );
@@ -206,7 +202,7 @@ it("reports a truncated vendor ramdisk table above the count allowance without r
   const reader = new AndroidBootImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "truncated",
       cause: {
         kind: "truncated",
@@ -232,7 +228,7 @@ it("rejects a source changed after its header was prepared", async () => {
   const path = await fixture(bytes);
   const reader = new AndroidBootImageArtifactReader(path);
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     await writeFile(path, Buffer.concat([bytes, Buffer.from([0])]));
     await expect(reader.open(entry!)).rejects.toMatchObject({
       reason: "integrity",
@@ -251,7 +247,7 @@ it("checks a multi-chunk member and preserves read cancellation", async () => {
   });
   const reader = new AndroidBootImageArtifactReader(await fixture(bytes));
   try {
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const controller = new AbortController();
     const reason = new Error("cancel member bytes");
     const stream = await reader.open(entry!, controller.signal);

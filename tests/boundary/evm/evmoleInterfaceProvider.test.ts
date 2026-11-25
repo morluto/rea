@@ -1,3 +1,4 @@
+import { EVMOLE_VERSION } from "../../../src/evm/EvmoleProviderIdentity.js";
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { access, readFile, symlink, writeFile } from "node:fs/promises";
@@ -237,7 +238,7 @@ it.runIf(!unsupportedHost).each(["completed", "malformed-reply"] as const)(
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.3",
+              version: EVMOLE_VERSION,
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -348,7 +349,7 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -457,7 +458,9 @@ it
                     : {
                         ok: true,
                         version:
-                          scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                          scenario === "wrong-version"
+                            ? "0.0.0"
+                            : EVMOLE_VERSION,
                         bytecode: {
                           sha256: createHash("sha256")
                             .update(bytes)
@@ -492,7 +495,7 @@ it
     if (scenario === "literal-replacement")
       expect(result).toMatchObject({
         ok: false,
-        error: { issues: [{ message: "valid �" }] },
+        error: { failure: { kind: "malformed", detail: "valid �" } },
       });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
@@ -508,9 +511,9 @@ it
         error: {
           _tag:
             scenario === "format" || scenario === "literal-replacement"
-              ? "AnalysisInputError"
+              ? "AnalysisTargetFailureError"
               : scenario === "unsupported"
-                ? "AnalysisUnsupportedTargetError"
+                ? "AnalysisTargetFailureError"
                 : scenario === "output-limit"
                   ? "AnalysisResourceConstraintError"
                   : "AnalysisOutputError",
@@ -570,7 +573,7 @@ it.runIf(!unsupportedHost)(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -818,7 +821,7 @@ it.runIf(!unsupportedHost)(
         cleanupResources: [root],
         diagnostics: {
           reason: "root cleanup failed",
-          previous_error: { category: "invalid_input" },
+          previous_error: { category: "unsupported_target" },
         },
       },
     });
@@ -856,7 +859,7 @@ it
           request.reply_path,
           JSON.stringify({
             ok: true,
-            version: "0.9.3",
+            version: EVMOLE_VERSION,
             bytecode: {
               sha256: createHash("sha256").update(bytes).digest("hex"),
               bytes: bytes.length,

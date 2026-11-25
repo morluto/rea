@@ -36,7 +36,10 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../../src/resources/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
@@ -1175,10 +1178,7 @@ it.each(
     const primary =
       variant === "physical read"
         ? Object.assign(new Error("physical read denied"), { code: "EACCES" })
-        : new ArtifactReaderFailure(
-            "format",
-            "invalid later format declaration",
-          );
+        : malformedArtifact("pe", "invalid later format declaration");
     const validation = Object.assign(
       new Error("final descriptor stat failed"),
       { code: "EIO" },

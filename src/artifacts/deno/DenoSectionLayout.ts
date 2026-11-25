@@ -2,6 +2,7 @@ import { BinaryReader } from "../../domain/binaryContainer.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   abortIfNeeded,
   artifactFixedLimitFailure,
 } from "../../resources/index.js";
@@ -527,8 +528,8 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
 };
 
 export const denoFormatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
+  malformedArtifact(
+    "deno-standalone",
     `Deno compile section is malformed: ${detail}`,
   );
 

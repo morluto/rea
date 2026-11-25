@@ -246,8 +246,8 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
   });
   expect(result.exitCode, result.stderr).toBe(1);
   expect(result.json).toMatchObject({
-    code: "truncated",
-    category: "truncated",
+    code: "partial",
+    category: "partial",
     retryable: true,
     details: {
       reason: "limit",

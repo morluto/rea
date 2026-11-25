@@ -43,12 +43,16 @@ def inspect_core(path, cache):
         if actual != required:
             raise CoreFailure("unsupported", "Expected " + package + " " + required + "; selected Python reports " + actual + ".")
     content = path.read_bytes()
-    if len(content) < 16 or content[:4] != b"\x7fELF":
+    # Bytes that diverge from the ELF magic are not an ELF; a matching prefix that
+    # ends before e_ident is complete is a truncated one.
+    if content[:4] != b"\x7fELF"[: len(content[:4])]:
         raise CoreFailure("format", "Selected recording lacks a complete ELF identification.")
+    if len(content) < 16:
+        raise CoreFailure("truncated", "Selected recording lacks a complete ELF identification.")
     if content[4:6] != b"\x02\x01":
         raise CoreFailure("unsupported-target", "Initial recorded-core profile requires ELF64 little-endian.")
     if len(content) < 64:
-        raise CoreFailure("format", "Selected ELF64 core header is truncated.")
+        raise CoreFailure("truncated", "Selected ELF64 core header is truncated.")
     if content[6] != 1:
         raise CoreFailure("format", "ELF identification version is not EV_CURRENT.")
     if int.from_bytes(content[20:24], "little") != 1:

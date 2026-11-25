@@ -122,7 +122,7 @@ cliTest("reports the fixed FIT devicetree depth limit", async ({ cli }) => {
 
   const refused = await inspect(65);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: false,
     details: {
       boundary: "capacity",
