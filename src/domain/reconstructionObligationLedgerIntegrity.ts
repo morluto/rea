@@ -1,5 +1,6 @@
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJson } from "./comparisonSemantics.js";
+import { obligationCategories } from "./reconstructionObligationCategories.js";
 import { evidenceAuthoritySchema } from "./evidence.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
@@ -20,32 +21,12 @@ export const summarizeReconstructionObligations = (
   ).length,
   by_status: countBy(
     obligations,
-    [
-      "unowned",
-      "characterized",
-      "implemented",
-      "verified",
-      "contradicted",
-      "blocked",
-      "out-of-scope",
-      "unknown",
-    ],
+    obligationCategories.statuses,
     ({ status }) => status,
   ),
   by_application_layer: countBy(
     obligations,
-    [
-      "cli",
-      "protocol",
-      "electron",
-      "persistence",
-      "process",
-      "runtime",
-      "packaging",
-      "native-abi",
-      "application",
-      "other",
-    ],
+    obligationCategories.applicationLayers,
     ({ application_layer }) => application_layer,
   ),
   by_evidence_authority: countBy(
@@ -56,7 +37,7 @@ export const summarizeReconstructionObligations = (
   ),
   by_source_state: countBy(
     obligations,
-    ["candidate", "observed", "reviewed", "unknown"],
+    obligationCategories.sourceStates,
     ({ source_state }) => source_state,
   ),
 });
