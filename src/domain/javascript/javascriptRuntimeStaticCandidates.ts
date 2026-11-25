@@ -209,6 +209,8 @@ const nodePaths = (node: ApplicationNode): string[] => {
       paths.push(observation.properties.path);
     const applicationPath = ownedApplicationPath(observation);
     if (applicationPath !== undefined) paths.push(applicationPath);
+    const workerPath = anchoredWorkerPath(node, observation);
+    if (workerPath !== undefined) paths.push(workerPath);
     if (rawApplicationFile) continue;
     if (typeof observation.properties.resolved_path === "string")
       paths.push(observation.properties.resolved_path);
@@ -266,6 +268,22 @@ const ownedApplicationPath = (
   )
     return properties.candidate_path;
   return undefined;
+};
+
+// A Node Worker filename anchored at the source directory names one exact
+// file even when the artifact lacks it; the runtime may still load that path.
+const anchoredWorkerPath = (
+  node: ApplicationNode,
+  observation: ApplicationNode["observations"][number],
+): string | undefined => {
+  const properties = observation.properties;
+  return node.kind === "worker" &&
+    properties.path_base === "source-directory" &&
+    (properties.resolution_status === "not-found" ||
+      properties.resolution_status === "unavailable") &&
+    typeof properties.candidate_path === "string"
+    ? properties.candidate_path
+    : undefined;
 };
 
 // Native declaration matching is needed only without an owned logical path.
