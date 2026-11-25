@@ -828,7 +828,7 @@ def main():
     try:
         req = validate_request(request)
     except RequestError as error:
-        write_reply(reply_path, {"ok": False, "reason": "format", "message": str(error)})
+        write_reply(reply_path, {"ok": False, "reason": "malformed", "message": str(error)})
         return 0
     # A file-size breach during the reply write must surface as exit 76,
     # not as a bare signal death.

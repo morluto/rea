@@ -74,6 +74,26 @@ describe("Unicorn bridge boundary", () => {
     if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
   });
 
+  it("maps a malformed-request bridge reply to an input error", async () => {
+    // The bridge reports a failed request validation with the TargetFailure
+    // wire kind `malformed` (main #14239 retired the `format` spelling).
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+      {
+        launcher: replyingLauncher(
+          JSON.stringify({
+            ok: false,
+            reason: "malformed",
+            message: "function_bytes must be hex",
+          }),
+        ),
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+  });
+
   it("rejects a reply whose engine version is not the pinned one", async () => {
     const client = new UnicornClient(
       { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },

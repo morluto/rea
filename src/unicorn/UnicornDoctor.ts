@@ -72,7 +72,7 @@ export const inspectUnicornProvider = async (
       code: null,
       detail: "Linux x64 host.",
       remediation: null,
-      classification: "unsupported_host",
+      classification: "healthy",
       details: { platform, arch },
     });
   }
@@ -105,7 +105,7 @@ export const inspectUnicornProvider = async (
       code: null,
       detail: `${UNICORN_PYTHON_ENV_VAR} is set to an absolute path.`,
       remediation: null,
-      classification: "config_drift",
+      classification: "healthy",
       details: { python_path: pythonPath },
     });
   }
@@ -137,7 +137,7 @@ export const inspectUnicornProvider = async (
       code: null,
       detail: "Selected Python executable is present and executable.",
       remediation: null,
-      classification: "config_drift",
+      classification: "healthy",
       details: { python_path: pythonPath },
     });
   }
@@ -185,7 +185,7 @@ export const inspectUnicornProvider = async (
         code: null,
         detail: `Unicorn ${providerVersion} is importable in the caller-supplied Python.`,
         remediation: null,
-        classification: "config_drift",
+        classification: "healthy",
         details: { unicorn_version: providerVersion },
       });
     } else {

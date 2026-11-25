@@ -87,6 +87,16 @@ describe("inspectUnicornProvider", () => {
       expect(inspection.available).toBe(true);
       expect(inspection.providerVersion).toBe("2.1.2");
       expect(check(inspection, "unicorn_importable")?.ok).toBe(true);
+      // Passing provider checks are healthy: failure classes belong to
+      // failed checks only (main #14251 made DoctorProviderCheck a union).
+      for (const name of [
+        "host",
+        "configuration",
+        "python_executable",
+        "unicorn_importable",
+      ]) {
+        expect(check(inspection, name)?.classification).toBe("healthy");
+      }
       expect(inspection.registrationEnvironment).toEqual({
         [UNICORN_PYTHON_ENV_VAR]: python.path,
       });

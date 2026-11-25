@@ -504,6 +504,50 @@ class UnicornValidationTests(unittest.TestCase):
                 impl.write_reply(path, {"pad": "y" * (64 * 1024 * 1024)})
             self.assertFalse(os.path.exists(path))
 
+    @unittest.skipUnless(HAS_UNICORN, "needs unicorn 2.1.2")
+    def test_invalid_request_reply_uses_malformed_kind(self):
+        # A failed request validation reports the TargetFailure wire kind
+        # `malformed` (main #14239 retired the `format` spelling).
+        import json
+
+        with tempfile.TemporaryDirectory() as directory:
+            reply_path = os.path.join(directory, "reply.json")
+            request_path = os.path.join(directory, "request.json")
+            request = {
+                "architecture": "x86_64",
+                "function_bytes": "c3",
+                "code_address": "0x%x" % CODE,
+                "registers": {},
+                "memory": [],
+                "stack_address": "0x%x" % STACK,
+                "stack_size": 7,
+                "stubs": {},
+                "stub_policy": "record",
+                "budgets": {
+                    "instruction_cap": 1_000_000,
+                    "timeout_ms": 30_000,
+                    "address_space_bytes": 3 * 1024 * 1024 * 1024,
+                },
+                "reply_path": reply_path,
+            }
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(request, handle)
+            argv = sys.argv
+            try:
+                sys.argv = [
+                    "emulate_function.py",
+                    os.path.join(directory, "marker"),
+                    request_path,
+                ]
+                self.assertEqual(impl.main(), 0)
+            finally:
+                sys.argv = argv
+            with open(reply_path, encoding="utf-8") as handle:
+                reply = json.load(handle)
+            self.assertFalse(reply["ok"])
+            self.assertEqual(reply["reason"], "malformed")
+            self.assertIn("stack_size", reply["message"])
+
     def test_resource_limits_apply_without_raising(self):
         # Smoke: installing the worker bounds must not fail the run setup.
         impl._apply_resource_limits(30_000)

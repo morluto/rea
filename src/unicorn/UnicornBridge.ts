@@ -104,7 +104,7 @@ const unicornBridgeProbeReplySchema = z.strictObject({
 
 const unicornBridgeFailureReplySchema = z.strictObject({
   ok: z.literal(false),
-  reason: z.enum(["format", "unavailable", "decoder", "version_mismatch"]),
+  reason: z.enum(["malformed", "unavailable", "decoder", "version_mismatch"]),
   message: z.string(),
 });
 
@@ -181,7 +181,7 @@ const mapFailureReply = (
           capturedOutput,
         },
       );
-    case "format":
+    case "malformed":
       return new AnalysisInputError(UNICORN_OPERATION, { capturedOutput }, [
         {
           path: [],
