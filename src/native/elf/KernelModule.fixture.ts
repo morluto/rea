@@ -1,40 +1,5 @@
+import { write16, write32, writeWord } from "../BinaryInteger.fixture.js";
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const writeWord = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  bits: 32 | 64,
-  little: boolean,
-): void => {
-  if (bits === 64) {
-    const wide = BigInt(value);
-    if (little) bytes.writeBigUInt64LE(wide, offset);
-    else bytes.writeBigUInt64BE(wide, offset);
-    return;
-  }
-  write32(bytes, offset, value, little);
-};
 
 /** One `__versions` record: unsigned long CRC plus a fixed NUL-padded name. */
 export const modversionEntry = (
@@ -96,12 +61,11 @@ export interface KernelModuleFixtureOptions {
   readonly exitText?: Buffer | null;
   /** Null omits the trailer. Undefined appends a consistent PKCS#7 trailer. */
   readonly signature?: Buffer | null;
-  /** Declare a second `.modinfo` section with the same bytes. */
-  readonly repeatModinfo?: boolean;
-  /** Extra empty file-backed sections that share one name-table string. */
+  /** Extra file-backed sections that share one name-table string; empty by default. */
   readonly sharedNameSections?: {
     readonly name: string;
     readonly count: number;
+    readonly body?: Buffer;
   };
 }
 
@@ -141,11 +105,6 @@ export const kernelModuleFixture = (
     if (body !== null) bodies.push({ name, type: 1, body });
   };
   add(".modinfo", chosen(options.modinfo, defaultModinfo));
-  if (options.repeatModinfo === true) {
-    const first = bodies.find((section) => section.name === ".modinfo");
-    if (first !== undefined)
-      bodies.push({ ...first, body: Buffer.from(first.body) });
-  }
   add(
     "__versions",
     chosen(options.versions, () => defaultVersions(bits, little)),
@@ -169,7 +128,11 @@ export const kernelModuleFixture = (
   const shared = options.sharedNameSections;
   if (shared !== undefined)
     for (let index = 0; index < shared.count; index++)
-      bodies.push({ name: shared.name, type: 1, body: Buffer.alloc(0) });
+      bodies.push({
+        name: shared.name,
+        type: 1,
+        body: shared.body ?? Buffer.alloc(0),
+      });
   const labels = [
     ...new Set([...bodies.map((section) => section.name), ".shstrtab"]),
   ];

@@ -10,9 +10,7 @@ import {
 import { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
 import { admitWebNetworkCaptureParent } from "./WebNetworkProjectionAccumulator.js";
 
-import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
-
-export { apiSurfaceFields, apiSurfaceViewSchema };
+import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 
 /** Create the budget and query-name policy shared by admission and projection. */
 export const createApiSurfaceAccumulator = (
@@ -25,6 +23,8 @@ export const createApiSurfaceAccumulator = (
   return new WebNetworkApiSurfaceAccumulator(
     undefined,
     selected?.include_query_parameter_names === true,
+    undefined,
+    selected?.include_request_header_names === true,
   );
 };
 /** Group retained HAR/SAZ request lines; format matches do not establish handler identity. */
@@ -57,6 +57,16 @@ export const projectWebNetworkApiSurfaceView = (
     ...(view.include_query_parameter_names === true
       ? [
           "Observed query parameter names do not establish required parameters, value types or a complete API schema.",
+        ]
+      : []),
+    ...(view.include_request_header_names === true
+      ? [
+          "Observed header, cookie and set-cookie names do not establish authentication, session semantics or a complete header schema; no values are copied.",
+        ]
+      : []),
+    ...(view.include_request_header_names === true && capture.format === "saz"
+      ? [
+          "SAZ captures carry cookies as request and response header fields, so SAZ groups list request header names only and the cookie and set-cookie name lists stay empty.",
         ]
       : []),
     ...(capture.records.length < capture.total_records

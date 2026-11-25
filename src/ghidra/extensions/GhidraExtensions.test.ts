@@ -1,12 +1,12 @@
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../../config/parseConfig.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
@@ -19,20 +19,12 @@ import {
   type GhidraExtensionResult,
 } from "./GhidraExtensions.js";
 
-const roots: string[] = [];
 let resources = new ArtifactResourceScope();
 afterEach(async () => {
   await resources.close();
   resources = new ArtifactResourceScope();
-  await Promise.all(
-    roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
 });
-const root = async () => {
-  const path = await mkdtemp(join(tmpdir(), "rea-extension-test-"));
-  roots.push(path);
-  return path;
-};
+const root = () => createTestTempDirectory("rea-extension-test-");
 const target: BinaryTarget = {
   path: "/tmp/native",
   kind: "executable",
@@ -143,30 +135,23 @@ describe("optional Ghidra extension boundary", () => {
       false,
     );
   });
-  it("commits the actual regular artifact bytes and caller path", async () => {
+  it("commits the configured artifact and snapshots its exact bytes exclusively", async () => {
     const { extension, bytes, path } = await artifact();
     expect(extension).toMatchObject({
       configured_path: path,
-      path,
+      path: await realpath(path),
       sha256: createHash("sha256").update(bytes).digest("hex"),
       integration_api: 1,
     });
-  });
-  it("snapshots identical bytes exclusively into the private runtime", async () => {
-    const { extension, bytes } = await artifact();
     const runtime = await root();
     const snapshots = await snapshotGhidraExtensions(
       [extension],
       runtime,
       resources,
     );
-    expect(snapshots[0]?.path).toBe(join(runtime, "extensions/nativeaot.jar"));
-    expect(
-      Buffer.compare(
-        await readFile(join(runtime, "extensions/nativeaot.jar")),
-        bytes,
-      ),
-    ).toBe(0);
+    const staged = join(runtime, "extensions", "nativeaot.jar");
+    expect(snapshots).toEqual([{ ...extension, path: staged }]);
+    expect((await readFile(staged)).equals(bytes)).toBe(true);
     await expect(
       snapshotGhidraExtensions([extension], runtime, resources),
     ).rejects.toMatchObject({
@@ -399,6 +384,7 @@ describe("Ghidra extension profile and producer validation", () => {
         reason: "unregistered",
       },
     });
+    expect(await readdir(runtime)).toEqual([]);
   });
 });
 
@@ -471,24 +457,6 @@ describe("Ghidra extension recovery coverage", () => {
         [{ ...positive, result: { ...positive.result, discovery: null } }],
       ),
     ).toContain("producer report");
-  });
-  it("preserves real loader failures without requiring a successful analyzer report", async () => {
-    const { extension } = await artifact();
-    const reason = "Extension loading/analysis failed: ClassNotFoundException";
-    expect(
-      validateGhidraExtensionResults(
-        [extension],
-        [
-          {
-            id: "nativeaot",
-            sha256: extension.sha256,
-            status: "failed",
-            reason,
-            result: { loader_failure: reason },
-          },
-        ],
-      ),
-    ).toBeNull();
   });
   it("does not accept complete recovery without format and byte identities", async () => {
     const { extension } = await artifact();

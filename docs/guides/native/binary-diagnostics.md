@@ -44,6 +44,11 @@ before dependency seeks. Structural inventory and the convenience-map engine
 still parse the snapshot separately; eliminating that remaining duplication
 requires preserving the upstream GOT/PLT and mitigation facts.
 
+The layout profile returns `unsupported_target` for `SHF_COMPRESSED` string,
+symbol, relocation or dynamic metadata sections before upstream convenience-map
+decoding. Their logical names and entry coordinates cannot be read from the
+compressed file bytes. Other compressed payload sections remain opaque.
+
 ## Interpreting results
 
 - Artifact path, SHA-256 and size identify original selected bytes. All parsing
@@ -92,6 +97,12 @@ requires preserving the upstream GOT/PLT and mitigation facts.
 - DT_NEEDED/PT_INTERP are reported names, not resolved runtime paths. GOT/PLT
   maps are derived convenience views and may collapse aliases. PLT inference
   can emulate selected instructions in Unicorn; its outputs are static candidates.
+  Each PLT section (`.plt`, `.plt.got`, `.plt.sec`, `.MIPS.stubs`) uses its
+  own Unicorn instance with a 1 GiB virtual map. REA releases each instance
+  before the next section. The tested CET x86-64 images used about 1.1 GiB of
+  address space during PLT emulation and fit within the default limit. Under
+  a tighter `address_space_bytes`, upstream skips the remaining PLT sections
+  and reports a warning in `diagnostics.stderr`. Structural facts are unaffected.
   Exec syscall tracing observes host process launches. Map completeness
   remains unknown and original upstream warnings are returned inline.
 - Canary, PIE, NX, executable-stack and RELRO are static inferences. NX and
@@ -119,8 +130,16 @@ section, symbol, mitigation or linkage views. The default `complete` detail and
 CLI output are unchanged.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
-and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the
-input bound alone, up to 1 GiB; the reply and deadline bounds are unchanged. The
+and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` is the
+runtime setting `pwntools.max_input_bytes`. Change the active value with
+`update_analysis_settings`. It raises the input default alone, up to 1 GiB.
+Per-call `producer_limits` selects
+`input_bytes`, `output_bytes`, `diagnostic_bytes`, `address_space_bytes`,
+`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call.
+`input_bytes` overrides the accepted setting. File admission
+follows selected `output_bytes` unless `file_bytes` is explicit. The separate
+`pwntools_timeout_ms` controls each command wall deadline. On CLI pass
+`--producer-limits '{"cpu_seconds":60,"output_bytes":134217728}'`. The
 reply budget applies to the decoder record; the CLI/MCP Evidence envelope adds
 copies and encoding overhead. The
 pinned MCP SDK defaults to a 10 MiB receive buffer. Large complete results need
@@ -128,15 +147,18 @@ a caller-configured `StdioClientTransport({ maxBufferSize: ... })` and a matchin
 server `REA_MCP_MAX_RESPONSE_BYTES`. See [MCP delivery budgets](../../reference/mcp-contracts.md#tool-results).
 These settings affect delivery, not decoder coverage or limits. The large
 extended-index verification uses 256 MiB and an explicit five-minute request
-timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to at most 3 GiB virtual address space,
-30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
+timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to the selected policy: defaults are 3 GiB
+virtual address space, 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
 retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
-Unicorn needs a large virtual map. Limits fail with no partial success, and
+Unicorn needs a large virtual map. Limits fail with no partial success, except
+upstream PLT emulation, which returns a reduced PLT map with its warning in
+`diagnostics.stderr` when the address space cannot fit an emulator, and
 owned process/root cleanup completes independently of cancellation.
 
-Core files, GDB session/state/control, optional pwndbg enrichment and instruction
-inspection are separate increments tracked by #969. This increment makes no
-real support claim for those features or other operating systems/architectures.
+For core files and optional pwndbg mapping context, use the
+[recorded-crash workflow](recorded-crashes.md). The binary-layout operations
+described here do not provide debugger session state or control, or establish
+support for other operating systems/architectures.
 
 Typed decoder failures retain bounded `captured_output` (stdout, stderr and an
 explicit truncation flag) alongside the original failure category and reason.
@@ -216,6 +238,47 @@ with `open_binary`. Without a cgroup v2 memory group, or when the count did not
 rise, the failure stays `execution_failure` and names the signal as a possible
 out-of-memory kill.
 
+## PE header admission
+
+`inspect-pe-imports`, `inspect-native-exports` (PE), `inspect-pe-load-config`,
+`inspect-pe-resources`, `inspect-pe-certificates` and
+`inspect-binary-hardening` (PE) share one header reader. It reads the image as
+the Windows loader does instead of refusing the declarations the loader
+ignores or caps. Every reader except hardening reports them in
+`header_anomalies`:
+
+| `code`                                  | Declaration                                                                                          | Read as                                                                                                             |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `optional_header_size_below_fields`     | `SizeOfOptionalHeader` ends before the fixed fields or data directories                              | Fields at their fixed offsets; the value only locates the section table                                             |
+| `directory_count_above_maximum`         | `NumberOfRvaAndSizes` above 16                                                                       | The first 16 directories                                                                                            |
+| `size_of_headers_inconsistent`          | `SizeOfHeaders` before the section table end or past the file                                        | Headers at their declared offsets; only file-backed header bytes are mapped                                         |
+| `directory_size_below_structure`        | A directory `Size` below the structure read at its RVA (export, import, delay import, TLS, resource) | The structure at its RVA; import descriptors to the null terminator; the resource tree within its file-backed bytes |
+| `directory_size_past_file_backed_bytes` | A resource directory `Size` past its file-backed bytes                                               | The tree within those bytes                                                                                         |
+
+DOS page and load-module fields do not affect PE admission, and a `PE\0\0`
+signature at `e_lfanew` declares the image. One exception: a valid DOS
+relocation table (starting at or after byte 28, with valid page fields) that
+covers `e_lfanew` owns those bytes as DOS data, even when they point at a PE
+signature. A table that describes no DOS load module does not. A pointer whose
+bytes name no Windows header is `unsupported_target` while the DOS module is
+valid and a malformed target otherwise. A data directory with a
+zero RVA is absent. Section raw bytes that overlap the headers or other
+sections are layout facts, and every reader maps RVAs through the same
+file-backed section content. A read is refused only when the operation needs
+the bytes and they are unmapped, ambiguously mapped or past the file end, as a
+malformed target. Windows headers that overlap the 64-byte DOS header
+(`e_lfanew` below 64), section tables or required section bytes past the file
+end, and section ranges that overflow the address width remain refused by
+every reader. Static inspection does not establish that Windows would load the
+image.
+
+Every static PE result reports the optional-header `image_base` once, as a hex
+VA. Location fields name their space: `rva` is relative to the image base,
+`va` (or a `_va` suffix) is the image base plus that RVA and is what provider
+tools such as `xrefs` accept, and `file_offset` or a `location` range is bytes
+in the file. Import rows carry `iat_va` beside `iat_rva`. Export rows keep
+`address` as the VA name they have always used.
+
 ## Portable PE resources
 
 `inspect_pe_resources` / `inspect-pe-resources` inspects an explicit PE32 or
@@ -237,7 +300,10 @@ count and SHA-256. Resources retain separate type, name and language identities:
 numeric IDs are distinct from UTF-16 names, whose original bytes are also
 reported. Directory headers, entries, data entries and payloads retain original
 file offsets and lengths. Each opaque payload has its own SHA-256; code page and
-reserved data-entry fields are preserved.
+reserved data-entry fields are preserved. The complete inventory requires
+numeric IDs to appear in ascending order within each directory. REA inventories
+named siblings in their stored order and identifies names by their exact UTF-16
+bytes. Named-entry ordering varies across producers.
 
 Every `directories[]` row retains its identity `path` and the matching incoming
 `entry_locations`: both are empty for the root, then contain the type and
@@ -254,23 +320,32 @@ remain explicit. Encoded dimensions are preserved (zero denotes 256 pixels).
 This is static reference inspection; no image decoding, language fallback,
 resource loading or selected-file execution occurs.
 
-An absent resource data directory is a complete empty inventory. Malformed
-headers, truncated tables, cycles, duplicate sibling identities, unbacked or
+An absent resource data directory is a complete empty inventory. Headers follow
+[PE header admission](#pe-header-admission). Truncated tables, cycles, duplicate sibling identities, unbacked or
 ambiguous RVA mappings, nonidentical overlapping ranges and unsupported tree
 shapes fail explicitly, rather than returning partial inventories. Exact shared
 payload ranges are supported. The supported tree has three levels: type, name,
 and language. Other resource payload formats remain opaque.
 
-`max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
+`max_file_bytes`, the [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance) for headers, directories and resource
+ranges, defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Parser refusals report the exhausted limit and enforced maximum in
+`details.reported_limits`.
 Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
 
 ## Byte entropy triage
+
+Entropy admission preserves the caller's spelling in `caller_input_path`. On
+Windows, the selected regular file's case-only filesystem spelling is used
+consistently in committed paths through both CLI and MCP. Symlink, junction and
+short-name aliases are not replaced with a different path. General path
+normalization remains lexical and does not probe source-discovered paths.
 
 `inspect_byte_entropy` / `inspect-byte-entropy` profiles any local regular file
 without an analysis engine, execution, extraction or network access.
@@ -394,9 +469,13 @@ returns artifact identity, table coverage and row counts. Use its
 }
 ```
 
-Names match exactly and preserve every same-name version or alias. Optional
-`indices` selects original row positions, intersecting a name filter when both
-are supplied; empty filters select nothing. `source_index` always remains and,
+Names match exactly and preserve every same-name version or alias.
+`name_prefixes` selects names that start with any listed prefix, for example
+`["EVP_"]`; with `names`, both must match. Matching is case-sensitive and uses
+the same identities as exact names: an ELF name that is not valid UTF-8 never
+matches. `coverage.total` counts every matching row, so `limit: 1` returns a
+count. Optional `indices` selects original row positions, intersecting a name
+filter when both are supplied; empty filters select nothing. `source_index` always remains and,
 with the parent ID, identifies the original export or issue row. Fields default
 to the complete row; an empty field list returns only its identity. ELF `name`
 selection also returns raw-byte and encoding qualifications. Fields from the
@@ -417,9 +496,10 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 - PE rows reproduce the export directory: each used export-address-table slot
   with its biased `ordinal` (`OrdinalBase` plus the slot index), one row per
-  name (aliases share an ordinal), `address`
-  as the preferred-base virtual address, or `forwarder` text when the slot
-  forwards to another DLL. Unused zero-address slots are omitted;
+  name (aliases share an ordinal), `rva` as the slot stores it, `address`
+  as the preferred-base virtual address (image base plus `rva`), or
+  `forwarder` text when the slot forwards to another DLL; a forwarder's `rva`
+  locates that text. Unused zero-address slots are omitted;
   ordinal-only exports have a null `name`. The name-ordinal table stores an
   unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
   directory's DLL name, ordinal base and timestamp are reported, and an image
@@ -427,46 +507,87 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 - ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
   (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`,
-  `binding` and `visibility` (`"default"` or `"protected"`; `"unknown"` in older
-  historical Evidence where visibility was not recorded). ELF string tables do
+  `binding` and `visibility` (`"default"` or `"protected"`). ELF string tables do
   not declare a text encoding. Names that
   contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
   UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
   valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for
   ASCII names). When they are not valid UTF-8, `name` uses a byte-preserving
-  Latin-1 mapping and the raw bytes remain available. Older retained results
-  report null for the newly added encoding fields. `version` is null for an
+  Latin-1 mapping and the raw bytes remain available. `version` is null for an
   unversioned symbol. A versioned
   symbol reports its GNU index, a name resolved from `.gnu.version_d` or
   `.gnu.version_r`, the corresponding `name_bytes_base64` and
-  `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
+  `name_utf8_decodable` facts (both null when the version name is unresolved),
+  and the `hidden` flag from `.gnu.version`.
   Version names use the same UTF-8-when-valid, otherwise byte-preserving
   Latin-1 display mapping as symbol names; ELF does not declare either
-  string's text encoding. Older retained results report null for the added
-  version-name encoding fields. `"unknown"`
+  string's text encoding. `"unknown"`
   means the symbol-version table could not be read. A hidden version is not
   the default version that a by-name `dlsym` lookup selects.
   Definition names take precedence when both tables name the same index.
+  A selected name that cannot be read remains unknown. An incomplete chain
+  leaves earlier names unknown when its unread records could replace them.
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+A PE export directory `Size` below its 40-byte table is read at its RVA and
+reported in `header_anomalies`; `Size` still bounds forwarder strings. See
+[PE header admission](#pe-header-admission).
+PE export tables and strings use file-backed headers and declared section
+content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue
 across adjacent file-backed section mappings when the virtual bytes are
 unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
 Unresolved symbol versions keep their rows: the version name is null when no
 definition or requirement names the index, and `version` is
 `"unknown"` when the version table cannot be read; coverage is likewise
-`partial`. A dynamic symbol table without its null entry is malformed. An ELF
-without section headers is `unsupported`. With section headers, a missing
-`SHT_DYNSYM` section is also `unsupported` when a `PT_DYNAMIC` segment is
-observed, including a directory containing only the inactive null section.
-Enumerating dynamic symbols from that segment is not implemented. A present
-section directory with neither a dynamic symbol table nor a dynamic segment
-reports a complete empty inventory. Mach-O exports are reported by
-`inspect_macho`.
+`partial`. A dynamic symbol table without its null entry is malformed.
+Entry 0 is the reserved undefined symbol: `st_info`, `st_other`, `st_shndx`,
+`st_value` and `st_size` must be zero, and any other value rejects the table.
+The gABI also requires `st_name` to be zero. A nonzero `st_name` with those
+fields zero does not define an export: the entry is skipped, coverage stays
+complete, and `limitations` records the name offset.
 
-`max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
+When `SHT_DYNSYM` is absent, including an ELF with no section headers, the
+reader locates symbols and strings through `PT_DYNAMIC` and their file-backed
+`PT_LOAD` mappings. `DT_HASH` or a nonempty `DT_GNU_HASH` supplies the symbol
+count; if both supply a count, they must agree. A missing hash table or empty
+GNU buckets without a SysV count leaves coverage `unsupported`, because the
+complete symbol inventory is unknown. Unmapped, conflicting or truncated
+table ranges are refused.
+
+The dynamic fallback retains readable `DT_VERSYM` indices and hidden flags,
+but does not decode names from `DT_VERDEF` or `DT_VERNEED`. Versioned exports
+therefore retain their rows with null version names and `partial` coverage;
+an unreadable `DT_VERSYM` retains `version: "unknown"`. Section-backed version
+names continue to use the tables described above. A present section directory
+with neither a dynamic symbol table nor a dynamic segment reports a complete
+empty inventory. Mach-O exports are reported by `inspect_macho`.
+
+ELF export tables marked `SHF_COMPRESSED` are not decompressed. A compressed
+dynamic symbol table or its string table reports `unsupported` coverage rather
+than treating stored bytes as symbols or names. Compressed version tables or
+their string tables keep readable export rows with `partial` coverage and
+unresolved versions. When version definition storage is compressed, requirement
+names also remain unknown because unseen definitions may override them.
+
+`max_file_bytes`, the [read allowance](../../reference/limits-and-recovery.md#static-reader-read-allowance), defaults to 256 MiB (maximum 512 MiB;
+CLI `--max-file-bytes`); files up to 512 MiB are admitted whatever their size.
 Export directories in PE headers are read like those in sections. An export or
 dynamic symbol table above 262144 entries, more than 262144 rows, or more than
 16 MiB of retained names fails without partial success. Export rows do not establish that a symbol is reachable, safe to call
 or loaded at runtime.
+
+## Portable ELF dependencies
+
+`inspect_elf_dependencies` / `inspect-elf-dependencies` reads the load-time
+dynamic-dependency inventory of an explicit ELF32/ELF64 `ET_EXEC` or `ET_DYN`
+image on any supported host, without executing it, invoking the dynamic
+loader, or opening a disassembler:
+
+```sh
+rea inspect-elf-dependencies ./program --json
+```
+
+It reports needed libraries, search paths, symbol versions and versioned
+imports. See [ELF dynamic dependencies](../../elf-dependencies.md).

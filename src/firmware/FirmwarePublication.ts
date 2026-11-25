@@ -1,16 +1,18 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  firmwareFailure,
+  AnalysisCleanupLease,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -46,6 +48,8 @@ const UNNAMED_DEPENDENCY_CONTINUATION =
 
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const depthContinuation = (
   maxDepth: number,
@@ -59,11 +63,11 @@ const depthContinuation = (
 
 // Use a different analyzer on the actual published child; repeating the same
 // whole-child extraction with unchanged handlers would reproduce this gap.
-const nestedUnknownContinuation = (
+const nestedRegionContinuation = (
   publishedFile: { readonly path: string; readonly size: number } | undefined,
 ): string => {
   const base =
-    "This unknown chunk was carved from a nested extraction, so its range is relative to the published child named by this gap's input_path, not to the original input.";
+    "This region is within a nested extraction, so its range is relative to the published child named by this gap's input_path, not to the original input.";
   return publishedFile !== undefined &&
     publishedFile.size > 0 &&
     publishedFile.size <= FIRMWARE_LIMITS.inputBytes
@@ -114,29 +118,23 @@ export const publishFirmwareExtraction = async (context: {
     | undefined;
   const files: z.infer<typeof firmwareResultSchemas.extract_firmware>["files"] =
     [];
+  const workerFailures: unknown[] = [];
   let totalFiles = 0;
+  let verifiedFiles = 0;
   const progress = () => ({
     output_directory: context.outputDirectory,
-    verified_files: files.length,
+    verified_files: verifiedFiles,
     total_files: totalFiles,
   });
   try {
     const materialized = new Set<string>();
-    for (const entry of context.entries)
-      if (entry.kind === "file")
-        materialized.add(`$output/${entry.relativePath}`);
-    totalFiles = materialized.size;
-    for (const path of context.normalized.files.keys()) {
-      if (path !== "$input" && !materialized.has(path))
-        throw new AnalysisOutputError(
-          "extract_firmware",
-          `Reported regular file is absent from materialized output: ${path}`,
-        );
-    }
+    const regularEntries: FirmwareEntry[] = [];
     const unpublished = [];
-    tree = await SafeOutputTree.create(context.outputDirectory);
     for (const entry of context.entries) {
-      if (entry.kind !== "file") {
+      if (entry.kind === "file") {
+        materialized.add(`$output/${entry.relativePath}`);
+        regularEntries.push(entry);
+      } else {
         unpublished.push({
           relative_path: entry.relativePath,
           kind: entry.kind,
@@ -145,39 +143,80 @@ export const publishFirmwareExtraction = async (context: {
             ? {}
             : { link_target_hex: entry.linkTargetHex }),
         });
-        continue;
       }
-      const logicalPath = `$output/${entry.relativePath}`;
-      const reported = context.normalized.files.get(logicalPath);
-      const sha256 = await context.files.hash(entry.path, context.signal);
-      if (
-        (reported?.sha256 !== null &&
-          reported?.sha256 !== undefined &&
-          reported.sha256 !== sha256) ||
-        (context.normalized.sizes.has(logicalPath) &&
-          context.normalized.sizes.get(logicalPath) !== entry.size)
-      )
+    }
+    totalFiles = materialized.size;
+    for (const path of context.normalized.files.keys()) {
+      if (path !== "$input" && !materialized.has(path))
         throw new AnalysisOutputError(
           "extract_firmware",
-          `Extracted bytes disagree with provider report: ${entry.relativePath}`,
+          `Reported regular file is absent from materialized output: ${path}`,
         );
-      const written = await context.files.publish(
-        entry,
-        sha256,
-        tree,
-        context.signal,
-      );
-      files.push({
-        relative_path: entry.relativePath,
-        path: join(tree.outputRoot, written.relativePath),
-        size: entry.size,
-        sha256,
-        reported_sha256: reported?.sha256 ?? null,
-        mime_type: reported?.mimeType ?? null,
-        analysis_depth: reported?.depth ?? null,
-        runtime_address: null,
-        original_file_range: null,
-      });
+    }
+    tree = await SafeOutputTree.create(context.outputDirectory);
+    const activeTree = tree;
+    const publishedSlots = new Array<(typeof files)[number] | undefined>(
+      regularEntries.length,
+    );
+    let cursor = 0;
+    const publishWorker = async (): Promise<void> => {
+      while (workerFailures.length === 0) {
+        const index = cursor++;
+        const entry = regularEntries[index];
+        if (entry === undefined) return;
+        try {
+          const logicalPath = `$output/${entry.relativePath}`;
+          const reported = context.normalized.files.get(logicalPath);
+          if (
+            context.normalized.sizes.has(logicalPath) &&
+            context.normalized.sizes.get(logicalPath) !== entry.size
+          ) {
+            throw new AnalysisOutputError(
+              "extract_firmware",
+              `Extracted bytes disagree with provider report: ${entry.relativePath}`,
+            );
+          }
+          const written = await context.files.publish(
+            entry,
+            undefined,
+            activeTree,
+            context.signal,
+          );
+          if (
+            reported?.sha256 !== null &&
+            reported?.sha256 !== undefined &&
+            reported.sha256 !== written.sha256
+          ) {
+            throw new AnalysisOutputError(
+              "extract_firmware",
+              `Extracted bytes disagree with provider report: ${entry.relativePath}`,
+            );
+          }
+          publishedSlots[index] = {
+            relative_path: entry.relativePath,
+            path: join(activeTree.outputRoot, written.relativePath),
+            size: entry.size,
+            sha256: written.sha256,
+            reported_sha256: reported?.sha256 ?? null,
+            mime_type: reported?.mimeType ?? null,
+            analysis_depth: reported?.depth ?? null,
+            runtime_address: null,
+            original_file_range: null,
+          };
+          verifiedFiles += 1;
+        } catch (cause: unknown) {
+          workerFailures.push(cause);
+          return;
+        }
+      }
+    };
+    const workerCount = Math.min(8, regularEntries.length);
+    await Promise.allSettled(
+      Array.from({ length: workerCount }, () => publishWorker()),
+    );
+    if (workerFailures.length > 0) throw workerFailures[0];
+    for (const item of publishedSlots) {
+      if (item !== undefined) files.push(item);
     }
     result = firmwareResultSchemas.extract_firmware.parse({
       analysis_timeout_ms: context.analysisTimeoutMs,
@@ -223,20 +262,45 @@ export const publishFirmwareExtraction = async (context: {
         : new AnalysisCleanupLease(async () => {
             await ownedTree.rollback();
           });
-    const primary = firmwareFailure(
+    const dialect = firmwareFailureDialect({
+      engine: "unblob",
+      operation: "extract_firmware",
+      phase: {
+        signal: context.signal,
+        deadline: context.deadline,
+        publication: progress(),
+      },
+      treeCleanupLease: treeLease,
+    });
+    let primary = classifyProviderFailure(
       outputDirectoryAdmissionRefusal(
         "extract_firmware",
         "output_directory",
         cause,
       ),
-      {
-        engine: "unblob",
-        operation: "extract_firmware",
-        deadline: context.deadline,
-        treeCleanupLease: treeLease,
-        publication: progress(),
-      },
+      dialect,
     );
+    if (workerFailures.length > 1 && Object.is(cause, workerFailures[0])) {
+      for (const extraCause of workerFailures.slice(1)) {
+        const extra = classifyProviderFailure(
+          outputDirectoryAdmissionRefusal(
+            "extract_firmware",
+            "output_directory",
+            extraCause,
+          ),
+          dialect,
+        );
+        if (extra.cleanupIncomplete) {
+          primary = analysisErrorWithCleanupDependencies(
+            primary,
+            extra,
+            "extract_firmware",
+          );
+        } else {
+          primary.retainSecondaryFailure(extra);
+        }
+      }
+    }
     try {
       await treeLease?.release();
     } catch (cleanupCause: unknown) {
@@ -251,12 +315,8 @@ export const publishFirmwareExtraction = async (context: {
         "unblob",
         [context.outputDirectory, context.workspacePath],
         {
-          reason:
-            cleanupCause instanceof Error
-              ? cleanupCause.message
-              : String(cleanupCause),
-          previous_error:
-            cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cleanupCause),
+          previous_error: errorMessage(cause),
         },
         {
           cause: cleanupCause,
@@ -270,11 +330,11 @@ export const publishFirmwareExtraction = async (context: {
         context.retainCleanup(tree, treeLease, cleanup);
       if (publishedResult !== undefined)
         primary.retainPartialObservation(publishedResult);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "extract_firmware",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     if (tree?.published === true && result !== undefined) return result;
     throw primary;
@@ -380,7 +440,7 @@ const extractionGaps = (
   const continuation = (instruction: string): string => {
     const known = instructions.get(instruction);
     if (known !== undefined) return known;
-    const id = createHash("sha256").update(instruction).digest("hex");
+    const id = sha256Hex(instruction);
     instructions.set(instruction, id);
     return id;
   };
@@ -390,7 +450,7 @@ const extractionGaps = (
   );
   const nestedContinuationId = (inputPath: string): string => {
     return continuation(
-      nestedUnknownContinuation(publishedFiles.get(inputPath)),
+      nestedRegionContinuation(publishedFiles.get(inputPath)),
     );
   };
   const chunkGaps = (
@@ -420,8 +480,8 @@ const extractionGaps = (
     normalized.depth_limited_paths.length > 0;
   const reRootablePaths = new Map<string, Set<string>>();
   if (ceilingReached)
-    for (const [filePath, file] of [...publishedFiles].sort(
-      ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0),
+    for (const [filePath, file] of [...publishedFiles].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
     )) {
       const size = file.size;
       if (size <= 0 || size > FIRMWARE_LIMITS.inputBytes) continue;

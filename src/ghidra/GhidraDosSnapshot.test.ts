@@ -12,40 +12,42 @@ import { attestGhidraDosSnapshot } from "./GhidraDosSnapshot.js";
 const hash = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
-it.each([false, true])(
-  "compares final overlapping relocation windows (intermediate=%s)",
-  async (intermediate) => {
-    const fixture = fixtureDosOverlapLoadImage();
-    expect(fixture.bytes.subarray(56, 59).toString("hex")).toBe("000400");
-    const first = fixture.observation.relocations[0];
-    if (first === undefined) throw new Error("Missing authored overlap record");
-    if (intermediate) first.memory_bytes_hex = "0410";
+it.each([
+  { reverseTable: false, observedWindow: "001410" },
+  { reverseTable: true, observedWindow: "000410" },
+] as const)(
+  "retains measured MZ overlap with table reversal $reverseTable",
+  async (variant) => {
+    const fixture = fixtureDosOverlapLoadImage(variant);
     const directory = await createTestTempDirectory("rea-mz-overlap-");
     const path = join(directory, "inert.exe");
     await writeFile(path, fixture.bytes);
-    const handle = await open(path, "r");
-    try {
-      const result = await attestGhidraDosSnapshot(
-        handle,
-        fixture.bytes.length,
-        path,
-        fixture.sha256,
-        fixture.observation,
-      );
-      if (!result.ok || result.value.status === "unsupported")
-        throw new Error("Expected completed MZ comparison");
-      expect(result.value.status).toBe(intermediate ? "mismatch" : "verified");
-      expect(
-        result.value.checks
-          .filter((check) => !check.matched)
-          .map((check) => check.name),
-      ).toEqual(intermediate ? ["relocation_records"] : []);
-      expect(result.value.observations.relocations).toEqual(
-        fixture.observation.relocations,
-      );
-    } finally {
-      await handle.close();
-    }
+    const attest = async (digest: string) => {
+      const handle = await open(path, "r");
+      try {
+        return await attestGhidraDosSnapshot(
+          handle,
+          fixture.bytes.length,
+          path,
+          digest,
+          fixture.observation,
+        );
+      } finally {
+        await handle.close();
+      }
+    };
+    expect(await attest(fixture.sha256)).toMatchObject({
+      ok: true,
+      value: {
+        status: "unsupported",
+        reason: expect.stringContaining("no established application order"),
+        observations: fixture.observation,
+      },
+    });
+    expect(await attest("f".repeat(64))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("digest"),
+    });
   },
 );
 

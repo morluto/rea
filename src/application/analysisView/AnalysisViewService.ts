@@ -1,5 +1,8 @@
+import type { z } from "zod";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { isNativeObservationOperation } from "../../domain/native/nativeObservation.js";
 import { dispatchQueuedInterrupts } from "../../process/queuedInterrupts.js";
@@ -9,29 +12,35 @@ import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analy
 import { ANALYSIS_VIEW_PROVIDER } from "../../domain/investigationProviders.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
-import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisCapabilityUnavailableError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import { validateAnalysisViewSubject } from "../../domain/analysisView/analysisViewParent.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import {
   createEvidence,
+  evidenceLocalTarget,
+  evidenceSubjectDisplay,
+  evidenceSubjectInput,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
   type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
 import {
   inspectAnalysisViewInputSchema,
-  prepareAnalysisViewProjection,
-  type AnalysisViewResult,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewRequest.js";
+import { prepareAnalysisViewProjection } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewResult } from "../../domain/analysisView/analysisViewResult.js";
 import {
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
@@ -41,6 +50,10 @@ import {
   readEvidenceFileSource,
   type EvidenceFileReadOptions,
 } from "./evidenceFileSource.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "./AnalysisViewRetention.js";
 
 /** A parsed request whose source can be projected without filesystem access. */
 export interface ReadyAnalysisViewInput {
@@ -130,7 +143,7 @@ const inspectBundleView = async (
           path: ["source", "kind"],
           reason: "invalid_value",
           message:
-            "--evidence-bundle requires a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
+            "An Evidence bundle needs a retained-evidence source with the exact parent evidence_id; inline Evidence already supplies its source",
         },
       ]),
     );
@@ -172,14 +185,12 @@ const cancelledFileViewResult = <T>(
   completedEvidence?: Evidence,
 ): Result<T, AnalysisError> => {
   if (!signal?.aborted) return result;
-  const cancellation = new AnalysisCancelledError(
+  const cancellation = cancelledBy(
     INSPECT_ANALYSIS_VIEW_OPERATION,
-    {
-      cause: signal.reason,
-      ...(completedEvidence !== undefined
-        ? { partialObservation: completedEvidence }
-        : {}),
-    },
+    signal,
+    completedEvidence !== undefined
+      ? { partialObservation: completedEvidence }
+      : {},
   );
   if (!result.ok)
     cancellation.retainSecondaryFailure(result.error, {
@@ -187,11 +198,11 @@ const cancelledFileViewResult = <T>(
     });
   return err(
     !result.ok && result.error.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
+      ? analysisErrorWithCleanupDependencies(
           cancellation,
           result.error,
           INSPECT_ANALYSIS_VIEW_OPERATION,
-        ).bindCleanupDependencies([result.error])
+        )
       : cancellation,
   );
 };
@@ -239,63 +250,15 @@ const projectResolvedAnalysisView = (
     subject: presentation.subject,
     limitations: parent.limitations,
     parameters: parent.parameters,
-    artifact:
-      presentation.subject === null
-        ? null
-        : {
-            path: presentation.subject.local_path,
-            sha256: presentation.subject.digest.sha256,
-          },
+    artifact: viewArtifact(presentation),
   });
   if (!projected.ok) return projected;
-  if (
-    parent.subject !== null &&
-    parent.subject.digest.sha256 !== projected.value.artifact?.sha256
-  )
-    return err(
-      new EvidenceIntegrityError(
-        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact?.sha256 ?? "unknown"}.`,
-      ),
-    );
+  const identity = validateAnalysisViewSubject(
+    parent.subject,
+    projected.value.artifact?.sha256,
+  );
+  if (!identity.ok) return identity;
   return ok(createAnalysisViewEvidence(input, presentation, projected.value));
-};
-
-/** Session Evidence ownership required to deliver a view instead of a complete record. */
-export interface AnalysisViewRetention {
-  readonly evidenceById: EvidenceLookup | undefined;
-  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-}
-
-/** Fail before analysis when selected delivery cannot keep its complete source. */
-export const requireAnalysisViewRetention = (
-  operation: string,
-  retention: AnalysisViewRetention,
-): Result<
-  {
-    readonly evidenceById: EvidenceLookup;
-    readonly recordEvidence: EvidenceWriter["recordEvidence"];
-  },
-  AnalysisError
-> => {
-  if (
-    retention.recordEvidence === undefined ||
-    retention.evidenceById === undefined
-  )
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        ANALYSIS_VIEW_PROVIDER.id,
-        operation,
-        "summary detail requires a server session that retains Evidence for later views",
-        {
-          userMessage:
-            "This server does not retain Evidence. Select detail complete to receive the complete analysis inline.",
-        },
-      ),
-    );
-  return ok({
-    evidenceById: retention.evidenceById,
-    recordEvidence: retention.recordEvidence,
-  });
 };
 
 /**
@@ -308,6 +271,53 @@ export const summarizeRetainedAnalysis = (
   retention: AnalysisViewRetention,
 ): Result<Evidence, AnalysisError> =>
   projectRetainedAnalysis(evidence, retention, { kind: "summary" });
+
+/**
+ * Parse a retained-delivery operation request, enforce session retention when
+ * `detail: "summary"` is selected, run the underlying provider operation, and
+ * project the requested view (or summary).
+ */
+export const executeRetainedSummaryOperation = async <
+  TOperation extends string,
+  TInput extends {
+    readonly detail?: "complete" | "summary" | undefined;
+    readonly view?: AnalysisViewRequest | undefined;
+  },
+>(
+  service: {
+    execute(
+      operation: TOperation,
+      input: unknown,
+      options?: ExecutionOptions,
+    ): Promise<Result<Evidence, AnalysisError>>;
+  },
+  operation: TOperation,
+  schema: z.ZodType<TInput>,
+  rawInput: unknown,
+  retention: AnalysisViewRetention,
+  options?: ExecutionOptions,
+): Promise<Result<Evidence, AnalysisError>> => {
+  const parsed = parseAnalysisInput(
+    operation,
+    rawInput,
+    schema,
+    options?.signal,
+  );
+  if (!parsed.ok) return parsed;
+  const { detail, view, ...providerInput } = parsed.value;
+  if (detail === "summary") {
+    const ready = requireAnalysisViewRetention(operation, retention);
+    if (!ready.ok) return ready;
+  }
+  const executed = await service.execute(operation, providerInput, options);
+  return !executed.ok || detail !== "summary"
+    ? executed
+    : projectRetainedAnalysis(
+        executed.value,
+        retention,
+        view ?? { kind: "summary" },
+      );
+};
 
 /** Retain the complete owner observation and deliver one explicitly selected view. */
 export const projectRetainedAnalysis = (
@@ -327,22 +337,14 @@ export const projectRetainedAnalysis = (
   if (!retained.ok) return retained;
   // Duplicate semantic records retain their original ledger metadata. Detail
   // selection changes presentation, not the historical lookup or payload owner.
-  const subject = evidence.subject;
-  return projectResolvedAnalysisView(
+  const projected = projectResolvedAnalysisView(
     { source, view },
     prepareAnalysisViewProjection(view),
     retained.value,
-    subject === null
-      ? undefined
-      : {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
-          ...(subject.architecture === null
-            ? {}
-            : { architecture: subject.architecture }),
-        },
+    evidenceSubjectTarget(evidence.subject),
   );
+  if (!projected.ok) projected.error.retainPartialObservation(source);
+  return projected;
 };
 
 const resolveAnalysisViewSource = (
@@ -365,6 +367,8 @@ const authenticateEvidence = (
   const parsed = safeParseEvidence(value);
   if (parsed.ok) return parsed;
   const cause = parsed.error;
+  if (isUnsupportedEvidenceFormat(cause))
+    return err(unsupportedEvidenceFormatError(cause));
   return err(
     analysisInputErrorFromIssues(
       INSPECT_ANALYSIS_VIEW_OPERATION,
@@ -383,17 +387,12 @@ const createAnalysisViewEvidence = (
   parent: Evidence,
   result: AnalysisViewResult,
 ): Evidence => {
-  const target =
-    parent.subject === null
-      ? undefined
-      : {
-          path: parent.subject.local_path,
-          sha256: parent.subject.digest.sha256,
-          format: parent.subject.format,
-          ...(parent.subject.architecture === null
-            ? {}
-            : { architecture: parent.subject.architecture }),
-        };
+  // A view names the target its parent observed (a file or a page URL); a
+  // parent that names no target is committed through the view's link.
+  const subject =
+    parent.subject.identity.kind === "unknown"
+      ? unknownTarget("derived-from-linked-evidence")
+      : evidenceSubjectInput(parent.subject);
   const nativeFunctionView =
     result.kind === "native" ||
     (result.kind === "summary" &&
@@ -407,7 +406,7 @@ const createAnalysisViewEvidence = (
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
-    target,
+    subject,
     ANALYSIS_VIEW_PROVIDER,
     {
       predicateType: "rea.analysis-view",
@@ -465,4 +464,15 @@ const createAnalysisViewEvidence = (
     },
     { immutable: true },
   );
+};
+
+/** The artifact a view names: the presented file target and its display path. */
+const viewArtifact = (
+  evidence: Evidence,
+): { readonly path: string; readonly sha256: string } | null => {
+  const target = evidenceLocalTarget(evidence);
+  const display = evidenceSubjectDisplay(evidence);
+  return target === undefined || display === undefined
+    ? null
+    : { path: display.local_path, sha256: target.sha256 };
 };

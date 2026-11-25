@@ -95,7 +95,10 @@ it.each([
         ),
       processIdentities: async (selected) =>
         new Map<number, ProcessIdentityObservation>(
-          selected.map((process) => {
+          selected.map(({ pid }) => {
+            const process = [parent, child].find((entry) => entry.pid === pid);
+            if (process === undefined)
+              return [pid, { state: "absent", reason: "not-in-snapshot" }];
             if (process.pid === parent.pid && ++parentReads > 2) {
               reparented = true;
               return [
@@ -170,10 +173,15 @@ it("shares native exit waiting before signaling healthy groups in one cleanup at
     processIdentities: async (selected) => {
       clock += 25;
       return new Map<number, ProcessIdentityObservation>(
-        selected.map((process) => [
-          process.pid,
-          identity(process, process.pid !== root.pid),
-        ]),
+        selected.map(({ pid }) => {
+          const process = rows.find((entry) => entry.pid === pid);
+          return [
+            pid,
+            process === undefined
+              ? { state: "absent", reason: "not-in-snapshot" }
+              : identity(process, process.pid !== root.pid),
+          ];
+        }),
       );
     },
     signalGroup: vi.fn((group) => {

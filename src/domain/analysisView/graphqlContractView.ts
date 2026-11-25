@@ -11,7 +11,7 @@ import {
 } from "../apiContract/graphqlContract.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -23,8 +23,8 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { pickFields, selectViewRows } from "./selectViewRows.js";
 
 export const graphqlContractViewContextSchema = graphqlContractSchema.omit({
   types: true,
@@ -90,31 +90,33 @@ const select = <Row extends object, Key extends keyof Row>(
   },
 ) => {
   const keys = [
-    ...new Set<string | keyof Row>([
+    ...new Set<string>([
       ...(view.fields ?? columns.defaults),
-      ...columns.required,
+      ...(columns.required as readonly string[]),
     ]),
   ];
+  const activeFilters = Object.entries(filters).filter(
+    (entry): entry is [keyof Row & string, ReadonlySet<string>] =>
+      entry[1] !== undefined,
+  );
+  const matches =
+    activeFilters.length === 0
+      ? undefined
+      : (row: Row) => {
+          for (let i = 0; i < activeFilters.length; i += 1) {
+            const [key, selected] = activeFilters[i]!;
+            const value = row[key];
+            if (typeof value !== "string" || !selected.has(value)) return false;
+          }
+          return true;
+        };
   return selectViewRows(
     rows,
     view,
-    (row) => {
-      for (const key in filters) {
-        const selected = filters[key];
-        if (
-          selected !== undefined &&
-          (typeof row[key] !== "string" || !selected.has(row[key] as string))
-        )
-          return false;
-      }
-      return true;
-    },
-    (row) => {
-      const source = row as Record<keyof Row, JsonValue>;
-      return Object.fromEntries(
-        keys.map((key) => [key, source[key as keyof Row]]),
-      ) as Partial<Row> & Pick<Row, Key>;
-    },
+    matches,
+    (row) =>
+      pickFields(row as Record<string, unknown>, keys) as Partial<Row> &
+        Pick<Row, Key>,
   );
 };
 const referenceColumns = {
@@ -230,15 +232,8 @@ export const projectGraphqlContractView = (
     "graphql-contract",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "GraphQL inventories support summary and graphql-contract pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "GraphQL inventories support summary and graphql-contract pages.",
     );
   const {
     types: _types,
@@ -276,7 +271,7 @@ export const projectGraphqlContractView = (
         sha256: context.artifact.sha256,
       },
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const selected = selectRows(report, view);
   return ok({

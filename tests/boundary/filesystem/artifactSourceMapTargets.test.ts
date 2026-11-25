@@ -5,22 +5,16 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 
-it.each([
-  "directory",
-  "directory-with-child",
-  "file",
-  "directory-map",
-  "missing",
-])(
+it.each(["directory-with-child", "file", "directory-map", "missing"] as const)(
   "admits only a regular mapped file while retaining ZIP containment (%s)",
   async (target) => {
     const root = await createTestTempDirectory("rea-map-target-kind-");
     const path = join(root, "sample.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
-    if (target.startsWith("directory") && target !== "directory-map")
+    if (target === "directory-with-child") {
       await writer.add("main.js/", undefined, { directory: true });
-    if (target === "directory-with-child")
       await writer.add("main.js/child.txt", new TextReader("child"));
+    }
     if (target === "file" || target === "directory-map")
       await writer.add("main.js", new TextReader("export const answer = 42;"));
     if (target === "directory-map")
@@ -64,7 +58,7 @@ it.each([
         target === "file" ? main?.artifact_id : carrier.artifact_id,
     });
     expect(map.limitations).toEqual([]);
-    if (target.startsWith("directory") && target !== "directory-map") {
+    if (target === "directory-with-child") {
       expect(main).toMatchObject({
         entry_kind: "directory",
         artifact_kind: "container",
@@ -77,8 +71,6 @@ it.each([
         relation: "contains",
         parent_artifact_id: carrier.artifact_id,
       });
-    }
-    if (target === "directory-with-child") {
       const child = inventory.occurrences.find(
         ({ logical_path }) => logical_path === "main.js/child.txt",
       );

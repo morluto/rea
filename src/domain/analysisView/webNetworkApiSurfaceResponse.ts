@@ -57,10 +57,10 @@ export const apiSurfaceResponse = (
 } => {
   if (format === "har") {
     const response = readRecordedResponseDeclaration(reported);
-    const status = response?.status;
     const mime = response?.content?.mimeType;
     return {
-      status: typeof status === "number" && status !== 0 ? status : null,
+      // Main's declaration schema normalizes statuses to 100-999 or null.
+      status: response?.status ?? null,
       mime: typeof mime === "string" ? mime : "",
       mimeSourceLength: 0,
     };

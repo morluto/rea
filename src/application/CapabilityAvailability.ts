@@ -1,33 +1,40 @@
-import type { ProviderAvailability } from "./AnalysisProvider.js";
-import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
+import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import type { AvailabilityPolicy } from "./CapabilityInventory.js";
-import type { OptionalProviderLoadFailures } from "./OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
+import type { CommandProviderLaunchFailures } from "./reverse/ReverseEngineeringService.js";
+
+/** Optional capability toggles reported for target-free session status. */
+export type OptionalAvailabilityFeatures = Pick<
+  AvailabilityPolicy,
+  | "packetCaptureEnabled"
+  | "signalRecordingEnabled"
+  | "wasmArtifactEnabled"
+  | "evmInterfaceEnabled"
+  | "browserObservationEnabled"
+  | "browserScenarioEnabled"
+  | "electronObservationEnabled"
+  | "electronAutomationEnabled"
+  | "v8InspectorObservationEnabled"
+  | "javascriptRecoveryEnabled"
+  | "webModuleResolutionEnabled"
+  | "binaryLayoutEnabled"
+  | "recordedCrashEnabled"
+  | "firmwareInspectionEnabled"
+  | "firmwareExtractionEnabled"
+>;
 
 export interface CapabilityAvailabilityFacts {
   readonly probes?: Partial<CapabilityAvailabilityProbes>;
   readonly observeProviderLoadFailures?: () => OptionalProviderLoadFailures;
+  readonly observeCommandProviderFailures?: () => CommandProviderLaunchFailures;
+  readonly observeOptionalFeatures?: () => Partial<OptionalAvailabilityFeatures>;
   readonly optionalProviderLoadFailures?:
     | OptionalProviderLoadFailures
     | undefined;
+  readonly commandProviderFailures?: CommandProviderLaunchFailures | undefined;
   readonly hostUnsupported?: AvailabilityPolicy["hostUnsupported"];
-  readonly optionalFeatures?: Pick<
-    AvailabilityPolicy,
-    | "packetCaptureEnabled"
-    | "signalRecordingEnabled"
-    | "wasmArtifactEnabled"
-    | "evmInterfaceEnabled"
-    | "browserObservationEnabled"
-    | "browserScenarioEnabled"
-    | "electronObservationEnabled"
-    | "electronAutomationEnabled"
-    | "v8InspectorObservationEnabled"
-    | "javascriptRecoveryEnabled"
-    | "webModuleResolutionEnabled"
-    | "binaryLayoutEnabled"
-    | "recordedCrashEnabled"
-    | "firmwareInspectionEnabled"
-    | "firmwareExtractionEnabled"
-  >;
+  readonly optionalFeatures?: OptionalAvailabilityFeatures;
 }
 
 /** Provider-owned live probes used by session discovery. */

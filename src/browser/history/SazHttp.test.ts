@@ -10,10 +10,21 @@ it.each([
     types: ["application/json"],
   },
   { ending: "\n", value: "\n application/json", types: ["application/json"] },
-  { ending: "\r\n", value: "\n application/json", types: [] },
-  { ending: "\r\n", value: "\r\n \n application/json", types: [] },
+  // Main's mixed CRLF/LF header splitting accepts both line endings as
+  // continuation framing, so the unfolded value carries no line break and
+  // the MIME type stays known.
+  { ending: "\r\n", value: "\n application/json", types: ["application/json"] },
+  {
+    ending: "\r\n",
+    value: "\r\n \n application/json",
+    types: ["application/json"],
+  },
   { ending: "\n", value: "\r application/json", types: [] },
-  { ending: "\r\n", value: " application/json;\n charset=utf-8", types: [] },
+  {
+    ending: "\r\n",
+    value: " application/json;\n charset=utf-8",
+    types: ["application/json"],
+  },
 ])(
   "uses only parsed continuations for $ending framing and $value",
   ({ ending, value, types }) => {

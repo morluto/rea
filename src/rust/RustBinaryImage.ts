@@ -1,149 +1,269 @@
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-  type BinaryContainer,
-  type ImageSection,
-} from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import type {
+  BinaryContainer,
+  ImageSection,
+} from "../domain/binaryContainer.js";
+import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
+import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
+  RustContainerBits,
 } from "../domain/rust/rustBinary.js";
 import {
-  readAuditableSection,
-  RustAuditableFormatFailure,
-  RustAuditableResourceFailure,
+  DEFAULT_RUSTC_HASH_LIMIT,
+  rustcPartialCoverage,
+  rustDependencySectionName,
+} from "../domain/rust/rustBinary.js";
+import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
+import {
+  readAuditableSectionFromReader,
+  RUST_AUDITABLE_FORMAT,
 } from "./RustAuditableReader.js";
+import {
+  hasWasmPreamble,
+  readRustWasmSectionsFromReader,
+} from "./RustWasmImage.js";
+import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
-/** One toolchain normally leaves one hash; a small cap bounds retained output. */
-const MAX_RUSTC_HASHES = 64;
+/** Streamed scan window for `/rustc/<40-hex>/` literals across read-only spans. */
+const RUSTC_SCAN_WINDOW_BYTES = 1024 * 1024;
+/** Overlap keeps any 48-byte `/rustc/<40-hex>[/\]` match intact across window boundaries. */
+const RUSTC_SCAN_OVERLAP_BYTES = RUSTC_PREFIX.length + HASH_BYTES;
 
 /** Container identity plus optional dependency metadata and inferred rustc commits. */
 export interface RustBinaryImage {
   readonly format: RustBinary["format"];
   readonly architecture: string;
-  readonly bits: 32 | 64;
+  readonly bits: RustContainerBits;
   readonly byte_order: RustBinary["byte_order"];
   readonly auditable_metadata: RustAuditableMetadata | null;
   readonly rustc_commit: RustBinary["rustc_commit"];
   readonly section_names_limitation?: string;
 }
 
-/** Read dependency metadata from container sections without executing the image. */
-export const readRustBinaryImage = (bytes: Buffer): RustBinaryImage => {
-  const container = readContainer(bytes);
-  const dependency = dependencySection(container.format, container.sections);
+interface FileSpan {
+  readonly offset: number;
+  readonly size: number;
+}
+
+/** The stored dependency stream and the PE padding allowance that may follow it. */
+interface DependencySpan extends FileSpan {
+  readonly peFileAlignment?: number | undefined;
+}
+
+/** Container identity and the exact file spans that Rust metadata lookups read. */
+interface RustImageLayout extends Pick<
+  RustBinaryImage,
+  "format" | "architecture" | "bits" | "byte_order" | "section_names_limitation"
+> {
+  readonly section_name: RustAuditableMetadata["section_name"];
+  readonly dependency: DependencySpan | null;
+  /** Spans where rustc stores constant `/rustc/<hash>/` path strings. */
+  readonly compiler_strings: readonly FileSpan[];
+}
+
+/** Stream Rust dependency and compiler-path inspection over a range reader. */
+export const readRustBinaryImageFromHandle = async (
+  source: ByteSource,
+  maxRustcHashes: number | undefined,
+  maxOutputBytes: number | undefined,
+  pause: ZstandardFramePause,
+): Promise<RustBinaryImage> => {
+  const effectiveMaxHashes = maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT;
+  const effectiveMaxOutputBytes =
+    maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes;
+  const preamble = await readByteSourceSlice(
+    source,
+    0,
+    Math.min(source.size, 8),
+  );
+  const layout: RustImageLayout = hasWasmPreamble(preamble)
+    ? await wasmLayoutFromReader(source, pause)
+    : nativeLayoutFromContainer(
+        await readBinaryContainerFromReader(
+          source,
+          "inspect_rust_binary",
+          pause,
+        ),
+      );
+  const { section_name, dependency, compiler_strings, ...identity } = layout;
+  const auditable_metadata =
+    dependency === null
+      ? null
+      : await readAuditableSectionFromReader(
+          section_name,
+          dependency,
+          (offset, length) => readByteSourceSlice(source, offset, length),
+          pause,
+          {
+            maxOutputBytes: effectiveMaxOutputBytes,
+            peFileAlignment: dependency.peFileAlignment,
+          },
+        );
+  const rustc_commit = await rustcCommitFromReader(
+    source,
+    compiler_strings,
+    effectiveMaxHashes,
+    effectiveMaxOutputBytes,
+    pause,
+  );
+  return {
+    ...identity,
+    auditable_metadata,
+    rustc_commit,
+  };
+};
+
+const wasmLayoutFromReader = async (
+  source: ByteSource,
+  pause: ZstandardFramePause,
+): Promise<RustImageLayout> => {
+  const { dependency_sections, data_section } =
+    await readRustWasmSectionsFromReader(source, pause);
+  if (dependency_sections.length > 1) throw duplicateDependencySection();
+  return {
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+    section_name: rustDependencySectionName("wasm"),
+    dependency: dependency_sections[0] ?? null,
+    compiler_strings: data_section === null ? [] : [data_section],
+  };
+};
+
+const rustcCommitFromReader = async (
+  source: ByteSource,
+  spans: readonly FileSpan[],
+  maxHashes: number,
+  maxOutputBytes: number,
+  pause: ZstandardFramePause,
+): Promise<RustBinaryImage["rustc_commit"]> => {
+  const retention: RustcPathRetention = {
+    hashes: [],
+    seen: new Set(),
+    maxHashes,
+    maxBytes: maxOutputBytes,
+    bytes: 2,
+    reason: undefined,
+  };
+  for (const range of mergedFileRanges(spans)) {
+    let cursor = range.offset;
+    while (cursor < range.end && retention.reason === undefined) {
+      if (cursor > range.offset) await pause();
+      const length = Math.min(RUSTC_SCAN_WINDOW_BYTES, range.end - cursor);
+      const chunk = await readByteSourceSlice(source, cursor, length);
+      collectHashesInChunk(chunk, cursor, retention);
+      if (cursor + length >= range.end) break;
+      cursor += length - RUSTC_SCAN_OVERLAP_BYTES;
+    }
+    if (retention.reason !== undefined) break;
+  }
+  return retention.hashes.length === 0
+    ? null
+    : {
+        evidence_kind: "inferred",
+        hashes: retention.hashes,
+        ...(retention.reason !== undefined
+          ? {
+              coverage: rustcPartialCoverage(
+                retention.reason,
+                retention.reason === "report_bytes"
+                  ? maxOutputBytes
+                  : maxHashes,
+              ),
+            }
+          : {}),
+      };
+};
+
+const nativeLayoutFromContainer = (
+  container: BinaryContainer,
+): RustImageLayout => {
+  const section_name = rustDependencySectionName(container.format);
+  const dependency = dependencySection(section_name, container.sections);
   return {
     format: container.format,
     architecture: container.architecture,
     bits: container.bits,
     byte_order: container.byte_order,
-    auditable_metadata:
-      dependency === null
-        ? null
-        : readDependency(bytes, container.format, dependency),
-    rustc_commit: rustcCommit(bytes, container),
     ...(container.section_names_limitation === undefined
       ? {}
       : { section_names_limitation: container.section_names_limitation }),
+    section_name,
+    dependency:
+      dependency === null
+        ? null
+        : {
+            offset: dependency.offset,
+            size: dependency.size,
+            peFileAlignment:
+              dependency.format === "pe" &&
+              dependency.virtual_size === 0 &&
+              dependency.file_alignment > 0 &&
+              dependency.raw_size % dependency.file_alignment === 0
+                ? dependency.file_alignment
+                : undefined,
+          },
+    compiler_strings: [
+      ...container.sections.filter((section) => section.read_only),
+      ...(container.format === "elf"
+        ? (container.load_regions ?? [])
+            .filter((region) => region.read && !region.write && !region.execute)
+            .map(({ mapping }) => mapping)
+        : []),
+    ],
   };
 };
 
-const readContainer = (bytes: Buffer) => {
-  try {
-    return readBinaryContainer(bytes);
-  } catch (cause) {
-    if (cause instanceof BinaryFormatFailure)
-      throw new RustAuditableFormatFailure(cause.kind, cause.message, {
-        cause,
-      });
-    if (cause instanceof BinaryResourceFailure)
-      throw new RustAuditableResourceFailure(
-        {
-          resource: "memory",
-          reported_limits: { maximum_bytes: cause.maximum_bytes },
-        },
-        cause.message,
-        {
-          cause,
-        },
-      );
-    throw cause;
-  }
-};
+/** cargo-auditable writes one dependency section; a second leaves the list ambiguous. */
+const duplicateDependencySection = () =>
+  malformedInput(
+    RUST_AUDITABLE_FORMAT,
+    "Image contains more than one dependency section",
+  );
 
 const dependencySection = (
-  format: RustBinaryImage["format"],
+  expected: RustAuditableMetadata["section_name"],
   sections: readonly ImageSection[],
 ): ImageSection | null => {
-  const expected = format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
-  const matches = sections.filter((section) => section.name === expected);
-  if (matches.length > 1)
-    throw new RustAuditableFormatFailure(
-      "malformed",
-      "Image contains more than one dependency section",
-    );
-  const section = matches[0];
+  const selected = uniqueKeyed(
+    keyedBy(sections, ({ name }) => name),
+    expected,
+  );
+  if (!selected.ok) throw duplicateDependencySection();
+  const section = selected.value;
   if (section === undefined) return null;
   if (section.compressed)
-    throw new RustAuditableFormatFailure(
-      "unsupported",
+    throw unsupportedInput(
+      RUST_AUDITABLE_FORMAT,
       "Compressed dependency sections are unsupported",
+      { undecodedContent: true },
     );
   if (!section.file_backed)
-    throw new RustAuditableFormatFailure(
-      "malformed",
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
       "Dependency section is not file-backed",
     );
   return section;
 };
 
-const readDependency = (
-  bytes: Buffer,
-  format: RustBinaryImage["format"],
-  section: ImageSection,
-): RustAuditableMetadata =>
-  readAuditableSection(
-    format === "macho" ? "__DATA,.dep-v0" : ".dep-v0",
-    section.offset,
-    bytes.subarray(section.offset, section.offset + section.size),
-    {
-      peFileAlignment:
-        section.format === "pe" &&
-        section.virtual_size === 0 &&
-        section.file_alignment > 0 &&
-        section.raw_size % section.file_alignment === 0
-          ? section.file_alignment
-          : undefined,
-    },
-  );
+/** One owner for compiler-path uniqueness, retained output and exhaustion. */
+interface RustcPathRetention {
+  readonly hashes: { hash: string; file_offset: number }[];
+  readonly seen: Set<string>;
+  readonly maxHashes: number;
+  readonly maxBytes: number;
+  bytes: number;
+  reason: "max_rustc_hashes" | "report_bytes" | undefined;
+}
 
-const rustcCommit = (
-  bytes: Buffer,
-  container: BinaryContainer,
-): RustBinaryImage["rustc_commit"] => {
-  const hashes: { hash: string; file_offset: number }[] = [];
-  const seen = new Set<string>();
-  const sections = container.sections
-    .filter((section) => section.read_only)
-    .map(({ offset, size }) => ({ offset, size }));
-  const loadRegions =
-    container.format === "elf"
-      ? (container.load_regions ?? [])
-          .filter((region) => region.read && !region.write && !region.execute)
-          .map(({ mapping }) => mapping)
-      : [];
-  // Overlapping section and ELF load ranges are scanned once, so total work
-  // stays bounded by the file size however many mappings reference a range.
-  for (const range of mergedReadOnlyFileRanges([...sections, ...loadRegions]))
-    collectHashes(bytes, range, seen, hashes);
-  return hashes.length === 0 ? null : { evidence_kind: "inferred", hashes };
-};
-
-const mergedReadOnlyFileRanges = (
-  ranges: readonly { readonly offset: number; readonly size: number }[],
+const mergedFileRanges = (
+  ranges: readonly FileSpan[],
 ): { readonly offset: number; readonly end: number }[] => {
   const sorted = ranges
     .filter(({ size }) => size > 0)
@@ -159,30 +279,31 @@ const mergedReadOnlyFileRanges = (
   return merged;
 };
 
-const collectHashes = (
-  bytes: Buffer,
-  range: { readonly offset: number; readonly end: number },
-  seen: Set<string>,
-  hashes: { hash: string; file_offset: number }[],
+const collectHashesInChunk = (
+  region: Buffer,
+  baseOffset: number,
+  retention: RustcPathRetention,
 ): void => {
-  const region = bytes.subarray(range.offset, range.end);
   let cursor = 0;
   while (cursor < region.length) {
     const at = region.indexOf(RUSTC_PREFIX, cursor);
     if (at < 0) return;
     const start = at + RUSTC_PREFIX.length;
     const hash = hashAt(region, start);
-    if (hash !== null && !seen.has(hash)) {
-      if (seen.size >= MAX_RUSTC_HASHES)
-        throw new RustAuditableResourceFailure(
-          {
-            resource: "capacity",
-            reported_limits: { maximum_rustc_hashes: MAX_RUSTC_HASHES },
-          },
-          `Read-only data contains more than ${MAX_RUSTC_HASHES} distinct rustc commit paths.`,
-        );
-      seen.add(hash);
-      hashes.push({ hash, file_offset: range.offset + at });
+    if (hash !== null && !retention.seen.has(hash)) {
+      if (retention.seen.size >= retention.maxHashes) {
+        retention.reason = "max_rustc_hashes";
+        return;
+      }
+      const entry = { hash, file_offset: baseOffset + at };
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry)) + 1;
+      if (entryBytes > retention.maxBytes - retention.bytes) {
+        retention.reason = "report_bytes";
+        return;
+      }
+      retention.bytes += entryBytes;
+      retention.seen.add(hash);
+      retention.hashes.push(entry);
     }
     cursor = at + 1;
   }
@@ -190,7 +311,9 @@ const collectHashes = (
 
 const hashAt = (region: Buffer, start: number): string | null => {
   const end = start + HASH_BYTES;
-  if (end >= region.length || region[end] !== 0x2f) return null;
+  // Windows builds join the remapped `/rustc/<hash>` prefix with `\`.
+  if (end >= region.length || (region[end] !== 0x2f && region[end] !== 0x5c))
+    return null;
   for (let index = start; index < end; index += 1) {
     const byte = region[index] ?? 0;
     const hex =

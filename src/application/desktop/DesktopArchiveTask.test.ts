@@ -1,9 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import {
@@ -12,6 +14,8 @@ import {
 } from "../../domain/desktop/zipArchive.fixture.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { readZipView } from "./DesktopZipView.js";
 import { DESKTOP_OPERATION } from "./DesktopCaptureRefusals.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
@@ -112,17 +116,10 @@ const HOLE = {
   tolerance: 0.01,
 };
 
-/** The entries of the list document's last version in the capture's state view. */
-const endEntries = async (folder: string) => {
+const inspectArchives = async (folder: string) => {
   const evidence = await inspectDesktopApplicationState(folder, readers);
-  if (!("normalized_result" in evidence)) throw evidence;
-  const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
-  const end = state.paths
-    .find((entry) => entry.home_path === LIST)
-    ?.versions.at(-1)?.view;
-  return (
-    (end as { entries: Record<string, unknown>[] } | undefined)?.entries ?? []
-  );
+  if (evidence instanceof Error) throw evidence;
+  return desktopApplicationStateSchema.parse(evidence.normalized_result);
 };
 
 const exportTask = async (folder: string, checks: unknown[]) => {
@@ -144,43 +141,200 @@ const exportTask = async (folder: string, checks: unknown[]) => {
   return { result, directory };
 };
 
-describe("documents saved as zip archives", () => {
-  it("reads each version into its entries and lists the change by entry and element name", async () => {
-    const evidence = await inspectDesktopApplicationState(
-      await archiveCapture(),
-      readers,
-    );
-    if (!("normalized_result" in evidence)) throw evidence;
-    const state = desktopApplicationStateSchema.parse(
-      evidence.normalized_result,
-    );
-    const path = state.paths.find((entry) => entry.home_path === PLATE);
+it.each([
+  { seedTitle: "done", accepted: false },
+  { seedTitle: "before", accepted: true },
+])(
+  "checks the recompressed gzip archive's real seed view (accepted: $accepted)",
+  async ({ seedTitle, accepted }) => {
+    const archive = (title: string) =>
+      zipArchive([
+        { name: "state.json", data: JSON.stringify({ title }), method: 0 },
+        { name: "padding.txt", data: "x".repeat(60_000), method: 0 },
+      ]);
+    const seed = gzipSync(archive(seedTitle), { level: 9 });
+    const end = gzipSync(archive("done"), { level: 0 });
+    const folder = await archiveCapture([seed, end]);
+    const state = await inspectArchives(folder);
+    const versions = state.paths.find(
+      (entry) => entry.home_path === LIST,
+    )?.versions;
+    expect(versions?.[0]).toMatchObject({
+      format: null,
+      compression: "gzip",
+    });
+    expect(versions?.at(-1)).toMatchObject({
+      format: "zip",
+      compression: "gzip",
+    });
+    const { result } = await exportTask(folder, [
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=state.json]/view/title",
+        value: "done",
+      },
+    ]);
+    if (accepted) {
+      if (result instanceof Error) throw result;
+      expect(result.normalized_result).toMatchObject({
+        tasks: [{ failing_on_seed: ["check-1"] }],
+      });
+    } else {
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error & { userMessage: string }).userMessage).toContain(
+        "already passes on the seed",
+      );
+    }
+  },
+);
 
-    expect(path).toMatchObject({
+it("retains typed cancellation at the retained ZIP reader boundary", async () => {
+  const bytes = zipArchive([{ name: "state.json", data: '{"value":"kept"}' }]);
+  expect(await readZipView(bytes)).toMatchObject({
+    ok: true,
+    value: { entry_count: 1, truncated: false },
+  });
+  const controller = new AbortController();
+  const reason = { code: "EACCES", source: "caller" };
+  controller.abort(reason);
+  const failure: unknown = await readZipView(bytes, controller.signal).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+  expect(failure.reason).toBe("cancelled");
+  expect(failure.cause).toBe(reason);
+  expect(failure.cancellation?.reason).toBe(reason);
+});
+
+const HOLE_ADDED =
+  "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children/[name=Object][@name=Hole]";
+
+describe("documents saved as zip archives", () => {
+  it("drafts archive changes by name and exports them with guards that hold at both ends", async () => {
+    const folder = await archiveCapture();
+    const state = await inspectArchives(folder);
+    const plate = state.paths.find((entry) => entry.home_path === PLATE);
+    expect(plate).toMatchObject({
       role: "document",
       format: "zip",
       versions: [
         { format: "zip", view: { entry_count: 2, truncated: false } },
         { format: "zip", view_error: null },
       ],
-      changes: [{ kind: "values", complete: true }],
+      changes: [
+        {
+          kind: "values",
+          complete: true,
+          added: expect.arrayContaining([HOLE_ADDED]),
+        },
+      ],
     });
-    expect(path?.changes[0]?.added).toContain(
-      "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children/[name=Object][@name=Hole]",
-    );
+
+    const draft = await draftDesktopApplicationTask(folder, readers);
+    if (draft instanceof Error) throw draft;
+    const { files, task, guards } = draft.normalized_result as {
+      files: { file: string }[];
+      task: { checks: { id: string; file: string; pointer?: string }[] };
+      guards: { id: string }[];
+    };
+    expect(files.find(({ file }) => file === PLATE)).toMatchObject({
+      values_cut: false,
+      values: expect.arrayContaining([
+        expect.objectContaining({ kind: "added", pointer: HOLE_ADDED }),
+      ]),
+    });
+    const archived = task.checks.filter(({ file }) => file === PLATE);
+    expect(archived.length).toBeGreaterThan(0);
+    for (const { pointer } of archived) expect(pointer).toContain("[name=");
+    expect(task.checks.filter(({ file }) => file === LIST)).toEqual([
+      expect.objectContaining({
+        kind: "text_equals",
+        pointer: `${LIST_TEXT}/[name=text:p]`,
+        value: "Buy milk",
+      }),
+    ]);
+    expect(guards.length).toBeGreaterThan(0);
+
+    const { result } = await exportTask(folder, [...task.checks, ...guards]);
+    if (result instanceof Error) throw result;
+    const report = result.normalized_result as {
+      tasks: { checks: number; failing_on_seed: string[] }[];
+    };
+    expect(report.tasks[0]?.checks).toBe(task.checks.length + guards.length);
+    const failures = report.tasks[0]?.failing_on_seed;
+    expect(failures).toContain(archived[0]?.id);
+    for (const { id } of guards) expect(failures).not.toContain(id);
   });
 
-  it("exports a task that checks the hole and the list's namespaced XML by name", async () => {
-    const folder = await archiveCapture();
+  it("exports archive member checks by name, including absence and whole-entry values", async () => {
+    const folder = await archiveCapture([
+      odtArchive("Buy bread", [
+        {
+          name: "comments.xml",
+          data: '<office:annotations xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>',
+        },
+      ]),
+      odtArchive("Buy milk"),
+    ]);
+    const state = await inspectArchives(folder);
+    const end = state.paths
+      .find(({ home_path }) => home_path === LIST)
+      ?.versions.at(-1);
+    const entries = (
+      end?.view as { entries: { name: string; size: number }[] } | undefined
+    )?.entries;
+    const content = entries?.find(({ name }) => name === "content.xml");
+    expect(entries).toHaveLength(3);
+    if (content === undefined) throw new Error("Missing archived content.xml");
     const milk = {
       kind: "value_equals",
       file: LIST,
       pointer: `${LIST_TEXT}/[name=text:p]/children/0`,
       value: "Buy milk",
     };
-
-    const { result, directory } = await exportTask(folder, [HOLE, milk]);
-    if (result instanceof Error) throw result;
+    const { result, directory } = await exportTask(folder, [
+      { ...HOLE, value: 5.005 },
+      milk,
+      { kind: "value_equals", file: LIST, pointer: "/entries", value: entries },
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=content.xml]/size",
+        value: content.size,
+      },
+      {
+        kind: "value_absent",
+        file: LIST,
+        pointer: "/entries/[name=comments.xml]",
+      },
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=content.xml]",
+        value: content,
+      },
+    ]);
+    expect(
+      result,
+      result instanceof AnalysisError ? result.userMessage : undefined,
+    ).toMatchObject({
+      normalized_result: {
+        tasks: [
+          {
+            failing_on_seed: [
+              "check-1",
+              "check-2",
+              "check-3",
+              "check-4",
+              "check-5",
+              "check-6",
+            ],
+          },
+        ],
+      },
+    });
     const verifier = await readFile(
       join(directory, "artifacts/cut-hole-check/verify.py"),
       "utf8",
@@ -189,86 +343,16 @@ describe("documents saved as zip archives", () => {
     expect(verifier).toContain(JSON.stringify(milk.pointer));
   });
 
-  it("accepts a check on the whole listing, whose value holds namespaced XML", async () => {
-    const folder = await archiveCapture();
-    const entries = await endEntries(folder);
-    expect(entries).toHaveLength(3);
-
-    const { result } = await exportTask(folder, [
-      { kind: "value_equals", file: LIST, pointer: "/entries", value: entries },
-    ]);
-
-    if (result instanceof Error) throw result;
-  });
-
-  it("exports checks of a namespaced entry's metadata, its absence, and the entry compared whole", async () => {
-    const comments = {
-      name: "comments.xml",
-      data: '<office:annotations xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>',
-    };
-    const folder = await archiveCapture([
-      odtArchive("Buy bread", [comments]),
-      odtArchive("Buy milk"),
-    ]);
-    const content = (await endEntries(folder)).find(
-      (entry) => entry.name === "content.xml",
-    );
-
-    const { result } = await exportTask(folder, [
-      {
-        kind: "value_equals",
-        file: LIST,
-        pointer: "/entries/[name=content.xml]/size",
-        value: content?.size,
-      },
-      {
-        kind: "value_absent",
-        file: LIST,
-        pointer: "/entries/[name=comments.xml]",
-      },
-    ]);
-    expect(
-      result instanceof Error
-        ? (result as Error & { userMessage: string }).userMessage
-        : undefined,
-    ).toBeUndefined();
-
-    const whole = await exportTask(folder, [
-      {
-        kind: "value_equals",
-        file: LIST,
-        pointer: "/entries/[name=content.xml]",
-        value: content,
-      },
-    ]);
-    if (whole.result instanceof Error) throw whole.result;
-  });
-
-  it("drafts name-addressed checks of the archive that the export then accepts", async () => {
+  it("points a refused check at the draft's values", async () => {
     const folder = await archiveCapture();
 
-    const drafted = await draftDesktopApplicationTask(folder, readers);
-    if (drafted instanceof Error) throw drafted;
-    const task = (
-      drafted.normalized_result as {
-        task: { checks: { file: string; pointer?: string }[] };
-      }
-    ).task;
+    const { result } = await exportTask(folder, [{ ...HOLE, value: 7 }]);
 
-    const archived = task.checks.filter(({ file }) => file === PLATE);
-    expect(archived.length).toBeGreaterThan(0);
-    expect(
-      archived.every(({ pointer }) => pointer?.includes("[name=") === true),
-    ).toBe(true);
-    expect(task.checks.filter(({ file }) => file === LIST)).toEqual([
-      expect.objectContaining({
-        kind: "text_equals",
-        pointer: `${LIST_TEXT}/[name=text:p]`,
-        value: "Buy milk",
-      }),
-    ]);
-    const { result } = await exportTask(folder, task.checks);
-    expect(result).not.toBeInstanceOf(Error);
+    expect(result).toBeInstanceOf(Error);
+    const remediation = (result as Error & { remediationAction?: string })
+      .remediationAction;
+    for (const name of ["values", "stop_build_capture"])
+      expect(remediation).toContain(name);
   });
 });
 
@@ -306,7 +390,7 @@ describe("paragraphs split into runs", () => {
     ]);
     if (whole.result instanceof Error) throw whole.result;
     expect(whole.result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["check-1", "check-2"] },
+      tasks: [{ failing_on_seed: ["check-1", "check-2"] }],
     });
 
     const first = await exportTask(folder, [

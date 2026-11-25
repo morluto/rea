@@ -56,12 +56,12 @@ describe.skipIf(process.platform !== "darwin")(
           { format: "binary", depth: 200, data: false },
           { format: "xml", depth: 200, data: false },
           { format: "json", depth: 200, data: false },
+          { format: "binary", depth: 997, data: true },
           { format: "binary", depth: 998, data: true },
-          { format: "binary", depth: 999, data: true },
+          { format: "xml", depth: 997, data: true },
           { format: "xml", depth: 998, data: true },
-          { format: "xml", depth: 999, data: true },
+          { format: "json", depth: 997, data: false },
           { format: "json", depth: 998, data: false },
-          { format: "json", depth: 999, data: false },
         ] as const) {
           const { format, depth, data } = fixture;
           const path = join(root, `${format}-${depth}.plist`);
@@ -81,7 +81,7 @@ describe.skipIf(process.platform !== "darwin")(
           // Compare its upper-edge admission with the actual utility, while
           // requiring the historical depth-129/200 controls to succeed below.
           const native =
-            format === "xml" && depth === 998
+            format === "xml" && depth === 997
               ? await lintXmlPlist(path)
               : undefined;
           const output = await cli.run({
@@ -90,7 +90,7 @@ describe.skipIf(process.platform !== "darwin")(
           });
           const response = await call("inspect_plist", { path });
           expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-          if (depth === 999) {
+          if (depth === 998) {
             expect(output.exitCode, output.stderr).toBe(1);
             const expectedFailure = {
               code: "resource_constraint",
@@ -98,7 +98,10 @@ describe.skipIf(process.platform !== "darwin")(
               retryable: false,
               details: {
                 resource: "memory",
-                reported_limits: { maximum_nesting_depth: 998 },
+                reported_limits: {
+                  boundary: "plist-nesting-depth",
+                  maximum: 997,
+                },
               },
               remediation: {
                 action: expect.stringMatching(/\S/u),
@@ -112,22 +115,33 @@ describe.skipIf(process.platform !== "darwin")(
           }
           if (native !== undefined && native.exitCode !== 0) {
             expect(output.exitCode, output.stderr).toBe(1);
-            const expectedFailure = {
+            const captured_output = {
+              exit_code: native.exitCode,
+              stdout: native.stdout,
+              // Native commands inspect a private snapshot, so they can name
+              // a different operand in raw diagnostics.
+              stderr: native.stderr.includes(path)
+                ? expect.stringContaining(
+                    native.stderr.replace(path, "").trim(),
+                  )
+                : native.stderr,
+            };
+            // The CLI selects the plist as its target; MCP selects it with
+            // the `path` input. Each failure names the input that chose it.
+            expect(output.json).toMatchObject({
+              code: "target_unavailable",
+              retryable: false,
+              details: { path, captured_output },
+            });
+            expect(parseMcpToolError(response).error).toMatchObject({
               code: "invalid_request",
               retryable: false,
               details: {
                 operation: "inspect_plist",
-                captured_output: {
-                  exit_code: native.exitCode,
-                  stdout: native.stdout,
-                  stderr: native.stderr,
-                },
+                issues: [{ path: ["path"] }],
+                captured_output,
               },
-            };
-            expect(output.json).toMatchObject(expectedFailure);
-            expect(parseMcpToolError(response).error).toMatchObject(
-              expectedFailure,
-            );
+            });
             continue;
           }
           expect(
@@ -169,7 +183,6 @@ describe.skipIf(process.platform !== "darwin")(
           ).toBe(false);
         }
       },
-      60_000,
     );
   },
 );

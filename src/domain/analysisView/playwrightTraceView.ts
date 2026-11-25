@@ -14,7 +14,6 @@ import {
   type PlaywrightTrace,
 } from "../playwrightTrace/playwrightTrace.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
-import type { JsonValue } from "../jsonValue.js";
 import { err, ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
@@ -31,8 +30,12 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import { pickFields, selectViewRows } from "./selectViewRows.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -110,13 +113,8 @@ const allows = (
   selection: ReadonlySet<string> | undefined,
   value: string | null,
 ) => selection === undefined || (value !== null && selection.has(value));
-const fields = (row: object, selected: readonly string[]) =>
-  Object.fromEntries(
-    selected.map((key) => [key, (row as Record<string, JsonValue>)[key]!]),
-  );
 type View = z.output<typeof playwrightTraceViewRequestSchema>;
-const eventFields = (
-  row: PlaywrightTrace["events"][number],
+const createEventProjector = (
   view: Extract<View, { collection: "events" }>,
 ) => {
   const selected = view.fields?.filter((field) => field !== "text_preview") ?? [
@@ -131,26 +129,97 @@ const eventFields = (
   ];
   const preview =
     view.fields === undefined || view.fields.includes("text_preview");
-  let text_preview:
-    | (z.output<typeof analysisTextPageItemSchema> & {
-        coverage: z.output<typeof analysisViewCoverageSchema>;
-      })
-    | null = null;
-  if (preview && row.text !== null) {
-    const page = analysisTextPage(row.text, 0, 256, "Recorded event text");
-    if (!page.ok) throw page.error;
-    text_preview = { ...page.value.item, coverage: page.value.coverage };
-  }
-  return {
-    ...fields(row, selected),
-    ...(preview ? { text_preview } : {}),
-    event_id: row.event_id,
-    stream_id: row.stream_id,
-    ordinal: row.ordinal,
-    source: row.source,
-    kind: row.kind,
-    credential_redacted: row.credential_redacted,
+  return (row: PlaywrightTrace["events"][number]) => {
+    let text_preview:
+      | (z.output<typeof analysisTextPageItemSchema> & {
+          coverage: z.output<typeof analysisViewCoverageSchema>;
+        })
+      | null = null;
+    if (preview && row.text !== null) {
+      const page = analysisTextPage(row.text, 0, 256, "Recorded event text");
+      if (!page.ok) throw page.error;
+      text_preview = { ...page.value.item, coverage: page.value.coverage };
+    }
+    return {
+      ...pickFields(row, selected),
+      ...(preview ? { text_preview } : {}),
+      event_id: row.event_id,
+      stream_id: row.stream_id,
+      ordinal: row.ordinal,
+      source: row.source,
+      kind: row.kind,
+      credential_redacted: row.credential_redacted,
+    };
   };
+};
+
+type TraceRowIndex = ReadonlyMap<string, readonly number[]>;
+const traceIndexes = new WeakMap<
+  readonly object[],
+  Map<string, TraceRowIndex>
+>();
+
+const candidateIndices = <Row extends object>(
+  report: PlaywrightTrace,
+  rows: readonly Row[],
+  key: keyof Row & string,
+  filter: ReadonlySet<string>,
+): readonly number[] | undefined => {
+  if (!isImmutableJsonSnapshot(report)) return undefined;
+  if (filter.size === 0) return [];
+  let indexes = traceIndexes.get(rows);
+  if (indexes === undefined) {
+    indexes = new Map();
+    traceIndexes.set(rows, indexes);
+  }
+  let index = indexes.get(key);
+  if (index === undefined) {
+    const built = new Map<string, number[]>();
+    for (let i = 0; i < rows.length; i += 1) {
+      const value = rows[i]?.[key];
+      if (typeof value !== "string") continue;
+      const bucket = built.get(value);
+      if (bucket === undefined) built.set(value, [i]);
+      else bucket.push(i);
+    }
+    index = built;
+    indexes.set(key, index);
+  }
+  return collectCandidateIndices(index, filter);
+};
+
+const collectCandidateIndices = (
+  indexMap: ReadonlyMap<string, readonly number[]>,
+  filter: ReadonlySet<string>,
+): readonly number[] => {
+  if (filter.size === 1) {
+    const only = filter.values().next().value;
+    const list = only === undefined ? undefined : indexMap.get(only);
+    return list ?? [];
+  }
+  const seen = new Set<number>();
+  for (const key of filter) {
+    const list = indexMap.get(key);
+    if (list === undefined) continue;
+    for (let i = 0; i < list.length; i += 1) seen.add(list[i]!);
+  }
+  return [...seen].sort((left, right) => left - right);
+};
+
+const selectCandidateRows = <Source, Row>(
+  rows: readonly Source[],
+  candidateIndices: readonly number[],
+  view: { readonly offset: number; readonly limit: number },
+  matches: ((row: Source, index: number) => boolean) | undefined,
+  project: (row: Source, index: number) => Row,
+): { rows: Row[]; total: number } => {
+  // Exact index hits already supply the total unless another filter applies.
+  return selectViewRows(
+    candidateIndices,
+    view,
+    matches === undefined ? undefined : (index) => matches(rows[index]!, index),
+    (index) => project(rows[index]!, index),
+  );
 };
 
 const selectRows = (
@@ -162,77 +231,163 @@ const selectRows = (
       streams = values(view.stream_ids),
       kinds = values(view.kinds),
       calls = values(view.call_ids);
-    return selectViewRows(
-      report.events,
-      view,
-      (row) =>
-        allows(ids, row.event_id) &&
-        allows(streams, row.stream_id) &&
-        allows(kinds, row.kind) &&
-        allows(calls, row.call_id),
-      (row) => eventFields(row, view),
+    const activeFilters = [ids, streams, kinds, calls].filter(
+      (selection) => selection !== undefined,
     );
+    const matchEvent = (row: PlaywrightTrace["events"][number]): boolean =>
+      allows(ids, row.event_id) &&
+      allows(streams, row.stream_id) &&
+      allows(kinds, row.kind) &&
+      allows(calls, row.call_id);
+    const projectEvent = createEventProjector(view);
+    if (activeFilters.length > 0) {
+      const candidates =
+        ids !== undefined
+          ? candidateIndices(report, report.events, "event_id", ids)
+          : calls !== undefined
+            ? candidateIndices(report, report.events, "call_id", calls)
+            : streams !== undefined
+              ? candidateIndices(report, report.events, "stream_id", streams)
+              : candidateIndices(report, report.events, "kind", kinds!);
+      if (candidates !== undefined) {
+        return selectCandidateRows(
+          report.events,
+          candidates,
+          view,
+          activeFilters.length > 1 ? matchEvent : undefined,
+          projectEvent,
+        );
+      }
+      return selectViewRows(report.events, view, matchEvent, projectEvent);
+    }
+    return selectViewRows(report.events, view, undefined, projectEvent);
   }
   if (view.collection === "members") {
     const ids = values(view.member_ids),
       paths = values(view.paths);
-    return selectViewRows(
-      report.members,
-      view,
-      (row) => allows(ids, row.member_id) && allows(paths, row.path),
-      (row) => ({
-        ...fields(
-          row,
-          view.fields ?? ["declared_bytes", "declared_compressed_bytes"],
-        ),
-        member_id: row.member_id,
-        path: row.path,
-        logical_path: row.logical_path,
-        kind: row.kind,
-        encrypted: row.encrypted,
-        decoded: row.decoded,
-        limitations: row.limitations,
-      }),
-    );
+    const filtered = ids !== undefined || paths !== undefined;
+    const matchMember = (row: PlaywrightTrace["members"][number]): boolean =>
+      allows(ids, row.member_id) && allows(paths, row.path);
+    const memberFields = view.fields ?? [
+      "declared_bytes",
+      "declared_compressed_bytes",
+    ];
+    const projectMember = (row: PlaywrightTrace["members"][number]) => ({
+      ...pickFields(row, memberFields),
+      member_id: row.member_id,
+      path: row.path,
+      logical_path: row.logical_path,
+      kind: row.kind,
+      encrypted: row.encrypted,
+      decoded: row.decoded,
+      limitations: row.limitations,
+    });
+    if (filtered) {
+      const candidates =
+        ids !== undefined
+          ? candidateIndices(report, report.members, "member_id", ids)
+          : candidateIndices(report, report.members, "path", paths!);
+      if (candidates !== undefined) {
+        return selectCandidateRows(
+          report.members,
+          candidates,
+          view,
+          ids !== undefined && paths !== undefined ? matchMember : undefined,
+          projectMember,
+        );
+      }
+      return selectViewRows(report.members, view, matchMember, projectMember);
+    }
+    return selectViewRows(report.members, view, undefined, projectMember);
   }
   if (view.collection === "streams") {
     const ids = values(view.stream_ids);
-    return selectViewRows(
-      report.streams,
-      view,
-      (row) => allows(ids, row.stream_id),
-      (row) => ({
-        ...fields(
-          row,
-          view.fields ?? ["producer", "lines", "supported_events"],
-        ),
-        stream_id: row.stream_id,
-        member_id: row.member_id,
-        role: row.role,
-        version: row.version,
-        state: row.state,
-      }),
-    );
+    const matchStream = (row: PlaywrightTrace["streams"][number]): boolean =>
+      allows(ids, row.stream_id);
+    const streamFields = view.fields ?? [
+      "producer",
+      "lines",
+      "supported_events",
+    ];
+    const projectStream = (row: PlaywrightTrace["streams"][number]) => ({
+      ...pickFields(row, streamFields),
+      stream_id: row.stream_id,
+      member_id: row.member_id,
+      role: row.role,
+      version: row.version,
+      state: row.state,
+    });
+    if (ids !== undefined) {
+      const candidates = candidateIndices(
+        report,
+        report.streams,
+        "stream_id",
+        ids,
+      );
+      if (candidates !== undefined)
+        return selectCandidateRows(
+          report.streams,
+          candidates,
+          view,
+          undefined,
+          projectStream,
+        );
+      return selectViewRows(report.streams, view, matchStream, projectStream);
+    }
+    return selectViewRows(report.streams, view, undefined, projectStream);
   }
   const codes = values(view.codes);
-  return selectViewRows(
-    report.diagnostics,
-    view,
-    (row) => allows(codes, row.code),
-    (row) => ({
-      ...fields(row, view.fields ?? ["message"]),
-      diagnostic_id: row.diagnostic_id,
-      member_id: row.member_id,
-      line: row.line,
-      code: row.code,
-    }),
-  );
+  const matchDiagnostic = (
+    row: PlaywrightTrace["diagnostics"][number],
+  ): boolean => allows(codes, row.code);
+  const diagnosticFields = view.fields ?? ["message"];
+  const projectDiagnostic = (row: PlaywrightTrace["diagnostics"][number]) => ({
+    ...pickFields(row, diagnosticFields),
+    diagnostic_id: row.diagnostic_id,
+    member_id: row.member_id,
+    line: row.line,
+    code: row.code,
+  });
+  if (codes !== undefined) {
+    const candidates = candidateIndices(
+      report,
+      report.diagnostics,
+      "code",
+      codes,
+    );
+    if (candidates !== undefined)
+      return selectCandidateRows(
+        report.diagnostics,
+        candidates,
+        view,
+        undefined,
+        projectDiagnostic,
+      );
+    return selectViewRows(
+      report.diagnostics,
+      view,
+      matchDiagnostic,
+      projectDiagnostic,
+    );
+  }
+  return selectViewRows(report.diagnostics, view, undefined, projectDiagnostic);
 };
 const selectEventText = (
   report: PlaywrightTrace,
   view: Extract<View, { collection: "event-text" }>,
 ) => {
-  const event = report.events.find((row) => row.event_id === view.event_id);
+  const candidates = candidateIndices(
+    report,
+    report.events,
+    "event_id",
+    new Set([view.event_id]),
+  );
+  const event =
+    candidates !== undefined
+      ? candidates.length > 0
+        ? report.events[candidates[0]!]
+        : undefined
+      : report.events.find((row) => row.event_id === view.event_id);
   if (event === undefined || event.text === null)
     return err(
       analysisViewInputError([
@@ -270,15 +425,8 @@ export const projectPlaywrightTraceView = (
     "playwright-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Playwright trace inventories support summary and playwright-trace pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Playwright trace inventories support summary and playwright-trace pages.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
@@ -321,7 +469,7 @@ export const projectPlaywrightTraceView = (
         sha256: context.artifact.sha256,
       },
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "event-text") {
     const text = selectEventText(parsed.value, view);

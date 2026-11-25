@@ -3,8 +3,8 @@ import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,
 } from "./NativeMachoSelectedSlice.js";
-import { parseLipoOutput } from "./parsers/lipo.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
+import { parseLipoOutputResult } from "../domain/apple/lipo.js";
 
 it("binds the lipo row to one FAT entry and its selected thin header", async () => {
   const bytes = Buffer.alloc(256);
@@ -21,10 +21,12 @@ it("binds the lipo row to one FAT entry and its selected thin header", async () 
     bytes.writeUInt32BE(64, at + 12);
     bytes.writeUInt32BE(4, at + 16);
   }
-  const lipo = parseLipoOutput(
+  const parsed = parseLipoOutputResult(
     `Fat header in: /fixture\nfat_magic 0xcafebabe\nnfat_arch 2\narchitecture arm64v8\ncputype CPU_TYPE_ARM64\ncpusubtype CPU_SUBTYPE_ARM64_V8\noffset 64\nsize 64\nalign 2^4\narchitecture arm64\ncputype CPU_TYPE_ARM64\ncpusubtype CPU_SUBTYPE_ARM64_ALL\noffset 128\nsize 64\nalign 2^4\n`,
     "/fixture",
   );
+  if (!parsed.ok) throw parsed.error;
+  const lipo = parsed.value;
   const source = {
     bytes: bytes.length,
     readSlice: async (
@@ -57,9 +59,15 @@ it("binds the lipo row to one FAT entry and its selected thin header", async () 
       header: { ...binary.header, cpuSubtype: 1 },
     }),
   ).toThrow("disagrees");
-  await expect(resolveSelectedMachoSlice(source, selected, 1)).rejects.toThrow(
-    "records exceed",
-  );
+  await expect(
+    resolveSelectedMachoSlice(source, selected, 1),
+  ).rejects.toMatchObject({
+    message: "Mach-O FAT slice records exceed the selected-slice table budget",
+    failure: {
+      kind: "limit",
+      limit: { name: "macho_fat_slice_records", maximum: 1 },
+    },
+  });
   const missingRange = { ...selected, file_offset: null, size: null };
   await expect(
     resolveSelectedMachoSlice(source, missingRange, 2),
@@ -74,6 +82,17 @@ it("binds the lipo row to one FAT entry and its selected thin header", async () 
       2,
     ),
   ).rejects.toThrow("CPU identity is unavailable");
+  // A file that ends inside the table it declares is cut short, measured
+  // against the file's own size.
+  await expect(
+    resolveSelectedMachoSlice({ ...source, bytes: 40 }, selected, 2),
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "truncated",
+      format: "macho",
+      extent: { availableBytes: 40, requiredBytes: 48 },
+    },
+  });
   bytes.writeUInt32BE(0, 12);
   await expect(
     resolveSelectedMachoSlice(source, missingRange, 2),

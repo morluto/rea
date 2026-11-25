@@ -15,15 +15,15 @@ does not establish which server an approval wildcard covers. See
 
 ## Choose the remedy from the observed failure
 
-| Observation                                                     | Meaning and next step                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No REA tools in the active session                              | If REA was installed as a client plugin, follow the plugin section below. Otherwise inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                                                                                                                                                                                                                                                                                     |
-| Missing, malformed or stale registration                        | Prepare a scoped setup plan; apply only authorized changes with backups.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Aligned registration, but no connected tools                    | Restart/reconnect the client. Doctor checks registration; it cannot establish the current agent's connection. Inspect the client's launch error if reconnection fails.                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| MCP connection dropped or REA could not start                   | If the connection drops, retry that call once only when it is safe to repeat or known not to have started. If it may already have changed the target, or the same failure returns, tell the user REA's connection failed and ask them to restart the MCP client. If REA could not start its connection, retry once, then tell the user and ask them to restart the MCP client. Do not retry a startup failure that returns the same unchanged result. Run `rea doctor` when REA could not start or tools stay missing after restart. Doctor cannot restore a live connection by itself. |
-| `MCP tool call requires approval, but approval policy is never` | Codex rejected the call before REA executed it. Do not install an engine or repeat setup to solve this client-policy decision. See the approval section below.                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| REA returns `provider_unavailable` or an unavailable tool entry | Read that operation's provider diagnostics or `binary_session.result.tool_availability`. Expand each group's tool names and inherit the shared client requirements unless overridden. Use the operation's availability, reason, and remediation; a complete tool catalog does not imply every operation is available. Request `{"detail": "complete"}` only for provider diagnostics.                                                                                                                                                                                                   |
-| `rea` is missing in a child shell, or Node is incompatible      | Inspect the actual shell PATH and launcher/runtime. A prefix installation may be absent from a login shell's PATH; this does not establish a broken MCP registration.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Observation                                                     | Meaning and next step                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No REA tools in the active session                              | If REA was installed as a client plugin, follow the plugin section below. Otherwise inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                                                                                   |
+| Missing, malformed or stale registration                        | Prepare a scoped setup plan; apply only authorized changes with backups.                                                                                                                                                                                                                                                                                                              |
+| Aligned registration, but no connected tools                    | Restart/reconnect the client. Doctor checks registration; it cannot establish the current agent's connection. Inspect the client's launch error if reconnection fails.                                                                                                                                                                                                                |
+| MCP connection dropped or REA could not start                   | Follow the [recovery ladder](#recovery-ladder). Doctor cannot restore a live connection by itself.                                                                                                                                                                                                                                                                                    |
+| `MCP tool call requires approval, but approval policy is never` | Codex rejected the call before REA executed it. Do not install an engine or repeat setup to solve this client-policy decision. See the approval section below.                                                                                                                                                                                                                        |
+| REA returns `provider_unavailable` or an unavailable tool entry | Read that operation's provider diagnostics or `binary_session.result.tool_availability`. Expand each group's tool names and inherit the shared client requirements unless overridden. Use the operation's availability, reason, and remediation; a complete tool catalog does not imply every operation is available. Request `{"detail": "complete"}` only for provider diagnostics. |
+| `rea` is missing in a child shell, or Node is incompatible      | Inspect the actual shell PATH and launcher/runtime. A prefix installation may be absent from a login shell's PATH; this does not establish a broken MCP registration.                                                                                                                                                                                                                 |
 
 If the client cannot launch its shell/sandbox helper or read the installed skill,
 inspect its launch diagnostic. For example, Codex can refuse helper aliases when
@@ -60,14 +60,10 @@ When configuration is not editable, report the setting needed or use an
 authorized CLI fallback. Do not silently broaden permissions or switch targets.
 
 A returned REA `provider_timeout` instead means the **server/provider** reached
-its deadline. Follow its `remediation.action`, reuse accessible partial Evidence,
-and resolve reported incomplete cleanup before retrying. Change a request
-field or a `REA_*` setting only when the returned remediation explicitly
-recommends that change. Restart REA when that text says the value is read at
-startup. A mention that a control does not raise the deadline is not a
-recommendation to change it. Do not invent a setting the remediation does not
-name. Raising only the client deadline does not change
-this server budget. For static JavaScript,
+its deadline. Follow its `remediation.action` under the
+[recovery ladder](#recovery-ladder) rules, reuse accessible partial Evidence,
+and resolve reported incomplete cleanup before retrying. Raising only the client
+deadline does not change this server budget. For static JavaScript,
 `analysis_timeout_ms` (CLI `rea analyze-javascript-application <path>
 --analysis-timeout-ms <milliseconds>`) controls each source's
 startup, analysis and transfer deadline in **milliseconds**. Increase that
@@ -108,29 +104,34 @@ is not a recommendation to change it. Do not invent a setting. Host memory and
 - Capacity, when the result is `resource_constraint` and `retryable` is true:
   wait for the active admission to finish, then retry within the reported
   limits. Do not restart REA to free the slot.
-- `configuration_invalid`: correct the named setting in the environment that
-  starts REA (the shell or the MCP registration), then restart REA. Run
-  `rea doctor` to see the `runtime-configuration:` check. Re-run `rea setup`
-  for that client when the registration must carry the new setting, then
-  reconnect.
+- `configuration_invalid`: when the error reports `update_mode: "runtime"`,
+  call `update_analysis_settings` for that setting. When it reports
+  `update_mode: "parameter"`, change that call's argument; the setter does not
+  accept it. Otherwise correct the named setting in the environment that starts
+  REA (the shell or the MCP registration) and start REA again. Run `rea doctor`
+  to see the `runtime-configuration:` check. Re-run `rea setup` for that client
+  when the registration must carry the new setting, then reconnect.
 - `invalid_request`: correct the reported fields from the current schema. Do
   not repeat the unchanged call.
 
 ## REA installed as a client plugin
 
-A Claude Code or Codex plugin owns its `rea` server and this skill. Doctor's
-`--client` and `--skill` checks and `rea setup` read and write only
-setup-owned state, so for a plugin-only install they report `missing`, and
-applying setup would add a second `rea` server. If this skill was loaded from
-a plugin, or the client lists a `rea` plugin, do not prepare a setup plan for
-missing tools. Instead:
+A Claude Code, Codex, or Cursor Marketplace plugin owns its `rea` server and
+this skill. Doctor's `--client` and `--skill` checks and `rea setup` read and
+write only setup-owned state, so for a plugin-only install they report
+`missing`, and applying setup would add a second `rea` server. If this skill
+was loaded from a plugin, or the client lists a `rea` plugin, do not prepare a
+setup plan for missing tools. Instead:
 
 - Check that the plugin is installed and enabled with the client's own
   listing: `claude plugin list` and `/mcp` in Claude Code, `codex plugin list`
-  in Codex.
+  in Codex, and Cursor's plugin settings for a Marketplace install.
 - Restart or reconnect the client, then read its launch error for the `rea`
-  server if tools are still absent. The plugin starts its bundled runtime; a missing build or version mismatch
-  requires a reinstall, or a fresh build when developing from source.
+  server if tools are still absent. Claude Code and Codex start the plugin's
+  bundled runtime; a missing build or version mismatch requires a reinstall,
+  or a fresh build when developing from source. A Cursor Marketplace install
+  starts `npx` at the version pinned in the plugin's `mcp.json`. A failed
+  download needs network access to that published version.
 - Check analysis engines through the connected server's
   `binary_session.result.tool_availability`. `rea doctor --provider <id> --json`
   from a shell reports that shell's environment, which can differ from the
@@ -152,9 +153,12 @@ rea setup --client codex --dry-run --json
 ```
 
 Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
-`cursor`, `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`,
-`copilot_cli`, `commandcode`, `qwen_code`, `vscode`, `trae`, `grok_build`, `omp`, `pi`,
-`hermes`, `qoder`, `droid`, `zcode`, `dsh`, `freebuff`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
+`cursor`, `codebuddy`, `cline`, `gemini_cli`, `windsurf`, `devin`, `opencode`,
+`antigravity`, `copilot_cli`, `commandcode`, `qwen_code`, `kimi`, `vscode`, `trae`,
+`workbuddy`, `lm_studio`, `grok_build`, `omp`, `pi`, `hermes`, `qoder`, `droid`,
+`zcode`, `dsh`, `freebuff`, `cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`,
+`cline_cursor`, `cline_windsurf`, `kiro`, `mastracode`, `zed`, `amp`, `mcporter`, `fx`, `junie`, `goose`,
+`kilo`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
 For unsupported clients, use manual stdio registration with the selected
 installation’s absolute runtime and entry script, or continue through the CLI.

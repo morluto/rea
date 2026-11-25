@@ -6,8 +6,12 @@ export function encodeCliSessionFrame(value: unknown): Buffer;
 
 /**
  * Parse complete frames from a byte stream. An oversized or malformed frame
- * fails the reader instead of resynchronizing on a later length.
+ * fails the reader instead of resynchronizing on a later length. Call finish
+ * at EOF to require the stream to end on a frame boundary.
  */
 export function createCliSessionFrameReader(
   onFrame: (value: unknown) => void,
-): (chunk: Buffer | string) => void;
+): {
+  (chunk: Buffer | string): void;
+  finish(): void;
+};

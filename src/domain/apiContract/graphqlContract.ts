@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { apiContractArtifactSchema } from "./apiContract.js";
 
@@ -125,9 +126,16 @@ export const graphqlContractSchema = z.strictObject({
   }),
   source_coverage: z.strictObject({
     status: z.enum(["complete-within-scope", "partial"]),
-    schema_declarations: z.enum(["complete", "partial", "unavailable"]),
+    schema_declarations: z.enum([
+      ...knownCoverageStatusSchema.options,
+      "unavailable",
+    ]),
     schema_model: z.enum(["constructed", "unavailable"]),
-    operations: z.enum(["complete", "partial", "unavailable", "not-supplied"]),
+    operations: z.enum([
+      ...knownCoverageStatusSchema.options,
+      "unavailable",
+      "not-supplied",
+    ]),
     operation_validation: z.literal("field-resolution-only"),
     endpoint_behavior: z.literal("unknown"),
   }),

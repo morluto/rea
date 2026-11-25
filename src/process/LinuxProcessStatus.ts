@@ -32,10 +32,39 @@ export const parseLinuxProcessIds = (
 /**
  * Why Linux withholds `/proc/<pid>/environ` from a caller without
  * CAP_SYS_PTRACE (PTRACE_MODE_READ_FSCREDS): the target's real, effective or
- * saved UID/GID differs from the caller's, or the target is non-dumpable, which
- * procfs reports as root ownership of `/proc/<pid>/environ`.
+ * saved UID/GID differs from the caller's, the target is non-dumpable (which
+ * procfs reports as root ownership of `/proc/<pid>/environ`), or the target
+ * occupies another user namespace.
  */
-export type LinuxEnvironmentRestriction = "credentials" | "non-dumpable";
+export type LinuxEnvironmentRestriction =
+  | "credentials"
+  | "non-dumpable"
+  | "user-namespace";
+
+/** Different readable UID maps prove distinct namespaces; equal maps do not prove sameness. */
+export const linuxUidMapsDiffer = (
+  target: string | undefined,
+  caller: string | undefined,
+): boolean | undefined => {
+  const normalized = (value: string | undefined): string | undefined => {
+    if (value === undefined || value.trim() === "") return undefined;
+    const rows: string[] = [];
+    for (const line of value.trim().split("\n")) {
+      const match = /^\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s*$/u.exec(line);
+      if (match === null) return undefined;
+      const numbers = match.slice(1).map(Number);
+      if (numbers.some((number) => !Number.isSafeInteger(number)))
+        return undefined;
+      rows.push(numbers.join(" "));
+    }
+    return rows.join("\n");
+  };
+  const targetMap = normalized(target);
+  const callerMap = normalized(caller);
+  return targetMap === undefined || callerMap === undefined
+    ? undefined
+    : targetMap !== callerMap;
+};
 
 /** Derive the kernel's environment restriction from one generation's procfs facts. */
 export const linuxEnvironmentRestriction = (facts: {
@@ -44,8 +73,16 @@ export const linuxEnvironmentRestriction = (facts: {
   readonly procfsOwnerUid: number | undefined;
   readonly callerUid: number | undefined;
   readonly callerGid: number | undefined;
+  readonly userNamespaceDiffers?: boolean | undefined;
 }): LinuxEnvironmentRestriction | undefined => {
-  const { uids, gids, procfsOwnerUid, callerUid, callerGid } = facts;
+  const {
+    uids,
+    gids,
+    procfsOwnerUid,
+    callerUid,
+    callerGid,
+    userNamespaceDiffers,
+  } = facts;
   if (
     (callerUid !== undefined &&
       uids.slice(0, 3).some((uid) => uid !== callerUid)) ||
@@ -54,7 +91,7 @@ export const linuxEnvironmentRestriction = (facts: {
       gids.slice(0, 3).some((gid) => gid !== callerGid))
   )
     return "credentials";
-  return procfsOwnerUid !== undefined && procfsOwnerUid !== uids[1]
-    ? "non-dumpable"
-    : undefined;
+  if (procfsOwnerUid !== undefined && procfsOwnerUid !== uids[1])
+    return "non-dumpable";
+  return userNamespaceDiffers === true ? "user-namespace" : undefined;
 };

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
@@ -10,7 +10,7 @@ import {
   artifactMcpResult,
   withArtifactMcp,
 } from "./lib/artifact-e2e.mjs";
-import { createCanonicalTemporaryDirectory } from "./lib/canonical-temporary-directory.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const cancellation = new AbortController();
 let shutdownSignal;
@@ -47,15 +47,14 @@ const callerLines = new Set(
     return matches[0];
   }),
 );
-const allocatedDirectory =
-  await createCanonicalTemporaryDirectory("rea-pascal-calls-");
-let directory = allocatedDirectory.path;
+const directoryFixture = await VerifierFixture.open({
+  prefix: "rea-pascal-calls-",
+  private: false,
+});
+let directory = directoryFixture.path;
+// The package command owner releases the fixture after its commands close.
 const commands = await createPackageVerifierCommands({
-  workspace: {
-    path: allocatedDirectory.allocatedPath,
-    close: () =>
-      rm(allocatedDirectory.allocatedPath, { recursive: true, force: true }),
-  },
+  workspace: { path: directory, close: () => directoryFixture.release() },
 });
 const execute = (command, arguments_, { timeout }) =>
   commands.exec(command, arguments_, {

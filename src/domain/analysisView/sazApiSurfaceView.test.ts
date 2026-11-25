@@ -6,7 +6,11 @@ import {
 import type { JsonValue } from "../jsonValue.js";
 import { projectAnalysisView } from "./analysisView.js";
 
-const project = (reported: JsonValue[], sensitiveValueCount = 0) => {
+const project = (
+  reported: JsonValue[],
+  sensitiveValueCount = 0,
+  includeRequestHeaderNames?: boolean,
+) => {
   const capture = analysisViewCaptureFixture();
   capture.format = "saz";
   capture.artifact.path = "/fixtures/surface.saz";
@@ -30,7 +34,14 @@ const project = (reported: JsonValue[], sensitiveValueCount = 0) => {
       limitations: [],
       parameters: { sensitive_value_count: sensitiveValueCount },
     },
-    { kind: "api-surface", offset: 0, limit: 50 },
+    {
+      kind: "api-surface",
+      offset: 0,
+      limit: 50,
+      ...(includeRequestHeaderNames === undefined
+        ? {}
+        : { include_request_header_names: includeRequestHeaderNames }),
+    },
   );
 };
 const request = { method: "GET", url: "https://api.test/items/1?omit=value" };
@@ -235,4 +246,70 @@ it("keeps the refusal for unretained sensitive declarations on SAZ parents", () 
       reason: "sensitive_values_unretained",
     },
   });
+});
+
+it("feeds SAZ request header names to the selected facet without values", () => {
+  const result = project(
+    [
+      {
+        request: {
+          ...request,
+          headers: [
+            { name: "Authorization", value: null },
+            { name: "Accept", value: "text/html" },
+            { name: "Cookie", value: "session=secret-cookie-value" },
+          ],
+        },
+        response: {
+          status: "200",
+          headers: [
+            { name: "Content-Type", value: "application/json" },
+            { name: "Set-Cookie", value: "refresh=secret-set-cookie-value" },
+          ],
+        },
+      },
+    ],
+    0,
+    true,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      groups: [
+        {
+          request_header_names: {
+            request_headers: [
+              { name: "Accept", record_ordinals: [0] },
+              { name: "Authorization", record_ordinals: [0] },
+              { name: "Cookie", record_ordinals: [0] },
+            ],
+            cookie_names: [],
+            set_cookie_names: [],
+          },
+        },
+      ],
+      limitations: expect.arrayContaining([
+        "SAZ captures carry cookies as request and response header fields, so SAZ groups list request header names only and the cookie and set-cookie name lists stay empty.",
+      ]),
+      unknowns: [],
+    },
+  });
+  expect(JSON.stringify(result)).not.toContain("secret-cookie-value");
+  expect(JSON.stringify(result)).not.toContain("secret-set-cookie-value");
+  expect(JSON.stringify(result)).not.toContain("text/html"); // header values stay unread
+});
+
+it("omits the header-name facet from SAZ groups by default", () => {
+  const result = project([
+    {
+      request: {
+        ...request,
+        headers: [{ name: "Authorization", value: null }],
+      },
+      response: { status: "200", headers: [] },
+    },
+  ]);
+  expect(result).toMatchObject({ ok: true, value: { groups: [{}] } });
+  expect(JSON.stringify(result)).not.toContain("request_header_names");
+  expect(JSON.stringify(result)).not.toContain("SAZ captures carry cookies");
 });

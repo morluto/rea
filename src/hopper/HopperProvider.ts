@@ -1,10 +1,18 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
+
+import { HOPPER_BRIDGE_SCRIPT_URL } from "./HopperBridgeSources.js";
 import { accessSync, constants, statSync } from "node:fs";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type {
   AnalysisClient,
   AnalysisOperation,
@@ -16,19 +24,18 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { selectedHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err, ok } from "../domain/result.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -43,19 +50,32 @@ import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
+import {
+  HopperReplyContractError,
+  hopperBridgeMethod,
+  hopperReplyJson,
+  isHopperOperation,
+  type HopperReplyMethod,
+} from "./HopperReplyContracts.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
 import {
   reconcileHopperCallers,
   reconciliationChildOptions,
+  type HopperCallerNativeReply,
+  hopperAddressReferencesReason,
+  projectHopperAddressReferences,
 } from "./HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
 import { hopperCapabilities } from "./HopperProviderCapabilities.js";
 import { HOPPER_PROVIDER_IDENTITY } from "./HopperProviderMetadata.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {
   private readonly environment: Readonly<NodeJS.ProcessEnv>;
+  /** The configured launcher, else the one automatic discovery selected. */
+  readonly #launcherSpelling: string;
   readonly #launcherPath: string;
   readonly #ownedResources = new ArtifactResourceScope();
   readonly #inspectionOwner: RetainedResourceScope = {
@@ -78,11 +98,21 @@ export class HopperProvider implements AnalysisProviderCandidate {
     private readonly config: AppConfig,
     private readonly logger: Logger,
     environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
+    /**
+     * Linux launcher authentication from Hopper setup, supplied by
+     * composition. Without it a Linux launch is refused before Hopper runs.
+     */
+    private readonly linuxLauncherVerification?: LinuxHopperLauncherVerification,
   ) {
     this.environment = snapshotEnvironment(environment, platform);
-    // Bind lookup once; retain config's selected spelling for diagnostics.
-    this.#launcherPath = absoluteCallerPath(config.hopperLauncherPath);
+    this.#launcherSpelling = selectedHopperLauncherPath(
+      config.hopperLauncherPath,
+      platform,
+      environment,
+    );
+    // Bind lookup once; retain the selected spelling for diagnostics.
+    this.#launcherPath = absoluteCallerPath(this.#launcherSpelling);
   }
 
   identity(): ProviderIdentity {
@@ -98,7 +128,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
 
   inspectAvailability(): ProviderAvailability {
     const diagnostics = {
-      launcher_path: this.config.hopperLauncherPath,
+      launcher_path: this.#launcherSpelling,
       platform: this.platform,
     };
     if (this.platform !== "darwin" && this.platform !== "linux")
@@ -127,7 +157,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       return {
         status: "unavailable",
         code: "executable_missing",
-        reason: `Hopper launcher is missing or not executable: ${this.config.hopperLauncherPath}`,
+        reason: `Hopper launcher is missing or not executable: ${this.#launcherSpelling}`,
         remediation:
           "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH to an executable Hopper launcher in the environment that starts REA, then restart REA.",
         diagnostics,
@@ -146,6 +176,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         status: "unsupported",
         code: "target_kind_unsupported",
         reason: `Hopper cannot directly analyze ${target.kind} targets.`,
+        diagnostics,
+      };
+    if (target.kind === "database" && target.databaseEngine === "ida")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "Hopper cannot open IDA databases. Select the ida provider or open the original executable.",
         diagnostics,
       };
     if (target.kind === "database" && this.platform === "darwin")
@@ -228,7 +266,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       const failure = new ProviderCleanupError(
         HOPPER_PROVIDER_IDENTITY.id,
         this.#ownedResources.cleanupResources,
-        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { reason: errorMessage(cause) },
         { cause, operation: "close_owned_resources" },
       );
       bindArtifactFileCleanup(cause, failure);
@@ -281,7 +319,10 @@ export class HopperProvider implements AnalysisProviderCandidate {
         : "thin";
     const derivedLoaderArgs = hopperLoaderArgsForTarget(
       target,
-      container === "thin" || container === "fat32" || container === "fat64"
+      container === "thin" ||
+        container === "fat" ||
+        container === "fat32" ||
+        container === "fat64"
         ? container
         : undefined,
     );
@@ -292,43 +333,54 @@ export class HopperProvider implements AnalysisProviderCandidate {
       };
     const executionProvider = profile?.provider ?? HOPPER_PROVIDER_IDENTITY;
     const client = new HopperClient({
-      launcher: new HopperApplicationLauncher({
-        environment: this.environment,
-        launcherPath: this.#launcherPath,
-        targetPath: target.path,
-        targetKind: target.kind,
-        ...(target.kind === "executable"
-          ? { targetSha256: target.sha256 }
-          : {}),
-        ...(preparedImage === undefined
-          ? {}
-          : {
-              preparedImage: {
-                image: preparedImage,
-                sourceSha256: target.sha256,
-              },
-            }),
-        loaderArgs:
-          this.config.hopperLoaderArgs.length > 0
-            ? this.config.hopperLoaderArgs
-            : derivedLoaderArgs.value,
-        bridgeScriptPath: fileURLToPath(
-          new URL("../../bridge/hopper_bridge.py", import.meta.url),
-        ),
-        bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
-        ...(this.platform === "linux"
-          ? {
-              launchMode: "verified_linux_demo" as const,
-              demoHelperPath: fileURLToPath(
-                new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
-              ),
-            }
-          : { launchMode: "native" as const }),
-      }),
+      launcher: new HopperApplicationLauncher(
+        {
+          environment: this.environment,
+          launcherPath: this.#launcherPath,
+          targetPath: target.path,
+          targetKind: target.kind,
+          ...(target.kind === "executable"
+            ? { targetSha256: target.sha256 }
+            : {}),
+          ...(preparedImage === undefined
+            ? {}
+            : {
+                preparedImage: {
+                  image: preparedImage,
+                  sourceSha256: target.sha256,
+                },
+              }),
+          loaderArgs:
+            this.config.hopperLoaderArgs.length > 0
+              ? this.config.hopperLoaderArgs
+              : derivedLoaderArgs.value,
+          bridgeScriptPath: fileURLToPath(HOPPER_BRIDGE_SCRIPT_URL),
+          bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
+          ...(this.platform === "linux"
+            ? {
+                launchMode: "verified_linux_demo" as const,
+                demoHelperPath: fileURLToPath(
+                  new URL("../../scripts/hopper-demo-x11.py", import.meta.url),
+                ),
+              }
+            : { launchMode: "native" as const }),
+        },
+        {
+          platform: this.platform,
+          ...(this.linuxLauncherVerification === undefined
+            ? {}
+            : {
+                verifyLinuxLauncher: this.linuxLauncherVerification.inspect,
+                retryPublisherCleanup:
+                  this.linuxLauncherVerification.retryCleanup,
+              }),
+        },
+      ),
       ...(context === undefined ? {} : { runId: context.runId }),
-      startupTimeoutMs: this.config.hopperStartupTimeoutMs,
       readStartupTimeoutMs: () => this.config.hopperStartupTimeoutMs,
+      readStartupTimeoutSource: () => this.config.hopperStartupTimeoutSource,
       bridgeMaxRequestBytes: this.config.bridgeMaxRequestBytes,
+      bridgeMaxReplyBytes: this.config.bridgeMaxReplyBytes,
       logger: this.logger.child({ layer: "bridge" }),
       onDiagnostic: (diagnostic) =>
         this.logger.info(diagnostic, "Hopper bridge reported a diagnostic"),
@@ -411,82 +463,130 @@ export class HopperProvider implements AnalysisProviderCandidate {
       execute: async (operation, parameters, options) => {
         try {
           return await sourceReads.run(async () => {
+            if (!isHopperOperation(operation))
+              return err(
+                new AnalysisCapabilityUnavailableError(
+                  "hopper",
+                  operation,
+                  "Hopper does not serve this operation.",
+                ),
+              );
             const willReconcile =
               operation === "procedure_callers" ||
               operation === "analyze_function" ||
               (operation === "procedure_references" &&
                 parameters.direction === "incoming");
+            const callOptions = {
+              ...(willReconcile
+                ? reconciliationChildOptions(options)
+                : options),
+              operation,
+            };
+            // The client validates each reply against its method contract.
+            const call = <M extends HopperReplyMethod>(method: M) =>
+              client.callTool(method, parameters, callOptions);
+            if (operation === "list_names") {
+              const names = await call("list_names");
+              if (!names.ok) return names;
+              const inventory = projectHopperNameInventory(names.value);
+              return ok(
+                projectExecution(
+                  operation,
+                  inventory.result,
+                  inventory.changed ? names.value : null,
+                ),
+              );
+            }
+            if (operation === "address_to_file_offset") {
+              const offset = await call("address_to_file_offset");
+              if (!offset.ok) return offset;
+              const mapped = await mapHopperFileOffset(target, offset.value, {
+                ...(options?.signal === undefined
+                  ? {}
+                  : { signal: options.signal }),
+                retainFailedClose: retainSourceDescriptor,
+                onCleanupMarker: (marker) => {
+                  if (!(marker.cause instanceof RegularFileCleanupFailure))
+                    return;
+                  sourceLeases
+                    .get(marker.cause.owner)
+                    ?.bindCleanupError(marker);
+                },
+              });
+              if (!mapped.ok) return mapped;
+              return ok(
+                projectExecution(operation, mapped.value, offset.value),
+              );
+            }
+            if (willReconcile) {
+              const native =
+                operation === "procedure_callers"
+                  ? await call("rea_caller_base")
+                  : operation === "analyze_function"
+                    ? await call("analyze_function")
+                    : await call("procedure_references");
+              // A reply outside its contract keeps its raw reply as partial
+              // reconciliation Evidence; other failures return directly.
+              // An address outside every procedure has no forward callers to
+              // reconcile: Hopper's recorded references are the observation.
+              if (
+                native.ok &&
+                "target_kind" in native.value &&
+                native.value.target_kind === "address"
+              )
+                return ok(
+                  projectExecution(
+                    operation,
+                    projectHopperAddressReferences(native.value),
+                    // Retain the target identity and completeness facts.
+                    hopperReplyJson(native.value),
+                    hopperAddressReferencesReason(native.value),
+                  ),
+                );
+              let nativeReply: Result<
+                HopperCallerNativeReply,
+                HopperReplyContractError
+              >;
+              if (native.ok) nativeReply = native;
+              else if (native.error instanceof HopperReplyContractError)
+                nativeReply = err(native.error);
+              else
+                return operation === "procedure_callers"
+                  ? err(
+                      analysisClientFailureForOperation(
+                        native.error,
+                        "hopper",
+                        operation,
+                      ),
+                    )
+                  : native;
+              const reconciled = await reconcileHopperCallers(
+                client,
+                operation,
+                parameters,
+                nativeReply,
+                options,
+                this.config.hopperCallerScanBudget,
+              );
+              if (!reconciled.ok) return reconciled;
+              return ok(
+                projectExecution(
+                  operation,
+                  reconciled.value.result,
+                  reconciled.value.rawResult,
+                  reconciled.value.reason,
+                ),
+              );
+            }
             const result =
               (operation === "search_strings" ||
                 operation === "search_procedures") &&
               parameters.mode === "regex"
                 ? await regexSearch.execute(operation, parameters, options)
-                : await client.callTool(
-                    operation === "procedure_callers"
-                      ? "rea_caller_base"
-                      : operation,
-                    parameters,
-                    willReconcile
-                      ? reconciliationChildOptions(options)
-                      : options,
-                  );
-            if (!result.ok)
-              return operation === "procedure_callers"
-                ? err(
-                    analysisClientFailureForOperation(
-                      result.error,
-                      "hopper",
-                      operation,
-                    ),
-                  )
-                : result;
-            const mapped =
-              operation === "address_to_file_offset"
-                ? await mapHopperFileOffset(target, result.value, {
-                    ...(options?.signal === undefined
-                      ? {}
-                      : { signal: options.signal }),
-                    retainFailedClose: retainSourceDescriptor,
-                    onCleanupMarker: (marker) => {
-                      if (!(marker.cause instanceof RegularFileCleanupFailure))
-                        return;
-                      sourceLeases
-                        .get(marker.cause.owner)
-                        ?.bindCleanupError(marker);
-                    },
-                  })
-                : result;
-            if (!mapped.ok) return mapped;
-            const reconciled =
-              operation === "procedure_callers" ||
-              operation === "analyze_function" ||
-              (operation === "procedure_references" &&
-                parameters.direction === "incoming")
-                ? await reconcileHopperCallers(
-                    client,
-                    operation,
-                    parameters,
-                    mapped.value,
-                    options,
-                    this.config.hopperCallerScanBudget,
-                  )
-                : undefined;
-            if (reconciled !== undefined && !reconciled.ok) return reconciled;
-            const reconciledResult = reconciled?.value.result ?? mapped.value;
-            const inventory =
-              operation === "list_names"
-                ? projectHopperNameInventory(reconciledResult)
-                : { result: reconciledResult, changed: false };
+                : await call(hopperBridgeMethod(operation));
+            if (!result.ok) return result;
             return ok(
-              projectExecution(
-                operation,
-                inventory.result,
-                reconciled?.value.rawResult ??
-                  (inventory.changed || mapped !== result
-                    ? result.value
-                    : null),
-                reconciled?.value.reason,
-              ),
+              projectExecution(operation, hopperReplyJson(result.value)),
             );
           });
         } catch (cause: unknown) {
@@ -544,11 +644,11 @@ export class HopperProvider implements AnalysisProviderCandidate {
         return closed.ok
           ? err(descriptors)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 closed.error,
                 descriptors,
                 "close_binary",
-              ).bindCleanupDependencies([closed.error, descriptors]),
+              ),
             );
       },
     };

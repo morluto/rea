@@ -1,9 +1,9 @@
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
 import type { enhancedInputSchemas } from "../../contracts/enhancedInputs.js";
 import { interfaceBuilderAnalysisSchema } from "../../domain/apple/interfaceBuilderGraph.js";
@@ -16,7 +16,7 @@ import {
 import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
 import { parseProcedureAddress } from "../ProcedureAddressResolution.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
   renderSourceLimitations,
@@ -63,11 +63,11 @@ export const traceNativeUiAction = async (
         : uiExecution.error;
     if (secondary.cleanupIncomplete)
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           primary,
           secondary,
           "trace_native_ui_action",
-        ).bindCleanupDependencies([primary, secondary]),
+        ),
       );
     if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
     return err(primary);
@@ -77,8 +77,8 @@ export const traceNativeUiAction = async (
     (uiExecution.error._tag === "AnalysisCancelledError" ||
       uiExecution.error.cleanupIncomplete)
   )
-    return err(uiExecution.error);
-  if (!metadataExecution.ok) return err(metadataExecution.error);
+    return uiExecution;
+  if (!metadataExecution.ok) return metadataExecution;
   const metadata = nativeDispatchMetadataResultSchema.parse(
     metadataExecution.value,
   );
@@ -93,6 +93,8 @@ export const traceNativeUiAction = async (
 
   let graph = emptyGraph(targetSha256, metadata.provider);
   const coverage = [];
+  let uiOutputBoundReached = false;
+  let sourceGraphTruncated = false;
   if (uiExecution.ok) {
     const decoded = interfaceBuilderAnalysisSchema.safeParse(
       uiExecution.value.result,
@@ -115,27 +117,31 @@ export const traceNativeUiAction = async (
     const archiveDecode = decoded.data.graph.coverage.find(
       (facet) => facet.facet === "archive_decode",
     );
-    const documentsFound = decoded.data.documents.length > 0;
-    coverage.push({
-      facet: "interface_builder_archives",
-      status:
-        archiveDecode?.status === "partial" ||
-        archiveDecode?.status === "complete" ||
-        archiveDecode?.status === "unsupported"
-          ? archiveDecode.status
-          : documentsFound
-            ? "complete"
-            : "unsupported",
-      reason:
-        archiveDecode?.reason ??
-        (documentsFound
-          ? null
-          : "no_compiled_interface_builder_archives_found"),
-      examined: archiveDecode?.examined ?? decoded.data.documents.length,
-      omitted: archiveDecode?.omitted ?? 0,
-    });
+    coverage.push(
+      archiveDecode !== undefined
+        ? { ...archiveDecode, facet: "interface_builder_archives" }
+        : decoded.data.documents.length > 0
+          ? // Documents were found but their decode coverage was not
+            // reported: how many archives decoded is unknown, not complete.
+            {
+              facet: "interface_builder_archives",
+              status: "unknown",
+              reason: "archive_decode_coverage_not_reported",
+              examined: decoded.data.documents.length,
+              omitted: null,
+            }
+          : {
+              facet: "interface_builder_archives",
+              status: "unsupported",
+              reason: "no_compiled_interface_builder_archives_found",
+              examined: 0,
+              omitted: 0,
+            },
+    );
+    sourceGraphTruncated = graph.truncated;
     const bounded = boundUiGraph(graph, input.max_nodes, input.max_edges);
     graph = bounded.graph;
+    uiOutputBoundReached = bounded.truncated;
     if (bounded.truncated)
       coverage.push({
         facet: "interface_builder_graph",
@@ -205,7 +211,7 @@ export const traceNativeUiAction = async (
       edges: [],
       unresolved: [],
       reached_depth: 0,
-      truncated: graph.truncated,
+      truncated: graph.truncated || uiOutputBoundReached,
       reason: selected.reason,
       coverage,
       limitations: [
@@ -213,7 +219,7 @@ export const traceNativeUiAction = async (
       ],
     };
     return ok(
-      jsonValueSchema.parse(nativeInvestigationTraceSchema.parse(trace)),
+      ownedJsonValueSchema.parse(nativeInvestigationTraceSchema.parse(trace)),
     );
   }
 
@@ -257,7 +263,7 @@ export const traceNativeUiAction = async (
     nodes: expanded.nodes,
     edges: expanded.edges,
     coverage: [...graph.coverage, ...coverage],
-    truncated: graph.truncated || expanded.truncated,
+    truncated: sourceGraphTruncated,
   });
   const trace = traceNativeInvestigationGraph(finalGraph, {
     start: selected.nodeId,
@@ -268,19 +274,40 @@ export const traceNativeUiAction = async (
       max_edges: input.max_edges,
     },
   });
+  // Expansion starts from the bounded initial trace; its omitted relationships
+  // cannot be recovered merely by tracing that reduced graph again.
+  const initialCutoffReason =
+    initial.truncated && initial.reason !== "source_graph_truncated"
+      ? initial.reason
+      : null;
+  const reason =
+    trace.reason !== null && trace.reason !== "source_graph_truncated"
+      ? trace.reason
+      : (initialCutoffReason ??
+        (uiOutputBoundReached ? "native_trace_output_bound_reached" : null) ??
+        (expanded.truncated ? "native_call_traversal_bound_reached" : null) ??
+        trace.reason);
   return ok(
-    jsonValueSchema.parse(
+    ownedJsonValueSchema.parse(
       nativeInvestigationTraceSchema.parse({
         ...trace,
-        truncated: trace.truncated || expanded.truncated || graph.truncated,
-        reason:
-          expanded.truncated && trace.reason === null
-            ? "native_call_traversal_bound_reached"
-            : graph.truncated && trace.reason === null
-              ? "native_trace_output_bound_reached"
-              : trace.reason,
+        truncated:
+          trace.truncated ||
+          initial.truncated ||
+          expanded.truncated ||
+          uiOutputBoundReached,
+        reason,
         limitations: [
           ...trace.limitations,
+          ...(initialCutoffReason !== null && initialCutoffReason !== reason
+            ? [
+                `The initial UI graph trace stopped traversal: ${initialCutoffReason}.`,
+              ]
+            : []),
+          ...(expanded.truncated &&
+          reason !== "native_call_traversal_bound_reached"
+            ? ["Native call expansion stopped at a traversal bound."]
+            : []),
           ...renderSourceLimitations(expanded.limitations),
         ],
       }),
@@ -365,22 +392,30 @@ const resolveUiAction = (
       reason: "action_selector_matches_multiple_ui_connections",
     };
 
-  const objectMatches = graph.nodes.filter(
-    (node) =>
+  const objectMatchIds = new Set<string>();
+  for (const node of graph.nodes) {
+    if (
       ["control", "view", "view_controller", "scene"].includes(node.kind) &&
       (node.id === query ||
-        node.attributes.interface_builder_object_id === query),
-  );
-  const actionIds = new Set(
-    graph.edges.flatMap((edge) =>
-      edge.resolution === "observed" &&
-      edge.relation === "target_action" &&
-      objectMatches.some(({ id }) => edge.from === id) &&
-      graph.nodes.some(({ id, kind }) => id === edge.to && kind === "action")
-        ? [edge.to]
-        : [],
-    ),
-  );
+        node.attributes.interface_builder_object_id === query)
+    )
+      objectMatchIds.add(node.id);
+  }
+  const actionIds = new Set<string>();
+  if (objectMatchIds.size > 0) {
+    const actionNodeIds = new Set<string>();
+    for (const node of graph.nodes)
+      if (node.kind === "action") actionNodeIds.add(node.id);
+    for (const edge of graph.edges) {
+      if (
+        edge.resolution === "observed" &&
+        edge.relation === "target_action" &&
+        objectMatchIds.has(edge.from) &&
+        actionNodeIds.has(edge.to)
+      )
+        actionIds.add(edge.to);
+    }
+  }
   if (actionIds.size === 1)
     return { nodeId: [...actionIds][0] ?? null, candidates: [], reason: null };
   if (actionIds.size > 1)
@@ -592,23 +627,30 @@ const graphNodeDepths = (
   >["edges"][number][],
 ): ReadonlyMap<string, number> => {
   const known = new Set(nodes.map(({ id }) => id));
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (
+      edge.resolution === "unresolved" ||
+      edge.to === null ||
+      !known.has(edge.to)
+    )
+      continue;
+    const targets = outgoing.get(edge.from);
+    if (targets === undefined) outgoing.set(edge.from, [edge.to]);
+    else targets.push(edge.to);
+  }
   const depths = new Map([[start, 0]]);
   const queue = [start];
   for (let index = 0; index < queue.length; index += 1) {
     const current = queue[index];
     if (current === undefined) continue;
     const depth = depths.get(current) ?? 0;
-    for (const edge of edges) {
-      if (
-        edge.resolution === "unresolved" ||
-        edge.from !== current ||
-        edge.to === null ||
-        !known.has(edge.to) ||
-        depths.has(edge.to)
-      )
-        continue;
-      depths.set(edge.to, depth + 1);
-      queue.push(edge.to);
+    const targets = outgoing.get(current);
+    if (targets === undefined) continue;
+    for (const to of targets) {
+      if (depths.has(to)) continue;
+      depths.set(to, depth + 1);
+      queue.push(to);
     }
   }
   return depths;

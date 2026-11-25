@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { compareStaticAndObservedEndpointsEvidence } from "./StaticObservedEndpointComparisonService.js";
 import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "../../contracts/javascript/staticObservedEndpointExample.js";
@@ -37,7 +38,7 @@ it("admits the combined representation before source authentication can clone it
 
 it("locates malformed retained capture facts at the named consumer input", async () => {
   const capture = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE.capture.provider,
     {
       operation: "inspect_web_network_capture",
@@ -68,15 +69,19 @@ it.each(["har", "saz"] as const)(
   "keeps static endpoint comparison restricted to HAR captures (%s)",
   async (format) => {
     const example = STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE;
-    const capture = createEvidence(undefined, example.capture.provider, {
-      operation: "inspect_web_network_capture",
-      parameters: { sensitive_value_count: 0 },
-      result: {
-        ...webNetworkCaptureSchema.parse(example.capture.normalized_result),
-        format,
+    const capture = createEvidence(
+      unknownTarget("not-observed"),
+      example.capture.provider,
+      {
+        operation: "inspect_web_network_capture",
+        parameters: { sensitive_value_count: 0 },
+        result: {
+          ...webNetworkCaptureSchema.parse(example.capture.normalized_result),
+          format,
+        },
+        confidence: "observed",
       },
-      confidence: "observed",
-    });
+    );
     const result = await compareStaticAndObservedEndpointsEvidence({
       ...example,
       capture,

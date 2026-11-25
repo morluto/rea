@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { parseWabtInterface } from "./WabtInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
@@ -45,9 +46,7 @@ const moduleNames = (
         if (nameEnd > end)
           throw new WabtAdmissionError("incomplete_module_name");
         names.push(
-          new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-            bytes.subarray(offset, nameEnd),
-          ),
+          decodeStrictUtf8(bytes.subarray(offset, nameEnd), "preserve"),
         );
         // WABT calls OnModuleName before rejecting trailing subsection bytes.
         if (nameEnd !== end)
@@ -67,7 +66,7 @@ const moduleNames = (
 };
 
 /** Extract exact top-level WABT WAT forms; no raw WASM decoding or import/export name unescaping. */
-export const parseWabtWat = (text: string) => {
+export const parseWabtWat = (text: string, maximumInterfaceBytes?: number) => {
   if (!/^\(module(?:\s|\))/u.test(text))
     throw new WabtAdmissionError("unsupported_module_prefix");
   const forms: string[] = [];
@@ -121,10 +120,7 @@ export const parseWabtWat = (text: string) => {
             throw new WabtAdmissionError("unsupported_custom_name");
           const nameString = watString(form, prefix[0].length);
           // A WASM name is length-delimited UTF-8; leading U+FEFF is name data.
-          const name = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(nameString.bytes);
+          const name = decodeStrictUtf8(nameString.bytes, "preserve");
           customSectionNames.push(name);
           if (name === "name") {
             const payloadPrefix = /^\s+"/u.exec(form.slice(nameString.end));
@@ -160,6 +156,6 @@ export const parseWabtWat = (text: string) => {
     customSectionNames,
     debugModuleNames,
     debugNameMetadata,
-    interface: parseWabtInterface(forms),
+    interface: parseWabtInterface(forms, maximumInterfaceBytes),
   };
 };

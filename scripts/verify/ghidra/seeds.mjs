@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -11,6 +10,10 @@ import {
 } from "../../../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../dist/process/ProcessOwnership.js";
 import { createVerifierRun } from "../../lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const installation = process.env.GHIDRA_INSTALL_DIR;
 assert.ok(
@@ -22,10 +25,21 @@ assert.notEqual(
   "win32",
   "This direct headless regression requires a POSIX host; Windows uses its controlled provider lane",
 );
-const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-seed-regression-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-seed-regression-",
+});
+const workspace = workspaceFixture.path;
 const run = createVerifierRun();
 let supervisor;
-try {
+// The owned Ghidra process may still use the workspace: its stop confirms
+// before the root is removed.
+workspaceFixture.releaseAfter(async () => {
+  if (supervisor === undefined) return;
+  const stopped = await supervisor.stop();
+  assert.notEqual(stopped.status, "incomplete", JSON.stringify(stopped));
+  supervisor.dispose();
+});
+await withVerifierFixture(workspaceFixture, async () => {
   const target = join(workspace, "seed-functions.bin");
   const seeds = join(workspace, "seeds.tsv");
   // Falling through from the lower entry reaches the higher entry. Creating
@@ -111,14 +125,7 @@ try {
     rejected,
   );
   assert.ok(!rejected.includes("REA_ANALYZER_OPTIONS_DISABLED_OK"), rejected);
-} finally {
-  if (supervisor !== undefined) {
-    const stopped = await supervisor.stop();
-    assert.notEqual(stopped.status, "incomplete", JSON.stringify(stopped));
-    supervisor.dispose();
-  }
-  await rm(workspace, { recursive: true, force: true });
-}
+});
 console.log(
   "Real Ghidra pre-script regression passed: descending function order, out-of-range seed, BSS label, BSS code rejection, analyzer option readback, not-applicable analyzer report, unknown-analyzer abort before post-scripts, and owned-process cleanup.",
 );

@@ -4,11 +4,7 @@
   "ignore": [
     "node_modules/**",
     "dist/**",
-    "docs/**",
-    ".codex/**",
-    ".devin/**",
     "tests/fixtures/**",
-    "third_party/**",
     "tests/conformance/**/*.c",
     "tests/conformance/**/*.m",
     "tests/conformance/**/*.swift",

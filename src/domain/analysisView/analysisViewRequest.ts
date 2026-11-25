@@ -1,3 +1,4 @@
+import { webSourceLocationViewRequestSchema } from "./webSourceLocationView.js";
 import { nativeProcedureReferencesViewRequestSchema } from "./nativeProcedureReferencesView.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
@@ -8,12 +9,16 @@ import {
 } from "./nativeObservationSchemas.js";
 import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionReferencesView.js";
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
+import { uefiExtractionViewRequestSchema } from "./uefiExtractionView.js";
+import { uefiFirmwareViewRequestSchema } from "./uefiFirmwareView.js";
 import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery.js";
 import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
 import { pythonPycViewRequestSchema } from "./pythonPycView.js";
 import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
+import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
+import { webPageViewRequestSchema } from "./webPageView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
@@ -23,6 +28,7 @@ import { gpuCodeObjectsViewRequestSchema } from "./gpuCodeObjectsView.js";
 import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import { goBinaryViewRequestSchema } from "./goBinaryView.js";
+import { cycloneDxViewRequestSchema } from "./cyclonedxView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
 import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
@@ -36,10 +42,13 @@ import { browserScenarioViewRequestSchema } from "./browserScenarioViewSchemas.j
 import { nativeLoadImageViewRequestSchema } from "./nativeLoadImageView.js";
 import { desktopViewRequestSchema } from "./desktopApplicationView.js";
 import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
-import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
+import {
+  javascriptFactGroupsViewRequestSchema,
+  javascriptFactsViewRequestSchema,
+} from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
 import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
-import { apiSurfaceViewSchema } from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import { evmViewRequestSchema } from "./evmInterfaceView.js";
 import { artifactInventoryViewRequestSchema } from "./artifactInventoryView.js";
 import { managedViewRequestSchema } from "./managedArtifactView.js";
@@ -53,7 +62,7 @@ import { environmentStateViewRequestSchema } from "./environmentStateView.js";
 import { environmentCoverageViewRequestSchema } from "./environmentCoverageView.js";
 import { pcapViewRequestSchema } from "./pcapCaptureView.js";
 import { qlogViewRequestSchema } from "./qlogCaptureView.js";
-import { androidViewRequestSchema } from "./androidPackageView.js";
+import { androidViewRequestSchema } from "../android/androidPackageQuery.js";
 import { androidJniViewRequestSchema } from "../android/androidJniQuery.js";
 import { dartAotViewRequestSchema } from "./dartAotView.js";
 import { il2cppMetadataViewRequestSchema } from "./il2cppMetadataView.js";
@@ -82,11 +91,15 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeContextViewRequestSchema,
   recordedArrayViewSchema,
   devicetreeViewRequestSchema,
+  uefiFirmwareViewRequestSchema,
+  uefiExtractionViewRequestSchema,
   erlangBeamViewRequestSchema,
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
+  elfDependenciesViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,
+  webPageViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,
@@ -97,14 +110,17 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,
   summaryViewSchema,
+  webSourceLocationViewRequestSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
+  cycloneDxViewRequestSchema,
   desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,
   pageViewSchema,
   javascriptModuleReferencesRequestSchema,
   javascriptFactsViewRequestSchema,
+  javascriptFactGroupsViewRequestSchema,
   nativeViewSchema,
   nativeInventoryViewRequestSchema,
   nativeProcedureReferencesViewRequestSchema,
