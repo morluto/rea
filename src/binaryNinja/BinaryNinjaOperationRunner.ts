@@ -98,6 +98,7 @@ interface Relationships {
 }
 
 const INSTRUCTION_LINE = /^(0x[0-9a-f]+) {2}(.*)$/iu;
+const BLOCK_RANGE = /^(0x[0-9a-f]+)-(0x[0-9a-f]+) \(\d+ bytes\)$/iu;
 const isHexAddress = (value: string): boolean => /^0x[0-9a-f]+$/iu.test(value);
 
 /** Estimate without serializing or copying the reply being admitted. */
@@ -207,9 +208,12 @@ export class BinaryNinjaOperationRunner {
   private async table(
     tool: BinaryNinjaTableTool,
     args: Readonly<Record<string, JsonValue>>,
+    fn?: BinaryNinjaFunction,
   ): Promise<Record<string, string>[]> {
     const rows: Record<string, string>[] = [];
     await this.pages(tool, args, (document, page) => {
+      if (fn !== undefined)
+        this.verifyFunctionPage(tool, fn, document.metadata);
       const pageRows = parseBinaryNinjaTable(
         document.body,
         BINARY_NINJA_COLUMNS[tool],
@@ -281,14 +285,26 @@ export class BinaryNinjaOperationRunner {
       query === undefined
         ? await this.table("bn_function_list", {})
         : await this.table("bn_function_search", { query });
-    return rows.map((row) => ({
+    return rows.map((row) => this.functionEntry(row));
+  }
+
+  private functionEntry(
+    row: Readonly<Record<string, string>>,
+  ): BinaryNinjaFunction {
+    return {
       address: binaryNinjaAddressSchema.parse(row.function),
       architecture: row.arch ?? "",
       name: row.name ?? "",
-    }));
+    };
   }
 
-  private notFound(query: string, requestedBy: string, reason: string) {
+  private invalidSelector(
+    query: string,
+    requestedBy: string | undefined,
+    reason: string,
+  ) {
+    if (requestedBy === undefined)
+      return new AnalysisProtocolError(`${reason}: ${query}`);
     return new AnalysisInputError(requestedBy, undefined, [
       {
         path: ["procedure"],
@@ -301,14 +317,13 @@ export class BinaryNinjaOperationRunner {
   /**
    * Resolve a function by start address or exact name. Names are matched by
    * REA rather than evaluated as Binary Ninja expressions, so a name is never
-   * reinterpreted as arithmetic. When `requestedBy` names the caller's
-   * operation, a missing function is invalid input; provider-derived
-   * selectors that cannot be resolved remain producer faults.
+   * reinterpreted as arithmetic. An absent function allows caller queries
+   * to try the exact symbol lookup. Ambiguous functions are errors.
    */
-  async resolve(
+  private async findFunction(
     query: string,
     requestedBy?: string,
-  ): Promise<BinaryNinjaFunction> {
+  ): Promise<BinaryNinjaFunction | undefined> {
     if (isHexAddress(query)) {
       const address = binaryNinjaAddressSchema.parse(query);
       let document: BinaryNinjaDocument;
@@ -318,15 +333,10 @@ export class BinaryNinjaOperationRunner {
         });
       } catch (cause: unknown) {
         if (
-          requestedBy !== undefined &&
           cause instanceof BinaryNinjaToolError &&
           cause.code === "function_not_found"
         )
-          throw this.notFound(
-            query,
-            requestedBy,
-            "No Binary Ninja function starts at this address",
-          );
+          return undefined;
         throw cause;
       }
       const fn = {
@@ -343,20 +353,59 @@ export class BinaryNinjaOperationRunner {
     const matches = (await this.functions(query)).filter(
       ({ name }) => name === query,
     );
-    const entries = new Map(matches.map((fn) => [fn.address, fn]));
-    if (entries.size === 1 && matches.length === 1)
-      return matches[0] as BinaryNinjaFunction;
-    if (requestedBy === undefined)
-      throw new AnalysisProtocolError(
-        `Binary Ninja could not resolve provider-reported function ${JSON.stringify(query)} to one entry.`,
+    if (matches.length > 1)
+      throw this.invalidSelector(
+        query,
+        requestedBy,
+        "Several Binary Ninja functions share this name; supply the entry address",
       );
-    throw this.notFound(
-      query,
-      requestedBy,
-      matches.length === 0
-        ? "No Binary Ninja function has this exact name"
-        : "Several Binary Ninja functions share this name; supply the entry address",
+    return matches[0];
+  }
+
+  private async symbolAt(address: string): Promise<string | undefined> {
+    const tool = "bn_symbol_list_at";
+    const document = await this.document(tool, { address });
+    const symbols = parseBinaryNinjaTable(
+      document.body,
+      BINARY_NINJA_COLUMNS[tool],
+      tool,
     );
+    for (const symbol of symbols)
+      if (binaryNinjaAddressSchema.parse(symbol.symbol) !== address)
+        throw new AnalysisProtocolError(
+          "Binary Ninja returned a symbol at a different address.",
+        );
+    return symbols.find((symbol) => symbol.name)?.name;
+  }
+
+  private async callerSymbol(
+    query: string,
+    requestedBy?: string,
+  ): Promise<string | undefined> {
+    if (isHexAddress(query)) {
+      const address = binaryNinjaAddressSchema.parse(query);
+      return (await this.symbolAt(address)) === undefined ? undefined : address;
+    }
+    const symbols = (await this.table("bn_symbol_list", { query })).filter(
+      ({ name, fullName }) => name === query || fullName === query,
+    );
+    // Binary Ninja may report both a concrete slot and an external placeholder
+    // with the same imported name. Named calls target the concrete slot.
+    const hasImportSlot = symbols.some(
+      ({ type }) => type === "ImportAddressSymbol",
+    );
+    const matches = new Set(
+      symbols
+        .filter(({ type }) => !hasImportSlot || type !== "ExternalSymbol")
+        .map(({ symbol }) => binaryNinjaAddressSchema.parse(symbol)),
+    );
+    if (matches.size > 1)
+      throw this.invalidSelector(
+        query,
+        requestedBy,
+        "Several Binary Ninja symbols share this name; supply the symbol address",
+      );
+    return matches.values().next().value;
   }
 
   async strings(
@@ -432,15 +481,16 @@ export class BinaryNinjaOperationRunner {
         throw measuredResourceConstraint(
           "binary_ninja_strings",
           "memory",
-          "Insufficient runtime capacity for the requested strings, retained replies, and serialized Evidence.",
+          "A declared Binary Ninja string exceeds the Node.js buffer or string length limit.",
           {
-            required_bytes: requiredBytes.toString(),
+            declared_string_bytes: length.toString(),
+            decoded_code_units_upper_bound: codeUnits.toString(),
             maximum_buffer_bytes: bufferConstants.MAX_LENGTH,
             maximum_string_code_units: bufferConstants.MAX_STRING_LENGTH,
           },
           {
             remediationAction:
-              "Free memory or raise the Node.js heap allowance for REA, then retry. This is a runtime capacity check, not the registration maxInputBytes limit.",
+              "Inspect the string in Binary Ninja or request a different string by address.",
           },
         );
     }
@@ -461,12 +511,7 @@ export class BinaryNinjaOperationRunner {
       0,
       Math.floor(Math.min(heap.total_available_size, hostAvailable)),
     );
-    // The estimate includes two serialized strings; neither may exceed V8's
-    // string ceiling even when the host has enough free memory.
-    if (
-      requiredBytes > BigInt(availableBytes) ||
-      requiredBytes > BigInt(bufferConstants.MAX_STRING_LENGTH) * 4n
-    )
+    if (requiredBytes > BigInt(availableBytes))
       throw measuredResourceConstraint(
         operation,
         "memory",
@@ -475,7 +520,6 @@ export class BinaryNinjaOperationRunner {
           required_bytes: requiredBytes.toString(),
           available_bytes: availableBytes,
           available_heap_bytes: heap.total_available_size,
-          maximum_string_code_units: bufferConstants.MAX_STRING_LENGTH,
         },
         {
           remediationAction:
@@ -508,9 +552,29 @@ export class BinaryNinjaOperationRunner {
   }
 
   async pseudocode(fn: BinaryNinjaFunction): Promise<string> {
-    return (await this.code("bn_function_decompile", fn, ["bn-pseudoc"])).join(
-      "\n",
+    return this.joinCode(
+      "procedure_pseudo_code",
+      await this.code("bn_function_decompile", fn, ["bn-pseudoc"]),
     );
+  }
+
+  private joinCode(operation: string, lines: readonly string[]): string {
+    const codeUnits = lines.reduce(
+      (length, line) => length + line.length,
+      Math.max(0, lines.length - 1),
+    );
+    if (codeUnits > bufferConstants.MAX_STRING_LENGTH)
+      throw measuredResourceConstraint(
+        operation,
+        "memory",
+        "The rendered Binary Ninja function exceeds the Node.js single-string length limit.",
+        {
+          required_string_code_units: codeUnits,
+          maximum_string_code_units: bufferConstants.MAX_STRING_LENGTH,
+        },
+        { remediationAction: "Inspect the function in Binary Ninja." },
+      );
+    return lines.join("\n");
   }
 
   /** Instruction lines plus the rendered signature heading, when present. */
@@ -548,6 +612,7 @@ export class BinaryNinjaOperationRunner {
     for (const row of await this.table(
       "bn_function_callers",
       this.functionArguments(fn),
+      fn,
     )) {
       const references = parseBinaryNinjaFunctionReferences(
         row["Caller Function"] ?? "",
@@ -571,13 +636,85 @@ export class BinaryNinjaOperationRunner {
     };
   }
 
+  private async calleeRows(fn: BinaryNinjaFunction) {
+    return this.table("bn_function_callees", this.functionArguments(fn), fn);
+  }
+
+  private async containsReference(
+    fn: BinaryNinjaFunction,
+    sources: readonly bigint[],
+  ): Promise<boolean> {
+    for (const row of await this.table(
+      "bn_function_basic_blocks",
+      this.functionArguments(fn),
+      fn,
+    )) {
+      const range = BLOCK_RANGE.exec(row.Range ?? "");
+      if (range === null)
+        throw new AnalysisProtocolError(
+          "Binary Ninja returned an invalid basic block range.",
+        );
+      const start = BigInt(range[1]!);
+      const end = BigInt(range[2]!);
+      if (sources.some((source) => start <= source && source < end))
+        return true;
+    }
+    return false;
+  }
+
+  private async symbolCallers(address: string): Promise<Relationships> {
+    const sources = (await this.dataReferenceSources(address)).map((source) =>
+      BigInt(source),
+    );
+    const items = new Map<string, ProcedureIdentity>();
+    for (const row of await this.table("bn_function_list", {})) {
+      const fn = this.functionEntry(row);
+      if (items.has(fn.address)) continue;
+      const calls = await this.calleeRows(fn);
+      if (
+        calls.some(
+          (call) =>
+            binaryNinjaAddressSchema.parse(call["Callee Address"]) === address,
+        )
+      ) {
+        items.set(fn.address, identity(fn));
+        continue;
+      }
+      if (sources.length === 0) continue;
+      const first = BigInt(binaryNinjaAddressSchema.parse(row.lowestAddress));
+      const last = BigInt(binaryNinjaAddressSchema.parse(row.highestAddress));
+      const candidates = sources.filter(
+        (source) => first <= source && source <= last,
+      );
+      if (
+        candidates.length > 0 &&
+        (await this.containsReference(fn, candidates))
+      )
+        items.set(fn.address, identity(fn));
+    }
+    return {
+      items: [...items.values()],
+      coverage: {
+        status: "partial",
+        limited_directions: ["callers"],
+        limitations: [
+          "Binary Ninja MCP exposes calls from analyzed functions and data references to this symbol. Other code references to the symbol may be absent.",
+        ],
+      },
+    };
+  }
+
+  private relationshipAddresses(relationships: Relationships): string[] {
+    this.relationshipCoverage = relationships.coverage;
+    if (relationships.coverage.status === "partial")
+      this.limitations.push(...relationships.coverage.limitations);
+    return relationships.items.map(({ address }) => address);
+  }
+
   async callees(fn: BinaryNinjaFunction): Promise<Relationships> {
     const result = new Map<string, ProcedureIdentity>();
     const unnamed = new Set<string>();
-    for (const row of await this.table(
-      "bn_function_callees",
-      this.functionArguments(fn),
-    )) {
+    for (const row of await this.calleeRows(fn)) {
       const references = parseBinaryNinjaFunctionReferences(
         row["Callee Functions"] ?? "",
         "bn_function_callees",
@@ -588,13 +725,8 @@ export class BinaryNinjaOperationRunner {
       // Calls through import slots name a symbol rather than an analyzed function.
       const address = binaryNinjaAddressSchema.parse(row["Callee Address"]);
       if (result.has(address) || unnamed.has(address)) continue;
-      const symbols = parseBinaryNinjaTable(
-        (await this.document("bn_symbol_list_at", { address })).body,
-        BINARY_NINJA_COLUMNS.bn_symbol_list_at,
-        "bn_symbol_list_at",
-      );
-      const name = symbols[0]?.name;
-      if (name === undefined || name.length === 0) unnamed.add(address);
+      const name = await this.symbolAt(address);
+      if (name === undefined) unnamed.add(address);
       else result.set(address, identity({ address, name }));
     }
     for (const address of unnamed) result.delete(address);
@@ -613,29 +745,25 @@ export class BinaryNinjaOperationRunner {
     };
   }
 
+  private async dataReferenceSources(address: string): Promise<string[]> {
+    return (await this.table("bn_data_xrefs_to", { address })).map((row) =>
+      binaryNinjaAddressSchema.parse(row.Source),
+    );
+  }
+
   /**
    * Binary Ninja MCP exposes data references to an exact address and call
    * sites into a function entry. Other code references into the address are
    * not observable, so the result is always reported as possibly incomplete.
    */
   async xrefs(address: string): Promise<string[]> {
-    const sources = new Set<string>();
-    for (const row of await this.table("bn_data_xrefs_to", { address }))
-      sources.add(binaryNinjaAddressSchema.parse(row.Source));
-    let entry: BinaryNinjaFunction | undefined;
-    try {
-      entry = await this.resolve(address);
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof BinaryNinjaToolError) ||
-        cause.code !== "function_not_found"
-      )
-        throw cause;
-    }
+    const sources = new Set(await this.dataReferenceSources(address));
+    const entry = await this.findFunction(address);
     if (entry !== undefined)
       for (const row of await this.table(
         "bn_function_callers",
         this.functionArguments(entry),
+        entry,
       ))
         sources.add(binaryNinjaAddressSchema.parse(row.Callsite));
     this.referencesTruncated = true;
@@ -694,10 +822,27 @@ export class BinaryNinjaOperationRunner {
       return this.xrefs(address);
     }
     const query = String(parameters.procedure);
-    const fn = await this.resolve(
-      query,
-      this.options.selectorOrigin === "provider" ? undefined : operation,
-    );
+    const requestedBy =
+      this.options.selectorOrigin === "provider" ? undefined : operation;
+    const fn = await this.findFunction(query, requestedBy);
+    if (fn === undefined) {
+      if (operation === "procedure_callers") {
+        const symbol = await this.callerSymbol(query, requestedBy);
+        if (symbol !== undefined) {
+          this.locations.push({ kind: "address", address: symbol });
+          return this.relationshipAddresses(await this.symbolCallers(symbol));
+        }
+      }
+      const kind =
+        operation === "procedure_callers" ? "function or symbol" : "function";
+      throw this.invalidSelector(
+        query,
+        requestedBy,
+        isHexAddress(query)
+          ? `No Binary Ninja ${kind} starts at this address`
+          : `No Binary Ninja ${kind} has this exact name`,
+      );
+    }
     this.locations.push({ kind: "address", address: fn.address });
     switch (operation) {
       case "procedure_address":
@@ -705,18 +850,11 @@ export class BinaryNinjaOperationRunner {
       case "procedure_pseudo_code":
         return this.pseudocode(fn);
       case "procedure_assembly":
-        return (await this.assembly(fn)).instructions.join("\n");
+        return this.joinCode(operation, (await this.assembly(fn)).instructions);
       case "procedure_callers":
-      case "procedure_callees": {
-        const relationships =
-          operation === "procedure_callers"
-            ? await this.callers(fn)
-            : await this.callees(fn);
-        this.relationshipCoverage = relationships.coverage;
-        if (relationships.coverage.status === "partial")
-          this.limitations.push(...relationships.coverage.limitations);
-        return relationships.items.map(({ address }) => address);
-      }
+        return this.relationshipAddresses(await this.callers(fn));
+      case "procedure_callees":
+        return this.relationshipAddresses(await this.callees(fn));
       case "read_function_instructions":
         return functionInstructionWindowSchema.parse({
           procedure: identity(fn),

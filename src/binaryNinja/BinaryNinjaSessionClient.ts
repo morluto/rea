@@ -1,5 +1,13 @@
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  carriedReason,
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisOutputError,
+  AnalysisProtocolError,
+  measuredResourceConstraint,
+} from "../domain/analysisErrorCore.js";
 import type { AppConfig } from "../config/types.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -10,13 +18,6 @@ import {
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
-  AnalysisOutputError,
-  AnalysisProtocolError,
-  measuredResourceConstraint,
-} from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -69,8 +70,10 @@ export const BINARY_NINJA_REQUIRED_TOOLS = [
   "bn_function_disassembly",
   "bn_function_callers",
   "bn_function_callees",
+  "bn_function_basic_blocks",
   "bn_string_list",
   "bn_data_xrefs_to",
+  "bn_symbol_list",
   "bn_symbol_list_at",
 ] as const;
 

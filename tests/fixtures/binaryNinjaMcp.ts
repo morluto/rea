@@ -40,6 +40,7 @@ interface FixtureFunction {
   readonly disassembly: readonly string[];
   readonly callers: readonly (readonly [string, string])[];
   readonly callees: readonly (readonly [string, string])[];
+  readonly blocks?: readonly (readonly [string, string])[];
 }
 
 interface FixtureString {
@@ -48,7 +49,31 @@ interface FixtureString {
   readonly bytes: Buffer;
 }
 
+interface FixtureSymbol {
+  readonly name: string;
+  readonly type: string;
+}
+
 const cell = (value: string): string => value.replaceAll("|", "\\|");
+
+const fixtureBlocks = (
+  fn: FixtureFunction,
+): readonly (readonly [string, string])[] =>
+  fn.blocks ?? [[fn.address, `0x${(BigInt(fn.address) + 1n).toString(16)}`]];
+
+const symbolCells = ([address, { name, type }]: readonly [
+  string,
+  FixtureSymbol,
+]) => [
+  address,
+  name,
+  type,
+  "BNINTERNALNAMESPACE",
+  "0",
+  "NoBinding",
+  name,
+  "true",
+];
 
 /** Render a reply exactly as Binary Ninja 6.0's GUI MCP server formats tables. */
 export const renderBinaryNinjaTable = (
@@ -163,7 +188,9 @@ export class RecordingBinaryNinjaMcp implements BinaryNinjaMcpConnection {
       callees: [["0x401107", ""]],
     },
   ];
-  symbols = new Map<string, string>([["0x403000", "puts"]]);
+  symbols = new Map<string, FixtureSymbol>([
+    ["0x403000", { name: "puts", type: "ImportAddressSymbol" }],
+  ]);
   dataXrefs = new Map<string, string[]>([["0x401100", ["0x402100"]]]);
   strings: FixtureString[] = [
     { address: "0x402000", type: "AsciiString", bytes: Buffer.from("a|b") },
@@ -414,18 +441,22 @@ export class RecordingBinaryNinjaMcp implements BinaryNinjaMcpConnection {
         name,
         args,
         this.functions.filter((fn) => fn.name.toLowerCase().includes(query)),
-        (fn) => [
-          fn.address,
-          "x86_64",
-          fn.name,
-          "linux-x86_64",
-          fn.address,
-          fn.address,
-          "int32_t()",
-          "1",
-          "false",
-          "false",
-        ],
+        (fn) => {
+          const blocks = fixtureBlocks(fn);
+          const last = BigInt(blocks.at(-1)![1]) - 1n;
+          return [
+            fn.address,
+            "x86_64",
+            fn.name,
+            "linux-x86_64",
+            blocks[0]![0],
+            `0x${last.toString(16)}`,
+            "int32_t()",
+            String(blocks.length),
+            "false",
+            "false",
+          ];
+        },
         name === "bn_function_search" ? { query: String(args.query) } : {},
       );
     },
@@ -496,6 +527,23 @@ export class RecordingBinaryNinjaMcp implements BinaryNinjaMcpConnection {
     },
     bn_function_callees: (name, args) =>
       this.#handlers.bn_function_callers!(name, args),
+    bn_function_basic_blocks: (name, args) => {
+      this.#requireActive(name);
+      const fn = this.#function(name, args);
+      return this.#rows(
+        name,
+        args,
+        fixtureBlocks(fn).map(([start, end], index) => [
+          String(index),
+          `${start}-${end} (${BigInt(end) - BigInt(start)} bytes)`,
+          "can-exit",
+          "",
+          "",
+        ]),
+        (row) => row,
+        { function: fn.address, arch: "x86_64", name: fn.name },
+      );
+    },
     bn_string_list: (
       name: string,
       args: Readonly<Record<string, JsonValue>>,
@@ -519,6 +567,18 @@ export class RecordingBinaryNinjaMcp implements BinaryNinjaMcpConnection {
         { previewBytes: Number(args.previewBytes) },
       );
     },
+    bn_symbol_list: (name, args) => {
+      this.#requireActive(name);
+      const query = String(args.query).toLowerCase();
+      return this.#rows(
+        name,
+        args,
+        [...this.symbols].filter(([, symbol]) =>
+          symbol.name.toLowerCase().includes(query),
+        ),
+        symbolCells,
+      );
+    },
     bn_symbol_list_at: (
       name: string,
       args: Readonly<Record<string, JsonValue>>,
@@ -534,18 +594,7 @@ export class RecordingBinaryNinjaMcp implements BinaryNinjaMcpConnection {
           },
           symbol === undefined
             ? []
-            : [
-                [
-                  String(args.address),
-                  symbol,
-                  "ImportAddressSymbol",
-                  "BNINTERNALNAMESPACE",
-                  "0",
-                  "NoBinding",
-                  symbol,
-                  "true",
-                ],
-              ],
+            : [symbolCells([String(args.address), symbol])],
         ),
       );
     },

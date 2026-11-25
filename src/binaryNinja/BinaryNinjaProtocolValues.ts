@@ -267,6 +267,17 @@ export const binaryNinjaAnalysisStatusSchema = z
   .passthrough();
 
 /** Columns of each table-rendering tool, in producer order. */
+const SYMBOL_COLUMNS = [
+  "symbol",
+  "name",
+  "type",
+  "namespace",
+  "ordinal",
+  "binding",
+  "fullName",
+  "autoDefined",
+] as const;
+
 export const BINARY_NINJA_COLUMNS = {
   bn_open_item_list: [
     "openItem",
@@ -338,6 +349,13 @@ export const BINARY_NINJA_COLUMNS = {
     "Callee Address",
     "Callee Functions",
   ],
+  bn_function_basic_blocks: [
+    "Index",
+    "Range",
+    "Flags",
+    "Incoming Edges",
+    "Outgoing Edges",
+  ],
   bn_function_xrefs_to: [
     "Source",
     "Architecture",
@@ -345,16 +363,8 @@ export const BINARY_NINJA_COLUMNS = {
     "Target Range",
   ],
   bn_data_xrefs_to: ["Source", "Source Data Variable", "Source Definition"],
-  bn_symbol_list_at: [
-    "symbol",
-    "name",
-    "type",
-    "namespace",
-    "ordinal",
-    "binding",
-    "fullName",
-    "autoDefined",
-  ],
+  bn_symbol_list: SYMBOL_COLUMNS,
+  bn_symbol_list_at: SYMBOL_COLUMNS,
 } as const satisfies Readonly<Record<string, readonly string[]>>;
 export type BinaryNinjaTableTool = keyof typeof BINARY_NINJA_COLUMNS;
 

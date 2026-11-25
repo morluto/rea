@@ -20,7 +20,20 @@ import { BinaryNinjaSessionClient } from "./BinaryNinjaSessionClient.js";
 
 const heapCapacity = vi.hoisted(() => ({
   available: undefined as number | undefined,
+  stringLimit: undefined as number | undefined,
 }));
+vi.mock("node:buffer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:buffer")>();
+  return {
+    ...actual,
+    constants: {
+      ...actual.constants,
+      get MAX_STRING_LENGTH() {
+        return heapCapacity.stringLimit ?? actual.constants.MAX_STRING_LENGTH;
+      },
+    },
+  };
+});
 vi.mock("node:v8", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:v8")>();
   return {
@@ -36,6 +49,7 @@ vi.mock("node:v8", async (importOriginal) => {
 
 afterEach(() => {
   heapCapacity.available = undefined;
+  heapCapacity.stringLimit = undefined;
 });
 
 const config: BinaryNinjaConfiguration = {
@@ -428,16 +442,109 @@ describe("Binary Ninja operations", () => {
 
 describe("Binary Ninja relationships, strings and dossiers", () => {
   it("resolves callers, callees and import slots through their symbols", async () => {
-    const { client } = await fixture();
-    const callees = await value(client, "procedure_callees", {
-      procedure: "0x401100",
+    const { client, producer } = await fixture();
+    producer.pageSize = 1;
+    try {
+      const callees = await value(client, "procedure_callees", {
+        procedure: "0x401100",
+      });
+      expect(callees.result).toEqual(["0x403000"]);
+      expect(callees.relationshipCoverage).toEqual({ status: "complete" });
+      const callers = await value(client, "procedure_callers", {
+        procedure: "0x401100",
+      });
+      expect(callers.result).toEqual(["0x401000"]);
+      const importCallers = await value(client, "procedure_callers", {
+        procedure: "0x00403000",
+      });
+      expect(importCallers.result).toEqual(["0x401100"]);
+      expect(importCallers.locations).toContainEqual({
+        kind: "address",
+        address: "0x403000",
+      });
+      expect(importCallers.relationshipCoverage).toMatchObject({
+        status: "partial",
+        limited_directions: ["callers"],
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
+  it("attributes non-call references to an exact symbol only inside analyzed blocks", async () => {
+    const { client, producer } = await fixture();
+    const [main, helper] = producer.functions;
+    producer.functions = [
+      { ...main!, blocks: [["0x401000", "0x401007"]] },
+      {
+        ...helper!,
+        blocks: [
+          ["0x401100", "0x401103"],
+          ["0x401107", "0x40110d"],
+        ],
+      },
+    ];
+    producer.symbols.set("0x403010", {
+      name: "input_label",
+      type: "DataSymbol",
     });
-    expect(callees.result).toEqual(["0x403000"]);
-    expect(callees.relationshipCoverage).toEqual({ status: "complete" });
-    const callers = await value(client, "procedure_callers", {
-      procedure: "0x401100",
+    producer.symbols.set("0x403020", {
+      name: "unused_label",
+      type: "DataSymbol",
     });
-    expect(callers.result).toEqual(["0x401000"]);
+    producer.dataXrefs.set("0x403010", ["0x401006", "0x401103", "0x402100"]);
+    try {
+      const result = await value(client, "procedure_callers", {
+        procedure: "input_label",
+      });
+      expect(result.result).toEqual(["0x401000"]);
+      expect(result.relationshipCoverage).toMatchObject({
+        status: "partial",
+        limited_directions: ["callers"],
+      });
+      expect(
+        (
+          await value(client, "procedure_callers", {
+            procedure: "unused_label",
+          })
+        ).result,
+      ).toEqual([]);
+      expect(
+        await client.execute("procedure_callers", {
+          procedure: "0x403030",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError" },
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
+  it("resolves an import name to its slot and rejects ambiguity between real slots", async () => {
+    const { client, producer } = await fixture();
+    producer.symbols.set("0x403010", { name: "puts", type: "ExternalSymbol" });
+    try {
+      expect(
+        (await value(client, "procedure_callers", { procedure: "puts" }))
+          .result,
+      ).toEqual(["0x401100"]);
+      producer.symbols.set("0x403020", {
+        name: "puts",
+        type: "ImportAddressSymbol",
+      });
+      expect(
+        await client.execute("procedure_callers", {
+          procedure: "puts",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError" },
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
   });
 
   it("marks callees without a function or symbol as partial coverage", async () => {
@@ -704,6 +811,51 @@ it("rejects missing chunk bytes instead of returning zero-filled string content"
 });
 
 describe("Binary Ninja string capacity", () => {
+  it("admits representable strings when the aggregate estimate exceeds the per-string ceiling", async () => {
+    const { client, producer } = await fixture();
+    const expected = { address: "0x500000", value: "a".repeat(1024) };
+    producer.strings = [
+      {
+        address: expected.address,
+        type: "AsciiString",
+        bytes: Buffer.from(expected.value),
+      },
+    ];
+    heapCapacity.available = 250000;
+    heapCapacity.stringLimit = 16384;
+    try {
+      expect((await value(client, "list_strings")).result).toEqual([expected]);
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
+  it("refuses to join code pages that exceed the single-string ceiling", async () => {
+    const { client, producer } = await fixture();
+    const line = "u".repeat(600);
+    producer.functions = [
+      { ...producer.functions[0]!, pseudocode: [line, line] },
+    ];
+    producer.pageSize = 1;
+    heapCapacity.stringLimit = 1024;
+    try {
+      expect(
+        await client.execute("procedure_pseudo_code", { procedure: "main" }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          reportedLimits: {
+            required_string_code_units: 1201,
+            maximum_string_code_units: 1024,
+          },
+        },
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
   it("admits string inventories against combined memory use before reading bytes", async () => {
     const { client, producer } = await fixture();
     heapCapacity.available = 250000;
