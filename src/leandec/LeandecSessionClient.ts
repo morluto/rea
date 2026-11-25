@@ -3,6 +3,9 @@ import { createReadStream } from "node:fs";
 import { copyFile, link, lstat, mkdir, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { withOwnedFileHandle } from "../filesystem/OwnedRegularFile.js";
+import { classifyProviderFailure, type ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   createAnalysisExecution,
@@ -11,7 +14,7 @@ import {
   type AnalysisOperation,
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -40,7 +43,7 @@ import {
   leandecLimitations,
   LEANDEC_PROVIDER_IDENTITY,
 } from "./LeandecProviderCapabilities.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { matchRegexValues } from "../process/RegexMatcher.js";
 import type { AnalysisSearchQuery } from "../domain/analysisSearch.js";
 import type { LeandecSettings } from "./LeandecSettings.js";
@@ -114,7 +117,7 @@ const inventoryEntry = (row: JsonValue): InventoryEntry => {
 
 const waitShared = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
   const result = await waitForAbortable(promise, signal);
-  if (result === ABORTED) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+  if (result instanceof AbortedWait) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
   return result;
 };
 
@@ -155,6 +158,7 @@ export class LeandecSessionClient implements AnalysisClient {
   #closed = false;
   readonly #owner = new AbortController();
   #runtime: PrivateRuntimeRoot | undefined;
+  readonly #failedHandles = new Set<OwnedFileHandle>();
 
   constructor(
     target: BinaryTarget,
@@ -219,7 +223,7 @@ export class LeandecSessionClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
-      return err(this.#project(cause, operation, options));
+      return err(classifyProviderFailure(cause, this.#failureDialect(operation, options)));
     }
   }
 
@@ -229,11 +233,15 @@ export class LeandecSessionClient implements AnalysisClient {
     try {
       await this.#client.close();
       await Promise.allSettled([this.#session, this.#inventory, this.#strings]);
+      for (const owner of this.#failedHandles) {
+        await owner.close();
+        this.#failedHandles.delete(owner);
+      }
       await this.#runtime?.close();
       this.#runtime = undefined;
       return ok(null);
     } catch (cause: unknown) {
-      return err(this.#project(cause, "close", {}));
+      return err(classifyProviderFailure(cause, this.#failureDialect("close", {})));
     }
   }
 
@@ -675,13 +683,16 @@ export class LeandecSessionClient implements AnalysisClient {
   async #verifiedInput(options: ExecutionOptions): Promise<{ path: string; digest: string }> {
     this.#runtime ??= await PrivateRuntimeRoot.create({ prefix: "rea-leandec-" });
     const path = join(this.#runtime.path, "input");
-    const file = await open(path, "w", 0o600);
+    const owner = new OwnedFileHandle(await open(path, "w", 0o600));
     const source = createHash("sha256");
     const selected = createHash("sha256");
     const slice = this.#target.format === "mach-o-universal" ? this.#target.universalSlice : undefined;
     let offset = 0;
     let copied = 0;
-    try {
+    await withOwnedFileHandle(path, owner, {
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      retainFailedClose: failed => { this.#failedHandles.add(failed); },
+    }, async file => {
       for await (const chunk of createReadStream(this.#target.path, { highWaterMark: 64 * 1024, signal: options.signal })) {
         options.signal?.throwIfAborted();
         const bytes = Buffer.from(chunk);
@@ -701,9 +712,7 @@ export class LeandecSessionClient implements AnalysisClient {
         }
         offset += bytes.length;
       }
-    } finally {
-      await file.close();
-    }
+    });
     if (source.digest("hex") !== this.#target.sha256 || copied === 0 || (slice !== undefined && copied !== slice.size))
       throw new AnalysisInputError("open_binary", { userMessage: "Target bytes changed or the selected slice is incomplete; reopen the target." });
     return { path, digest: selected.digest("hex") };
@@ -910,39 +919,29 @@ export class LeandecSessionClient implements AnalysisClient {
     });
   }
 
-  #project(
-    cause: unknown,
-    operation: string,
-    options: ExecutionOptions,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof LeandecCallCancelled)
-      return cause.reason === "timeout"
-        ? new AnalysisTimeoutError(operation, this.#settings.defaultTimeoutMs, {
-            userMessage: cause.message,
-          })
-        : new AnalysisCancelledError(operation, {
-            cause: options.signal?.reason ?? cause,
+  #failureDialect(operation: string, options: ExecutionOptions): ProviderFailureDialect {
+    return {
+      providerId: "leandec",
+      operation,
+      file: { path: this.#target.path, description: "selected binary" },
+      recognise: (cause, details) => {
+        if (cause instanceof LeandecCallCancelled)
+          return cause.reason === "timeout"
+            ? new AnalysisTimeoutError(operation, this.#settings.defaultTimeoutMs, { ...details, userMessage: cause.message })
+            : new AnalysisCancelledError(operation, { ...details, cause: options.signal?.reason ?? cause });
+        if (cause instanceof LeandecToolError)
+          return /no function|no procedure|required|hexadecimal|invalid|unknown target|not a procedure/iu.test(cause.message)
+            ? new AnalysisInputError(operation, { ...details, userMessage: cause.message })
+            : new ProviderAdapterError("leandec", operation, { ...details, userMessage: cause.message });
+        if (cause instanceof LeandecRpcError)
+          return new ProviderAdapterError("leandec", operation, {
+            ...details, userMessage: cause.message,
+            capturedOutput: { stdout: "", stderr: cause.capturedOutput, truncated: false },
           });
-    if (cause instanceof LeandecToolError)
-      return /no function|no procedure|required|hexadecimal|invalid|unknown target|not a procedure/iu.test(
-        cause.message,
-      )
-        ? new AnalysisInputError(operation, { userMessage: cause.message })
-        : new ProviderAdapterError("leandec", operation, {
-            userMessage: cause.message,
-          });
-    if (cause instanceof LeandecRpcError)
-      return new ProviderAdapterError("leandec", operation, {
-        userMessage: cause.message,
-        capturedOutput: {
-          stdout: "",
-          stderr: cause.capturedOutput,
-          truncated: false,
-        },
-        cause,
-      });
-    return new ProviderAdapterError("leandec", operation, { cause });
+        return undefined;
+      },
+      unclassified: (_cause, details) => new ProviderAdapterError("leandec", operation, details),
+    };
   }
 
   #unavailable(

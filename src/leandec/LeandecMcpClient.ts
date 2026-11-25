@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { spawnOwnedProviderProcess, ProviderProcessSupervisor, type ProviderProcessHandle } from "../process/ProviderProcess.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -142,7 +142,7 @@ export class LeandecMcpClient {
     if (signal?.aborted) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
     this.#handshake ??= this.#handshakeOnce();
     const result = await waitForAbortable(this.#handshake, signal);
-    if (result === ABORTED) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+    if (result instanceof AbortedWait) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
   }
 
   async #handshakeOnce(): Promise<void> {
