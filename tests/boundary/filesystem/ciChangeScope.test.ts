@@ -2060,36 +2060,6 @@ it.each([
     },
   ],
   [
-    "scripts/lib/cli-process-environment.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.d.mts",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
     "tests/conformance/readiness/report/reconstructionReadiness.ts",
     {
       code: true,
@@ -2119,6 +2089,21 @@ it.each([
   ],
 ])("preserves scope boundaries for %s", async (path, expected) => {
   expect(await classifyPaths([path])).toMatchObject(expected);
+});
+
+it.each([
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+])("selects packaged CLI runtime checks for %s", async (path) => {
+  expect(await classifyPaths([path])).toMatchObject({
+    code: true,
+    package: true,
+    runtime: true,
+    javascript_recovery: true,
+    readiness: false,
+  });
 });
 
 it("unions provider scopes across mixed changes and deletions", async () => {
