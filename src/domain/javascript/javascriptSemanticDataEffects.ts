@@ -90,7 +90,7 @@ export const collectJavaScriptSemanticDataEffects = (
   // A fetch or WebSocket the host refuses to construct sends nothing.
   const requests = candidateRequests.output.filter(
     ({ node, operation }) =>
-      !hostRefusesJavaScriptRequest(node, operation.method),
+      !hostRefusesJavaScriptRequest(node, operation.method, state),
   );
   // Defaults and response consumers read the completed candidates above.
   const defaults = collectDefaults(context, configuration);

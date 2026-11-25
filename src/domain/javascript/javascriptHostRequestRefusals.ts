@@ -8,6 +8,9 @@ import {
   staticObjectPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
+import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 /** RFC 9110 `token`, the grammar of methods, header names and subprotocols. */
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
@@ -24,6 +27,19 @@ const literalString = (node: t.Node | undefined): string | undefined => {
     ? literal.value
     : undefined;
 };
+
+/** An inherited iterator can change while the call's arguments are evaluated. */
+const inheritedIteratorMayHaveChanged = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+  constructor: "Object" | "Array",
+): boolean =>
+  intrinsicPrototypeMemberMayHaveChanged(
+    state,
+    constructor,
+    "Symbol.iterator",
+    node,
+  ) || opaqueCodeMayChangeGlobalRead(node.callee, state, constructor, node);
 
 /**
  * Whether an absolute URL literal names a user or password. Without `//` after
@@ -105,7 +121,10 @@ const provenBody = (node: t.Node): boolean => {
  *
  * Only a string URL proves the default GET; a Request object may carry its own method.
  */
-const fetchRefused = (node: t.Node): boolean => {
+const fetchRefused = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
   const [input, init] = node.arguments;
@@ -153,7 +172,11 @@ const fetchRefused = (node: t.Node): boolean => {
   const record = unwrapJavaScriptExpression(headers.value).node;
   if (!t.isObjectExpression(record)) return false;
   const names = recordHeaderNames(record);
-  return names !== undefined && names.some((name) => !TOKEN.test(name));
+  if (names === undefined || !names.some((name) => !TOKEN.test(name)))
+    return false;
+  // An inherited iterator changes HeadersInit from record to sequence. A
+  // source-visible write or escape can happen while arguments are evaluated.
+  return !inheritedIteratorMayHaveChanged(node, state, "Object");
 };
 
 /**
@@ -169,7 +192,10 @@ const fetchRefused = (node: t.Node): boolean => {
  * A relative URL without a fragment stays: a browser resolves it against the
  * document. A non-string subprotocol becomes its string form, so it stays too.
  */
-const webSocketRefused = (node: t.Node): boolean => {
+const webSocketRefused = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   if (!t.isNewExpression(node)) return false;
   const [target, protocols] = node.arguments;
   // A spread can move every later literal to a slot the host ignores.
@@ -190,10 +216,10 @@ const webSocketRefused = (node: t.Node): boolean => {
     const name = literalString(element ?? undefined);
     return name === undefined ? [] : [name];
   });
-  return (
+  const refused =
     known.some((name) => !TOKEN.test(name)) ||
-    new Set(known).size !== known.length
-  );
+    new Set(known).size !== known.length;
+  return refused && !inheritedIteratorMayHaveChanged(node, state, "Array");
 };
 
 /**
@@ -203,9 +229,10 @@ const webSocketRefused = (node: t.Node): boolean => {
 export const hostRefusesJavaScriptRequest = (
   node: t.Node,
   method: string,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   method === "fetch"
-    ? fetchRefused(node)
+    ? fetchRefused(node, state)
     : method === "WebSocket"
-      ? webSocketRefused(node)
+      ? webSocketRefused(node, state)
       : false;
