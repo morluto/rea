@@ -85,7 +85,7 @@ it("refuses wrong initial digest and a changed selected file even after a return
       ),
     ).rejects.toMatchObject({
       reason: "integrity",
-      integrityCheck: "container-identity",
+      integrityCheck: "admitted-identity",
     });
     expect(run).not.toHaveBeenCalled();
     await expect(
