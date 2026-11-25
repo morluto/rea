@@ -15,7 +15,10 @@ import { NativeModuleResolver } from "../../dist/browser/modules/NativeModuleRes
 import { startBrowserModuleSite } from "../fixtures/browser-module-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 /** Check native URL resolution against an independently loaded module graph through CLI/MCP. */
 export async function verifyBrowserModules(
@@ -38,7 +41,10 @@ export async function verifyBrowserModules(
     const cli = async (...args) => {
       const { stdout } = await promisify(execFile)(
         process.execPath,
-        [entrypoint, ...args, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([...args, "--json"])),
+        ],
         { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
       );
       return parseEvidence(JSON.parse(stdout));

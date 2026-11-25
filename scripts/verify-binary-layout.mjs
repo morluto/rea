@@ -31,7 +31,10 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
@@ -1533,9 +1536,11 @@ try {
         trace,
         process.execPath,
         entrypoint,
-        "inspect-binary-layout",
-        join(root.path, name),
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-binary-layout",
+          join(root.path, name),
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
@@ -1667,7 +1672,14 @@ async function inspect(
     try {
       response = await commands.exec(
         process.execPath,
-        [entrypoint, "inspect-binary-layout", path, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([
+            "inspect-binary-layout",
+            path,
+            "--json",
+          ])),
+        ],
         {
           env: selectedEnvironment,
           timeout: 40_000,

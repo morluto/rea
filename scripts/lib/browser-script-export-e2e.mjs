@@ -17,6 +17,7 @@ import {
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import {
+  completeEvidenceCliArguments,
   completeEvidenceClient,
   completeEvidenceToolArguments,
 } from "./complete-evidence.mjs";
@@ -188,7 +189,10 @@ const exportCli =
   async (...args) => {
     const { stdout } = await promisify(execFile)(
       process.execPath,
-      [entrypoint, ...args, "--json"],
+      [
+        entrypoint,
+        ...(await completeEvidenceCliArguments([...args, "--json"])),
+      ],
       { env, timeout: 60000, maxBuffer: 32 * 1024 * 1024 },
     );
     return parseEvidence(JSON.parse(stdout));

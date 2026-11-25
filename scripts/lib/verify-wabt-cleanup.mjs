@@ -17,7 +17,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./wabt-verifier-timeouts.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 const execute = promisify(execFile);
 /** Real WABT inspection with authored cleanup denials and same-connection recovery. */
 export async function verifyWabtCleanup(entrypoint, environment, parent) {
@@ -84,9 +87,11 @@ export async function verifyWabtCleanup(entrypoint, environment, parent) {
             "--import",
             preload,
             entrypoint,
-            "inspect-wasm-artifact",
-            input,
-            "--json",
+            ...(await completeEvidenceCliArguments([
+              "inspect-wasm-artifact",
+              input,
+              "--json",
+            ])),
           ],
           {
             env: c.env,

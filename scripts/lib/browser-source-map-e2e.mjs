@@ -13,7 +13,10 @@ import { mcpTextValue } from "./mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { createPackageVerifierCommands } from "./verify-package-commands.mjs";
 import { importVerifierSource } from "./verifier-source-loader.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS } = await importVerifierSource(
   new URL("./browser-process-startup.mts", import.meta.url).href,
@@ -53,7 +56,10 @@ export async function verifyBrowserSourceMap(
     const cli = async (...args) => {
       const { stdout } = await commands.exec(
         process.execPath,
-        [entrypoint, ...args, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([...args, "--json"])),
+        ],
         // Allow the shared cold-start budget plus capture, cleanup and delivery.
         { env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
       );

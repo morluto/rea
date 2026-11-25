@@ -9,7 +9,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const execute = promisify(execFile);
 
@@ -135,9 +138,11 @@ export async function runScenarioCli(scenario) {
     process.execPath,
     [
       "scripts/rea.mjs",
-      "capture-browser-scenario",
-      JSON.stringify(scenario),
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "capture-browser-scenario",
+        JSON.stringify(scenario),
+        "--json",
+      ])),
     ],
     {
       cwd: process.cwd(),

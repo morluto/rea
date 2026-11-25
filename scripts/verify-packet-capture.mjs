@@ -22,7 +22,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -349,7 +352,14 @@ await withVerifierFixture(root, async () => {
         (
           await execute(
             process.execPath,
-            [entrypoint, "inspect-pcap-capture", capturePath, "--json"],
+            [
+              entrypoint,
+              ...(await completeEvidenceCliArguments([
+                "inspect-pcap-capture",
+                capturePath,
+                "--json",
+              ])),
+            ],
             { env: environment, timeout: 60000, maxBuffer: 16 * 1024 * 1024 },
           )
         ).stdout,

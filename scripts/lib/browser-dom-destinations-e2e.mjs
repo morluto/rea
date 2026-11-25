@@ -8,7 +8,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { assertFormDestinations } from "./browser-verifier-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
-import { completeEvidenceClient } from "./complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 /** Verify the real fixture's form destinations through CLI and stdio MCP. */
 export async function verifyBrowserDomDestinations(
@@ -21,12 +24,14 @@ export async function verifyBrowserDomDestinations(
     process.execPath,
     [
       entrypoint,
-      "inspect-web-page",
-      attachment.cdp_endpoint,
-      attachment.target_id,
-      "--observation-ms",
-      "100",
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "inspect-web-page",
+        attachment.cdp_endpoint,
+        attachment.target_id,
+        "--observation-ms",
+        "100",
+        "--json",
+      ])),
     ],
     { env, timeout: 60000, maxBuffer: 32 * 1024 * 1024 },
   );

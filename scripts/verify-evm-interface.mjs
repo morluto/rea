@@ -20,7 +20,10 @@ import {
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const manifest = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -97,10 +100,12 @@ try {
           [
             ...scope.prefix,
             entrypoint,
-            "inspect-evm-interface",
-            path,
-            encoding,
-            "--json",
+            ...(await completeEvidenceCliArguments([
+              "inspect-evm-interface",
+              path,
+              encoding,
+              "--json",
+            ])),
           ],
           {
             env: scope.environment ?? environment,
@@ -500,10 +505,12 @@ try {
         join(root.path, `offline.trace.${name}`),
         process.execPath,
         entrypoint,
-        "inspect-evm-interface",
-        join(root.path, name),
-        encoding,
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-evm-interface",
+          join(root.path, name),
+          encoding,
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
