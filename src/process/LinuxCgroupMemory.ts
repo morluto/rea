@@ -242,18 +242,14 @@ const parseLinuxCgroupCurrent = (value: string): number | null => {
 };
 
 /**
- * Find all visible ancestor cgroup directories across covering mounts, preferring
- * the widest usable mount (shortest mount.root) so parent limits outside subtree
- * mounts are not skipped.
+ * Find candidate ancestor cgroup directories across all covering mounts for each ancestor path,
+ * preserving all covering mounts so unreadable outer mounts do not mask readable delegated mounts.
  */
 const resolveAncestorCgroupDirectories = (
   mounts: readonly LinuxCgroup2Mount[],
   leafPath: string,
-): readonly string[] => {
-  const sortedMounts = [...mounts].sort(
-    (a, b) => a.root.length - b.root.length,
-  );
-  const leafCovered = sortedMounts.some(
+): readonly (readonly string[])[] => {
+  const leafCovered = mounts.some(
     (mount) =>
       mount.root === "/" ||
       leafPath === mount.root ||
@@ -271,31 +267,41 @@ const resolveAncestorCgroupDirectories = (
     current = parent;
   }
 
-  const directories: string[] = [];
-  const visited = new Set<string>();
+  const ancestorDirectories: (readonly string[])[] = [];
 
   for (const cgroupPath of cgroupPaths) {
-    for (const mount of sortedMounts) {
+    const candidateMounts = mounts.filter(
+      (mount) =>
+        mount.root === "/" ||
+        cgroupPath === mount.root ||
+        cgroupPath.startsWith(`${mount.root}/`),
+    );
+    const sorted = [...candidateMounts].sort(
+      (a, b) => b.root.length - a.root.length,
+    );
+    const directories: string[] = [];
+    const visited = new Set<string>();
+
+    for (const mount of sorted) {
       const rest =
         mount.root === "/"
           ? cgroupPath
           : cgroupPath === mount.root
             ? "/"
-            : cgroupPath.startsWith(`${mount.root}/`)
-              ? cgroupPath.slice(mount.root.length)
-              : undefined;
-      if (rest !== undefined) {
-        const directory = posix.resolve(mount.mountPoint, `.${rest}`);
-        if (!visited.has(directory)) {
-          visited.add(directory);
-          directories.push(directory);
-        }
-        break;
+            : cgroupPath.slice(mount.root.length);
+      const directory = posix.resolve(mount.mountPoint, `.${rest}`);
+      if (!visited.has(directory)) {
+        visited.add(directory);
+        directories.push(directory);
       }
+    }
+
+    if (directories.length > 0) {
+      ancestorDirectories.push(directories);
     }
   }
 
-  return directories;
+  return ancestorDirectories;
 };
 
 interface DirectoryMemoryMetrics {
@@ -330,6 +336,72 @@ const readDirectoryMemoryMetrics = async (
   return { max, current };
 };
 
+const readAncestorMemoryMetrics = async (
+  candidateDirectories: readonly string[],
+  retainFailedClose?: (path: string, owner: OwnedFileHandle) => void,
+): Promise<DirectoryMemoryMetrics> => {
+  let max: number | "max" | undefined = undefined;
+  let current: number | null = null;
+
+  for (const directory of candidateDirectories) {
+    const metrics = await readDirectoryMemoryMetrics(
+      directory,
+      retainFailedClose,
+    );
+    if (max === undefined && metrics.max !== undefined) {
+      max = metrics.max;
+    }
+    if (current === null && metrics.current !== null) {
+      current = metrics.current;
+    }
+    if (max !== undefined && current !== null) {
+      break;
+    }
+  }
+
+  return { max, current };
+};
+
+interface AncestorAccumulator {
+  tightestMax: number | "max" | null;
+  tightestRemaining: number | null;
+  leafUsageBytes: number | null;
+  knownDescendantUsage: number | null;
+}
+
+const updateAncestorMetrics = (
+  acc: AncestorAccumulator,
+  metrics: DirectoryMemoryMetrics,
+  isLeaf: boolean,
+): void => {
+  if (isLeaf) {
+    acc.leafUsageBytes = metrics.current;
+  }
+  if (metrics.current !== null) {
+    acc.knownDescendantUsage =
+      acc.knownDescendantUsage === null
+        ? metrics.current
+        : Math.max(acc.knownDescendantUsage, metrics.current);
+  }
+  if (metrics.max === "max") {
+    if (acc.tightestMax === null) acc.tightestMax = "max";
+  } else if (metrics.max !== undefined) {
+    acc.tightestMax =
+      acc.tightestMax === null || acc.tightestMax === "max"
+        ? metrics.max
+        : Math.min(acc.tightestMax, metrics.max);
+
+    const effectiveCharge = metrics.current ?? acc.knownDescendantUsage;
+    if (effectiveCharge !== null) {
+      const remaining = Math.max(0, metrics.max - effectiveCharge);
+      acc.tightestRemaining =
+        acc.tightestRemaining === null
+          ? remaining
+          : Math.min(acc.tightestRemaining, remaining);
+    }
+  }
+};
+
 /**
  * Read the effective cgroup memory ceiling for this process: the tightest
  * finite `memory.max` across the group and its visible ancestors, together
@@ -361,45 +433,31 @@ export const readLinuxCgroupAdmissionFacts = async (
   );
   if (mountInfo === undefined) return undefined;
   const mounts = parseLinuxCgroup2Mounts(mountInfo);
-  const directories = resolveAncestorCgroupDirectories(mounts, path);
-  if (directories.length === 0) return undefined;
+  const ancestorDirectories = resolveAncestorCgroupDirectories(mounts, path);
+  if (ancestorDirectories.length === 0) return undefined;
 
-  let tightestMax: number | "max" | null = null;
-  let tightestRemaining: number | null = null;
-  let leafUsageBytes: number | null = null;
+  const acc: AncestorAccumulator = {
+    tightestMax: null,
+    tightestRemaining: null,
+    leafUsageBytes: null,
+    knownDescendantUsage: null,
+  };
 
-  for (let index = 0; index < directories.length; index += 1) {
-    const directory = directories[index];
-    if (directory === undefined) continue;
+  for (let index = 0; index < ancestorDirectories.length; index += 1) {
+    const candidates = ancestorDirectories[index];
+    if (candidates === undefined || candidates.length === 0) continue;
 
-    const metrics = await readDirectoryMemoryMetrics(
-      directory,
+    const metrics = await readAncestorMemoryMetrics(
+      candidates,
       options.retainFailedClose,
     );
-
-    if (index === 0) {
-      leafUsageBytes = metrics.current;
-    }
-
-    if (metrics.max === "max") {
-      if (tightestMax === null) tightestMax = "max";
-    } else if (metrics.max !== undefined) {
-      tightestMax =
-        tightestMax === null || tightestMax === "max"
-          ? metrics.max
-          : Math.min(tightestMax, metrics.max);
-      const remaining = Math.max(0, metrics.max - (metrics.current ?? 0));
-      tightestRemaining =
-        tightestRemaining === null
-          ? remaining
-          : Math.min(tightestRemaining, remaining);
-    }
+    updateAncestorMetrics(acc, metrics, index === 0);
   }
 
   return {
-    effectiveMemoryMax: tightestMax,
-    usageBytes: leafUsageBytes,
-    effectiveRemainingBytes: tightestRemaining,
+    effectiveMemoryMax: acc.tightestMax,
+    usageBytes: acc.leafUsageBytes,
+    effectiveRemainingBytes: acc.tightestRemaining,
   };
 };
 

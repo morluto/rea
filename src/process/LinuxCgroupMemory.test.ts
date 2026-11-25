@@ -332,7 +332,7 @@ it("reads admission facts and tightens effective limit across ancestor hierarchy
   expect(facts).toEqual({
     effectiveMemoryMax: 1073741824,
     usageBytes: 524288000,
-    effectiveRemainingBytes: 1073741824,
+    effectiveRemainingBytes: 549453824,
   });
 });
 
@@ -437,5 +437,68 @@ it("discovers parent limits through wider mounts outside subtree mounts", async 
     effectiveMemoryMax: 2147483648,
     usageBytes: 104857600,
     effectiveRemainingBytes: 1623195648,
+  });
+});
+
+it("reads limits from readable subtree mount when wider mount is unreadable", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-readable-subtree-");
+  const subtreeMount = join(root, "subtree-cgroup");
+  const unreadableWiderMount = join(root, "unreadable-wider");
+
+  // Subtree mount exposes /jobs/rea and is readable
+  const leafInSubtree = join(subtreeMount, "rea");
+  await mkdir(leafInSubtree, { recursive: true });
+  await writeFile(join(leafInSubtree, "memory.max"), "1073741824\n");
+  await writeFile(join(leafInSubtree, "memory.current"), "268435456\n");
+
+  // Wider mount exposes root /, but does not have the leaf paths
+  await mkdir(unreadableWiderMount, { recursive: true });
+
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  await writeFile(procCgroupPath, "0::/jobs/rea\n");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  await writeFile(
+    procMountInfoPath,
+    `${mountInfoRow("/", unreadableWiderMount)}\n${mountInfoRow("/jobs", subtreeMount)}\n`,
+  );
+
+  const facts = await readLinuxCgroupAdmissionFacts({
+    platform: "linux",
+    procCgroupPath,
+    procMountInfoPath,
+  });
+
+  expect(facts).toEqual({
+    effectiveMemoryMax: 1073741824,
+    usageBytes: 268435456,
+    effectiveRemainingBytes: 805306368,
+  });
+});
+
+it("preserves uncertainty when ancestor limit is finite but usage cannot be determined", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-uncertain-usage-");
+  const mountPoint = join(root, "cgroup");
+  const parentGroup = join(mountPoint, "parent.slice");
+  const childGroup = join(parentGroup, "child.slice");
+  await mkdir(childGroup, { recursive: true });
+
+  await writeFile(join(parentGroup, "memory.max"), "1073741824\n");
+  await writeFile(join(childGroup, "memory.max"), "max\n");
+
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  await writeFile(procCgroupPath, "0::/parent.slice/child.slice\n");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  await writeFile(procMountInfoPath, `${mountInfoRow("/", mountPoint)}\n`);
+
+  const facts = await readLinuxCgroupAdmissionFacts({
+    platform: "linux",
+    procCgroupPath,
+    procMountInfoPath,
+  });
+
+  expect(facts).toEqual({
+    effectiveMemoryMax: 1073741824,
+    usageBytes: null,
+    effectiveRemainingBytes: null,
   });
 });
