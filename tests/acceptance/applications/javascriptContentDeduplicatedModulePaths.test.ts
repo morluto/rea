@@ -1,9 +1,9 @@
+import { inspectEvidenceView } from "../../support/cli/inspectEvidenceView.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -24,22 +24,7 @@ cliTest(
     await writeFile(evidencePath, JSON.stringify(evidence));
     const queryPath = join(root, "query.json");
 
-    const inspect = async (view: Record<string, unknown>) => {
-      await writeFile(
-        queryPath,
-        JSON.stringify({
-          source: { kind: "evidence-file", path: evidencePath },
-          view,
-        }),
-      );
-      const result = await cli.run({
-        arguments: ["inspect-analysis-view", queryPath, "--json"],
-      });
-      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
-      return analysisViewResultSchema.parse(
-        parseEvidence(result.json).normalized_result,
-      );
-    };
+    const inspect = inspectEvidenceView(cli, evidencePath, queryPath);
 
     let sharedNodeId: string | undefined;
     for (const path of ["a.js", "b.js"]) {
