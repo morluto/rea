@@ -499,8 +499,8 @@ it("keeps selection narrow when a changed fixture module has a traced consumer",
   );
   expect(await runPlanScript(directory, base, head)).toMatchObject({
     testSelection: {
-      mode: "affected",
-      tests: [consumer, unrelated],
+      mode: "selected",
+      files: [consumer, unrelated],
     },
   });
 });
