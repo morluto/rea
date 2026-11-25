@@ -137,8 +137,20 @@ const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
 };
 
 /**
- * Apply pax records over earlier ones. POSIX: an empty value deletes the
- * keyword, so the header field applies again.
+ * Mutate a retained global pax map in place after budget accounting. POSIX: an
+ * empty value deletes the keyword, so the header field applies again.
+ */
+const applyPaxInPlace = (
+  target: Map<string, string>,
+  records: TarPaxRecords,
+): void => {
+  for (const [key, value] of records)
+    if (value === "") target.delete(key);
+    else target.set(key, value);
+};
+
+/**
+ * Apply pax records over earlier ones without mutating `base`.
  */
 const withPax = (
   base: TarPaxRecords,
@@ -146,9 +158,7 @@ const withPax = (
 ): TarPaxRecords => {
   if (records === undefined) return base;
   const merged = new Map(base);
-  for (const [key, value] of records)
-    if (value === "") merged.delete(key);
-    else merged.set(key, value);
+  applyPaxInPlace(merged, records);
   return merged;
 };
 
@@ -245,7 +255,7 @@ export const walkTar = async (
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(TAR_RETAINED_METADATA_BYTES);
-  let global: TarPaxRecords = new Map();
+  const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
   let longName: Uint8Array | undefined;
@@ -397,7 +407,7 @@ export const walkTar = async (
             else if (nextBytes < chargedGlobalPax)
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
-            global = withPax(global, pax.records);
+            applyPaxInPlace(global, pax.records);
           } else local = pax.records;
         } else {
           const end = data.indexOf(0);
