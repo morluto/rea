@@ -13,17 +13,13 @@ import {
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import type {
-  ArtifactAnalysisResources,
-  ArtifactAnalysisRuntime,
-} from "../process/ArtifactAnalysisResources.js";
+import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import type { LinuxResourceLimits } from "../process/LinuxResourceLimits.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { artifactResourceDialect } from "./artifactResourceFailure.js";
-import { classifyProviderFailure } from "./classifyProviderFailure.js";
+import type { ProviderFailureDialect } from "./classifyProviderFailure.js";
 
 export type RecordingProducerPhase =
   | "configuration"
@@ -35,7 +31,7 @@ interface RecordingProducerFailureContext {
   readonly phase: RecordingProducerPhase;
   readonly operation: string;
   readonly path: string;
-  readonly root: ArtifactAnalysisRuntime | undefined;
+  readonly workspacePath: string | null;
   readonly limits: Parameters<ArtifactAnalysisResources["commandContext"]>[0];
   readonly effectiveLimits: LinuxResourceLimits | undefined;
   readonly observedOutput: AnalysisCapturedOutput | undefined;
@@ -54,20 +50,13 @@ interface RecordingProducerFailureContext {
   ) => AnalysisError;
 }
 
-/** Classify a recording producer failure after retaining any unfinished command cleanup. */
-export const classifyRecordingProducerFailure = (
-  cause: unknown,
+/** Describe recording failures in terms of the command, workspace, and catalog that produced them. */
+export const recordingProducerFailureDialect = (
   resources: ArtifactAnalysisResources,
   context: RecordingProducerFailureContext,
-): AnalysisError => {
-  const { root, operation, phase, path, observedOutput, catalog } = context;
-  if (
-    root !== undefined &&
-    cause instanceof OwnedCommandFailure &&
-    cause.cleanupOwner !== undefined
-  )
-    resources.retain(root, cause.cleanupOwner);
-  const workspacePath = root?.path ?? null;
+): ProviderFailureDialect => {
+  const { workspacePath, operation, phase, path, observedOutput, catalog } =
+    context;
   const command = resources.commandContext(
     context.limits,
     context.effectiveLimits,
@@ -75,19 +64,16 @@ export const classifyRecordingProducerFailure = (
     "producer_limits",
   );
   if (phase === "integrity")
-    return classifyProviderFailure(
-      cause,
-      artifactResourceDialect(resources, {
-        kind: "integrity",
-        operation,
-        path,
-        capturedOutput: observedOutput,
-      }),
-    );
+    return artifactResourceDialect(resources, {
+      kind: "integrity",
+      operation,
+      path,
+      capturedOutput: observedOutput,
+    });
 
   const captured =
     observedOutput === undefined ? {} : { capturedOutput: observedOutput };
-  return classifyProviderFailure(cause, {
+  return {
     providerId: resources.providerId,
     operation,
     recognise: (failure) =>
@@ -140,5 +126,5 @@ export const classifyRecordingProducerFailure = (
         ...captured,
       });
     },
-  });
+  };
 };

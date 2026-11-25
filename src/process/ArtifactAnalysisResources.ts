@@ -314,6 +314,19 @@ export class ArtifactAnalysisResources {
     });
   }
 
+  /** Keep a failed command's cleanup owner with the workspace that acquired it. */
+  retainCommandCleanup(
+    root: ArtifactAnalysisRuntime | undefined,
+    cause: unknown,
+  ): void {
+    if (
+      root !== undefined &&
+      cause instanceof OwnedCommandFailure &&
+      cause.cleanupOwner !== undefined
+    )
+      this.retain(root, cause.cleanupOwner);
+  }
+
   get pendingPaths(): readonly string[] {
     return [...this.#pending.keys()].map((root) => root.path);
   }

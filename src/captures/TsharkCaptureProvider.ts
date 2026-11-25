@@ -4,8 +4,9 @@ import {
   readerIntegrityFailure,
   readStableArtifact,
 } from "../resources/index.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
-  classifyRecordingProducerFailure,
+  recordingProducerFailureDialect,
   type RecordingProducerPhase,
 } from "../providers/recordingProducerFailure.js";
 import {
@@ -457,26 +458,26 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         );
       }
     } catch (cause) {
-      result = err(
-        classifyRecordingProducerFailure(cause, this.#resources, {
-          operation,
-          phase,
-          path: resourcePath,
-          root,
-          limits,
-          effectiveLimits,
-          observedOutput: capturedOutput,
-          catalog: {
-            format: FIELD_GLOSSARY_FORMAT,
-            allowance: "The packet-field discovery record allowance",
-            unit: "bytes",
-          },
-          configurationHelp:
-            "On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).",
-          readerIntegrity: (failure) =>
-            readerIntegrityFailure(operation, resourcePath, failure),
-        }),
-      );
+      this.#resources.retainCommandCleanup(root, cause);
+      const dialect = recordingProducerFailureDialect(this.#resources, {
+        operation,
+        phase,
+        path: resourcePath,
+        workspacePath: root?.path ?? null,
+        limits,
+        effectiveLimits,
+        observedOutput: capturedOutput,
+        catalog: {
+          format: FIELD_GLOSSARY_FORMAT,
+          allowance: "The packet-field discovery record allowance",
+          unit: "bytes",
+        },
+        configurationHelp:
+          "On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).",
+        readerIntegrity: (failure) =>
+          readerIntegrityFailure(operation, resourcePath, failure),
+      });
+      result = err(classifyProviderFailure(cause, dialect));
     }
     const completed = result;
     return finalizedResult(
