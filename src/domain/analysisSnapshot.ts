@@ -47,7 +47,7 @@ import {
   ownedJsonObjectSchema,
   type JsonValue,
 } from "./jsonValue.js";
-import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
