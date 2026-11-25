@@ -124,9 +124,11 @@ export class UbiImageArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       const lifecycle = this.#lifecycle.member(signal);
       const { signal: streamSignal, cancellationFailure } = lifecycle;
-      const source = Readable.from(
-        volumeChunks(handle, volume.ranges, streamSignal, cancellationFailure),
-        { objectMode: false },
+      const source = volumeStream(
+        handle,
+        volume.ranges,
+        streamSignal,
+        cancellationFailure,
       );
       const output = checkedArtifactMemberStream(
         stored,
@@ -189,21 +191,56 @@ export class UbiImageArtifactReader implements ArtifactReader {
   }
 }
 
-async function* volumeChunks(
+function volumeStream(
   handle: Pick<FileHandle, "read">,
   ranges: readonly UbiLebRange[],
   signal: AbortSignal,
   cancellationFailure: (reason: unknown) => Error,
-): AsyncIterable<Buffer> {
-  for (const range of ranges) {
-    if (range.length === 0) continue;
-    yield* readFileHandleChunks(handle, {
-      start: range.offset,
-      end: range.offset + range.length - 1,
-      signal,
-      cancellationFailure,
-    }) as AsyncIterable<Buffer>;
-  }
+): Readable {
+  let pending = false;
+  const source = Readable.from(
+    (async function* () {
+      for (const range of ranges) {
+        if (range.length === 0) continue;
+        const inner = readFileHandleChunks(handle, {
+          start: range.offset,
+          end: range.offset + range.length - 1,
+          signal,
+          cancellationFailure,
+        });
+        const chunks = (inner as AsyncIterable<Buffer>)[Symbol.asyncIterator]();
+        try {
+          while (true) {
+            pending = true;
+            let result: IteratorResult<Buffer, unknown>;
+            try {
+              result = await chunks.next();
+            } finally {
+              pending = false;
+            }
+            if (signal.aborted) throw cancellationFailure(signal.reason);
+            if (result.done) break;
+            yield result.value;
+          }
+        } finally {
+          if (!inner.destroyed) inner.destroy();
+          // Read-ahead may still own a descriptor read after the outer yield.
+          if (!inner.closed)
+            await new Promise<void>((resolve) => inner.once("close", resolve));
+        }
+      }
+    })(),
+    { objectMode: false },
+  );
+  const onAbort = (): void => {
+    // An active iterator read forwards its own failure before cancellation.
+    if (!pending && !source.destroyed)
+      source.destroy(cancellationFailure(signal.reason));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  source.once("close", () => signal.removeEventListener("abort", onAbort));
+  if (signal.aborted) onAbort();
+  return source;
 }
 
 const formatFailure = (

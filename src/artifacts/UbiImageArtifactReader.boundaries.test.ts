@@ -2,6 +2,8 @@ import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactR
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
+import { finished } from "node:stream/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -338,6 +340,63 @@ it("preserves cancellation while streaming a volume", async () => {
   } finally {
     await reader.close();
     await admitted.handle.close();
+  }
+});
+
+it("closes the reader when a paused volume is cancelled", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebCount = 6;
+  const layouts = ubiLayoutPebs(
+    [{ id: 0, name: "rootfs", type: "static", reservedPebs: lebCount }],
+    wide,
+  );
+  const lebs = Array.from({ length: lebCount }, (_, lnum) => ({
+    kind: "leb" as const,
+    volId: 0,
+    lnum,
+    data: Buffer.alloc(wide.pebSize - wide.dataOffset, 0x40 + lnum),
+    sqnum: BigInt(lnum + 2),
+    volType: "static" as const,
+    usedEbs: lebCount,
+  }));
+  const reader = new UbiImageArtifactReader(
+    await fixture(ubiImage([...layouts, ...lebs], wide)),
+  );
+  const controller = new AbortController();
+  const reason = new Error("cancel paused volume");
+  const [volume] = await entries(reader);
+  const stream = await reader.open(volume!, controller.signal);
+  const streamError = finished(stream).catch((cause: unknown) => cause);
+  const deadline = new AbortController();
+  try {
+    await new Promise<void>((resolve) => {
+      stream.once("data", () => {
+        stream.pause();
+        resolve();
+      });
+    });
+    await Promise.race([
+      (async () => {
+        while (stream.readableLength < stream.readableHighWaterMark)
+          await delay(1, undefined, { signal: deadline.signal });
+        // Give the producer time to finish read-ahead and park at a yield.
+        await delay(50, undefined, { signal: deadline.signal });
+        controller.abort(reason);
+        await reader.close();
+      })(),
+      delay(2000, undefined, { signal: deadline.signal }).then(() => {
+        throw new Error(
+          "Reader did not close after cancelling a paused volume",
+        );
+      }),
+    ]);
+    const failure = await streamError;
+    expect(failure).toMatchObject({ reason: "cancelled" });
+    expect((failure as Error).cause).toBe(reason);
+  } finally {
+    deadline.abort();
+    stream.destroy();
+    await reader.close();
   }
 });
 
