@@ -1294,6 +1294,7 @@
 * **native:** consolidate symbol-origin matching coverage ([#13423](https://github.com/morluto/rea/issues/13423)) ([9a885bd](https://github.com/morluto/rea/commit/9a885bd684d8b0ba87b6ab54be012dd420e67771))
 * **native:** isolate Objective-C ivar alignment coverage ([#13205](https://github.com/morluto/rea/issues/13205)) ([204434e](https://github.com/morluto/rea/commit/204434e087e2f3fee260c46abb928345d3171b44))
 * **native:** retain per-ivar alignment facts in mixed lists ([#3424](https://github.com/morluto/rea/issues/3424)) ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
+* **native:** share Mach-O inspection invocation fixtures ([#14543](https://github.com/morluto/rea/issues/14543)) ([2f510ac](https://github.com/morluto/rea/commit/2f510acf5197a04cece4f75903bbe66569a3ac73))
 * **nuget:** consolidate filename provenance and retained Evidence checks ([#13396](https://github.com/morluto/rea/issues/13396)) ([c45decb](https://github.com/morluto/rea/commit/c45decb70b71ce6443dc161547c05ca2ab50b1ce))
 * **nuget:** distinguish metadata budget and cancellation phases ([#13394](https://github.com/morluto/rea/issues/13394)) ([9fee59e](https://github.com/morluto/rea/commit/9fee59e418d7995457ab219c0c2053d45cc22336))
 * **package:** consolidate verifier diagnostics and setup applicability ([#12862](https://github.com/morluto/rea/issues/12862)) ([c6fe1e4](https://github.com/morluto/rea/commit/c6fe1e43e81c55065216e166247af043c95e9584))
