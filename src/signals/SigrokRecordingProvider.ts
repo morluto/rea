@@ -1,4 +1,5 @@
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   recordingProducerFailureDialect,
@@ -440,8 +441,12 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         observedOutput: capturedOutput,
         catalog: {
           format: DECODER_CATALOG_FORMAT,
-          allowance: "The sigrok decoder-discovery line allowance",
-          unit: "lines",
+          allowance: (maximum) =>
+            fixedAllowanceOptions(
+              "The sigrok decoder-discovery line allowance",
+              "capture",
+              { limit: maximum, unit: "lines" },
+            ),
         },
         configurationHelp:
           "On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).",

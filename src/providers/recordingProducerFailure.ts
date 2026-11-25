@@ -7,7 +7,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import type { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -37,8 +37,9 @@ interface RecordingProducerFailureContext {
   readonly observedOutput: AnalysisCapturedOutput | undefined;
   readonly catalog: {
     readonly format: string;
-    readonly allowance: string;
-    readonly unit: string;
+    readonly allowance: (
+      maximum: number,
+    ) => ReturnType<typeof fixedAllowanceOptions>;
   };
   readonly configurationHelp: string;
   readonly configurationDiagnostics?: (
@@ -80,10 +81,7 @@ export const recordingProducerFailureDialect = (
       isParseLimit(failure, catalog.format)
         ? parseLimitConstraint(operation, "memory", failure, {
             ...captured,
-            ...fixedAllowanceOptions(catalog.allowance, "capture", {
-              limit: failure.failure.limit.maximum,
-              unit: catalog.unit,
-            }),
+            ...catalog.allowance(failure.failure.limit.maximum),
           })
         : undefined,
     command: () => command,

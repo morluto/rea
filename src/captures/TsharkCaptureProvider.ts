@@ -4,6 +4,7 @@ import {
   readerIntegrityFailure,
   readStableArtifact,
 } from "../resources/index.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   recordingProducerFailureDialect,
@@ -469,8 +470,12 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         observedOutput: capturedOutput,
         catalog: {
           format: FIELD_GLOSSARY_FORMAT,
-          allowance: "The packet-field discovery record allowance",
-          unit: "bytes",
+          allowance: (maximum) =>
+            fixedAllowanceOptions(
+              "The packet-field discovery record allowance",
+              "capture",
+              { limit: maximum, unit: "bytes" },
+            ),
         },
         configurationHelp:
           "On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).",
