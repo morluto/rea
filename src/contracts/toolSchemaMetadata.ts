@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -14,7 +15,13 @@ import {
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
-import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
+import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
+import {
+  getEvidenceInputContract,
+  isDeclaredEvidenceRecord,
+} from "../domain/evidenceInputContract.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { schemaAnnotations } from "../domain/schemaAnnotations.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -63,45 +70,142 @@ const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
 
 type JsonSchemaProjection = z.ZodType["~standard"]["jsonSchema"]["input"];
 
+// Contracts are immutable module values. Build each advertised wrapper once so
+// its memoized projection serves every server in the process, not only the
+// server that registered it.
+const advertisedInputSchemas = new WeakMap<ToolContract, z.ZodType>();
+const advertisedOutputSchemas = new WeakMap<ToolContract, z.ZodType>();
+
+const oncePerContract = <
+  Contract extends ToolContract,
+  Schema extends z.ZodType,
+>(
+  cache: WeakMap<ToolContract, z.ZodType>,
+  contract: Contract,
+  build: () => Schema,
+): Schema => {
+  const cached = cache.get(contract);
+  if (cached !== undefined) return cached as Schema;
+  const built = build();
+  cache.set(contract, built);
+  return built;
+};
+
+/** The instruction an advertised complete observation carries after its description. */
+export const COMPLETE_OBSERVATION_GUIDANCE =
+  "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.";
+
+/**
+ * Apply typed presentation annotations while Zod projects an advertised input.
+ * Running inside this projection only keeps `--schema`, output schemas and
+ * every other JSON Schema conversion of the same Zod schema canonical.
+ */
+const presentAnnotatedInput = ({
+  zodSchema,
+  jsonSchema,
+}: {
+  readonly zodSchema: z.core.$ZodType;
+  readonly jsonSchema: Record<string, unknown>;
+}): void => {
+  if (isDeclaredEvidenceRecord(zodSchema)) {
+    const description =
+      typeof jsonSchema.description === "string"
+        ? jsonSchema.description
+        : undefined;
+    for (const key of Object.keys(jsonSchema)) delete jsonSchema[key];
+    Object.assign(jsonSchema, {
+      ...(description === undefined ? {} : { description }),
+      anyOf: [
+        {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["retained-evidence"] },
+            evidence_id: { type: "string" },
+          },
+          required: ["kind", "evidence_id"],
+          additionalProperties: false,
+        },
+        { type: "object" },
+      ],
+    });
+    return;
+  }
+  if (schemaAnnotations(zodSchema)?.completeObservation !== true) return;
+  // These operands are complete producer results, not fields an agent builds,
+  // so the wire declaration omits the repeated result schema.
+  if (jsonSchema.type !== "object")
+    throw new TypeError(
+      "A complete observation annotation requires an object schema",
+    );
+  const description = [jsonSchema.description, COMPLETE_OBSERVATION_GUIDANCE]
+    .filter((text) => typeof text === "string")
+    .join(" ");
+  for (const key of Object.keys(jsonSchema)) delete jsonSchema[key];
+  Object.assign(jsonSchema, { type: "object", description });
+};
+
+/**
+ * Declare `type: "object"` on a union root whose alternatives are all objects,
+ * after its combinator, where Zod places root metadata.
+ */
+const objectRoot = ({
+  $defs,
+  ...root
+}: Record<string, unknown>): Record<string, unknown> => ({
+  ...root,
+  type: "object",
+  ...($defs === undefined ? {} : { $defs }),
+});
+
 /** Attach caller guidance to a canonical schema for the SDK wire projection. */
 export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
 ): Contract["inputSchema"] =>
-  withAdvertisedJsonSchema(
-    contract.inputSchema,
-    "input",
-    (project) => (options) => {
-      const inline = project({
-        ...options,
-        libraryOptions: { ...options.libraryOptions, reused: "inline" },
-      });
-      const examples = advertisedInputExamples(contract);
-      const presented = presentInputJsonSchema(
-        inline,
-        fallbackPropertyDescription,
-      );
-      const sourceGuidance = getEvidenceInputContract(contract.inputSchema)
-        .hasEvidence
-        ? 'Declared Evidence fields accept complete records or {"kind":"retained-evidence","evidence_id":"ev_..."}. For a complete source, use the summary\'s parent_evidence_id.'
-        : undefined;
-      return {
-        // Keep advertised parameters self-contained for clients that do not
-        // resolve local references. The registered canonical schema remains
-        // responsible for runtime validation.
-        ...presented,
-        ...(sourceGuidance === undefined
-          ? {}
-          : {
-              description: [presented.description, sourceGuidance]
-                .filter((text) => typeof text === "string")
-                .join(" "),
-            }),
-        ...(examples.length === 0 ? {} : { examples }),
-      };
-    },
+  oncePerContract(advertisedInputSchemas, contract, () =>
+    withAdvertisedJsonSchema(
+      contract.inputSchema,
+      "input",
+      (project) => (options) => {
+        const inline = project({
+          ...options,
+          libraryOptions: {
+            ...options.libraryOptions,
+            reused: "inline",
+            override: presentAnnotatedInput,
+          },
+        });
+        const examples = advertisedInputExamples(contract);
+        const presented = presentInputJsonSchema(
+          inline,
+          fallbackPropertyDescription,
+          schemaAnnotations(contract.inputSchema),
+        );
+        const sourceGuidance = getEvidenceInputContract(contract.inputSchema)
+          .hasEvidence
+          ? 'Declared Evidence fields accept complete records or {"kind":"retained-evidence","evidence_id":"ev_..."}. For a complete source, use the summary\'s parent_evidence_id.'
+          : undefined;
+        return {
+          // Keep advertised parameters self-contained for clients that do not
+          // resolve local references. The registered canonical schema remains
+          // responsible for runtime validation.
+          ...presented,
+          ...(sourceGuidance === undefined
+            ? {}
+            : {
+                description: [presented.description, sourceGuidance]
+                  .filter((text) => typeof text === "string")
+                  .join(" "),
+              }),
+          ...(examples.length === 0 ? {} : { examples }),
+        };
+      },
+    ),
   );
 
-/** Return the full-profile advertised input JSON Schema registered on MCP. */
+/**
+ * Return the input JSON Schema registered on MCP. It keeps canonical patterns;
+ * `advertiseToolInput` derives what a client receives from it.
+ */
 export const advertisedInputJsonSchema = <Contract extends ToolContract>(
   contract: Contract,
 ): Record<string, unknown> =>
@@ -113,26 +217,82 @@ export const advertisedInputJsonSchema = <Contract extends ToolContract>(
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
 ): Contract["outputSchema"] =>
-  withAdvertisedJsonSchema(
-    contract.outputSchema,
-    "output",
-    (project) => (options) => {
-      const shared = project({
-        ...options,
-        libraryOptions: { reused: "ref", ...options.libraryOptions },
-      });
-      // An explicit ID owns the reference base. Relative external references
-      // also depend on that base, so leave those projections unchanged.
-      if ("$id" in shared || hasRelativeSchemaReference(shared)) return shared;
-      return {
-        ...shared,
-        $id: `urn:rea:tool-output:sha256:${digestCanonicalValue(
-          { target: options.target, schema: shared },
-          "Tool output schema",
-        )}`,
-      };
-    },
+  oncePerContract(advertisedOutputSchemas, contract, () =>
+    withAdvertisedJsonSchema(
+      contract.outputSchema,
+      "output",
+      (project) => (options) => {
+        const projected = project({
+          ...options,
+          libraryOptions: { reused: "ref", ...options.libraryOptions },
+        });
+        const shared = shareOutputDefinitions(
+          presentOutputJsonSchema(
+            schemaAnnotations(contract.outputSchema)?.objectRoot === true
+              ? objectRoot(projected)
+              : projected,
+          ),
+        );
+        // An explicit ID owns the reference base. Relative external references
+        // also depend on that base, so leave those projections unchanged.
+        if ("$id" in shared || hasRelativeSchemaReference(shared))
+          return shared;
+        return {
+          ...shared,
+          $id: `urn:rea:tool-output:sha256:${digestCanonicalValue(
+            { target: options.target, schema: shared },
+            "Tool output schema",
+          )}`,
+        };
+      },
+    ),
   );
+
+/**
+ * Return the canonical output JSON Schema registered on MCP for a target: the
+ * complete projection of the contract's output, which the full output profile
+ * lists. A client that validates a reply uses it whatever the selected profile
+ * advertises.
+ */
+export const advertisedOutputJsonSchema = <Contract extends ToolContract>(
+  contract: Contract,
+  target: Parameters<JsonSchemaProjection>[0]["target"] = "draft-2020-12",
+): Record<string, unknown> =>
+  toolOutputSchemaWithMetadata(contract)["~standard"].jsonSchema.output({
+    target,
+  }) as Record<string, unknown>;
+
+/** A wire projection already proven object-rooted, or its original schema. */
+const OBJECT_ROOT_OUTPUT_STUB: Readonly<Record<string, unknown>> =
+  Object.freeze({ type: "object" });
+
+/** Whether every valid instance of this output schema has an object root. */
+export const hasGuaranteedObjectOutputRoot = (schema: unknown): boolean =>
+  schema instanceof z.ZodObject ||
+  (schema instanceof z.core.$ZodType &&
+    schemaAnnotations(schema)?.objectRoot === true);
+
+/**
+ * Omit canonical JSON Schema generation on a server profile that strips
+ * `outputSchema` from `tools/list`, preserving runtime `~standard.validate`
+ * and object-root identity for wire codecs without running a 5 MB projection.
+ */
+export const omitAdvertisedOutputJsonSchema = <Schema>(
+  schema: Schema,
+): Schema => {
+  const standard = Reflect.get(schema as object, "~standard");
+  if (!isRecord(standard)) return schema;
+  const jsonSchema = Reflect.get(standard, "jsonSchema");
+  if (!isRecord(jsonSchema)) return schema;
+  if (typeof Reflect.get(jsonSchema, "output") !== "function") return schema;
+  return {
+    ...(schema as object),
+    "~standard": {
+      ...standard,
+      jsonSchema: { ...jsonSchema, output: () => OBJECT_ROOT_OUTPUT_STUB },
+    },
+  } as Schema;
+};
 
 /**
  * Apply a wire-presentation transform to one schema's advertised input
@@ -143,11 +303,12 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
 export const transformAdvertisedInputJsonSchema = <Schema>(
   schema: Schema,
   transform: (projected: Record<string, unknown>) => Record<string, unknown>,
+  resolveCached?: (target: string) => Record<string, unknown> | undefined,
 ): Schema => {
   const standard = Reflect.get(schema as object, "~standard");
-  if (!isSchemaRecord(standard)) return schema;
+  if (!isRecord(standard)) return schema;
   const jsonSchema = Reflect.get(standard, "jsonSchema");
-  if (!isSchemaRecord(jsonSchema)) return schema;
+  if (!isRecord(jsonSchema)) return schema;
   const project = Reflect.get(jsonSchema, "input");
   if (typeof project !== "function") return schema;
   const byTarget = new Map<string, Record<string, unknown>>();
@@ -159,13 +320,15 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
     if (cacheable) {
       const cached = byTarget.get(target);
       if (cached !== undefined) return cached;
+      const seeded = resolveCached?.(target);
+      if (seeded !== undefined) {
+        byTarget.set(target, seeded);
+        return seeded;
+      }
     }
     const projected = (project as (options: unknown) => unknown)(options);
-    const transformed = isSchemaRecord(projected)
-      ? transform(projected)
-      : projected;
-    if (cacheable && isSchemaRecord(transformed))
-      byTarget.set(target, transformed);
+    const transformed = isRecord(projected) ? transform(projected) : projected;
+    if (cacheable && isRecord(transformed)) byTarget.set(target, transformed);
     return transformed;
   };
   return {
@@ -200,7 +363,7 @@ const hasRelativeSchemaReference = (
     if (current === null || typeof current !== "object") continue;
     const { position } = entry;
     const scope =
-      position !== "map" && isSchemaRecord(current)
+      position !== "map" && isRecord(current)
         ? references.enter(current, entry.scope)
         : entry.scope;
     if (scope === undefined) return true;
@@ -256,9 +419,7 @@ const hasRelativeSchemaReference = (
 const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   canonical: Schema,
   io: "input" | "output",
-  advertise: (project: JsonSchemaProjection) => JsonSchemaProjection = (
-    project,
-  ) => project,
+  advertise: (project: JsonSchemaProjection) => JsonSchemaProjection,
 ): Schema => {
   // Zod's input projection drops root metadata when a descendant transforms.
   // Preserve the parser and let the SDK own conversion of everything else.
@@ -297,9 +458,6 @@ const memoizeByTarget = (
     return projected;
   };
 };
-
-const isSchemaRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const fallbackPropertyDescription = (property: string): string | undefined => {
   const explicit = Object.hasOwn(PROPERTY_DESCRIPTIONS, property)

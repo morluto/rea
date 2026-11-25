@@ -1,17 +1,18 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeImportsPort } from "./PeImportsPort.js";
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeImportsInputSchema,
   peImportsSchema,
+  type PeImportFunction,
   type PeImports,
 } from "../../domain/native/peImports.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import { peVa } from "../../domain/native/peAddressSpace.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_pe_imports";
 
@@ -23,57 +24,29 @@ export class PeImportsService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectPeImportsInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = peImportsSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPeImportsInputSchema,
+        outputSchema: peImportsSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "PE import provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = peSubjectArchitecture(value.machine, value.format);
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...fileRange(value.import_directory),
-      ...fileRange(value.delay_import_directory),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "pe",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, input) =>
+          report.artifact.path === input.path && validReport(report, input),
+        buildEvidence: (value, identity, parameters) =>
+          observedPeEvidence(value, identity, OPERATION, parameters, [
+            ...fileRange(value.import_directory),
+            ...fileRange(value.delay_import_directory),
+          ]),
+      },
+      rawInput,
+      options,
     );
   }
 }
@@ -98,14 +71,11 @@ const validReport = (
   input: {
     readonly max_dlls: number;
     readonly max_functions: number;
-    readonly max_file_bytes: number;
   },
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   const dllCount = report.imports.length + report.delay_imports.length;
   if (
-    report.artifact.bytes > input.max_file_bytes ||
     report.coverage.examined_dlls > input.max_dlls ||
     dllCount > report.coverage.examined_dlls ||
     (report.coverage.status === "complete" &&
@@ -141,5 +111,23 @@ const validReport = (
   const descriptorsFit = (
     rows: readonly { location: { offset: number; bytes: number } }[],
   ) => rows.every((row) => inside(row.location));
-  return descriptorsFit(report.imports) && descriptorsFit(report.delay_imports);
+  // A slot VA is the image base plus its RVA; a report that disagrees
+  // cannot be cited as a provider address.
+  const base = report.image_base;
+  const vasAgree = (
+    rows: readonly { functions: readonly PeImportFunction[] }[],
+  ) =>
+    rows.every(({ functions }) =>
+      functions.every(
+        ({ iat_rva, iat_va }) =>
+          iat_va === undefined ||
+          (base !== undefined && iat_va === peVa(BigInt(base), iat_rva)),
+      ),
+    );
+  return (
+    descriptorsFit(report.imports) &&
+    descriptorsFit(report.delay_imports) &&
+    vasAgree(report.imports) &&
+    vasAgree(report.delay_imports)
+  );
 };

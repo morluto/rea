@@ -1,5 +1,10 @@
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 import { z } from "zod";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
@@ -35,6 +40,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const countsSchema = z.strictObject({
   sections: z.number().int().nonnegative(),
@@ -355,16 +361,6 @@ const parseMetadataReport = (
   return ok(checked);
 };
 
-/** Direct batch lookup visits selected indices only; metadata order is stable. */
-function* rowIndices(length: number, indices: number[] | undefined) {
-  if (indices === undefined) {
-    for (let index = 0; index < length; index++) yield index;
-  } else {
-    for (const index of [...new Set(indices)].sort((a, b) => a - b))
-      if (index < length) yield index;
-  }
-}
-
 const selectFields = (
   row: Row,
   index: number,
@@ -526,34 +522,19 @@ export const projectIl2cppMetadataView = (
     SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
   >(admitted, "summary", "il2cpp-metadata");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata Evidence supports summary and selected sections, images, types, methods, member, parameter, string literal, method address, type reference, generic method instance and generic method issue pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "IL2CPP metadata Evidence supports summary and selected sections, images, types, methods, member, parameter, string literal, method address, type reference, generic method instance and generic method issue pages.",
     );
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;
   const { report, counts } = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject != null &&
-    (subject.format !== "file" ||
-      subject.digest.sha256 !== report.artifact.sha256)
+    (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata artifact identity does not match its parent subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "IL2CPP metadata artifact identity does not match its parent subject.",
     );
   const {
     sections,
@@ -633,7 +614,7 @@ export const projectIl2cppMetadataView = (
         : report.binary.generic_methods == null
           ? "Addresses come from static binary tables; runtime behavior and generic instance code remain unknown."
           : "Addresses come from static binary tables; runtime behavior and generic instances outside genericMethodTable remain unknown.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
           ]
@@ -665,7 +646,7 @@ export const projectIl2cppMetadataView = (
         ...(binary === undefined ? {} : { binary }),
         counts,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   const nativeUnavailable =
@@ -698,40 +679,21 @@ export const projectIl2cppMetadataView = (
         },
       ]),
     );
-  if (
-    view.collection === "parameter_types" &&
-    view.method_indices !== undefined &&
-    report.parameters === undefined
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view", "method_indices"],
-          reason: "invalid_value",
-          message:
-            "Retained Evidence did not collect parameters, so parameter owners are unknown; inspect the metadata again to select parameter types by method.",
-        },
-      ]),
-    );
   const matches = selection(view, report);
   const selectedFields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);
-  const items = [];
-  let total = 0;
-  if (matches === undefined && view.indices === undefined) {
-    total = rows.length;
-    const end = Math.min(rows.length, view.offset + view.limit);
-    for (let index = Math.min(view.offset, rows.length); index < end; index++)
-      items.push(selectFields(rows[index]!, index, selectedFields));
-  } else {
-    for (const index of rowIndices(rows.length, view.indices)) {
-      const row = rows[index]!;
-      if (matches !== undefined && !matches(row, index)) continue;
-      if (total >= view.offset && items.length < view.limit)
-        items.push(selectFields(row, index, selectedFields));
-      total++;
-    }
-  }
+  const project = (row: Row, index: number) =>
+    selectFields(row, index, selectedFields);
+  const { rows: items, total } =
+    view.indices === undefined
+      ? selectViewRows(rows, view, matches, project)
+      : selectIndexedViewRows(
+          rows,
+          new Set(view.indices),
+          view,
+          matches,
+          project,
+        );
   return ok({
     kind: "il2cpp-metadata" as const,
     view,

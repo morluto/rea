@@ -1,14 +1,17 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
 
 import {
   centralDeclaresEncryption,
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
-  localEntryData,
-  MAX_DUPLICATE_NAME_SAMPLE,
-  MAX_V1_SIGNATURE_ENTRIES,
+  parseLocalEntryHeader,
   type ApkV1Entry,
 } from "./apkV1Signature.js";
+
+// Fixed examples keep the entry and output-sample limits independently checked.
+const MAX_V1_SIGNATURE_ENTRIES = 4096;
+const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 /** A central-directory entry with no stored data. */
 const entry = (name: string): ApkV1Entry => ({
@@ -138,10 +141,14 @@ describe("APK v1 (JAR) signature detection", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toEqual({
-      kind: "budget-exceeded",
-      resource: "v1-signature-entries",
-      limit: MAX_V1_SIGNATURE_ENTRIES,
+    expect(isParseLimit(result.error, "apk-v1-central-directory")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: {
+          name: "max_v1_signature_entries",
+          maximum: MAX_V1_SIGNATURE_ENTRIES,
+        },
+      },
     });
   });
 
@@ -390,6 +397,18 @@ const block: ApkV1Entry = {
 const data = [9, 8, 7, 6];
 const dataStart = 30 + block.rawName.length + 3;
 
+const parseHeader = (
+  local: Uint8Array,
+  entry: ApkV1Entry,
+  entriesEnd = local.length,
+) =>
+  parseLocalEntryHeader(
+    local.subarray(entry.localHeaderOffset),
+    entry,
+    entriesEnd,
+    local.length,
+  );
+
 describe("APK v1 signature block locations", () => {
   it("keeps each record's data location for its signature block", () => {
     const record = cdRecord("META-INF/CERT.RSA");
@@ -423,26 +442,28 @@ describe("APK v1 signature block locations", () => {
 
   it("locates stored data through the local header, within the entry region", () => {
     const local = localRecord(block, data);
-    const found = localEntryData(local, block, local.length);
-    expect(found.ok && [...found.value.data]).toEqual(data);
+    const found = parseHeader(local, block);
+    expect(
+      found.ok && [
+        ...local.subarray(found.value.dataStart, found.value.dataEnd),
+      ],
+    ).toEqual(data);
     expect(found.ok && found.value.declaresEncryption).toBe(false);
-    expect(localEntryData(local, block, local.length - 1)).toEqual({
+    expect(parseHeader(local, block, local.length - 1)).toEqual({
       ok: false,
       error: {
         detail: `entry data at byte ${String(dataStart)} runs past the entries`,
       },
     });
     expect(
-      localEntryData(local, { ...block, localHeaderOffset: 1 }, local.length),
+      parseHeader(local, { ...block, localHeaderOffset: 1 }),
     ).toMatchObject({ ok: false });
   });
 
   it("names Zip64 sizes as unread before any other check", () => {
     const local = localRecord(block, data);
     for (const field of ["compressedSize", "uncompressedSize"] as const)
-      expect(
-        localEntryData(local, { ...block, [field]: 0xffffffff }, local.length),
-      ).toEqual({
+      expect(parseHeader(local, { ...block, [field]: 0xffffffff })).toEqual({
         ok: false,
         error: { detail: "Zip64 entry sizes are not read" },
       });
@@ -450,7 +471,7 @@ describe("APK v1 signature block locations", () => {
 
   it("leaves the data unknown when the local header disagrees with the central directory", () => {
     const refusal = (local: Uint8Array, entry: ApkV1Entry = block) => {
-      const found = localEntryData(local, entry, local.length);
+      const found = parseHeader(local, entry);
       return found.ok ? null : found.error.detail;
     };
     expect(refusal(localRecord(block, data, { compressedSize: 5 }))).toBe(
@@ -503,13 +524,15 @@ describe("APK v1 signature block locations", () => {
   it("reads an entry flagged as encrypted, as apksig ignores the flag", () => {
     const flagged = { ...block, flags: 0x1 };
     const both = localRecord(flagged, data);
-    const read = localEntryData(both, flagged, both.length);
-    expect(read.ok && [...read.value.data]).toEqual(data);
+    const read = parseHeader(both, flagged);
+    expect(
+      read.ok && [...both.subarray(read.value.dataStart, read.value.dataEnd)],
+    ).toEqual(data);
     expect(read.ok && read.value.declaresEncryption).toBe(true);
     expect(centralDeclaresEncryption(flagged)).toBe(true);
     // Either header's flag is reported.
     const local = localRecord(block, data, { flags: 0x1 });
-    const localOnly = localEntryData(local, block, local.length);
+    const localOnly = parseHeader(local, block);
     expect(localOnly.ok && localOnly.value.declaresEncryption).toBe(true);
     expect(centralDeclaresEncryption(block)).toBe(false);
   });

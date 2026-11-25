@@ -3,7 +3,16 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import {
+  HOME,
+  change,
+  retained,
+  seedEndCapture,
+} from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { LINUX_ARGUMENT_VECTOR_BYTES } from "../../../src/desktop/BuildComputerController.js";
 import {
   BUILD_REQUEST as REQUEST,
   BUILD_TASK as TASK,
@@ -15,7 +24,12 @@ import {
   expectNoToken,
   startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
+import {
+  INVALID_BUILD_SCREENSHOTS,
+  VALID_BUILD_SCREENSHOT,
+} from "../../fixtures/buildScreenshotData.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { hasReadableProcDescriptor } from "../../fixtures/desktopDconfHost.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const files = async (root: string, prefix = ""): Promise<string[]> =>
@@ -68,6 +82,8 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     changes: 1,
     retained_files: 1,
     retained_bytes: 5,
+    changed_files: ["Documents/today.txt"],
+    more_changed_files: 0,
   });
   expect(parseMcpToolError(await mark("seed")).error.message).toContain(
     "already taken",
@@ -109,7 +125,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: TASK,
+        tasks: [{ task: TASK }],
         directory,
       })
     ).structuredContent,
@@ -127,7 +143,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     environment: "notes",
     files: (await files(directory)).length,
     seed_files: [".config/notes/settings.ini", "Documents/today.txt"],
-    task: { name: "add-eggs", failing_on_seed: [expect.any(String)] },
+    tasks: [{ name: "add-eggs", failing_on_seed: [expect.any(String)] }],
   });
   expect(await rea.notes("tasks.jsonl")).toEqual([TASK]);
 
@@ -140,6 +156,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     agentenv: string[];
   }[];
   expect(calls.map(({ argv }) => argv[0])).toEqual([
+    "export-desktop-application",
     "capture-desktop-application",
     "describe-desktop-application-task",
     "export-desktop-application",
@@ -149,7 +166,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       agentenv: [],
       apt_config: join(rea.home, ".rea-build/apt/apt.conf"),
     });
-  expect(calls[0]?.argv).toEqual(
+  expect(calls[1]?.argv).toEqual(
     expect.arrayContaining([
       "--desktop-entry",
       "org.example.notes",
@@ -157,7 +174,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       join(rea.home, ".rea-build"),
     ]),
   );
-  expect(calls.slice(1).map(({ argv }) => argv)).toEqual([
+  expect(calls.slice(2).map(({ argv }) => argv)).toEqual([
     expect.arrayContaining([
       "--seed-checkpoint",
       "seed",
@@ -169,33 +186,305 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       "seed",
       "--end-checkpoint",
       "end",
+      // The agent made the seed in the computer, so the README need not keep it local.
+      "--synthetic-seed",
     ]),
   ]);
+  expect(
+    parseEvidence(JSON.parse(await readFile(outputs.export, "utf8")))
+      .parameters,
+  ).toMatchObject({ synthetic_seed: true });
+  expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+    `The seed was made for this task, not taken from a user's own data; read \`envs/${exported.environment}/seed/\` before publishing the bundle.`,
+  );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
-it("refuses a task too large for one command argument before the export runs in the computer", async () => {
+it("keeps valid checkpoint screenshots byte for byte for export and skips invalid screenshots without failing checkpoints", async () => {
+  const screenshots = [
+    { name: "seed", data: VALID_BUILD_SCREENSHOT.data },
+    ...INVALID_BUILD_SCREENSHOTS,
+    { name: "end", data: VALID_BUILD_SCREENSHOT.data },
+  ];
+  const { rea, client } = await fakes({
+    jpegScreenshotData: screenshots.map(({ data }) => data),
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const { name } of screenshots) {
+    const marked = await callOk(client, "mark_build_checkpoint", {
+      computer_id: id,
+      name,
+    });
+    expect(
+      toolContract("mark_build_checkpoint").outputSchema.parse(
+        marked.structuredContent,
+      ).checkpoint.name,
+    ).toBe(name);
+  }
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  await callOk(client, "export_build_environment", {
+    computer_id: id,
+    tasks: [{ task: TASK }],
+    directory: join(await createTestTempDirectory("build-screens-"), "out"),
+  });
+
+  const shots = (await files(join(rea.home, ".rea-build"))).filter((path) =>
+    path.endsWith(".jpg"),
+  );
+  expect(shots.map((path) => path.split("/").slice(-2).join("/"))).toEqual([
+    "screens/end.jpg",
+    "screens/seed.jpg",
+  ]);
+  for (const path of shots) {
+    const bytes = await readFile(join(rea.home, ".rea-build", path));
+    expect(bytes.equals(VALID_BUILD_SCREENSHOT.bytes), path).toBe(true);
+  }
+  const exported = (
+    (await rea.notes("calls.jsonl")) as { argv: string[] }[]
+  ).findLast(({ argv }) => argv[0] === "export-desktop-application");
+  const at = exported?.argv.indexOf("--screens") ?? -1;
+  expect(at).toBeGreaterThan(0);
+  expect(join(rea.home, exported?.argv[at + 1] ?? "")).toBe(
+    join(
+      rea.home,
+      ".rea-build",
+      shots[0]?.split("/").slice(0, -1).join("/") ?? "",
+    ),
+  );
+});
+
+it("takes checkpoints from a REA in the computer that predates their changed files, saying which changed is unknown, also from its log", async () => {
+  const { client } = await fakes({
+    env: { FAKE_REA_UNLISTED_CHANGES: "1" },
+    dropReplies: ["mark"],
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const mark = async (name: string) =>
+    toolContract("mark_build_checkpoint").outputSchema.parse(
+      (
+        await callOk(client, "mark_build_checkpoint", {
+          computer_id: id,
+          name,
+        })
+      ).structuredContent,
+    ).checkpoint;
+  // The first reply is lost, so the second call reads the checkpoint from the capture's log.
+  const lost = parseMcpToolError(
+    await client.callTool({
+      name: "mark_build_checkpoint",
+      arguments: { computer_id: id, name: "seed" },
+    }),
+  );
+  expect(lost.error.code).not.toBe("invalid_request");
+
+  const seed = await mark("seed");
+  const end = await mark("end");
+
+  for (const [taken, name, atMs] of [
+    [seed, "seed", 1000],
+    [end, "end", 2000],
+  ] as const)
+    expect(taken).toEqual({
+      name,
+      trigger: "request",
+      at_ms: atMs,
+      entries: 5,
+      changes: 1,
+      retained_files: 1,
+      retained_bytes: 5,
+      changed_files: null,
+      more_changed_files: null,
+    });
+  const stopped = await callOk(client, "stop_build_capture", {
+    computer_id: id,
+  });
+  expect(stopped.structuredContent).toMatchObject({
+    draft: { seed_checkpoint: "seed", end_checkpoint: "end" },
+  });
+});
+
+it("returns a draft note's read error when only a dconf database REA cannot read changed between seed and end", async () => {
+  const database = `${HOME}/.config/dconf/user`;
+  const [before, after] = ["GVariant wrap=false", "GVariant wrap=true"];
+  const base = seedEndCapture();
+  const recorded: DesktopApplicationCapture = {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((point) =>
+        point.name === "baseline"
+          ? {
+              ...point,
+              retained: [...point.retained, retained(database, before)],
+            }
+          : point.name === "end"
+            ? {
+                ...point,
+                changes: [change(database, { before, after })],
+                retained: [retained(database, after)],
+              }
+            : point,
+      ),
+    },
+  };
+  // The subprocess has no dconf command on Linux and no descriptor path on other hosts.
+  const { client } = await fakes({
+    recorded,
+    extraContent: [before, after],
+    exportRefused: true,
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+
+  const stopped = toolContract("stop_build_capture").outputSchema.parse(
+    (await callOk(client, "stop_build_capture", { computer_id: id }))
+      .structuredContent,
+  );
+
+  expect(stopped.draft?.files).toEqual([]);
+  expect(stopped.draft?.notes).toEqual([
+    {
+      code: "unreadable_changes",
+      message: expect.any(String),
+      files: [{ file: ".config/dconf/user", role: "shared_desktop" }],
+      error: (await hasReadableProcDescriptor())
+        ? "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND"
+        : expect.stringContaining("/proc/"),
+    },
+  ]);
+});
+
+it("refuses an older build runtime before capturing the app", async () => {
+  const { rea, client } = await fakes({ env: { FAKE_REA_OLD_EXPORT: "1" } });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("does not support synthetic seeds");
+  expect(JSON.stringify(error)).toContain("pack:build-computer-runtime");
+  expect(JSON.stringify(error)).toContain("restart the REA MCP server");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
+it("refuses a build runtime whose export takes no task ends before capturing the app", async () => {
+  const { rea, client } = await fakes({
+    env: { FAKE_REA_EXPORT_WITHOUT: "taskEnd" },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("does not support task ends");
+  expect(error.message).not.toContain("synthetic seeds");
+  expect(JSON.stringify(error)).toContain("pack:build-computer-runtime");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
+it("reports an unsuccessful runtime schema command without diagnosing its cause", async () => {
+  const { rea, client } = await fakes({
+    env: { FAKE_REA_SCHEMA_FAILURE: "1" },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("exited 23");
+  expect(error.message).toContain("runtime cannot load its export command");
+  expect(error.message).not.toContain("does not support synthetic seeds");
+  expect(JSON.stringify(error)).toContain("restart the REA MCP server");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
+it.each(["failure", "invalid"])(
+  "redacts control tokens in %s schema output",
+  async (mode) => {
+    const { computer, client } = await fakes({
+      env: { FAKE_REA_SCHEMA_TOKEN: mode },
+    });
+    const id = await startBuildComputer(client, REQUEST);
+    const result = await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    });
+    expect(result.isError).toBe(true);
+    expectNoToken(computer, result);
+    if (mode === "invalid") {
+      expect(JSON.stringify(result)).not.toContain(computer.token.slice(0, 12));
+      expect(JSON.stringify(result)).toContain("invalid JSON");
+    } else expect(JSON.stringify(result)).toContain("runtime output");
+  },
+);
+
+it("exports a task larger than the old 96 KiB refusal and keeps its prompt", async () => {
   const { rea, client } = await fakes();
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
   for (const name of ["seed", "end"])
     await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
   await callOk(client, "stop_build_capture", { computer_id: id });
-  const { error } = parseMcpToolError(
-    await client.callTool({
-      name: "export_build_environment",
-      arguments: {
+  const task = {
+    ...TASK,
+    prompt: `X${"Add eggs. ".repeat(10 * 1024)}Y`,
+  };
+  const exported = toolContract("export_build_environment").outputSchema.parse(
+    (
+      await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: { ...TASK, prompt: "Add eggs. ".repeat(10 * 1024) },
+        tasks: [{ task }],
         directory: join(await createTestTempDirectory("build-out-"), "b"),
-      },
-    }),
+      })
+    ).structuredContent,
   );
-  expect(error.code).toBe("invalid_request");
+  expect(exported.tasks).toEqual([
+    expect.objectContaining({ name: task.name }),
+  ]);
+  expect(await rea.notes("tasks.jsonl")).toEqual([task]);
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+  expect(calls.map(({ argv }) => argv[0])).toContain(
     "export-desktop-application",
   );
+  const refused = await client.callTool({
+    name: "export_build_environment",
+    arguments: {
+      computer_id: id,
+      tasks: [
+        { task: { ...task, prompt: "a".repeat(LINUX_ARGUMENT_VECTOR_BYTES) } },
+      ],
+      directory: join(await createTestTempDirectory("build-out-"), "b"),
+    },
+  });
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      reported_limits: {
+        actual_bytes: expect.any(Number),
+        max_bytes: LINUX_ARGUMENT_VECTOR_BYTES,
+      },
+    },
+    remediation: { action: expect.any(String) },
+  });
 });
 
 it("refuses capture steps out of order and a capture of a bundle's computer", async () => {
@@ -227,7 +516,7 @@ it("refuses capture steps out of order and a capture of a bundle's computer", as
     (
       await call("export_build_environment", {
         computer_id: id,
-        task: TASK,
+        tasks: [{ task: TASK }],
         directory: join(await createTestTempDirectory("build-out-"), "b"),
       })
     ).error.message,

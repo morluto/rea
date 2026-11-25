@@ -1,9 +1,14 @@
 import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
-import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
+import {
+  verifiedGhidraApplicationProperties,
+  verifiedGhidraJavaObservation,
+} from "../../../src/ghidra/GhidraInstallation.fixture.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import type { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import type { TestDelivery } from "../../support/completeEvidenceByDefault.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
@@ -24,7 +29,7 @@ import {
   ghidraReferenceEdge,
 } from "../../../src/domain/ghidraValues.fixture.js";
 
-const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
+const INSTALL = `/opt/ghidra_${SUPPORTED_GHIDRA_VERSION}_PUBLIC`;
 
 export const connectGhidraMcp = async (
   name: string,
@@ -36,7 +41,9 @@ export const connectGhidraMcp = async (
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
     readonly delivery?: ToolResultDelivery;
-    readonly environment?: Readonly<Record<string, string>>;
+    /** "budgeted" leaves an omitted detail to the agent result budget. */
+    readonly testDelivery?: TestDelivery;
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
     readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
 ) => {
@@ -80,6 +87,9 @@ export const connectGhidraMcp = async (
     ...(fixture.schemaValidator === undefined
       ? {}
       : { schemaValidator: fixture.schemaValidator }),
+    ...(fixture.testDelivery === undefined
+      ? {}
+      : { testDelivery: fixture.testDelivery }),
     serverOptions: {
       logger: silentLogger,
       environment: {
@@ -123,25 +133,17 @@ export const sessionEvidence = (session: BinarySession, value: unknown) => {
 export const ghidraInstallationHost = (): GhidraInstallationHost => ({
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => verifiedGhidraApplicationProperties,
   executable: () => true,
   probeJava: () =>
-    javaProbeOk<GhidraJavaObservation>({
-      osArch: "amd64",
-      osName: "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/usr/lib/jvm/jdk-21",
-      bits: 64,
-      runtime: "jdk",
-    }),
+    javaProbeOk(verifiedGhidraJavaObservation("/usr/lib/jvm/jdk-25")),
 });
 
 const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   name: "REA Ghidra bridge" as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: profileDigest,
-  provider: { id: "ghidra" as const, version: "12.1.4" },
+  provider: { id: "ghidra" as const, version: SUPPORTED_GHIDRA_VERSION },
   read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,

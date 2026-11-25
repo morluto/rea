@@ -2,7 +2,59 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { topLevelBinding } from "./javascriptSemanticAnalysis.fixture.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import {
+  analyzeCommonJsStaticFixture,
+  analyzeCommonJsSemanticFixture,
+} from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
+it.each([
+  "Object.assign(module,{require(){return {}}});",
+  "Object.assign(module,{...replacement});",
+  "Object.defineProperties(module,{[key]:{value:()=>({})}});",
+  'Reflect.set(module,"require",()=>({}));',
+  'Reflect.set({},"require",()=>({}),module);',
+  "({x:module.require}={x:replacement});",
+  "[module.require]=[replacement];",
+  "for(module.require of [replacement]){}",
+])("retains uncertainty after a possible delegate replacement: %s", (write) => {
+  const analysis = analyzeCommonJsStaticFixture(`${write}require("electron");`);
+  expect(analysis.references).not.toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: "electron" }),
+  );
+  expect(analysis.references).toContainEqual(
+    expect.objectContaining({ kind: "require", specifier: null }),
+  );
+});
+
+it.each([
+  "Object.assign(module,{other(){}});",
+  "Object.defineProperties(module,{other:{value:()=>({})}});",
+  "Object.assign({},{require(){}});",
+  'Reflect.set(module,"other",()=>({}));',
+  'Reflect.set(module,"require",()=>({}),{});',
+  "({x:module.other}={x:replacement});",
+  "[module.other]=[replacement];",
+  "for(module.other of [replacement]){}",
+])("preserves the host loader after an unrelated write: %s", (write) => {
+  const analysis = analyzeCommonJsStaticFixture(`${write}require("electron");`);
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: "electron" }),
+  ]);
+});
+
+it.each([
+  "({x:module.require}={x:replacement});",
+  "[module.require]=[replacement];",
+  "for(module.require of [replacement]){}",
+])("preserves a builtin captured before its delegate write: %s", (write) => {
+  const analysis = analyzeCommonJsSemanticFixture(
+    `const fs=require('node:fs');${write}fs.readFileSync('kept');`,
+  );
+  expect(analysis.configurationOperations.map(({ key }) => key)).toEqual([
+    "kept",
+  ]);
+});
 
 it.each([
   'var require;require("./before.cjs");',
@@ -45,7 +97,7 @@ it.each([
   "({require}={require:()=>({BrowserWindow:class{}})});",
   "[require]=[()=>({BrowserWindow:class{}})];",
 ])("preserves an Electron capture before the projected write: %s", (write) => {
-  const analysis = analyzeJavaScriptStaticSource(
+  const analysis = analyzeCommonJsStaticFixture(
     `var require;const {BrowserWindow}=require("electron");${write}new BrowserWindow({webPreferences:{preload:"./before.cjs"}});`,
   );
   expect(analysis.parse_error_count).toBe(0);
@@ -65,7 +117,7 @@ it.each([
 ])(
   "distinguishes definite and conditional wrapper replacement: %s",
   (write, unknown) => {
-    const analysis = analyzeJavaScriptStaticSource(
+    const analysis = analyzeCommonJsStaticFixture(
       `var module;${write}module.require("./unused.cjs");`,
     );
     expect(analysis.parse_error_count).toBe(0);

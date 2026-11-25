@@ -4,9 +4,99 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ok } from "../../src/domain/result.js";
+import { OwnedCommandFailure } from "../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { fixtureCommandRepair } from "../support/reverseEngineeringCompositionFixtures.js";
+import { findsNoExecutable } from "../support/reverseEngineeringService.js";
+
+it.each([false, true])(
+  "keeps owned output collection failure primary after late cancellation=%s",
+  async (cancel) => {
+    const controller = new AbortController();
+    const abortReason = { caller: "cancelled after collection failure" };
+    const physical = Object.assign(new Error("output pipe read failed"), {
+      code: "EIO",
+    });
+    const owned = new OwnedCommandFailure(
+      "process",
+      "owned output collection failed",
+      {
+        stdout: { text: "retained", bytes: 8, observedBytes: 8 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: 0,
+        signal: null,
+      },
+      null,
+      { cause: physical, collectionFailure: true },
+    );
+    const profile = {
+      executable: "unused",
+      arguments: [],
+      repair: fixtureCommandRepair,
+      identity: { id: "fixture", name: "fixture", version: null },
+    };
+    const service = new ReverseEngineeringService({
+      commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+      processes: {
+        lookup: findsNoExecutable,
+        runOwned: async () => {
+          if (cancel) controller.abort(abortReason);
+          throw owned;
+        },
+      },
+    });
+    const result = await service.inspectWithObjdump(
+      { operation: "architectures" },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected output collection failure");
+    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error.cause).toMatchObject({ cause: owned });
+    expect(owned.cause).toBe(physical);
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: "retained",
+      stdout_bytes: 8,
+      exit_code: null,
+    });
+    expect(result.error.secondaryFailures).toHaveLength(cancel ? 1 : 0);
+    if (cancel)
+      expect(result.error.secondaryFailures[0]?.cause).toBe(abortReason);
+    await service.close();
+  },
+);
+
+it("keeps the owned producer cancellation reason authoritative", async () => {
+  const controller = new AbortController();
+  const abortReason = { caller: "owned process cancelled" };
+  const profile = {
+    executable: "unused",
+    arguments: [],
+    repair: fixtureCommandRepair,
+    identity: { id: "fixture", name: "fixture", version: null },
+  };
+  const service = new ReverseEngineeringService({
+    commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
+    processes: {
+      lookup: findsNoExecutable,
+      runOwned: async () => {
+        controller.abort(abortReason);
+        throw new OwnedCommandFailure("cancelled", "owned process cancelled");
+      },
+    },
+  });
+  const result = await service.inspectWithObjdump(
+    { operation: "architectures" },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected producer cancellation");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(abortReason);
+  expect(result.error.secondaryFailures).toEqual([]);
+  await service.close();
+});
 
 it.each([
   { stage: "stat", cause: null },
@@ -29,18 +119,26 @@ it.each([
               throw cause;
             }
           : stat,
-      run,
+      processes: { lookup: findsNoExecutable, runOwned: run },
       commands: {
-        objdump: () => ({
-          executable: "unused-objdump",
-          arguments: [path],
-          identity: { id: "test.objdump", name: "Test objdump", version: null },
-        }),
-        rizin: () => ({
-          executable: "unused-rizin",
-          arguments: [path],
-          identity: { id: "test.rizin", name: "Test Rizin", version: null },
-        }),
+        objdump: () =>
+          ok({
+            executable: "unused-objdump",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: {
+              id: "test.objdump",
+              name: "Test objdump",
+              version: null,
+            },
+          }),
+        rizin: () =>
+          ok({
+            executable: "unused-rizin",
+            arguments: [path],
+            repair: fixtureCommandRepair,
+            identity: { id: "test.rizin", name: "Test Rizin", version: null },
+          }),
       },
     });
 

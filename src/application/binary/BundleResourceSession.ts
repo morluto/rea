@@ -1,35 +1,16 @@
 import type {
   AnalysisClient,
-  AnalysisOperation,
   CapabilityDescriptor,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCloseRejections } from "../../domain/analysisErrorCleanup.js";
 import { err, ok } from "../../domain/result.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
-
-export const BUNDLE_NATIVE_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
-  "inspect_plist",
-]);
-
-export const BUNDLE_ARTIFACT_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
-  "decode_interface_builder",
-  "inspect_asset_catalog",
-  "inspect_keyed_archive",
-]);
-
-export const BUNDLE_RESOURCE_OPERATIONS = new Set<AnalysisOperation>([
-  ...BUNDLE_NATIVE_RESOURCE_OPERATIONS,
-  ...BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
-]);
-
-/** Share the dispatch owner's resource-session operation policy with discovery. */
-export const isBundleResourceOperation = (name: string): boolean => {
-  for (const operation of BUNDLE_RESOURCE_OPERATIONS)
-    if (operation === name) return true;
-  return false;
-};
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import {
+  BUNDLE_NATIVE_RESOURCE_OPERATIONS,
+  BUNDLE_RESOURCE_OPERATIONS,
+} from "../../ports/BundleResourceOperations.js";
 
 /** Provider-specific owner of the four read-only app-resource operations. */
 export interface BundleResourceClientFactory {
@@ -78,14 +59,13 @@ export const combineBundleResourceClients = (
       closeAnalysisClient(nativeClient, "bundle-resources", options),
     ]);
     if (!artifact.ok && !native.ok) {
-      const failure = analysisErrorWithCleanupFailure(
-        artifact.error,
-        native.error,
-        "close_binary",
+      return err(
+        analysisErrorWithCloseRejections(
+          artifact.error,
+          native.error,
+          "close_binary",
+        ),
       );
-      if (artifact.error.cleanupIncomplete && native.error.cleanupIncomplete)
-        failure.bindCleanupDependencies([artifact.error, native.error]);
-      return err(failure);
     }
     if (!artifact.ok) return artifact;
     if (!native.ok) return native;

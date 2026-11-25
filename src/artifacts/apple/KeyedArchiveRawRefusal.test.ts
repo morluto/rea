@@ -7,9 +7,8 @@ import { expect, it, vi } from "vitest";
 
 import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
-import { DirectoryArtifactEntryAccessDenied } from "../DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
@@ -101,7 +100,11 @@ it("keeps the reader's raw EIO refusal an artifact failure", async () => {
     expect(rejected.reason).toBe("io");
     expect(
       projectAnalysisError(
-        translateArtifactFailure("inspect_keyed_archive", rejected),
+        translateArtifactFailure(
+          "inspect_keyed_archive",
+          "/selected/artifact",
+          rejected,
+        ),
       ),
     ).toMatchObject({
       code: "artifact_operation_failed",

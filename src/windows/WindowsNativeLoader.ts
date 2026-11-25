@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -10,18 +11,20 @@ import {
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
 } from "../domain/windowsNativeArtifact.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
-export const windowsHandleSchema = z.custom<object>(
-  (value): value is object =>
-    typeof value === "object" && value !== null && !Array.isArray(value),
+export const windowsHandleSchema = z.custom<object>((value): value is object =>
+  isRecord(value),
 );
 
-/** Observed identity of an opened local NTFS object. */
+/** Observed identity of an opened local NTFS or ReFS object. */
 export const windowsFileIdentitySchema = z.strictObject({
   requestedPath: z.string(),
   finalPath: z.string(),
-  filesystem: z.literal("NTFS"),
+  filesystem: z.enum(["NTFS", "ReFS"]),
   volumeSerial: z.string().regex(/^[a-f0-9]{16}$/u),
   fileId: z.string().regex(/^[a-f0-9]{32}$/u),
   size: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -40,6 +43,8 @@ const inspectionSchema = z.strictObject({
   protocolStdin: z.boolean().optional(),
   /** Absent from artifacts built before owned Job Object commit limits. */
   jobMemoryLimit: z.literal(true).optional(),
+  /** Absent from artifacts built before transient private-runtime writes. */
+  runtimeWriteTransient: z.literal(true).optional(),
 });
 
 type NativeCall = (
@@ -86,11 +91,45 @@ export interface WindowsNativeLoadHost {
 }
 
 const missingWindowsNativeFileReason = (file: string): string =>
-  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball or build them with native/windows/README.md; no native artifact was loaded.`;
+  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball only when this checkout matches that published release's native contract. Matching package version alone is insufficient; otherwise build them from this exact source checkout using native/windows/README.md. No native artifact was loaded.`;
 
 /** Recovery when Windows refuses to load the verified artifact, for example by code-integrity policy. */
 export const WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION =
   "The file matched the package manifest, so restoring or reinstalling it will not help. If Windows reports that an Application Control policy blocked the file, Smart App Control or an App Control for Business policy refused it. Windows native controls, which Ghidra and JADX need on Windows, stay unavailable; rea setup can still register clients. Run REA on a host whose policy allows this file, or ask the REA maintainers about a signed build.";
+
+export type WindowsNativeFailureStage = Exclude<
+  WindowsNativeLoadResult,
+  { available: true }
+>["failureStage"];
+
+/** Stage-specific recovery guidance for an unavailable Windows native authority. */
+export const windowsNativeFailureRemediation = (
+  failureStage: WindowsNativeFailureStage,
+): string =>
+  failureStage === "host"
+    ? "Use a Windows x64 host and a supported Node.js runtime with Node-API 8 or newer."
+    : failureStage === "load"
+      ? WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION
+      : failureStage === "artifact"
+        ? "Use the matching published Windows x64 REA package. Restore native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from a same-version rea-agents tarball only for its corresponding release source. Matching package version alone is insufficient for an unreleased checkout; otherwise build them from this exact source checkout using native/windows/README.md. The loader checks version, ABI, architecture, and digest before granting authority; no download or install is performed automatically."
+        : failureStage === "inspection"
+          ? "Install the matching Windows x64 REA package; its native inspection must prove every required security control."
+          : "Inspect the preserved native self-test error. Check that the process has a writable local NTFS/ReFS temporary directory and that its filesystem, DACL, Job Object, and cleanup operations are permitted. Resolve the reported constraint, then rerun rea doctor; reinstalling Ghidra or Java cannot fix this self-test.";
+
+/** Refusal when the Windows native authority cannot be loaded or self-tested before launch. */
+export class WindowsNativeAuthorityUnavailableError extends RuntimeControlUnavailableError {
+  readonly code = "windows-native-authority-unavailable";
+  readonly failureStage: WindowsNativeFailureStage;
+
+  constructor(loaded: Exclude<WindowsNativeLoadResult, { available: true }>) {
+    super(loaded.reason, {
+      retryable: loaded.retryable === true,
+      remediationAction: windowsNativeFailureRemediation(loaded.failureStage),
+    });
+    this.name = "WindowsNativeAuthorityUnavailableError";
+    this.failureStage = loaded.failureStage;
+  }
+}
 
 const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
   try {
@@ -146,7 +185,7 @@ export const loadWindowsNativeAuthority = (
       return {
         available: false,
         failureStage: "load",
-        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${cause instanceof Error ? cause.message : String(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
+        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${errorMessage(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
       };
     }
     const binding = bindingSchema.parse(loadedModule);
@@ -158,7 +197,7 @@ export const loadWindowsNativeAuthority = (
         available: false,
         failureStage: "self-test",
         retryable: true,
-        reason: `REA Windows native self-test failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `REA Windows native self-test failed: ${errorMessage(cause)}`,
       };
     }
     const parsed = inspectionSchema.safeParse(observed);
@@ -174,20 +213,20 @@ export const loadWindowsNativeAuthority = (
     return {
       available: false,
       failureStage: "artifact",
-      reason: `REA Windows native controls are unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      reason: `REA Windows native controls are unavailable: ${errorMessage(cause)}`,
     };
   }
 };
 
 let cached: WindowsNativeLoadResult | undefined;
 
-/** Cache stable admission; let a later query retry failed owned inspection. */
-export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
-  if (cached?.available === false && cached.retryable === true)
-    cached = undefined;
-  cached ??= loadWindowsNativeAuthority({
-    platform: process.platform,
-    architecture: process.arch,
+const loadPackagedWindowsNativeAuthority = ({
+  platform,
+  architecture,
+}: HostPlatform): WindowsNativeLoadResult =>
+  loadWindowsNativeAuthority({
+    platform,
+    architecture,
     nodeApiVersion: process.versions.napi,
     packageVersion: PACKAGE_METADATA.version,
     readManifest: () => {
@@ -217,12 +256,26 @@ export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
       return value;
     },
   });
+
+/**
+ * Cache stable admission; let a later query retry failed owned inspection.
+ * Only this host's result is cached: another host's admission rules are a
+ * test seam and load the packaged artifact uncached.
+ */
+export const systemWindowsNativeAuthority = (
+  host: HostPlatform = HOST_PLATFORM,
+): WindowsNativeLoadResult => {
+  if (host !== HOST_PLATFORM) return loadPackagedWindowsNativeAuthority(host);
+  if (cached?.available === false && cached.retryable === true)
+    cached = undefined;
+  cached ??= loadPackagedWindowsNativeAuthority(host);
   return cached;
 };
 
 /** Require the verified backend when an operation depends on native authority. */
 export const requireWindowsNativeAuthority = (): WindowsNativeAuthority => {
   const loaded = systemWindowsNativeAuthority();
-  if (!loaded.available) throw new Error(loaded.reason);
+  if (!loaded.available)
+    throw new WindowsNativeAuthorityUnavailableError(loaded);
   return loaded.authority;
 };

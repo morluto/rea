@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  MAX_AGGREGATE_STRINGS,
-  MAX_STRINGS,
+  DEFAULT_APKTOOL_TOTAL_STRINGS,
+  DEFAULT_APKTOOL_STRING_LIMIT,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectApktoolStringTables } from "./ApktoolStringTables.js";
@@ -24,7 +24,7 @@ it("charges table-only output without reserving a duplicate primary copy", async
     {
       async readText(path) {
         paths.push(path);
-        return textRead(xml(MAX_STRINGS));
+        return textRead(xml(DEFAULT_APKTOOL_STRING_LIMIT));
       },
     },
     "decoded",
@@ -42,7 +42,7 @@ it("charges table-only output without reserving a duplicate primary copy", async
   );
   expect(
     outcome.value.tables.reduce((sum, table) => sum + table.strings.length, 0),
-  ).toBe(MAX_AGGREGATE_STRINGS);
+  ).toBe(DEFAULT_APKTOOL_TOTAL_STRINGS);
   expect(outcome.value.coverage).toBe("complete");
 });
 
@@ -115,12 +115,43 @@ describe("Apktool locale alias table selection", () => {
 });
 
 describe("physical Apktool string facts", () => {
+  it("applies the selected page before aggregate allocation while preserving alias counts", async () => {
+    const result = await projectApktoolStringTables(
+      { readText: async () => textRead(xml(4)) },
+      "decoded",
+      {
+        include_strings: true,
+        locale: "pt-BR",
+        locales: ["pt-rBR"],
+        string_tables_only: true,
+        string_offset: 1,
+        string_limit: 2,
+        max_total_strings: 3,
+      },
+    );
+    if (!result.ok) throw result.error.cause;
+    expect(result.value.tables).toMatchObject([
+      {
+        strings: [{ name: "s_1" }, { name: "s_2" }],
+        total_count: 4,
+        page: { offset: 1, returned_count: 2, next_offset: 3 },
+        coverage: "partial",
+      },
+      {
+        strings: [{ name: "s_1" }],
+        total_count: 4,
+        page: { offset: 1, returned_count: 1, next_offset: 2 },
+        coverage: "partial",
+      },
+    ]);
+  });
+
   it("counts complete source entries beyond the retained table prefix", async () => {
     const outcome = await projectApktoolStringTables(
       {
         async readText() {
           return textRead(
-            xml(MAX_STRINGS + 1).replace(
+            xml(DEFAULT_APKTOOL_STRING_LIMIT + 1).replace(
               "</resources>",
               '<string name="styled"><b>omitted</b></string></resources>',
             ),
@@ -133,13 +164,13 @@ describe("physical Apktool string facts", () => {
     if (!outcome.ok) throw outcome.error.cause;
     const result = outcome.value;
     expect(result.tables[0]).toMatchObject({
-      total_count: MAX_STRINGS + 1,
+      total_count: DEFAULT_APKTOOL_STRING_LIMIT + 1,
       unparsed_count: 1,
       coverage: "partial",
     });
-    expect(result.strings).toHaveLength(MAX_STRINGS);
+    expect(result.strings).toHaveLength(DEFAULT_APKTOOL_STRING_LIMIT);
     expect(result.limitations).toContain(
-      `strings reports the first ${String(MAX_STRINGS)} of ${String(MAX_STRINGS + 1)} entries`,
+      `strings reports the first ${String(DEFAULT_APKTOOL_STRING_LIMIT)} of ${String(DEFAULT_APKTOOL_STRING_LIMIT + 1)} entries`,
     );
   });
 
@@ -151,7 +182,7 @@ describe("physical Apktool string facts", () => {
           paths.push(path);
           if (path.includes("values-fr"))
             throw new Error("Unexamined table was read");
-          return textRead(xml(MAX_STRINGS));
+          return textRead(xml(DEFAULT_APKTOOL_STRING_LIMIT));
         },
       },
       "decoded",
@@ -171,7 +202,7 @@ describe("physical Apktool string facts", () => {
     expect(
       result.strings.length +
         result.tables.reduce((count, table) => count + table.strings.length, 0),
-    ).toBe(MAX_AGGREGATE_STRINGS);
+    ).toBe(DEFAULT_APKTOOL_TOTAL_STRINGS);
   });
 
   it("keeps a known empty alias present after the output budget is spent", async () => {
@@ -181,7 +212,9 @@ describe("physical Apktool string facts", () => {
         async readText(path) {
           paths.push(path);
           return textRead(
-            xml(path.includes("values-pt-rBR") ? 0 : MAX_STRINGS),
+            xml(
+              path.includes("values-pt-rBR") ? 0 : DEFAULT_APKTOOL_STRING_LIMIT,
+            ),
           );
         },
       },

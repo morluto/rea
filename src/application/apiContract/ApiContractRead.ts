@@ -1,19 +1,16 @@
 import {
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  readStableArtifact,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+  readerIntegrityFailure,
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
@@ -63,16 +60,9 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure(operation, input.path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,
@@ -86,7 +76,7 @@ const readFailure = (
             "Select a complete document within max_file_bytes; increasing reply limits or paging does not change this file admission.",
         },
       );
-    if (cause.reason === "path" || cause.reason === "format")
+    if (cause.reason === "path")
       return inputFailure(input.path, cause, cause.message, input.parameter);
   }
   if (cause instanceof Error && "code" in cause) {

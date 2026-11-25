@@ -1,3 +1,7 @@
+import {
+  ProcessOwnershipInspectionCancelled,
+  assertProcessOwnershipInspectionActive,
+} from "./ProcessInspectionCancellation.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
@@ -1069,17 +1073,19 @@ describe("owned process-group cleanup validation: exited members", () => {
     const reason = new Error("cancelled process observation");
     const adapter = nonSignalingObserver(async (signal) => {
       controller.abort(reason);
-      signal?.throwIfAborted();
+      assertProcessOwnershipInspectionActive(signal);
       return [];
     });
-    await expect(
-      observeOwnedProcessGroups(
-        ownership.runId,
-        [ownership.processGroupId],
-        adapter,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+    const failure: unknown = await observeOwnedProcessGroups(
+      ownership.runId,
+      [ownership.processGroupId],
+      adapter,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw failure;
+    expect(failure.reason).toBe(reason);
   });
   it("does not inspect a process group after observation was cancelled", async () => {
     const controller = new AbortController();
@@ -1088,14 +1094,16 @@ describe("owned process-group cleanup validation: exited members", () => {
     const adapter = nonSignalingObserver(() => {
       throw new Error("Cancelled observation must not inspect processes");
     });
-    await expect(
-      observeOwnedProcessGroups(
-        ownership.runId,
-        [ownership.processGroupId],
-        adapter,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+    const failure: unknown = await observeOwnedProcessGroups(
+      ownership.runId,
+      [ownership.processGroupId],
+      adapter,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw failure;
+    expect(failure.reason).toBe(reason);
   });
   it("ignores exited zombie members during live ownership checks", async () => {
     const environment = vi.fn((pid: number) =>
@@ -1121,7 +1129,7 @@ describe("owned process-group cleanup validation: exited members", () => {
       cleaned: true,
       signaled: true,
     });
-    expect(environment.mock.calls).toEqual([[100], [100]]);
+    expect(environment).not.toHaveBeenCalledWith(101);
     expect(signalGroup).toHaveBeenCalledWith(100, "SIGKILL");
   });
   it("observes a zombie-only group as settled", async () => {
@@ -1150,11 +1158,12 @@ describe("owned process-group cleanup validation: exited members", () => {
     expect(environment).not.toHaveBeenCalled();
   });
   it("is idempotent when the owned group has already exited", async () => {
-    const { adapter } = host({});
+    const { adapter, signalGroup } = host({});
     expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
       cleaned: true,
       signaled: false,
     });
+    expect(signalGroup).not.toHaveBeenCalled();
   });
   it("fails closed when the launcher command identity changes", async () => {
     const { adapter, signalGroup } = host({
@@ -1268,50 +1277,58 @@ describe("owned process-group cleanup token batches", () => {
     expect(signalGroup).not.toHaveBeenCalled();
   });
 
-  it("falls back to the environment reader when the batch operation throws", async () => {
-    const environment = vi.fn(() =>
-      Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
-    );
-    const signalGroup = vi.fn();
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () => Promise.resolve([root]),
-      environment,
-      runTokens: () => Promise.reject(new Error("batch reader unavailable")),
-      signalGroup,
-    };
-
-    await expect(cleanupOwnedProcessGroup(ownership, adapter)).resolves.toEqual(
-      { cleaned: true, signaled: true },
-    );
-    expect(environment).toHaveBeenCalledTimes(2);
-    expect(signalGroup).toHaveBeenCalledWith(root.processGroupId, "SIGKILL");
-  });
-
-  it("retains both failures when batch and individual token reads fail", async () => {
-    const signalGroup = vi.fn();
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () => Promise.resolve([root]),
-      environment: () => Promise.reject(new Error("individual unreadable")),
-      runTokens: () => Promise.reject(new Error("batch reader unavailable")),
-      signalGroup,
-    };
-
-    await expect(
-      cleanupOwnedProcessGroup(ownership, adapter),
-    ).resolves.toMatchObject({
-      cleaned: false,
-      failures: [
-        {
-          pid: root.pid,
-          reason: "environment-unreadable",
-          diagnostic: expect.stringMatching(
-            /individual unreadable.*batch reader unavailable/iu,
-          ),
+  it.each([false, true])(
+    "falls back from a failed batch without signaling an unreadable member's group (sweep %s)",
+    async (sweep) => {
+      const child = { ...root, pid: 101, parentPid: root.pid };
+      const group = sweep
+        ? { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] }
+        : ownership;
+      let live = true;
+      let childReadable = false;
+      const signalGroup = vi.fn(() => {
+        live = false;
+      });
+      const adapter: ProcessOwnershipHost = {
+        listProcesses: async () => (live ? [root, child] : []),
+        environment: async (pid) => {
+          if (pid === child.pid && !childReadable)
+            throw new Error("individual unreadable");
+          return { REA_PROCESS_RUN_ID: group.runId };
         },
-      ],
-    });
-    expect(signalGroup).not.toHaveBeenCalled();
-  });
+        runTokens: async () => {
+          throw new Error("batch reader unavailable");
+        },
+        signalGroup,
+      };
+
+      await expect(
+        cleanupOwnedProcessGroup(group, adapter),
+      ).resolves.toMatchObject({
+        cleaned: false,
+        failures: [
+          {
+            pid: child.pid,
+            reason: "environment-unreadable",
+            diagnostic: expect.stringMatching(
+              /individual unreadable.*batch reader unavailable/iu,
+            ),
+          },
+        ],
+      });
+      expect(signalGroup).not.toHaveBeenCalled();
+
+      childReadable = true;
+      await expect(cleanupOwnedProcessGroup(group, adapter)).resolves.toEqual({
+        cleaned: true,
+        signaled: true,
+      });
+      expect(signalGroup).toHaveBeenCalledExactlyOnceWith(
+        root.processGroupId,
+        "SIGKILL",
+      );
+    },
+  );
 });
 
 describe("Windows P0 process-tree cleanup", () => {

@@ -2,6 +2,10 @@
 import importlib.util
 import json
 import sys
+from pathlib import Path
+from runpy import run_path
+
+FakeX11 = run_path(str(Path(__file__).with_name("hopperX11Fixture.py")))["FakeX11"]
 
 helper_path = sys.argv[1]
 spec = importlib.util.spec_from_file_location("hopper_demo_x11", helper_path)
@@ -9,29 +13,6 @@ if spec is None or spec.loader is None:
     raise SystemExit("unable to load helper")
 helper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(helper)
-
-
-class FakeX11:
-    def __init__(self, titles, transients):
-        self.titles = titles
-        self.transients = transients
-
-    def XFetchName(self, _display, window, target):
-        value = self.titles.get(window)
-        if value is None:
-            return 0
-        target._obj.value = value.encode("utf-8")
-        return 1
-
-    def XGetTransientForHint(self, _display, window, target):
-        value = self.transients.get(window)
-        if value is None:
-            return 0
-        target._obj.value = value
-        return 1
-
-    def XFree(self, _value):
-        return 1
 
 
 x11 = FakeX11(

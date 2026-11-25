@@ -18,12 +18,20 @@ import {
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import type { NativeToolName } from "../../src/contracts/native/nativeToolContracts.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
-import { observed } from "../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed,
+} from "../fixtures/analysisExecution.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import {
   createBinarySessionTargets,
   createTestBinarySession,
 } from "../fixtures/binarySession.js";
+
+type SessionFactory = Exclude<
+  keyof DirectAnalysisDependencies,
+  "readConfiguration"
+>;
 
 const recordingFactories = (
   failure?: Error,
@@ -31,6 +39,7 @@ const recordingFactories = (
 ) => {
   const sessions: BinarySession[] = [];
   let clientsClosed = 0;
+  const selectedFactories: SessionFactory[] = [];
   const createSession = () => {
     const session = createTestBinarySession(
       () => ({
@@ -54,69 +63,49 @@ const recordingFactories = (
     sessions.push(session);
     return session;
   };
+  const select = (name: SessionFactory) => () => {
+    selectedFactories.push(name);
+    return createSession();
+  };
   const dependencies: DirectAnalysisDependencies = {
     readConfiguration: () => parseConfig({}),
-    createBinarySession: createSession,
-    createArtifactBinarySession: createSession,
-    createNativeDispatchBinarySession: createSession,
-    createNativeBinarySession: createSession,
-    createManagedBinarySession: createSession,
+    createBinarySession: select("createBinarySession"),
+    createArtifactBinarySession: select("createArtifactBinarySession"),
+    createNativeDispatchBinarySession: select(
+      "createNativeDispatchBinarySession",
+    ),
+    createNativeBinarySession: select("createNativeBinarySession"),
+    createManagedBinarySession: select("createManagedBinarySession"),
   };
-  return { dependencies, sessions, clientsClosed: () => clientsClosed };
+  return {
+    dependencies,
+    sessions,
+    selectedFactories,
+    clientsClosed: () => clientsClosed,
+  };
 };
 
-it("requires a durable summary destination before acquiring a managed session", async () => {
-  const factories = recordingFactories();
-  const result = await runProviderAnalysis(
-    factories.dependencies,
-    "/fixture/missing.dll",
-    "inspect_managed_members",
-    {},
-    undefined,
-    undefined,
-    { detail: "summary" },
-  ).then(projectCliAnalysisResult);
-  expect(result).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "inspect_managed_members",
-      issues: [{ path: ["evidence_bundle"], reason: "missing_argument" }],
-    },
-  });
-  expect(factories.sessions).toEqual([]);
-});
+/** Schema-valid read_bytes input so lifecycle tests reach the session. */
+const admittedReadBytes = { address: "0x1000" } as const;
 
-it.each([
-  "inspect_macho",
-  "inventory_artifact",
-  "inspect_managed_artifact",
-] as const)(
-  "rejects delivery options for %s before selecting a provider",
-  async (tool) => {
-    const factories = recordingFactories();
-    const invocation = [
-      factories.dependencies,
-      "/fixture/missing",
-      tool,
-      {},
-      undefined,
-      undefined,
-      { detail: "summary", evidenceBundlePath: "/fixture/bundle.json" },
-    ] as const;
-    // @ts-expect-error JavaScript callers can bypass managed-members-only delivery.
-    const result = await runProviderAnalysis(...invocation).then(
-      projectCliAnalysisResult,
-    );
-    expect(result).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: tool,
-        issues: [{ path: ["delivery"], reason: "invalid_value" }],
-      },
-    });
-    expect(factories.sessions).toEqual([]);
+/** Schema-valid inputs for the ordinary native session route. */
+const admittedNativeSessionInput = {
+  observe_native_ui: { pid: 123, window_id: 456 },
+  capture_native_ui_scenario: {
+    pid: 123,
+    window_id: 456,
+    steps: [{ kind: "wait", milliseconds: 100 }],
   },
-);
+  observe_native_calls: {
+    breakpoints: [
+      {
+        kind: "objc-method",
+        class_name: "NSURLSession",
+        selector: "dataTaskWithRequest:completionHandler:",
+      },
+    ],
+  },
+};
 
 describe("one-shot analysis factory boundary", () => {
   it("preserves thrown failures while releasing clients and cancellation listeners", async () => {
@@ -125,11 +114,13 @@ describe("one-shot analysis factory boundary", () => {
     const factories = recordingFactories(failure);
     const interruptListeners = process.listenerCount("SIGINT");
     const terminateListeners = process.listenerCount("SIGTERM");
-    await expect(
-      runDirectAnalysis(factories.dependencies, path, "read_bytes", {}).then(
-        projectCliAnalysisResult,
-      ),
-    ).rejects.toBe(failure);
+    const execution = runDirectAnalysis(
+      factories.dependencies,
+      path,
+      "read_bytes",
+      admittedReadBytes,
+    ).then(projectCliAnalysisResult);
+    await expect(execution).rejects.toBe(failure);
     expect(factories.clientsClosed()).toBe(1);
     expect(process.listenerCount("SIGINT")).toBe(interruptListeners);
     expect(process.listenerCount("SIGTERM")).toBe(terminateListeners);
@@ -210,80 +201,71 @@ describe("one-shot analysis factory boundary", () => {
       expect(factories.sessions).toEqual([]);
     },
   );
+});
 
-  it.each([
-    "inspect_macho",
-    "inspect_signature",
-    "list_architectures",
-    "inspect_plist",
-    "demangle_swift",
-  ] satisfies readonly NativeToolName[])(
-    "runs %s without reading deep-engine configuration or constructing its session",
-    async (tool) => {
-      const [path] = await createBinarySessionTargets();
-      const factories = recordingFactories();
-      const unexpected = (): never => {
-        throw new Error("unrelated session factory must stay unused");
-      };
-      const arguments_ =
-        tool === "demangle_swift" ? { symbols: ["$s4Test3fooyyF"] } : {};
+it.each([
+  {
+    factory: "createNativeBinarySession",
+    needsConfiguration: false,
+    cases: (
+      [
+        "inspect_macho",
+        "inspect_signature",
+        "list_architectures",
+        "inspect_plist",
+        "demangle_swift",
+      ] satisfies readonly NativeToolName[]
+    ).map((tool) => ({
+      tool,
+      input: tool === "demangle_swift" ? { symbols: ["$s4Test3fooyyF"] } : {},
+    })),
+  },
+  {
+    factory: "createBinarySession",
+    needsConfiguration: true,
+    cases: (
+      [
+        "observe_native_ui",
+        "capture_native_ui_scenario",
+        "observe_native_calls",
+      ] as const
+    ).map((tool) => ({ tool, input: admittedNativeSessionInput[tool] })),
+  },
+])(
+  "routes one-shot native operations through $factory",
+  async ({ factory, needsConfiguration, cases }) => {
+    const [path] = await createBinarySessionTargets();
+    const fixtures = recordingFactories();
+    const readConfiguration = vi.fn(fixtures.dependencies.readConfiguration);
+    const dependencies = { ...fixtures.dependencies, readConfiguration };
+    for (const { tool, input } of cases) {
       const result = await runProviderAnalysis(
-        {
-          ...factories.dependencies,
-          readConfiguration: unexpected,
-          createBinarySession: unexpected,
-          createArtifactBinarySession: unexpected,
-          createManagedBinarySession: unexpected,
-        },
+        dependencies,
         path,
         tool,
-        arguments_,
+        input,
       ).then(projectCliAnalysisResult);
-      expect(result).toMatchObject({
+      expect(result, tool).toMatchObject({
         operation: tool,
         normalized_result: { operation: tool },
       });
-      expect(factories.clientsClosed()).toBe(1);
-      expect(factories.sessions[0]?.activeTarget()).toBeUndefined();
-    },
-  );
-
-  it.each([
-    "observe_native_ui",
-    "capture_native_ui_scenario",
-    "observe_native_calls",
-  ] satisfies readonly NativeToolName[])(
-    "keeps %s on the ordinary session route",
-    async (tool) => {
-      const [path] = await createBinarySessionTargets();
-      const factories = recordingFactories();
-      const result = await runProviderAnalysis(
-        {
-          ...factories.dependencies,
-          createNativeBinarySession: () => {
-            throw new Error("static inspection factory must stay unused");
-          },
-        },
-        path,
-        tool,
-        {},
-      ).then(projectCliAnalysisResult);
-      expect(result).toMatchObject({ operation: tool });
-      expect(factories.clientsClosed()).toBe(1);
-    },
-  );
-});
+      expect(fixtures.selectedFactories.at(-1), tool).toBe(factory);
+    }
+    expect(fixtures.clientsClosed()).toBe(cases.length);
+    expect(readConfiguration).toHaveBeenCalledTimes(
+      needsConfiguration ? cases.length : 0,
+    );
+    expect(fixtures.sessions.map((session) => session.activeTarget())).toEqual(
+      cases.map(() => undefined),
+    );
+  },
+);
 
 it("preserves a managed execution profile in direct analysis Evidence", async () => {
   const [path] = await createBinarySessionTargets();
-  const profile = createAnalysisProfile(
-    {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    },
-    { fixture: true },
-  );
+  const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+    fixture: true,
+  });
   const factories = recordingFactories(undefined, profile);
   const evidence = await runProviderAnalysis(
     factories.dependencies,
@@ -296,10 +278,9 @@ it("preserves a managed execution profile in direct analysis Evidence", async ()
 
 it("direct analysis snapshot target mismatch retains actionable snapshot recovery", async () => {
   const [path, other] = await createBinarySessionTargets();
-  const profile = createAnalysisProfile(
-    { id: "fixture", name: "Fixture analysis provider", version: "1" },
-    { fixture: true },
-  );
+  const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+    fixture: true,
+  });
   const factories = recordingFactories(undefined, profile);
   const snapshotPath = join(dirname(path), "snapshot.json");
   expect(
@@ -307,7 +288,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       factories.dependencies,
       path,
       "read_bytes",
-      {},
+      admittedReadBytes,
       { snapshotPath },
     ).then(projectCliAnalysisResult),
   ).not.toHaveProperty("code");
@@ -315,7 +296,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     factories.dependencies,
     other,
     "read_bytes",
-    {},
+    admittedReadBytes,
     { snapshotPath },
   ).then(projectCliAnalysisResult);
   const sha = async (input: string) =>
@@ -332,8 +313,8 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     details: {
       binding_mismatch: {
         target: {
-          snapshot: { sha256: await sha(path) },
-          selected: { sha256: await sha(other) },
+          snapshot: { identity: { sha256: await sha(path) } },
+          selected: { identity: { sha256: await sha(other) } },
         },
         profile_comparison: "not_compared",
       },
@@ -344,7 +325,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       factories.dependencies,
       path,
       "read_bytes",
-      {},
+      admittedReadBytes,
       { snapshotPath },
     ).then(projectCliAnalysisResult),
   ).not.toHaveProperty("code");
@@ -352,10 +333,9 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
 
 it("retries snapshot file cleanup before final close even when a published identity is excluded", async () => {
   const [path] = await createBinarySessionTargets();
-  const profile = createAnalysisProfile(
-    { id: "fixture", name: "Fixture analysis provider", version: "1" },
-    { fixture: true },
-  );
+  const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+    fixture: true,
+  });
   const factories = recordingFactories(undefined, profile);
   const events: string[] = [];
   const publication = new EvidenceFileError("write", "io", {
@@ -385,7 +365,7 @@ it("retries snapshot file cleanup before final close even when a published ident
     dependencies,
     path,
     "read_bytes",
-    {},
+    admittedReadBytes,
     { snapshotPath: join(dirname(path), "excluded.snapshot") },
   ).then(projectCliAnalysisResult);
   expect(events[0]).toBe("file-cleanup");

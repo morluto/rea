@@ -9,22 +9,20 @@
  * certificate DER, SDK bounds, and additional attributes. Certificate facts and
  * digest recomputation are layered on top. Dependency-free and bounded: a short
  * or inconsistent length is a `malformed-signer` error, and a count past a
- * resource admission cap is a distinct `budget-exceeded` error, never conflated.
+ * resource admission cap is a distinct typed parse limit.
  */
+import { BinaryReader } from "../binaryContainer.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 
 export type ApkSchemeVersion = "v2" | "v3" | "v3.1";
 
-export type ApkSchemeError =
-  | {
-      readonly kind: "malformed-signer";
-      readonly detail: string;
-    }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: string;
-      readonly limit: number;
-    };
+interface ApkMalformedSigner {
+  readonly kind: "malformed-signer";
+  readonly detail: string;
+}
+
+export type ApkSchemeError = ApkMalformedSigner | ParseFailureError<"limit">;
 
 export interface ApkSignerDigest {
   /** APK signature-algorithm id (e.g. 0x0103 = RSA-PKCS1 SHA-256). */
@@ -66,28 +64,32 @@ const MAX_ELEMENTS = 4096;
  * Resource admission for signer fan-out, including per-signer X.509 work.
  * This is not an APK format maximum; excess records return a capacity error.
  */
-export const MAX_SIGNERS = 32;
+const MAX_SIGNERS = 32;
 /**
  * Resource admission for lineage fan-out before certificate materialisation.
  * This is not a format maximum; longer declared chains are refused explicitly.
  */
-export const MAX_LINEAGE_NODES = 32;
+const MAX_LINEAGE_NODES = 32;
 /** The only proof-of-rotation lineage encoding version apksig accepts. */
 const LINEAGE_VERSION = 1;
 
 /** Sequential little-endian reader over a byte range; every read is bounds-checked. */
 class LeReader {
   offset = 0;
-  private readonly dv: DataView;
+  private readonly reader: BinaryReader;
   constructor(private readonly bytes: Uint8Array) {
-    this.dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.reader = new BinaryReader(
+      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      true,
+      "apk",
+    );
   }
   get remaining(): number {
     return this.bytes.length - this.offset;
   }
   u32(): number | null {
     if (this.remaining < 4) return null;
-    const v = this.dv.getUint32(this.offset, true);
+    const v = this.reader.u32(this.offset);
     this.offset += 4;
     return v;
   }
@@ -101,23 +103,36 @@ class LeReader {
   }
 }
 
-const malformed = (detail: string): Result<never, ApkSchemeError> =>
+const malformed = (detail: string): Result<never, ApkMalformedSigner> =>
   err({ kind: "malformed-signer", detail });
+
+const schemeLimit = (
+  version: ApkSchemeVersion,
+  name: string,
+  maximum: number,
+): Result<never, ParseFailureError<"limit">> =>
+  err(
+    decodeLimit(
+      "apk-signature-scheme",
+      `APK Signature Scheme ${version} holds more ${name} than the ${String(maximum)} limit.`,
+      { name, maximum },
+    ),
+  );
 
 /** Split a length-prefixed sequence into its length-prefixed elements. */
 const elements = (
   seq: Uint8Array | null,
   what: string,
+  version: ApkSchemeVersion,
   limit = MAX_ELEMENTS,
 ): Result<Uint8Array[], ApkSchemeError> => {
   if (seq === null) return malformed(`${what} sequence missing or truncated`);
   const reader = new LeReader(seq);
   const out: Uint8Array[] = [];
   while (reader.remaining > 0) {
-    if (out.length >= limit)
-      return err({ kind: "budget-exceeded", resource: what, limit });
     const el = reader.lenChunk();
     if (el === null) return malformed(`${what} element truncated`);
+    if (out.length >= limit) return schemeLimit(version, what, limit);
     out.push(el);
   }
   return ok(out);
@@ -126,13 +141,14 @@ const elements = (
 const decodeAlgorithmRecords = <T>(
   seq: Uint8Array | null,
   what: string,
+  version: ApkSchemeVersion,
   record: (
     algorithmId: number,
     bytes: Uint8Array,
     uninterpretedBytes: number,
   ) => T,
 ): Result<T[], ApkSchemeError> => {
-  const items = elements(seq, what);
+  const items = elements(seq, what, version);
   if (!items.ok) return items;
   const records: T[] = [];
   for (const item of items.value) {
@@ -148,8 +164,9 @@ const decodeAlgorithmRecords = <T>(
 
 const decodeAttributes = (
   seq: Uint8Array | null,
+  version: ApkSchemeVersion,
 ): Result<ApkSignerAttribute[], ApkSchemeError> => {
-  const items = elements(seq, "attributes");
+  const items = elements(seq, "attributes", version);
   if (!items.ok) return items;
   const attributes: ApkSignerAttribute[] = [];
   for (const item of items.value) {
@@ -172,6 +189,7 @@ const decodeSignedData = (
   const digests = decodeAlgorithmRecords(
     reader.lenChunk(),
     "digests",
+    version,
     (algorithmId, digest, uninterpretedBytes) => ({
       algorithmId,
       digest,
@@ -179,7 +197,7 @@ const decodeSignedData = (
     }),
   );
   if (!digests.ok) return digests;
-  const certificates = elements(reader.lenChunk(), "certificates");
+  const certificates = elements(reader.lenChunk(), "certificates", version);
   if (!certificates.ok) return certificates;
   let minSdk: number | null = null;
   let maxSdk: number | null = null;
@@ -189,7 +207,7 @@ const decodeSignedData = (
     if (minSdk === null || maxSdk === null)
       return malformed("min/max SDK truncated");
   }
-  const attributes = decodeAttributes(reader.lenChunk());
+  const attributes = decodeAttributes(reader.lenChunk(), version);
   if (!attributes.ok) return attributes;
   return ok({
     certificates: certificates.value,
@@ -222,6 +240,7 @@ const decodeSigner = (
   const signatures = decodeAlgorithmRecords(
     reader.lenChunk(),
     "signatures",
+    version,
     (algorithmId, signature, uninterpretedBytes) => ({
       algorithmId,
       signature,
@@ -250,7 +269,7 @@ export const decodeSigners = (
   version: ApkSchemeVersion,
 ): Result<ApkDecodedScheme, ApkSchemeError> => {
   const reader = new LeReader(value);
-  const chunks = elements(reader.lenChunk(), "signers", MAX_SIGNERS);
+  const chunks = elements(reader.lenChunk(), "signers", version, MAX_SIGNERS);
   if (!chunks.ok) return chunks;
   const signers: ApkSigner[] = [];
   for (const [index, chunk] of chunks.value.entries()) {
@@ -285,22 +304,19 @@ export interface ApkLineageNode {
  */
 export const decodeRotationLineage = (
   value: Uint8Array,
+  version: Exclude<ApkSchemeVersion, "v2">,
 ): Result<ApkLineageNode[], ApkSchemeError> => {
   const reader = new LeReader(value);
-  const version = reader.u32();
-  if (version === null) return malformed("lineage version missing");
-  if (version !== LINEAGE_VERSION)
-    return malformed(`unsupported lineage version ${String(version)}`);
+  const lineageVersion = reader.u32();
+  if (lineageVersion === null) return malformed("lineage version missing");
+  if (lineageVersion !== LINEAGE_VERSION)
+    return malformed(`unsupported lineage version ${String(lineageVersion)}`);
   const nodes: ApkLineageNode[] = [];
   while (reader.remaining > 0) {
-    if (nodes.length >= MAX_LINEAGE_NODES)
-      return err({
-        kind: "budget-exceeded",
-        resource: "lineage-nodes",
-        limit: MAX_LINEAGE_NODES,
-      });
     const node = reader.lenChunk();
     if (node === null) return malformed("lineage node truncated");
+    if (nodes.length >= MAX_LINEAGE_NODES)
+      return schemeLimit(version, "lineage-nodes", MAX_LINEAGE_NODES);
     const nodeReader = new LeReader(node);
     const signedData = nodeReader.lenChunk();
     const flags = nodeReader.u32();
@@ -326,7 +342,7 @@ export const decodeRotationLineage = (
  */
 export const decodeSourceStampCertificate = (
   value: Uint8Array,
-): Result<Uint8Array, ApkSchemeError> => {
+): Result<Uint8Array, ApkMalformedSigner> => {
   const stampData = new LeReader(value).lenChunk();
   if (stampData === null) return malformed("source stamp data truncated");
   const certificate = new LeReader(stampData).lenChunk();

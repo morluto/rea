@@ -1,7 +1,10 @@
 import { afterEach, describe, expect } from "vitest";
 import { z } from "zod";
 
+import { join } from "node:path";
+
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../../../src/domain/browserScenarioCaptureLimits.js";
 import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "../../../src/domain/browserScenarioCaptureValues.js";
 import { browserScenarioDiffSchema } from "../../../src/domain/browserScenarioDiffValues.js";
@@ -12,7 +15,6 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const browsers: FakeCdpBrowser[] = [];
-const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
 
 const partialScriptEvents: FakeOptions["commandEvents"] = (
   { method },
@@ -35,6 +37,54 @@ const partialScriptEvents: FakeOptions["commandEvents"] = (
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
+
+cliTest(
+  "delivers an inspect-web-page summary only with its Evidence bundle",
+  async ({ cli }) => {
+    const browser = await startFakeCdpBrowser({});
+    browsers.push(browser);
+    const run = (extra: readonly string[]) =>
+      cli.run({
+        arguments: [
+          "inspect-web-page",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "0",
+          "--allowed-origins",
+          browser.allowedOrigin,
+          ...extra,
+          "--json",
+        ],
+        environment: process.env,
+      });
+    const complete = await run([]);
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    expect(complete.json).toMatchObject({ operation: "inspect_web_page" });
+
+    const unbundled = await run(["--detail", "summary"]);
+    expect(unbundled.exitCode).not.toBe(0);
+
+    const directory = await createTestTempDirectory("rea-web-page-summary-");
+    const bundle = join(directory, "bundle.json");
+    const summary = await run([
+      "--detail",
+      "summary",
+      "--evidence_output",
+      bundle,
+    ]);
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    expect(summary.json).toMatchObject({
+      summary: {
+        operation: "inspect_analysis_view",
+        normalized_result: {
+          kind: "summary",
+          parent_operation: "inspect_web_page",
+        },
+      },
+    });
+  },
+);
 
 cliTest(
   "compares source-map declaration omissions through the public CLI",
@@ -118,7 +168,6 @@ cliTest(
       });
     }
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -208,7 +257,6 @@ cliTest(
     });
     await assertScenarioComparisonPolicy(cli);
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -295,7 +343,6 @@ cliTest(
       },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -349,7 +396,6 @@ cliTest(
     });
     expect(JSON.stringify(refused)).not.toContain("not-this-browser");
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 describe("scenario comparison CLI diagnostics", () => {
@@ -364,7 +410,7 @@ describe("scenario comparison CLI diagnostics", () => {
       name: "duplicate rule IDs",
       normalization: { rules: [rule, rule] },
       issue: {
-        path: ["normalization", "rules", 1, "rule_id"],
+        path: ["normalizationJson", "rules", 1, "rule_id"],
         reason: "invalid_value",
         message: "Normalization rule IDs must be unique",
       },
@@ -373,7 +419,7 @@ describe("scenario comparison CLI diagnostics", () => {
       name: "duplicate artifact kinds",
       normalization: { rules: [{ ...rule, artifacts: ["url", "url"] }] },
       issue: {
-        path: ["normalization", "rules", 0, "artifacts"],
+        path: ["normalizationJson", "rules", 0, "artifacts"],
         reason: "invalid_value",
         message: "Normalization rule artifact kinds must be unique",
       },
@@ -382,7 +428,7 @@ describe("scenario comparison CLI diagnostics", () => {
       name: "structurally invalid rules",
       normalization: { rules: "invalid" },
       issue: {
-        path: ["normalization", "rules"],
+        path: ["normalizationJson", "rules"],
         reason: "invalid_type",
         expected: "array",
       },
@@ -434,7 +480,7 @@ describe("scenario comparison CLI diagnostics", () => {
           operation: "compare_web_captures",
           issues: [
             {
-              path: ["before_scenario", "duration_ms"],
+              path: ["beforeJson", "duration_ms"],
               reason: "invalid_type",
               expected: "number",
             },
@@ -464,12 +510,12 @@ describe("scenario comparison CLI diagnostics", () => {
           operation: "compare_web_captures",
           issues: expect.arrayContaining([
             {
-              path: ["before_scenario", "scenario"],
+              path: ["beforeJson", "scenario"],
               reason: "missing_argument",
               expected: "object",
             },
             {
-              path: ["after_scenario", "scenario"],
+              path: ["afterJson", "scenario"],
               reason: "missing_argument",
               expected: "object",
             },
@@ -721,7 +767,6 @@ describe("browser CLI capture parity", () => {
         normalized_result: { status: "identical", changed_pixels: 0 },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 
@@ -844,13 +889,13 @@ const assertScenarioComparisonPolicy = async (cli: TestCli): Promise<void> => {
   expect(malformedPolicyInvocation.signal).toBeNull();
   const malformedPolicy = malformedPolicyInvocation.json;
   expect(malformedPolicy).toMatchObject({
-    error: "Browser observation failed",
     code: "invalid_request",
     details: {
       operation: "compare_web_captures",
       issues: [
         {
-          path: ["normalization"],
+          // The issue names the CLI key that took the text.
+          path: ["normalizationJson"],
           reason: "invalid_format",
           expected: "JSON",
         },
@@ -1003,7 +1048,6 @@ cliTest(
       normalized_result: { overall_status: "changed" },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 const scenarioCaptureWithConsole = (

@@ -1,3 +1,6 @@
+import type { Result } from "../domain/result.js";
+import { Deadline } from "../domain/deadline.js";
+
 /** Result of an abort-aware interval wait. */
 export type AbortableWaitResult = "elapsed" | "aborted";
 
@@ -22,15 +25,24 @@ export const waitForAbortableDelay = (
   });
 };
 
+/** The window a startup failure finalizes under. */
+export interface StartupFinalization {
+  /** Monotonic finalize budget, started when finalization began. */
+  readonly deadline: Deadline;
+  /** The caller's signal. Startup expiry does not interrupt finalization. */
+  readonly signal: AbortSignal | undefined;
+}
+
 /**
- * One absolute deadline shared by every phase of a provider startup handshake.
+ * One absolute deadline shared by every phase of a provider startup handshake,
+ * with a separate finalize budget for the work a failed startup still owes.
  *
  * The deadline owns its timer and the listener attached to an optional caller
  * signal. Adapters must dispose it after startup succeeds or fails.
  */
 export class ProviderStartupDeadline {
   readonly #controller = new AbortController();
-  readonly #deadlineAt: number;
+  readonly #budget: Deadline;
   readonly #externalSignal: AbortSignal | undefined;
   readonly #onExternalAbort: () => void;
   #timer: NodeJS.Timeout | undefined;
@@ -39,14 +51,15 @@ export class ProviderStartupDeadline {
   constructor(
     readonly timeoutMs: number,
     signal?: AbortSignal,
+    options: { readonly finalizeMs?: number } = {},
   ) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
       throw new RangeError("Provider startup timeout must be positive");
-    this.#deadlineAt = performance.now() + timeoutMs;
+    this.#budget = Deadline.after(timeoutMs, options);
     this.#externalSignal = signal;
     this.#onExternalAbort = () => {
       if (this.#controller.signal.aborted) return;
-      if (performance.now() >= this.#deadlineAt) {
+      if (this.#budget.expired()) {
         this.#interruption = "timeout";
         this.#abort(
           new DOMException("Provider startup deadline elapsed", "TimeoutError"),
@@ -72,8 +85,7 @@ export class ProviderStartupDeadline {
   /** First control path that interrupted startup, if any. */
   get interruption(): "cancelled" | "timeout" | undefined {
     return (
-      this.#interruption ??
-      (performance.now() >= this.#deadlineAt ? "timeout" : undefined)
+      this.#interruption ?? (this.#budget.expired() ? "timeout" : undefined)
     );
   }
 
@@ -83,20 +95,17 @@ export class ProviderStartupDeadline {
     // deadline, so an elapsed timer must not report time left to spend. A
     // terminal timeout also cannot regain budget after later clock queries.
     if (this.#interruption === "timeout") return 0;
-    return Math.max(0, Math.ceil(this.#deadlineAt - performance.now()));
+    return this.#budget.remainingMs();
   }
 
   /**
    * Wait for at most one polling interval under the shared deadline signal.
    *
-   * Both timers may fire before their monotonic targets. Retain the earlier
-   * of the polling target and deadline, and wait again for any residual time.
+   * Treat the polling target and the startup deadline as separate absolute times.
+   * Clamp each timer to the remaining budget and recheck both targets on wake.
    */
   wait(milliseconds: number): Promise<AbortableWaitResult> {
-    const startedAt = performance.now();
-    // Absolute target: the earlier of the requested polling interval and the
-    // absolute monotonic deadline.
-    const targetAt = Math.min(startedAt + milliseconds, this.#deadlineAt);
+    const targetAt = performance.now() + milliseconds;
     const poll = (): Promise<AbortableWaitResult> => {
       const budget = this.remainingMs();
       const residual = Math.max(0, targetAt - performance.now());
@@ -105,17 +114,39 @@ export class ProviderStartupDeadline {
         this.signal,
       ).then((result) => {
         if (result === "aborted") return "aborted";
-        const now = performance.now();
         // The monotonic deadline expired: a full-budget wait resolves as an
         // abort so polling stops at the boundary.
-        if (now >= this.#deadlineAt) return "aborted";
+        if (this.#budget.expired()) return "aborted";
         // The polling interval elapsed without expiring the deadline.
-        if (now >= targetAt) return "elapsed";
+        if (performance.now() >= targetAt) return "elapsed";
         // A timer fired before the absolute target; keep waiting.
         return poll();
       });
     };
     return poll();
+  }
+
+  /** Settle readiness under this deadline while leaving failed startup primary. */
+  async finishStartup<Value, Failure>(
+    start: () => Promise<Result<Value, Failure>>,
+    interrupt: () => Promise<Result<never, Failure>>,
+  ): Promise<Result<Value, Failure>> {
+    const outcome = await start();
+    if (!outcome.ok) return outcome;
+    return this.interruption === undefined ? outcome : interrupt();
+  }
+
+  /**
+   * Begin finalizing a failed or interrupted startup. The finalize budget
+   * starts now and only the caller's signal interrupts it, so work that
+   * exhausted the startup budget can still drain evidence and release what it
+   * owns.
+   */
+  finalize(): StartupFinalization {
+    return {
+      deadline: this.#budget.beginFinalize(),
+      signal: this.#externalSignal,
+    };
   }
 
   /** Release the deadline timer and external abort listener. */
@@ -145,7 +176,7 @@ export class ProviderStartupDeadline {
     this.#timer = setTimeout(() => {
       this.#timer = undefined;
       if (this.#controller.signal.aborted) return;
-      if (performance.now() >= this.#deadlineAt) {
+      if (this.#budget.expired()) {
         this.#interruption = "timeout";
         this.#abort(
           new DOMException("Provider startup deadline elapsed", "TimeoutError"),

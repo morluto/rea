@@ -1,7 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 
 /** Close admission for one owned file handle. `code` is the stable identity. */
-export class OwnedFileHandleError extends Error {
+class OwnedFileHandleError extends Error {
   readonly _tag = "OwnedFileHandleError";
 
   constructor(readonly code: "handle_invalidated") {

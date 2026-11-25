@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,8 +15,24 @@ import {
   artifactComparisonResultSchema,
   compareArtifacts,
 } from "../../../src/domain/artifactComparison.js";
-import { parseArtifactInventoryEvidence } from "../../../src/domain/artifactInventoryEvidence.js";
-import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import {
+  artifactInventorySubject,
+  parseArtifactInventoryEvidence,
+} from "../../../src/domain/artifactInventoryEvidence.js";
+import {
+  artifactEdgeId,
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "../../../src/domain/artifactIdentity.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 
 const PROVIDER = {
@@ -26,21 +43,13 @@ const PROVIDER = {
 
 const observe = async (path: string) => {
   const inventory = await inventoryArtifact(path);
-  return createEvidence(
-    {
-      path,
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
-    PROVIDER,
-    {
-      operation: "inventory_artifact",
-      parameters: {},
-      result: inventory,
-      confidence: "observed",
-      authority: "shipped-artifact",
-    },
-  );
+  return createEvidence(artifactInventorySubject(path, inventory), PROVIDER, {
+    operation: "inventory_artifact",
+    parameters: {},
+    result: inventory,
+    confidence: "observed",
+    authority: "shipped-artifact",
+  });
 };
 
 const inspectPages = (
@@ -53,11 +62,7 @@ const inspectPages = (
     first.normalized_result,
   );
   return createEvidence(
-    {
-      path: "artifact-inspection-example",
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
+    artifactInventorySubject("artifact-inspection-example", inventory),
     PROVIDER,
     {
       operation: "inspect_artifact",
@@ -135,11 +140,7 @@ describe("leaf artifact comparison", () => {
     const parsed = artifactInventoryResultSchema.parse(left.normalized_result);
     const { coverage: _coverage, ...withoutCoverage } = parsed;
     const malformed = createEvidence(
-      {
-        path: left.subject!.local_path,
-        sha256: left.subject!.digest.sha256,
-        format: left.subject!.format,
-      },
+      evidenceSubjectInput(left.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -297,11 +298,7 @@ describe("artifact inventory coverage", () => {
       complete.normalized_result,
     );
     const unknownCoverage = createEvidence(
-      {
-        path: complete.subject!.local_path,
-        sha256: complete.subject!.digest.sha256,
-        format: complete.subject!.format,
-      },
+      evidenceSubjectInput(complete.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -339,11 +336,7 @@ describe("artifact inventory coverage", () => {
       fragment.normalized_result,
     );
     const mixed = createEvidence(
-      {
-        path: fragment.subject!.local_path,
-        sha256: fragment.subject!.digest.sha256,
-        format: fragment.subject!.format,
-      },
+      evidenceSubjectInput(fragment.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -439,11 +432,7 @@ describe("artifact comparison", () => {
       complete.normalized_result,
     );
     const incomplete = createEvidence(
-      {
-        path: root,
-        sha256: complete.subject?.digest.sha256 ?? "0".repeat(64),
-        format: "directory",
-      },
+      evidenceSubjectInput(complete.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -486,24 +475,16 @@ describe("artifact comparison completeness", () => {
       const inventory = artifactInventoryResultSchema.parse(
         evidence.normalized_result,
       );
-      return createEvidence(
-        {
-          path: evidence.subject?.local_path ?? "",
-          sha256: inventory.manifest.root_sha256,
-          format: inventory.manifest.root_format,
+      return createEvidence(evidenceSubjectInput(evidence.subject), PROVIDER, {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: {
+          ...inventory,
+          coverage: { scope: "root", status: "complete" },
         },
-        PROVIDER,
-        {
-          operation: "inventory_artifact",
-          parameters: {},
-          result: {
-            ...inventory,
-            coverage: { scope: "root", status: "complete" },
-          },
-          confidence: "derived",
-          authority: "shipped-artifact",
-        },
-      );
+        confidence: "derived",
+        authority: "shipped-artifact",
+      });
     };
     const compared = compareArtifacts(rootOnly(left), rootOnly(right));
     expect(compared.status).toBe("unknown");
@@ -567,8 +548,47 @@ describe("artifact comparison completeness", () => {
       summary: { unchanged: 502, unknown: 0 },
       changes: [],
     });
-  }, 15_000);
+  });
 });
+
+it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+  "retains an observed map edge without certifying completeness after an omitted subtree",
+  async () => {
+    const root = await createTestTempDirectory("rea-map-omitted-subtree-");
+    const omitted = join(root, "omitted");
+    await mkdir(omitted);
+    await Promise.all([
+      writeFile(join(root, "main.js"), "source();"),
+      writeFile(join(root, "main.js.map"), "{}"),
+      writeFile(join(omitted, "member.txt"), "unexamined member"),
+    ]);
+    const complete = await observe(root);
+    await chmod(omitted, 0);
+    const partial = await observe(root).finally(() => chmod(omitted, 0o700));
+    const { inventory } = parseArtifactInventoryEvidence(partial);
+    const map = inventory.occurrences.find(
+      ({ logical_path }) => logical_path === "main.js.map",
+    );
+    expect(inventory.coverage.status).toBe("unknown");
+    expect(inventory.occurrences).not.toContainEqual(
+      expect.objectContaining({ logical_path: "omitted/member.txt" }),
+    );
+    expect(inventory.edges).toContainEqual(
+      expect.objectContaining({
+        occurrence_id: map?.occurrence_id,
+        relation: "maps-source",
+      }),
+    );
+    expect(map).toHaveProperty("relationship_coverage", "unknown");
+    expect(compareArtifacts(complete, partial).changes).toContainEqual(
+      expect.objectContaining({
+        logical_path: "main.js.map",
+        classification: "unknown",
+        dimensions: ["availability"],
+      }),
+    );
+  },
+);
 
 describe("artifact source-map relationship coverage", () => {
   it("reports when an unchanged map points to changed source content", async () => {
@@ -617,11 +637,18 @@ describe("artifact source-map relationship coverage", () => {
   it("preserves unknown source-map relationships for duplicate ZIP paths", async () => {
     const root = await createTestTempDirectory("rea-duplicate-source-map-");
     const path = join(root, "duplicate-source-map.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("main.js", new TextReader("first();"), { level: 0 });
-    await writer.add("your.js", new TextReader("second();"), { level: 0 });
-    await writer.add("main.js.map", new TextReader("{}"), { level: 0 });
-    const bytes = Buffer.from(await writer.close());
+    const uniquePath = join(root, "unique-source-map.zip");
+    const zip = async (otherSource: string) => {
+      const writer = new ZipWriter(new Uint8ArrayWriter());
+      await writer.add("main.js", new TextReader("first();"), { level: 0 });
+      await writer.add("your.js", new TextReader("second();"), { level: 0 });
+      await writer.add("main.js.map", new TextReader("{}"), { level: 0 });
+      await writer.add("other.js", new TextReader(otherSource), { level: 0 });
+      await writer.add("other.js.map", new TextReader("{}"), { level: 0 });
+      return Buffer.from(await writer.close());
+    };
+    const bytes = await zip("before();");
+    await writeFile(uniquePath, await zip("after();"));
     for (const [signature, headerSize] of [
       [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 30],
       [Buffer.from([0x50, 0x4b, 0x01, 0x02]), 46],
@@ -660,6 +687,29 @@ describe("artifact source-map relationship coverage", () => {
         limitation.toLowerCase().includes("integrity"),
       ),
     ).toBe(false);
+    const unique = await observe(uniquePath);
+    for (const [left, right] of [
+      [unique, evidence],
+      [evidence, unique],
+    ] as const) {
+      expect(compareArtifacts(left, right).changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            logical_path: "main.js.map",
+            classification: "unknown",
+            dimensions: ["availability"],
+            left_artifact_id: map.artifact_id,
+            right_artifact_id: map.artifact_id,
+          }),
+          expect.objectContaining({
+            logical_path: "other.js.map",
+            classification: "changed",
+            dimensions: ["relations"],
+          }),
+        ]),
+      );
+    }
+    expect(map).toHaveProperty("relationship_coverage", "unknown");
   });
 });
 
@@ -669,11 +719,15 @@ describe("duplicate archive occurrence ownership", () => {
       "rea-artifact-duplicate-directory-",
     );
     const path = join(root, "duplicate-directories.zip");
+    const uniquePath = join(root, "unique-directories.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("x/", new TextReader(""));
     await writer.add("y/", new TextReader(""));
     await writer.add("x/file.txt", new TextReader("member"));
+    await writer.add("standalone.js", new TextReader("source();"));
+    await writer.add("standalone.js.map", new TextReader("{}"));
     const bytes = Buffer.from(await writer.close());
+    await writeFile(uniquePath, bytes);
     for (const [signature, headerSize] of [
       [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 30],
       [Buffer.from([0x50, 0x4b, 0x01, 0x02]), 46],
@@ -706,6 +760,27 @@ describe("duplicate archive occurrence ownership", () => {
       'The parent occurrence for "x/file.txt" is unknown because multiple observed directory or container occurrences share "x".',
     );
     expect(inventory.coverage.status).toBe("unknown");
+    const unique = await observe(uniquePath);
+    for (const [left, right] of [
+      [unique, evidence],
+      [evidence, unique],
+    ] as const)
+      expect(compareArtifacts(left, right).changes).toContainEqual(
+        expect.objectContaining({
+          logical_path: "x/file.txt",
+          classification: "unknown",
+          dimensions: ["availability"],
+          left_artifact_id: child?.artifact_id,
+          right_artifact_id: child?.artifact_id,
+        }),
+      );
+    expect(child).toHaveProperty("relationship_coverage", "unknown");
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: "standalone.js.map",
+        relationship_coverage: "complete",
+      }),
+    );
   });
 
   it("retains duplicate path occurrences across pages and leaves pairing unknown", async () => {
@@ -853,11 +928,7 @@ describe("artifact comparison fragment integrity", () => {
     const fragment = leftFragments[0];
     if (fragment === undefined) throw new Error("Expected inventory fragments");
     const conflictingScope = createEvidence(
-      {
-        path: leftPath,
-        sha256: left.subject?.digest.sha256 ?? "",
-        format: "directory",
-      },
+      evidenceSubjectInput(left.subject),
       PROVIDER,
       {
         operation: "inventory_artifact",
@@ -880,7 +951,7 @@ describe("artifact comparison fragment integrity", () => {
         issues: [expect.objectContaining({ path: ["left"] })],
       }),
     );
-  }, 15_000);
+  });
 
   it("rejects non-inventory and tampered Evidence", async () => {
     const root = await createTestTempDirectory("rea-artifact-invalid-");
@@ -888,11 +959,15 @@ describe("artifact comparison fragment integrity", () => {
     expect(() =>
       compareArtifacts({ ...evidence, operation: "binary_overview" }, evidence),
     ).toThrow(/identifier/u);
-    const wrongOperation = createEvidence(undefined, PROVIDER, {
-      operation: "binary_overview",
-      parameters: {},
-      result: evidence.normalized_result,
-    });
+    const wrongOperation = createEvidence(
+      unknownTarget("not-observed"),
+      PROVIDER,
+      {
+        operation: "binary_overview",
+        parameters: {},
+        result: evidence.normalized_result,
+      },
+    );
     expect(() => compareArtifacts(wrongOperation, evidence)).toThrowError(
       expect.objectContaining({
         _tag: "AnalysisInputError",
@@ -959,6 +1034,322 @@ describe("ZIP non-entry coverage", () => {
       summary: { changed: 1, unchanged: 1, unknown: 0 },
       changes: [
         expect.objectContaining({ logical_path: ".", dimensions: ["content"] }),
+      ],
+    });
+  });
+});
+
+/**
+ * Re-encode a directory inventory in the pre-`rea-directory-tree` format:
+ * no `root_digest`, a listing commitment in `manifest.root_sha256`, and a
+ * legacy file-shaped directory subject.
+ */
+const toLegacyDirectoryInventoryEvidence = (
+  path: string,
+  fresh: Evidence,
+  coverageOverride?: {
+    readonly scope: "root" | "container-entries";
+    readonly status: "complete" | "unknown";
+  },
+): Evidence => {
+  const { root_digest: _treeDigest, ...parsed } =
+    artifactInventoryResultSchema.parse(fresh.normalized_result);
+  const oldRootId = parsed.manifest.root_artifact_id;
+  const legacyRootSha256 = digestCanonicalValue(
+    {
+      kind: "directory-root",
+      children: parsed.occurrences
+        .filter(({ logical_path }) => logical_path !== ".")
+        .map(({ logical_path, artifact_id }) => ({
+          logical_path,
+          artifact_id,
+        }))
+        .sort((left, right) =>
+          compareUnicodeCodePoints(left.logical_path, right.logical_path),
+        ),
+    },
+    "Artifact",
+  );
+  const legacyRootId = artifactIdForContent(legacyRootSha256);
+  const nodes = parsed.nodes
+    .map((node) =>
+      node.artifact_id === oldRootId
+        ? { ...node, artifact_id: legacyRootId, sha256: legacyRootSha256 }
+        : node,
+    )
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
+    );
+  const occurrenceIdMap = new Map<string, string>();
+  for (const occurrence of parsed.occurrences) {
+    occurrenceIdMap.set(
+      occurrence.occurrence_id,
+      occurrenceIdForLocation({
+        rootArtifactId: legacyRootId,
+        logicalPath: occurrence.logical_path,
+        entryKind: occurrence.entry_kind,
+      }),
+    );
+  }
+  const occurrences = parsed.occurrences.map((occurrence) => ({
+    ...occurrence,
+    occurrence_id: occurrenceIdMap.get(occurrence.occurrence_id)!,
+    parent_occurrence_id:
+      occurrence.parent_occurrence_id === null
+        ? null
+        : occurrenceIdMap.get(occurrence.parent_occurrence_id)!,
+    artifact_id:
+      occurrence.artifact_id === oldRootId
+        ? legacyRootId
+        : occurrence.artifact_id,
+  }));
+  const occurrencesById = new Map(
+    occurrences.map((occurrence) => [occurrence.occurrence_id, occurrence]),
+  );
+  const edges = parsed.edges
+    .map((edge) => {
+      const parent_artifact_id =
+        edge.parent_artifact_id === oldRootId
+          ? legacyRootId
+          : edge.parent_artifact_id;
+      const occurrence_id = occurrenceIdMap.get(edge.occurrence_id)!;
+      const occurrence = occurrencesById.get(occurrence_id)!;
+      const updated = {
+        ...edge,
+        parent_artifact_id,
+        occurrence_id,
+      };
+      return {
+        ...updated,
+        edge_id: artifactEdgeId(updated, occurrence),
+      };
+    })
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.edge_id, right.edge_id),
+    );
+  const graphSha256 = artifactGraphDigest({
+    nodes,
+    occurrences,
+    edges,
+    contradictions: parsed.integrity_contradictions,
+  });
+  const manifest = {
+    ...parsed.manifest,
+    manifest_id: artifactManifestId(legacyRootId, graphSha256),
+    root_artifact_id: legacyRootId,
+    root_sha256: legacyRootSha256,
+    graph_sha256: graphSha256,
+  };
+  return createEvidence(
+    { path, sha256: legacyRootSha256, format: "directory" },
+    PROVIDER,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...parsed,
+        manifest,
+        nodes,
+        occurrences,
+        edges,
+        ...(coverageOverride === undefined
+          ? {}
+          : { coverage: coverageOverride }),
+      },
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  );
+};
+
+describe("legacy directory root digest scheme compatibility", () => {
+  it("reports unchanged directories as unchanged when comparing a legacy listing-hash inventory against a fresh tree-digest scan", async () => {
+    const root = await createTestTempDirectory("rea-legacy-dir-compare-");
+    const emptyDir = join(root, "empty");
+    const populatedDir = join(root, "populated");
+    const changedDir = join(root, "changed");
+    await Promise.all([
+      mkdir(emptyDir),
+      mkdir(join(populatedDir, "sub"), { recursive: true }),
+      mkdir(join(changedDir, "sub"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(populatedDir, "a.txt"), "same"),
+      writeFile(join(populatedDir, "sub", "b.txt"), "nested"),
+      writeFile(join(changedDir, "a.txt"), "modified"),
+      writeFile(join(changedDir, "sub", "b.txt"), "nested"),
+    ]);
+
+    const [freshEmpty, freshPopulated, freshChanged] = await Promise.all([
+      observe(emptyDir),
+      observe(populatedDir),
+      observe(changedDir),
+    ]);
+    const legacyEmpty = toLegacyDirectoryInventoryEvidence(
+      emptyDir,
+      freshEmpty,
+    );
+    const legacyPopulated = toLegacyDirectoryInventoryEvidence(
+      populatedDir,
+      freshPopulated,
+    );
+
+    // Sanity check: the legacy and fresh root hashes actually differ.
+    expect(
+      parseArtifactInventoryEvidence(legacyEmpty).inventory.manifest
+        .root_sha256,
+    ).not.toBe(
+      parseArtifactInventoryEvidence(freshEmpty).inventory.manifest.root_sha256,
+    );
+
+    // An unchanged empty directory reports unchanged in either direction.
+    for (const [left, right] of [
+      [legacyEmpty, freshEmpty],
+      [freshEmpty, legacyEmpty],
+    ] as const)
+      expect(compareArtifacts(left, right)).toMatchObject({
+        status: "unchanged",
+        summary: {
+          unchanged: 1,
+          added: 0,
+          removed: 0,
+          changed: 0,
+          unknown: 0,
+          contradiction: 0,
+        },
+        changes: [],
+      });
+
+    // An unchanged populated directory reports unchanged across all members.
+    expect(compareArtifacts(legacyPopulated, freshPopulated)).toMatchObject({
+      status: "unchanged",
+      summary: {
+        unchanged: 4,
+        added: 0,
+        removed: 0,
+        changed: 0,
+        unknown: 0,
+        contradiction: 0,
+      },
+      changes: [],
+    });
+
+    // A real member change is still reported without a spurious root diff.
+    const changed = compareArtifacts(legacyPopulated, freshChanged);
+    expect(changed).toMatchObject({
+      status: "changed",
+      summary: { changed: 1, unknown: 0 },
+      changes: [
+        expect.objectContaining({
+          logical_path: "a.txt",
+          classification: "changed",
+          dimensions: expect.arrayContaining(["content"]),
+        }),
+      ],
+    });
+
+    // Without container-entries coverage, incompatible root schemes stay unknown.
+    const freshRootOnly = createEvidence(
+      evidenceSubjectInput(freshEmpty.subject),
+      PROVIDER,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: {
+          ...artifactInventoryResultSchema.parse(freshEmpty.normalized_result),
+          coverage: { scope: "root", status: "complete" },
+        },
+        confidence: "derived",
+        authority: "shipped-artifact",
+      },
+    );
+    const legacyRootOnly = toLegacyDirectoryInventoryEvidence(
+      emptyDir,
+      freshEmpty,
+      { scope: "root", status: "complete" },
+    );
+    expect(compareArtifacts(legacyRootOnly, freshRootOnly)).toMatchObject({
+      status: "unknown",
+      summary: { unchanged: 0, changed: 0, unknown: 1 },
+      changes: [
+        expect.objectContaining({
+          logical_path: ".",
+          classification: "unknown",
+          dimensions: ["availability"],
+        }),
+      ],
+    });
+  });
+
+  it("reports NFC-to-NFD filename renames across legacy and fresh directory inventories", async () => {
+    const root = await createTestTempDirectory(
+      "rea-legacy-dir-normalization-rename-",
+    );
+    const nfcDir = join(root, "nfc");
+    const nfdDir = join(root, "nfd");
+    const nfc = "\u00e9.txt";
+    const nfd = "e\u0301.txt";
+    await Promise.all([mkdir(nfcDir), mkdir(nfdDir)]);
+    await Promise.all([
+      writeFile(join(nfcDir, nfc), "same bytes"),
+      writeFile(join(nfdDir, nfd), "same bytes"),
+    ]);
+
+    const [freshNfc, freshNfd] = await Promise.all([
+      observe(nfcDir),
+      observe(nfdDir),
+    ]);
+    const legacyNfc = toLegacyDirectoryInventoryEvidence(nfcDir, freshNfc);
+    const legacyNfd = toLegacyDirectoryInventoryEvidence(nfdDir, freshNfd);
+
+    // Ensure the host filesystem preserved the NFD spelling in `source_path`.
+    expect(
+      parseArtifactInventoryEvidence(freshNfd).inventory.occurrences.find(
+        ({ logical_path }) => logical_path === nfc,
+      ),
+    ).toMatchObject({ logical_path: nfc, source_path: nfd });
+
+    // Legacy NFC vs fresh NFD (and reverse) must report the filename change, not unchanged.
+    for (const [left, right] of [
+      [legacyNfc, freshNfd],
+      [freshNfd, legacyNfc],
+      [legacyNfd, freshNfc],
+      [freshNfc, legacyNfd],
+    ] as const)
+      expect(compareArtifacts(left, right)).toMatchObject({
+        status: "changed",
+        summary: { unchanged: 1, changed: 1, unknown: 0 },
+        changes: [
+          expect.objectContaining({
+            logical_path: nfc,
+            classification: "changed",
+            dimensions: ["metadata"],
+          }),
+        ],
+      });
+
+    // Identical NFD names across legacy and fresh remain unchanged.
+    expect(compareArtifacts(legacyNfd, freshNfd)).toMatchObject({
+      status: "unchanged",
+      summary: { unchanged: 2, changed: 0, unknown: 0 },
+      changes: [],
+    });
+
+    // Fresh NFC vs fresh NFD reports both the root tree digest change and the member spelling change.
+    expect(compareArtifacts(freshNfc, freshNfd)).toMatchObject({
+      status: "changed",
+      summary: { unchanged: 0, changed: 2, unknown: 0 },
+      changes: [
+        expect.objectContaining({
+          logical_path: ".",
+          classification: "changed",
+          dimensions: ["content"],
+        }),
+        expect.objectContaining({
+          logical_path: nfc,
+          classification: "changed",
+          dimensions: ["metadata"],
+        }),
       ],
     });
   });

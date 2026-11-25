@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import pino from "pino";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,7 +32,7 @@ it("preserves the relative request path in a load-image CLI summary and its comp
     selectedPath,
   );
   const run = vi.fn(async () => ({ ok: true as const, value: parent }));
-  const cli = Cli.create("rea-load-image-cli-test", { sync: false });
+  const cli = createCommandCli();
   registerCoreNativeCommands(cli, pino({ enabled: false }), run);
   let stdout = "";
   await cli.serve(

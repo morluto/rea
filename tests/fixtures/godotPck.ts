@@ -1,3 +1,9 @@
+import {
+  uint32LE as pckU32,
+  uint64LE as pckU64,
+} from "../../src/native/BinaryInteger.fixture.js";
+
+export { pckU32, pckU64 };
 import { createHash } from "node:crypto";
 
 export interface GodotPckMember {
@@ -9,16 +15,6 @@ export interface GodotPckMember {
   readonly offset?: bigint;
 }
 
-export const pckU32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-export const pckU64 = (value: bigint | number): Buffer => {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
-  return bytes;
-};
 const pad4 = (bytes: Buffer): Buffer =>
   Buffer.concat([bytes, Buffer.alloc((4 - (bytes.length % 4)) % 4)]);
 
@@ -71,8 +67,8 @@ export const buildGodotPck1 = (
 /**
  * Build a pack with the layout Godot's exporter writes (and GDRE Tools
  * reproduces): format 2 places the directory after a 96-byte header and
- * members after it; format 3 stores members first and a pack-relative
- * directory offset.
+ * members after it. Formats 3 and 4 add an eight-byte directory offset to
+ * the header and store members before the directory.
  */
 export const buildGodotPck = (
   version: 2 | 3 | 4,
@@ -107,7 +103,7 @@ export const buildGodotPck = (
       ];
     }),
   ]);
-  const headerBytes = 96;
+  const headerBytes = version === 2 ? 96 : 104;
   const fileBase = version === 2 ? headerBytes + directory.length : headerBytes;
   const header = Buffer.concat([
     Buffer.from("GDPC"),
@@ -117,7 +113,7 @@ export const buildGodotPck = (
     pckU32(1),
     pckU32(options.packFlags ?? (version >= 3 ? 2 : 0)),
     pckU64(fileBase),
-    pckU64(version >= 3 ? headerBytes + dataBytes : 0),
+    ...(version >= 3 ? [pckU64(headerBytes + dataBytes)] : []),
   ]);
   const paddedHeader = Buffer.concat([
     header,

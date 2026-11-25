@@ -41,7 +41,6 @@ ${mutation}
         REA_KUNA_CACHE_DIR: join(root, "cache"),
         REA_LOG_LEVEL: "silent",
       },
-      timeoutMs: 20_000,
     });
     const after = await readFile(executable);
     const afterHash = createHash("sha256").update(after).digest("hex");
@@ -68,11 +67,12 @@ ${mutation}
         providerInspections: expect.arrayContaining([
           expect.objectContaining({
             id: "kuna",
-            available: false,
+            // Admission decides availability; the version probe is its own check.
+            available: true,
             providerVersion: null,
             checks: expect.arrayContaining([
               expect.objectContaining({
-                name: "installation",
+                name: "version",
                 ok: false,
                 code: "version_unresolved",
                 details: expect.objectContaining({

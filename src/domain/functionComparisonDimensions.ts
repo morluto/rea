@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { hasStableNativeSymbol } from "./native/nativeSymbol.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
@@ -16,7 +17,6 @@ import {
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
-  sorted,
   swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
@@ -119,6 +119,7 @@ const facetLimitations = (
         "strings_names",
         dossier.referenced_strings.length +
           dossier.referenced_names.length +
+          // optional-fact-default: swiftLiteralCoverage reports absence.
           (dossier.swift_string_literals?.length ?? 0),
       ],
     ],
@@ -162,10 +163,10 @@ const compareText = (
         "Exact text comparison requires one provider identity.",
       ],
     });
-  const changes = diffLines(left, right, {
-    timeout: 100,
-    maxEditLength: 10_000,
-  });
+  const identical = left === right;
+  const changes = identical
+    ? []
+    : diffLines(left, right, { timeout: 100, maxEditLength: 10_000 });
   if (changes === undefined)
     return unresolvedDimension({
       dimension,
@@ -179,22 +180,22 @@ const compareText = (
     });
   const delta = changes.reduce(
     (summary, change) => ({
-      added_lines:
-        summary.added_lines + (change.added ? (change.count ?? 0) : 0),
+      added_lines: summary.added_lines + (change.added ? change.count : 0),
       removed_lines:
-        summary.removed_lines + (change.removed ? (change.count ?? 0) : 0),
+        summary.removed_lines + (change.removed ? change.count : 0),
       hunks: summary.hunks + (change.added || change.removed ? 1 : 0),
     }),
     { added_lines: 0, removed_lines: 0, hunks: 0 },
   );
+  const leftCount = [...left].length;
   return dimensionResult({
     dimension,
     status: delta.hunks === 0 ? "unchanged" : "changed",
     left,
     right,
     ...context,
-    leftCount: [...left].length,
-    rightCount: [...right].length,
+    leftCount,
+    rightCount: identical ? leftCount : [...right].length,
     textDelta: delta,
     limitations,
   });
@@ -359,8 +360,15 @@ const stringsAndNamesResult = ({
       names_and_literals: rightNamesAndLiterals,
     },
     ...context,
-    leftCount: leftStrings.length + (leftNamesAndLiterals?.length ?? 0),
-    rightCount: rightStrings.length + (rightNamesAndLiterals?.length ?? 0),
+    // Names that cannot be placed in the function leave the side's count unknown.
+    leftCount:
+      leftNamesAndLiterals === null
+        ? null
+        : leftStrings.length + leftNamesAndLiterals.length,
+    rightCount:
+      rightNamesAndLiterals === null
+        ? null
+        : rightStrings.length + rightNamesAndLiterals.length,
     textDelta: null,
     limitations,
   });
@@ -395,7 +403,10 @@ const compareReferencedStrings = (
       continue;
     }
     if (leftRows === undefined || rightRows === undefined) {
-      if (leftUnlocated || rightUnlocated)
+      // Only an unlocated row on the missing side could occupy this offset.
+      const missingSideHasUnlocated =
+        leftRows === undefined ? leftUnlocated : rightUnlocated;
+      if (missingSideHasUnlocated)
         limitations.add(
           `Referenced string membership at source offset ${offset} is ambiguous because another source location is unavailable.`,
         );
@@ -502,9 +513,7 @@ const groupStringsByContent = (
   const groups = new Map<string, ReferencedStringFact[]>();
   for (const string of strings) {
     if (string.content === null) continue;
-    const rows = groups.get(string.content);
-    if (rows === undefined) groups.set(string.content, [string]);
-    else rows.push(string);
+    appendToMapList(groups, string.content, string);
   }
   return groups;
 };
@@ -526,9 +535,7 @@ const groupStringsByOffset = (
 ): Map<string | null, ReferencedStringFact[]> => {
   const groups = new Map<string | null, ReferencedStringFact[]>();
   for (const string of strings) {
-    const rows = groups.get(string.source_offset);
-    if (rows === undefined) groups.set(string.source_offset, [string]);
-    else rows.push(string);
+    appendToMapList(groups, string.source_offset, string);
   }
   return groups;
 };

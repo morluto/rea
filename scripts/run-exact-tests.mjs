@@ -5,7 +5,15 @@ import { createVitest, parseCLI } from "vitest/node";
 
 // CLI file filters are substring matches. Select discovered specifications by
 // identity instead, retaining each project's include/exclude and runner settings.
-const { filter, options } = parseCLI(["vitest", ...process.argv.slice(2)]);
+const args = process.argv.slice(2);
+const ciSelected = args[0] === "ci-selected";
+if (ciSelected) args[0] = "run";
+const { filter, options } = parseCLI(["vitest", ...args]);
+if (
+  ciSelected &&
+  (options.testNamePattern !== undefined || options.tagsFilter !== undefined)
+)
+  throw new Error("Selected test groups cannot filter cases by name or tag");
 const vitest = await createVitest({ ...options, watch: false });
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
 let shutdownSignal;
@@ -90,8 +98,20 @@ try {
       throw new Error(
         `Selected test files were not discovered: ${missing.join(", ")}`,
       );
+    let specifications = [...selected];
+    const { shard, sequence, passWithNoTests } = vitest.config;
+    if (shard && shutdownSignal === undefined) {
+      if (!passWithNoTests && shard.count > specifications.length)
+        throw new Error(
+          `Cannot run ${shard.count} shards for ${specifications.length} selected test specifications`,
+        );
+      // runTestSpecifications takes the final inventory for this shard.
+      specifications = await new sequence.sequencer(vitest).shard(
+        specifications,
+      );
+    }
     if (shutdownSignal === undefined)
-      await vitest.runTestSpecifications([...selected]);
+      await vitest.runTestSpecifications(specifications);
   }
 } finally {
   await close();

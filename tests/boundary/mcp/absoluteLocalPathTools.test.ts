@@ -5,21 +5,43 @@ import { expect, it } from "vitest";
 
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRecoveryToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+import { V8_CODE_CACHE_TOOL_CONTRACTS } from "../../../src/contracts/v8/v8CodeCacheToolContracts.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../../src/contracts/java/mavenGradleMetadataToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolContracts.js";
+import { API_CONTRACT_TOOL_CONTRACTS } from "../../../src/contracts/apiContractToolContracts.js";
+import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../../../src/contracts/playwrightTraceToolContracts.js";
+import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonPycToolContracts.js";
+import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...WEB_SCRIPT_TOOL_CONTRACTS,
   ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+  ...API_CONTRACT_TOOL_CONTRACTS,
+  ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  ...PYTHON_PYC_TOOL_CONTRACTS,
+  ...NUGET_NUPKG_TOOL_CONTRACTS,
+  ...V8_CODE_CACHE_TOOL_CONTRACTS,
+  ...MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
 ];
 
 const PATH_FIELDS = {
   inspect_apple_ips: ["path"],
   inspect_elf_notes: ["path"],
+  inspect_elf_debug_link: ["path", "candidate_path"],
+  inspect_elf_unwind_ranges: ["path"],
   inspect_kernel_module: ["path"],
   inspect_byte_entropy: ["path"],
+  inspect_api_contract: ["path", "operations_path"],
+  inspect_devicetree: ["path"],
+  inspect_playwright_trace: ["path"],
+  inspect_python_pyc: ["path"],
+  inspect_nuget_nupkg: ["path"],
+  inspect_v8_code_cache: ["path"],
+  inspect_maven_gradle_metadata: ["path"],
   export_web_scripts: ["capture_path", "output_directory"],
   recover_javascript_sources: ["path", "output_directory", "additional_paths"],
 } as const;
@@ -37,6 +59,12 @@ const contractFor = (name: keyof typeof PATH_FIELDS) => {
 const validInput = (
   name: keyof typeof PATH_FIELDS,
 ): Record<string, unknown> => {
+  if (name === "inspect_api_contract")
+    return {
+      format: "graphql-sdl",
+      path: absoluteFile,
+      operations_path: absoluteFile,
+    };
   if (name === "export_web_scripts")
     return {
       capture_path: absoluteFile,
@@ -72,7 +100,10 @@ it("rejects one relative path field at a time on tools/list", async () => {
       () => ({ content: [] }),
     );
   }
-  const client = new Client({ name: "absolute-path-client", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
@@ -106,8 +137,19 @@ it("rejects one relative path field at a time on tools/list", async () => {
   expect(checked).toEqual([
     "inspect_apple_ips.path",
     "inspect_elf_notes.path",
+    "inspect_elf_debug_link.path",
+    "inspect_elf_debug_link.candidate_path",
+    "inspect_elf_unwind_ranges.path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",
+    "inspect_api_contract.path",
+    "inspect_api_contract.operations_path",
+    "inspect_devicetree.path",
+    "inspect_playwright_trace.path",
+    "inspect_python_pyc.path",
+    "inspect_nuget_nupkg.path",
+    "inspect_v8_code_cache.path",
+    "inspect_maven_gradle_metadata.path",
     "export_web_scripts.capture_path",
     "export_web_scripts.output_directory",
     "recover_javascript_sources.path",

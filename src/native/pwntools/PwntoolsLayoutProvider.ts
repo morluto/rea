@@ -1,6 +1,7 @@
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import {
   binaryLayoutPayloadSchema,
-  binaryLayoutSchema,
+  safeParseProjectedBinaryLayout,
   type BinaryLayout,
   type InspectBinaryLayoutInput,
 } from "../../domain/native/binaryLayout.js";
@@ -8,7 +9,7 @@ import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { BinaryLayoutPort } from "../../application/binaryDiagnostics/BinaryLayoutPort.js";
+import type { BinaryLayoutPort } from "../../ports/binaryDiagnostics/BinaryLayoutPort.js";
 import type { z } from "zod";
 
 /** ELF-specific projection around the shared owned pwntools decoder boundary. */
@@ -26,16 +27,17 @@ export class PwntoolsLayoutProvider
     createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-elf-layout-" }),
+    host?: HostPlatform,
   ) {
     super(
       {
         identity: PWNTOOLS_PROVIDER_IDENTITY,
         operation: "inspect_binary_layout",
         bridge: new URL("../../../bridge/pwntools/layout.py", import.meta.url),
+        targetFormat: "elf",
         payloadSchema: binaryLayoutPayloadSchema,
         project: ({ input, payload, snapshot, diagnostics }) => {
-          const value = binaryLayoutSchema.safeParse({
-            ...payload,
+          const value = safeParseProjectedBinaryLayout(payload, {
             artifact: {
               path: input.path,
               sha256: snapshot.sha256,
@@ -69,6 +71,7 @@ export class PwntoolsLayoutProvider
       environment,
       launcher,
       createRuntime,
+      host,
     );
   }
 }

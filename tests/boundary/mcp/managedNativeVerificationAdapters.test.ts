@@ -1,8 +1,7 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { afterAll, beforeAll, expect } from "vitest";
+import { join } from "node:path";
+import { expect } from "vitest";
 
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
@@ -14,25 +13,15 @@ import { managedMemberInspectionSchema } from "../../../src/domain/managed/manag
 import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import { managedNativeVerificationResultSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { fileLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
-const client = new Client({ name: "managed-native-adapters", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [resolve("scripts/rea.mjs"), "mcp"],
-  cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "" },
-  stderr: "pipe",
-});
-beforeAll(async () => {
-  await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
-});
-afterAll(async () => {
-  await Promise.all([client.close(), transport.close()]);
-});
+const fileMcp = fileLocalToolsMcp();
 
 cliTest(
   "preserves managed graph identity failures and wrong-role controls through CLI and stdio MCP",
@@ -51,7 +40,7 @@ cliTest(
       const source = createEvidence(
         variant === "subject-sha256"
           ? { path: members.artifact.path, format: "pe", sha256: otherDigest }
-          : undefined,
+          : unknownTarget("not-observed"),
         original.provider,
         {
           operation: original.operation,
@@ -74,7 +63,7 @@ cliTest(
       const input = managedApplicationGraphReferenceInputSchema.parse({
         managed_members: parseEvidence(JSON.parse(JSON.stringify(source))),
       });
-      const response = await client.callTool({
+      const response = await fileMcp.client.callTool({
         name: "project_managed_application_graph",
         arguments: input,
       });
@@ -110,7 +99,7 @@ cliTest(
 
     const wrongRole = MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries;
     const wrongInput = { managed_members: wrongRole };
-    const wrongResponse = await client.callTool({
+    const wrongResponse = await fileMcp.client.callTool({
       name: "project_managed_application_graph",
       arguments: wrongInput,
     });
@@ -140,9 +129,13 @@ cliTest(
       ],
     });
     expect(wrongCommand.exitCode, wrongCommand.stderr).toBe(1);
-    expect(wrongCommand.json).toMatchObject(wrongError);
+    expectAdapterErrorParity(
+      wrongError,
+      wrongCommand.json,
+      "project_managed_application_graph",
+    );
 
-    const control = await client.callTool({
+    const control = await fileMcp.client.callTool({
       name: "project_managed_application_graph",
       arguments: MANAGED_APPLICATION_GRAPH_EXAMPLE,
     });
@@ -161,7 +154,6 @@ cliTest(
     );
     expect(evidence.evidence_links).toEqual([original.evidence_id]);
   },
-  60_000,
 );
 
 /** Authentic native Evidence whose operation the workflow cannot read symbols from. */
@@ -300,7 +292,7 @@ cliTest(
           },
         }),
       );
-      const inspected = await client.callTool({
+      const inspected = await fileMcp.client.callTool({
         name: "inspect_managed_native_boundaries",
         arguments: { path: managedPath },
       });
@@ -333,7 +325,7 @@ cliTest(
         managed_boundaries: managed,
         native_observations: [native],
       };
-      const mcp = await client.callTool({
+      const mcp = await fileMcp.client.callTool({
         name: "verify_managed_native_boundaries",
         arguments: input,
       });
@@ -346,10 +338,10 @@ cliTest(
       const invocation = {
         arguments: ["verify-managed-native-boundaries", request, "--json"],
       };
-      const cliRun =
-        index === 0
-          ? await cli.run(invocation)
-          : await runFileCli(cli, invocation);
+      const cliRun = await cli.run({
+        ...invocation,
+        freshProcess: index === 0,
+      });
       expect(cliRun.exitCode, cliRun.stderr).toBe(0);
       const cliResult = managedNativeVerificationResultSchema.parse(
         parseEvidence(cliRun.json).normalized_result,
@@ -372,7 +364,6 @@ cliTest(
       ]);
     }
   },
-  60_000,
 );
 
 cliTest(
@@ -381,7 +372,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-managed-native-adapters-");
     const path = join(root, "fixture.dll");
     await writeFile(path, buildManagedPeFixture({ pinvoke: {} }));
-    const inspected = await client.callTool({
+    const inspected = await fileMcp.client.callTool({
       name: "inspect_managed_native_boundaries",
       arguments: { path },
     });
@@ -393,7 +384,7 @@ cliTest(
       native_observations: [native],
     };
 
-    const mcp = await client.callTool({
+    const mcp = await fileMcp.client.callTool({
       name: "verify_managed_native_boundaries",
       arguments: input,
     });
@@ -431,7 +422,7 @@ cliTest(
       "Some native Evidence operations were unsupported by this workflow.",
     );
 
-    const tampered = await client.callTool({
+    const tampered = await fileMcp.client.callTool({
       name: "verify_managed_native_boundaries",
       arguments: {
         ...input,
@@ -442,5 +433,4 @@ cliTest(
       error: { code: "evidence_integrity_mismatch" },
     });
   },
-  60_000,
 );

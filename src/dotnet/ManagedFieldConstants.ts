@@ -1,23 +1,25 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedFieldConstant } from "../domain/managed/managedFieldConstant.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   metadataToken,
   readMetadataBlob,
   decodeMetadataCodedIndex,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   managedFailure,
+  ManagedHeapAmbiguityFailure,
   ManagedReaderFailure,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import {
   decodeManagedConstantValue,
   managedConstantType,
@@ -35,7 +37,7 @@ const fieldConstantDeclarations = (
   const budget = managedDecodeBudget(layout);
   for (let row = 1; row <= (layout.table(11)?.rowCount ?? 0); row++) {
     const cursor = metadataRowCursor(bytes, layout, 11, row);
-    const typeAndPadding = cursor.readUInt16();
+    const typeAndPadding = cursor.u16();
     const parentRaw = cursor.readIndex(layout.codedIndexSize("HasConstant"));
     const blobIndex = cursor.readIndex(layout.blobIndexSize);
     const definition = MANAGED_CODED_INDEXES.HasConstant;
@@ -66,9 +68,7 @@ const fieldConstantDeclarations = (
       padding: typeAndPadding >>> 8,
       blob_index: blobIndex,
     };
-    const previous = result.get(parent.row);
-    if (previous === undefined) result.set(parent.row, [declaration]);
-    else previous.push(declaration);
+    appendToMapList(result, parent.row, declaration);
   }
   return result;
 };
@@ -113,12 +113,7 @@ export const createManagedFieldConstantReader = (
           "Constant row padding must be zero.",
           offset,
         );
-      const value = readMetadataBlob(
-        bytes,
-        layout,
-        first.blob_index,
-        layout.blob?.size ?? 0,
-      );
+      const value = readMetadataBlob(bytes, layout, first.blob_index);
       budget.admitTransient(value.length * 8 + 1024, offset);
       result.raw_hex = value.toString("hex");
       result.element_type = managedConstantType(first.type_code);
@@ -135,7 +130,8 @@ export const createManagedFieldConstantReader = (
         cause.issue.code === "resource-limit"
       )
         throw cause;
-      issues.push(cause.issue);
+      if (!(cause instanceof ManagedHeapAmbiguityFailure))
+        issues.push(cause.issue);
       result.limitation = cause.issue.detail;
     } finally {
       budget.releaseTransient();

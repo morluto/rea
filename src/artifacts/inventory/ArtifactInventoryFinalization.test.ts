@@ -5,9 +5,15 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactProvider } from "../ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../ZipArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import {
+  ZipArtifactReader,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
@@ -50,6 +56,41 @@ const zipFixture = async () => {
   await writeFile(path, bytes);
   return { path, sha256: createHash("sha256").update(bytes).digest("hex") };
 };
+
+it("does not complete a directory inventory after cancellation at the last entry", async () => {
+  const root = await createTestTempDirectory("rea-directory-paused-");
+  await writeFile(join(root, "member"), "data");
+  const reader = new DirectoryArtifactReader(root);
+  const controller = new AbortController();
+  try {
+    const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+    expect((await entries.next()).done).toBe(false);
+    controller.abort();
+    await expect(entries.next()).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
+    await reader.close();
+  }
+});
+
+it.each(["close", "cancel"] as const)(
+  "does not complete a ZIP inventory after %s at the last entry",
+  async (interruption) => {
+    const { path } = await zipFixture();
+    const reader = new ZipArtifactReader(path, "zip");
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it.each([
   { transfer: false, readerFails: false, rootFails: false, cancelAt: "reader" },
@@ -137,10 +178,7 @@ it("keeps an earlier inventory failure primary when cleanup is cancelled", async
   const { path } = await zipFixture();
   const scope = new ArtifactResourceScope();
   const controller = new AbortController();
-  const primary = new ArtifactReaderFailure(
-    "format",
-    "member enumeration failed",
-  );
+  const primary = malformedArtifact("zip", "member enumeration failed");
   const enumeration = vi
     .spyOn(ZipArtifactReader.prototype, "entries")
     .mockImplementation(async function* () {

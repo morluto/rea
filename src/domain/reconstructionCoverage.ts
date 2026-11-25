@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { reconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import { z } from "zod";
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -31,7 +32,10 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9._:\x2f\x2d]{0,199}$/u);
-const boundedTextSchema = z.string().trim().min(1);
+export const reconstructionBoundaryIdSchema = stableIdSchema.describe(
+  "Exact identifier of a boundary declared in the reconstruction coverage.",
+);
+const trimmedTextSchema = z.string().trim().min(1);
 
 const authoritySchema = z.enum([
   "observed",
@@ -54,7 +58,7 @@ const surfaceSchema = z.strictObject({
   family: z.string().trim().min(1),
   artifact_id: stableIdSchema,
   occurrence_id: z.string().trim().min(1).nullable(),
-  location: boundedTextSchema,
+  location: trimmedTextSchema,
   authority: authoritySchema,
   dependency_surface_ids: z.array(stableIdSchema),
   evidence_ids: z.array(evidenceIdSchema).min(1),
@@ -62,7 +66,7 @@ const surfaceSchema = z.strictObject({
 
 const implementationOwnerSchema = z.strictObject({
   disposition: z.literal("implemented"),
-  owner_path: boundedTextSchema,
+  owner_path: trimmedTextSchema,
   owner_export: z.string().trim().min(1).nullable(),
   owner_sha256: digestSchema,
   path_state: z.enum(["present", "missing", "unknown"]),
@@ -72,7 +76,7 @@ const implementationOwnerSchema = z.strictObject({
 
 const externalOwnerSchema = z.strictObject({
   disposition: z.enum(["external", "non-goal"]),
-  rationale: boundedTextSchema,
+  rationale: trimmedTextSchema,
 });
 
 const ownerSchema = z.strictObject({
@@ -158,7 +162,7 @@ const packageProofSchema = z.strictObject({
 });
 
 const boundarySchema = z.strictObject({
-  boundary_id: stableIdSchema,
+  boundary_id: reconstructionBoundaryIdSchema,
   title: z.string().trim().min(1),
   required_surface_ids: z.array(stableIdSchema).min(1),
   required_claim_ids: z.array(stableIdSchema).min(1),
@@ -203,6 +207,10 @@ export interface ParsedReconstructionCoverage {
   readonly claims: ReadonlyMap<
     string,
     ReconstructionCoverageData["claims"][number]
+  >;
+  readonly boundaries: ReadonlyMap<
+    string,
+    ReconstructionCoverageData["boundaries"][number]
   >;
   readonly ownersBySurface: ReadonlyMap<
     string,
@@ -277,11 +285,11 @@ const closureReasonSchema = z.strictObject({
     "package-proof-unknown",
   ]),
   subject_id: stableIdSchema,
-  detail: boundedTextSchema,
+  detail: trimmedTextSchema,
 });
 
 export const reconstructionClosureResultSchema = z.strictObject({
-  boundary_id: stableIdSchema,
+  boundary_id: reconstructionBoundaryIdSchema,
   status: z.enum(["partial", "failed", "unknown", "ready"]),
   summary: z.strictObject({
     required_surfaces: z.int().min(0),
@@ -293,7 +301,7 @@ export const reconstructionClosureResultSchema = z.strictObject({
     z.strictObject({
       operation: stableIdSchema,
       subject_id: stableIdSchema,
-      rationale: boundedTextSchema,
+      rationale: trimmedTextSchema,
     }),
   ),
   evidence_ids: z.array(evidenceIdSchema),
@@ -311,9 +319,7 @@ export const evaluateParsedReconstructionClosure = (
   boundaryId: string,
   nowEpochMs: number,
 ): Result<ReconstructionClosureResult, AnalysisInputError> => {
-  const boundary = parsed.coverage.boundaries.find(
-    ({ boundary_id: id }) => id === boundaryId,
-  );
+  const boundary = parsed.boundaries.get(boundaryId);
   if (boundary === undefined)
     return err(
       coverageInputError(
@@ -388,7 +394,10 @@ const validateCoverageReferences = (
     ...path,
     "package_proofs",
   ]);
-  indexUnique(workspace.boundaries, "boundary_id", [...path, "boundaries"]);
+  const boundaries = indexUnique(workspace.boundaries, "boundary_id", [
+    ...path,
+    "boundaries",
+  ]);
   for (const [index, contract] of workspace.verifier_contracts.entries()) {
     const { contract_sha256: contractSha256, ...base } = contract;
     if (
@@ -415,9 +424,7 @@ const validateCoverageReferences = (
         ["owners", index, "surface_id"],
         `Owner surface is missing: ${owner.surface_id}`,
       );
-    const owners = ownersBySurface.get(owner.surface_id);
-    if (owners === undefined) ownersBySurface.set(owner.surface_id, [owner]);
-    else owners.push(owner);
+    appendToMapList(ownersBySurface, owner.surface_id, owner);
   }
   for (const [index, claim] of workspace.claims.entries()) {
     const missingSurface = claim.surface_ids.findIndex(
@@ -464,7 +471,14 @@ const validateCoverageReferences = (
         ["residual_unknown_ids", index],
         `Coverage workspace residual unknown is missing: ${id}`,
       );
-  return { evidenceById, artifacts, surfaces, claims, ownersBySurface };
+  return {
+    evidenceById,
+    artifacts,
+    surfaces,
+    claims,
+    boundaries,
+    ownersBySurface,
+  };
 };
 
 const indexUnique = <Item extends Record<Key, string>, Key extends keyof Item>(

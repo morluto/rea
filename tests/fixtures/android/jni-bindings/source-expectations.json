@@ -122,6 +122,6 @@
       "x86": "REL"
     },
     "relr": "DT_RELR; verify actual tags and encoded slots from readelf and bytes",
-    "aps2": "Android APS2 packed REL/RELA; deliberately unsupported by the REA feature, with explicit coverage unknown"
+    "aps2": "Android APS2 packed REL/RELA; source-known table candidates and group/member provenance survive; unresolved symbols remain unknown"
   }
 }

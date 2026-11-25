@@ -1,9 +1,11 @@
+import type { DesktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
+import { describeValidationFailure } from "../domain/validationFailure.js";
 import { readdir } from "node:fs/promises";
 
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/index.js";
 import {
   fromUbuntuNobleArchive,
   repositoryRefusal,
@@ -18,10 +20,10 @@ import type {
 } from "../domain/desktop/desktopCapture.js";
 import {
   DPKG_STATUS_FORMAT,
+  literalDpkgOwnershipPath,
   ownershipCandidates,
   parseAptPolicyOrigins,
   parseAptPolicySources,
-  parseDpkgOwners,
   parseDpkgStatus,
 } from "../domain/desktop/linuxPackages.js";
 import {
@@ -29,18 +31,21 @@ import {
   resolveAptLocations,
   type AptRepositoryHost,
 } from "./AptRepositoryInventory.js";
-import { succeeded } from "./HostQuery.js";
+import { queryDpkgOwnership } from "./DpkgOwnershipQuery.js";
+import { queryUtf8Text, succeeded } from "./HostQuery.js";
 import {
   inspectLibraryPackages,
   installableLibraries,
   installablePackages,
 } from "./LibraryPackageInventory.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The host commands and apt folders Debian package identification reads. */
 export type DebianPackageHost = AptRepositoryHost;
 
 /** What package identification reads with and adds to. */
 export interface InventoryContext {
+  readonly libraryPolicy?: DesktopLibraryPolicy;
   readonly host: DebianPackageHost;
   readonly signal: AbortSignal | undefined;
   readonly limitations: string[];
@@ -52,11 +57,23 @@ type Package = DesktopApplicationInventory["package"];
 /** The `o=` origin of every package file `apt-cache policy` lists; undefined when apt could not be asked. */
 const policyOrigins = async (
   context: InventoryContext,
+  statusFile: string | undefined,
 ): Promise<ReadonlyMap<string, string | null> | undefined> => {
-  const policy = succeeded(
-    await context.host.runQuery("apt-cache", ["policy"], context.signal),
+  const policy = await queryUtf8Text(
+    context.host.runQuery,
+    "apt-cache",
+    ["policy"],
+    context.signal,
   );
-  return policy === undefined ? undefined : parseAptPolicyOrigins(policy);
+  if (policy.kind === "undecodable") {
+    context.limitations.push(
+      "apt-cache policy contained unreadable UTF-8, so the origins of repository sources are unknown.",
+    );
+    return new Map();
+  }
+  return policy.kind === "read"
+    ? parseAptPolicyOrigins(policy.text, statusFile)
+    : undefined;
 };
 
 /**
@@ -70,9 +87,7 @@ const bothFailed = (first: unknown, second: unknown): unknown => {
   const causes = [first, second];
   const both = new AggregateError(
     causes,
-    causes
-      .map((cause) => (cause instanceof Error ? cause.message : String(cause)))
-      .join("; "),
+    causes.map((cause) => errorMessage(cause)).join("; "),
   );
   const cleanups = causes.flatMap((cause) =>
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
@@ -138,6 +153,7 @@ const installFacts = async (
           installed.name ?? "",
           runQuery,
           context.signal,
+          context.libraryPolicy,
         ),
   );
   context.limitations.push(...vendor.limitations);
@@ -155,7 +171,7 @@ const installFacts = async (
       ...(libraries?.library_packages ?? []),
       ...(program === undefined ? [] : [program]),
     ],
-    { origins, declared },
+    { origins, declared, statusFile: context.host.apt.status },
     runQuery,
     context.signal,
   );
@@ -200,16 +216,26 @@ const dpkgOwner = async (
   { host, signal }: InventoryContext,
 ): Promise<Ownership> => {
   for (const path of ownershipCandidates(paths)) {
-    const outcome = await host.runQuery("dpkg-query", ["-S", path], signal);
-    if (outcome === "missing")
+    if (!literalDpkgOwnershipPath(path))
+      return {
+        kind: "unknown",
+        reason: `dpkg-query cannot safely query ${path} containing pattern characters or invalid path delimiters`,
+      };
+    const outcome = await queryDpkgOwnership(host.runQuery, [path], signal);
+    if (outcome.kind === "missing")
       return { kind: "unknown", reason: "dpkg-query is not installed" };
-    // dpkg-query exits 1 when no package owns the path and 2 when it could not tell.
-    if (outcome === "failed" || outcome.exitCode > 1)
+    if (outcome.kind !== "read")
       return {
         kind: "unknown",
         reason: `dpkg-query could not say which package owns ${path}`,
       };
-    const [name] = parseDpkgOwners(outcome.stdout, path);
+    const owners = outcome.owners.get(path);
+    if (owners === undefined)
+      return {
+        kind: "unknown",
+        reason: `dpkg-query returned unreadable ownership records for ${path}`,
+      };
+    const [name] = owners;
     if (name !== undefined) return { kind: "owned", name };
   }
   return { kind: "unowned" };
@@ -276,21 +302,37 @@ export const debianPackage = async (
     ),
   );
   const parsed = status === undefined ? undefined : parseDpkgStatus(status);
-  const policy = succeeded(
-    await host.runQuery("apt-cache", ["policy", name], signal),
+  const policy = await queryUtf8Text(
+    host.runQuery,
+    "apt-cache",
+    ["policy", name],
+    signal,
   );
+  if (policy.kind === "undecodable")
+    limitations.push(
+      "apt-cache policy contained unreadable UTF-8, so the installed version's repository sources are unknown.",
+    );
   const apt = await resolveAptLocations(host.runQuery, signal, host.apt);
-  const listsPresent = (
-    await readdir(apt.lists).catch(() => [] as string[])
-  ).some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list));
-  if (!listsPresent)
+  const listsPresent = await readdir(apt.lists).then(
+    (lists) => lists.some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list)),
+    (cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+      limitations.push(
+        `The apt package lists directory ${apt.lists} could not be read, so whether package lists are present is unknown: ${describeValidationFailure(cause)}`,
+      );
+      return null;
+    },
+  );
+  if (listsPresent === false)
     limitations.push(
       "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
     );
   const sources =
-    policy === undefined ? [] : [...parseAptPolicySources(policy)];
+    policy.kind === "read"
+      ? [...parseAptPolicySources(policy.text, apt.status)]
+      : [];
   // A local install's library packages are matched to the archive by origin too.
-  const origins = await policyOrigins(context);
+  const origins = await policyOrigins(context, apt.status);
   const installed = {
     kind: "deb" as const,
     name: parsed?.name ?? name,

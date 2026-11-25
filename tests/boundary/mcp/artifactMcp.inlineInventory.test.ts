@@ -1,3 +1,9 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { fileSubjectDisplay } from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalInputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -27,7 +33,7 @@ import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -42,17 +48,15 @@ const assertInventorySubjectValidation = async (
           .substeps[0]?.evidence.normalized_result
       : source.normalized_result;
   const inventory = artifactInventoryResultSchema.parse(result);
-  if (source.subject === null)
-    throw new Error("Fixture requires a known subject");
   for (const target of [
-    undefined,
+    unknownTarget("not-observed"),
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: inventory.manifest.root_sha256,
       format: "file" as const,
     },
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: "f".repeat(64),
       format: inventory.manifest.root_format,
     },
@@ -191,25 +195,23 @@ mcpTest(
   },
 );
 
-const createInventoryViewReader = async (
-  client: Client,
-  parent: Evidence,
-  profile: "full" | "compact",
-) => {
+const createInventoryViewReader = async (client: Client, parent: Evidence) => {
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Missing advertised view schemas");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
   const malformed = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "inventory", collection: "nodes", logical_paths: [] },
   };
-  if (profile === "full")
-    expect(ajv.validate(inputSchema, malformed)).toBe(false);
+  // The canonical contract disallows path filters for nodes. The server
+  // also enforces this when clients use the compact advertisement.
+  expect(ajv.validate(canonicalInputSchema(advertised.name), malformed)).toBe(
+    false,
+  );
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: malformed,
@@ -229,16 +231,12 @@ const createInventoryViewReader = async (
       ajv.validate(inputSchema, arguments_),
       JSON.stringify(ajv.errors),
     ).toBe(true);
-    const reply = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: arguments_,
-    });
+    const reply = await client.callTool(
+      { name: "inspect_analysis_view", arguments: arguments_ },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     if (reply.isError)
       throw new Error(JSON.stringify(parseMcpToolError(reply)));
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     return {
       evidence,
@@ -308,7 +306,8 @@ const assertSummaryDelivery = async (
   session: ReturnType<typeof createTestBinarySession>,
   complete: Evidence,
 ) => {
-  expect(complete.parameters).not.toHaveProperty("detail");
+  // Explicit complete delivery is recorded with the caller's choice.
+  expect(complete.parameters).toMatchObject({ detail: "complete" });
   const reply = await client.callTool({
     name: "inspect_artifact",
     arguments: { detail: "summary" },
@@ -382,9 +381,9 @@ const assertOccurrencePages = async (
   });
 };
 
-mcpTest.for(["full", "compact"] as const)(
-  "keeps complete ZIP output and reads retained inventory views after the source is removed (%s)",
-  async (profile, { mcp, onTestFinished }) => {
+mcpTest(
+  "keeps complete ZIP output and reads retained inventory views after the source is removed",
+  async ({ mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-artifact-inline-");
     const archive = join(directory, "many.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
@@ -405,7 +404,7 @@ mcpTest.for(["full", "compact"] as const)(
           environment: {
             ...process.env,
             ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
-            REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+            REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
           },
         },
       ),
@@ -419,7 +418,7 @@ mcpTest.for(["full", "compact"] as const)(
     expect(opened.isError).not.toBe(true);
     const result = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(
       true,
@@ -442,7 +441,7 @@ mcpTest.for(["full", "compact"] as const)(
     expect(graph.occurrences).toHaveLength(fileCount + 1);
     // Follow-ups must use retained source facts, not reopen this archive.
     await unlink(archive);
-    const readView = await createInventoryViewReader(client, parent, profile);
+    const readView = await createInventoryViewReader(client, parent);
     const summary = await readView({ kind: "summary" });
     expect(summary.result).toMatchObject({
       kind: "summary",

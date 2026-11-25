@@ -1,5 +1,5 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createTestProcessCaptureResourceScope } from "../fixtures/processCaptureResourceScope.js";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
@@ -7,6 +7,8 @@ import { expect, it, onTestFinished } from "vitest";
 import { createDarwinProcessRunTokenReader } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { createSystemProcessOwnershipHost } from "../../src/process/ProcessOwnershipObservation.js";
 import { startProcessSampler } from "../../src/process/capture/ProcessSampling.js";
+import { ProcessOwnershipInspectionCancelled } from "../../src/process/ProcessInspectionCancellation.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const waitForFile = async (path: string, timeoutMs = 4_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -79,25 +81,21 @@ const createDelayedCommand = async (directory: string) => {
 const expectOwnedCommandToFinishOnAbort = async (
   run: (signal: AbortSignal, directory: string) => Promise<unknown>,
 ): Promise<void> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-process-command-"));
+  const directory = await createTestTempDirectory("rea-process-command-");
   const command = await createDelayedCommand(directory);
   const controller = new AbortController();
   const reason = new Error("cancel owned process command");
   let pending: Promise<unknown> | undefined;
   onTestFinished(async () => {
-    try {
-      controller.abort(reason);
-      await pending?.catch(() => {});
-      if (
-        await readFile(command.readyPath).then(
-          () => true,
-          () => false,
-        )
+    controller.abort(reason);
+    await pending?.catch(() => {});
+    if (
+      await readFile(command.readyPath).then(
+        () => true,
+        () => false,
       )
-        await waitForFile(command.donePath);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    )
+      await waitForFile(command.donePath);
   });
 
   pending = run(controller.signal, directory);
@@ -111,7 +109,9 @@ const expectOwnedCommandToFinishOnAbort = async (
 
   if (!(failure instanceof Error))
     throw new Error("The cancelled process command did not return an error");
-  expect(failure.cause).toBe(reason);
+  expect(ProcessOwnershipInspectionCancelled.from(failure)?.reason).toBe(
+    reason,
+  );
   await expect(readFile(command.donePath, "utf8")).resolves.toBe("done");
 };
 
@@ -151,17 +151,11 @@ const processEntry = {
 it.skipIf(process.platform === "win32")(
   "waits for the owned ps command to exit when sampling stops",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-process-sampler-"));
+    const directory = await createTestTempDirectory("rea-process-sampler-");
     const readyPath = join(directory, "ready");
     const donePath = join(directory, "done");
     const psPath = join(directory, "ps");
     const originalPath = process.env.PATH;
-    const platformDescriptor = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
-    );
-    if (platformDescriptor === undefined)
-      throw new Error("process.platform descriptor is unavailable");
 
     let stopSampler: (() => Promise<unknown>) | undefined;
     let restoreProcessGlobals = (): void => {};
@@ -177,7 +171,6 @@ it.skipIf(process.platform === "win32")(
           await waitForFile(donePath);
       } finally {
         restoreProcessGlobals();
-        await rm(directory, { recursive: true, force: true });
       }
     });
 
@@ -188,17 +181,15 @@ it.skipIf(process.platform === "win32")(
     await chmod(psPath, 0o755);
 
     process.env.PATH = `${directory}${originalPath === undefined ? "" : `:${originalPath}`}`;
-    Object.defineProperty(process, "platform", {
-      ...platformDescriptor,
-      value: "darwin",
-    });
     restoreProcessGlobals = () => {
       if (originalPath === undefined) delete process.env.PATH;
       else process.env.PATH = originalPath;
-      Object.defineProperty(process, "platform", platformDescriptor);
     };
 
+    // macOS runs /bin/ps; another ps platform keeps the fixture on PATH.
     stopSampler = startProcessSampler({
+      platform: "freebsd",
+      resourceScope: createTestProcessCaptureResourceScope(),
       rootPid: 100,
       runId: "fixture-run-token",
       started: 0,
@@ -215,15 +206,15 @@ it.skipIf(process.platform === "win32")(
 
 it
   .skipIf(process.platform === "win32")
-  .each(["darwin-list", "freebsd-environment"] as const)(
+  .each(["freebsd-list", "freebsd-environment"] as const)(
   "waits for the %s ownership command to exit after cancellation",
   async (kind) => {
     await expectOwnedCommandToFinishOnAbort(async (signal, directory) => {
-      const platform = kind === "darwin-list" ? "darwin" : "freebsd";
-      const host = createSystemProcessOwnershipHost(platform, {
+      // macOS runs /bin/ps; FreeBSD keeps the PATH fixture for both commands.
+      const host = createSystemProcessOwnershipHost("freebsd", {
         PATH: directory,
       });
-      return kind === "darwin-list"
+      return kind === "freebsd-list"
         ? host.listProcesses(signal)
         : host.environment(123, signal);
     });
@@ -233,27 +224,23 @@ it
 const expectDarwinReaderCommandToFinishOnAbort = async (
   operation: "read" | "identities",
 ): Promise<void> => {
-  const directory = await mkdtemp(join(tmpdir(), `rea-darwin-${operation}-`));
+  const directory = await createTestTempDirectory(`rea-darwin-${operation}-`);
   const command = await createDelayedCommand(directory);
   const reader = await createFakeDarwinReader(directory, command);
   const controller = new AbortController();
   const reason = new Error(`cancel ${operation}`);
   let pending: Promise<unknown> | undefined;
   onTestFinished(async () => {
-    try {
-      controller.abort(reason);
-      await pending?.catch(() => {});
-      if (
-        await readFile(command.readyPath).then(
-          () => true,
-          () => false,
-        )
+    controller.abort(reason);
+    await pending?.catch(() => {});
+    if (
+      await readFile(command.readyPath).then(
+        () => true,
+        () => false,
       )
-        await waitForFile(command.donePath);
-      await reader.close();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    )
+      await waitForFile(command.donePath);
+    await reader.close();
   });
 
   pending =

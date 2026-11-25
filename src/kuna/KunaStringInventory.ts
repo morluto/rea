@@ -3,7 +3,10 @@ import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { analysisStringSchema } from "../domain/native/nativeString.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { compareKunaAddresses } from "./KunaAddress.js";
+import {
+  compareKunaAddresses,
+  isCanonicalKunaHexAddress,
+} from "./KunaAddress.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
@@ -56,31 +59,82 @@ const DOCUMENT = {
   ]),
 } as const;
 
+type StringRow = z.infer<typeof row>;
+
+const parseStringRow = (
+  fields: Readonly<Record<string, unknown>>,
+): StringRow => {
+  const {
+    address: rawAddress,
+    address_hex: rawAddressHex,
+    text,
+    length,
+    byte_length: byteLength,
+    nul_terminated: nulTerminated,
+    encoding,
+    section,
+    xrefs_count: xrefsCount,
+    functions,
+  } = fields;
+  if (
+    isCanonicalKunaHexAddress(rawAddress) &&
+    (rawAddressHex === rawAddress ||
+      isCanonicalKunaHexAddress(rawAddressHex)) &&
+    typeof text === "string" &&
+    typeof length === "number" &&
+    Number.isSafeInteger(length) &&
+    length >= 0 &&
+    typeof byteLength === "number" &&
+    Number.isSafeInteger(byteLength) &&
+    byteLength >= 0 &&
+    typeof nulTerminated === "boolean" &&
+    (encoding === "ascii" || encoding === "utf8" || encoding === "utf16") &&
+    (section === null || typeof section === "string") &&
+    xrefsCount === 0 &&
+    Array.isArray(functions) &&
+    functions.length === 0
+  )
+    return fields as unknown as StringRow;
+  return parseKunaRow(row, "string", fields);
+};
+
 /** JSON text omits terminators; native lengths describe the encoded source. */
-const validateStringFacts = (entry: z.infer<typeof row>): void => {
+const validateStringFacts = (entry: StringRow): void => {
+  const { text, encoding } = entry;
+  const isAscii = encoding === "ascii";
+  const isUtf16 = encoding === "utf16";
   let characters = 0;
-  for (const character of entry.text) {
-    const point = character.codePointAt(0)!;
-    if (
-      point === 0 ||
-      (point >= 0xd800 && point <= 0xdfff) ||
-      (entry.encoding === "ascii" && point > 0x7f) ||
-      (entry.encoding === "utf16" && point > 0xff)
-    )
+  let utf8Bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit === 0) throw new KunaDocumentError("encoding_contradicts_text");
+    if (unit >= 0xd800 && unit <= 0xdfff) {
+      if (
+        unit <= 0xdbff &&
+        i + 1 < text.length &&
+        text.charCodeAt(i + 1) >= 0xdc00 &&
+        text.charCodeAt(i + 1) <= 0xdfff
+      ) {
+        if (isAscii || isUtf16)
+          throw new KunaDocumentError("encoding_contradicts_text");
+        i += 1;
+        characters += 1;
+        utf8Bytes += 4;
+        continue;
+      }
+      throw new KunaDocumentError("encoding_contradicts_text");
+    }
+    if ((isAscii && unit > 0x7f) || (isUtf16 && unit > 0xff))
       throw new KunaDocumentError("encoding_contradicts_text");
     characters += 1;
+    utf8Bytes += unit <= 0x7f ? 1 : unit <= 0x7ff ? 2 : 3;
   }
-  const textBytes =
-    entry.encoding === "utf16"
-      ? entry.text.length * 2
-      : entry.encoding === "ascii"
-        ? entry.text.length
-        : Buffer.byteLength(entry.text);
-  const terminatorBytes = entry.nul_terminated
-    ? entry.encoding === "utf16"
-      ? 2
-      : 1
-    : 0;
+  const textBytes = isUtf16
+    ? text.length * 2
+    : isAscii
+      ? text.length
+      : utf8Bytes;
+  const terminatorBytes = entry.nul_terminated ? (isUtf16 ? 2 : 1) : 0;
   if (
     characters < KUNA_STRING_MIN_LENGTH ||
     entry.length !== characters ||
@@ -121,7 +175,7 @@ export const kunaStringsAtAddress = (
 /** Validates `kuna strings --json` row by row as Kuna writes it. */
 export class KunaStringInventoryReader extends KunaJsonDocumentReader<KunaStringInventory> {
   readonly #items: KunaStringItem[] = [];
-  readonly #identities = new Set<string>();
+  readonly #identities = new Map<string, number>();
 
   constructor() {
     super("kuna:strings", "Kuna's string inventory", DOCUMENT);
@@ -141,14 +195,18 @@ export class KunaStringInventoryReader extends KunaJsonDocumentReader<KunaString
       return err(
         this.unusable("string inventory count disagrees with examined rows"),
       );
-    this.#items.sort(
-      (left, right) =>
-        compareKunaAddresses(left.address, right.address) ||
-        (left.string?.encoding ?? "").localeCompare(
-          right.string?.encoding ?? "",
-          "en",
-        ),
-    );
+    this.#identities.clear();
+    this.#items.sort((left, right) => {
+      const addressOrder = compareKunaAddresses(left.address, right.address);
+      if (addressOrder !== 0) return addressOrder;
+      const leftEncoding = left.string?.encoding ?? "";
+      const rightEncoding = right.string?.encoding ?? "";
+      return leftEncoding < rightEncoding
+        ? -1
+        : leftEncoding > rightEncoding
+          ? 1
+          : 0;
+    });
     return ok({
       items: this.#items,
       sha256: completed.value.sha256,
@@ -161,14 +219,16 @@ export class KunaStringInventoryReader extends KunaJsonDocumentReader<KunaString
     _member: string,
     fields: Readonly<Record<string, unknown>>,
   ): void {
-    const entry = parseKunaRow(row, "string", fields);
+    const entry = parseStringRow(fields);
     validateStringFacts(entry);
     if (entry.address !== entry.address_hex)
       throw new KunaDocumentError("address_hex_disagrees");
-    const identity = `${entry.address}:${entry.encoding}`;
-    if (this.#identities.has(identity))
+    const encodingMask =
+      entry.encoding === "ascii" ? 1 : entry.encoding === "utf8" ? 2 : 4;
+    const seen = this.#identities.get(entry.address) ?? 0;
+    if ((seen & encodingMask) !== 0)
       throw new KunaDocumentError("repeated_identity");
-    this.#identities.add(identity);
+    this.#identities.set(entry.address, seen | encodingMask);
     this.#items.push({
       address: entry.address,
       value: entry.text,
