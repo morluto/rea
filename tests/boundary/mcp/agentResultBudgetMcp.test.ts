@@ -82,18 +82,33 @@ type Delivery = {
   };
 };
 
-/** The delivery facts block that follows the summary's own text block. */
+type Link = {
+  readonly type: "resource_link";
+  readonly uri: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly size: number;
+};
+
+/**
+ * The delivery facts block that follows the summary's own text block, and
+ * the resource link to the complete record after it.
+ */
 const deliveryOf = (result: {
   readonly content?: unknown;
   readonly _meta?: Record<string, unknown> | undefined;
-}): Delivery => {
+}): Delivery & { readonly link: Link } => {
   const blocks = result.content as { type: string; text: string }[];
-  expect(blocks).toHaveLength(2);
+  expect(blocks.map(({ type }) => type)).toEqual([
+    "text",
+    "text",
+    "resource_link",
+  ]);
   const { delivery } = JSON.parse(blocks[1]!.text) as {
     readonly delivery: Delivery;
   };
   expect(result._meta?.[AGENT_BUDGET_DELIVERY_META]).toEqual(delivery);
-  return delivery;
+  return { ...delivery, link: blocks[2] as unknown as Link };
 };
 
 type EvidenceJsonPage = {
@@ -207,6 +222,90 @@ it("delivers a retained summary with a cursor when complete Evidence exceeds the
   const joined = await pageEvidenceJson(client, delivery.next!);
   expect(joined).toBe(JSON.stringify(complete.structuredContent));
   expect(JSON.parse(joined)).toEqual(complete.structuredContent);
+
+  // The link names the same retained parent, and one read returns its exact
+  // JSON: the bytes the cursor pages and that complete detail delivers.
+  expect(delivery.link).toEqual({
+    type: "resource_link",
+    uri: `rea://evidence/${view.parent_evidence_id}`,
+    name: "complete-evidence",
+    title: `Complete inspect_byte_entropy Evidence (${String(delivery.complete_bytes)} bytes)`,
+    mimeType: "application/json",
+    size: delivery.complete_bytes,
+  });
+  const read = await client.readResource({ uri: delivery.link.uri });
+  expect(read.contents).toHaveLength(1);
+  const [contents] = read.contents as {
+    uri: string;
+    mimeType: string;
+    text: string;
+  }[];
+  expect(contents).toMatchObject({
+    uri: delivery.link.uri,
+    mimeType: "application/json",
+  });
+  expect(contents!.text).toBe(joined);
+  expect(Buffer.byteLength(contents!.text)).toBe(delivery.link.size);
+});
+
+it("serves retained Evidence by template only, and refuses an ID this session does not retain", async () => {
+  const client = await connect();
+  expect(client.getServerCapabilities()?.resources).toBeDefined();
+  const templates = await client.listResourceTemplates();
+  expect(templates.resourceTemplates).toEqual([
+    expect.objectContaining({
+      name: "retained-evidence",
+      uriTemplate: "rea://evidence/{evidence_id}",
+      mimeType: "application/json",
+    }),
+  ]);
+  // Records are linked from the results that summarize them, not listed.
+  expect((await client.listResources()).resources).toEqual([]);
+
+  // Complete Evidence that fits is delivered inline, with no link.
+  const fitting = await client.callTool({
+    name: "inspect_byte_entropy",
+    arguments: await entropyTarget(4096),
+  });
+  expect(fitting.isError).not.toBe(true);
+  expect(
+    (fitting.content as { type: string }[]).map(({ type }) => type),
+  ).toEqual(["text"]);
+  const retained = parseEvidence(fitting.structuredContent);
+  // Any record the session retains reads exactly.
+  const read = await client.readResource({
+    uri: `rea://evidence/${retained.evidence_id}`,
+  });
+  expect((read.contents[0] as { text: string }).text).toBe(
+    JSON.stringify(fitting.structuredContent),
+  );
+
+  // An unknown ID, one another session retained, or one a reset cleared is
+  // not found.
+  const other = await connect();
+  const cleared = await connect();
+  const before = await cleared.callTool({
+    name: "inspect_byte_entropy",
+    arguments: await entropyTarget(4096),
+  });
+  const clearedUri = `rea://evidence/${parseEvidence(before.structuredContent).evidence_id}`;
+  expect(
+    (await cleared.readResource({ uri: clearedUri })).contents,
+  ).toHaveLength(1);
+  const reset = await cleared.callTool({
+    name: "reset_investigation",
+    arguments: {},
+  });
+  expect(reset.isError).not.toBe(true);
+  for (const [reader, uri] of [
+    [client, `rea://evidence/ev_${"0".repeat(64)}`],
+    [other, `rea://evidence/${retained.evidence_id}`],
+    [cleared, clearedUri],
+  ] as const)
+    await expect(reader.readResource({ uri })).rejects.toMatchObject({
+      code: -32602,
+      message: expect.stringContaining("is not retained in this MCP session"),
+    });
 });
 
 it("delivers complete Evidence that fits, and follows a runtime budget override", async () => {

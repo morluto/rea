@@ -1,4 +1,7 @@
-import type { CallToolResult } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  ResourceLink,
+} from "@modelcontextprotocol/server";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -47,6 +50,10 @@ import {
 } from "../domain/agentResultBudget.js";
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 import { AGENT_BUDGET_OPERATIONS } from "../domain/agentBudgetOperations.js";
+import {
+  retainedEvidenceLink,
+  retainedEvidenceReadFits,
+} from "./retainedEvidenceResource.js";
 
 const AGENT_BUDGET_OPERATION_NAMES: ReadonlySet<string> = new Set(
   AGENT_BUDGET_OPERATIONS,
@@ -323,12 +330,10 @@ export class ToolResultDelivery {
     const budgeted =
       recorded === undefined
         ? undefined
-        : overBudgetSummary(
-            evidence,
-            contract,
-            recordSummary,
-            this.agentBudgetSeed,
-          );
+        : overBudgetSummary(evidence, contract, recordSummary, {
+            agentBudgetSeed: this.agentBudgetSeed,
+            resultBudgetBytes: this.resultBudgetBytes,
+          });
     if (budgeted !== undefined) {
       // The frame check covers the delivery facts added after encoding.
       const delivered = this.successResult(
@@ -343,11 +348,11 @@ export class ToolResultDelivery {
           agent_budget: budgeted.delivery as unknown as JsonValue,
         },
         undefined,
-        agentBudgetDeliveryBytes(budgeted.delivery),
+        agentBudgetDeliveryBytes(budgeted.delivery, budgeted.link),
       );
       return delivered.isError === true
         ? delivered
-        : withAgentBudgetDelivery(delivered, budgeted.delivery);
+        : withAgentBudgetDelivery(delivered, budgeted.delivery, budgeted.link);
     }
     return this.successResult(evidence, contract, () => {
       const resolvedViewSource =
@@ -659,9 +664,18 @@ const overBudgetSummary = (
   evidence: Evidence,
   contract: ToolContract,
   recordSummary: EvidenceWriter["recordEvidence"] | undefined,
-  agentBudgetSeed: string | undefined,
+  limits: {
+    /** REA_AGENT_RESULT_BUDGET_BYTES from the environment the server captured. */
+    readonly agentBudgetSeed: string | undefined;
+    /** This connection's response budget, which bounds one resource read. */
+    readonly resultBudgetBytes: number;
+  },
 ):
-  | { readonly summary: Evidence; readonly delivery: AgentBudgetDelivery }
+  | {
+      readonly summary: Evidence;
+      readonly delivery: AgentBudgetDelivery;
+      readonly link: ResourceLink | undefined;
+    }
   | undefined => {
   if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) return undefined;
   // Only a tool with a detail selector is budgeted: its caller can always
@@ -669,7 +683,7 @@ const overBudgetSummary = (
   if (!AGENT_BUDGET_OPERATION_NAMES.has(contract.name)) return undefined;
   const selection = currentMcpToolRequest()?.deliverySelection;
   if (selection === undefined) return undefined;
-  const budget = currentAgentResultBudget(agentBudgetSeed);
+  const budget = currentAgentResultBudget(limits.agentBudgetSeed);
   const completeBytes = budgetedSummaryBytes({
     detail: selection.detail,
     evidence,
@@ -687,6 +701,17 @@ const overBudgetSummary = (
     return undefined;
   return {
     summary: summary.value,
+    // A record one read cannot deliver pages only through the cursor. The
+    // read's own check decides, after the cheap bound on its unescaped size.
+    link:
+      completeBytes <= limits.resultBudgetBytes &&
+      retainedEvidenceReadFits(evidence, limits.resultBudgetBytes)
+        ? retainedEvidenceLink({
+            evidenceId: evidence.evidence_id,
+            operation: evidence.operation,
+            completeBytes,
+          })
+        : undefined,
     delivery: agentBudgetDelivery({
       operation: evidence.operation,
       evidenceId: evidence.evidence_id,
@@ -708,25 +733,34 @@ const agentBudgetDeliveryBlock = (delivery: AgentBudgetDelivery) => ({
  */
 export const agentBudgetDeliveryBytes = (
   delivery: AgentBudgetDelivery,
+  link?: ResourceLink,
 ): number =>
   Buffer.byteLength(JSON.stringify(agentBudgetDeliveryBlock(delivery))) +
   1 +
   Buffer.byteLength(
     JSON.stringify({ [AGENT_BUDGET_DELIVERY_META]: delivery }),
   ) +
-  1;
+  1 +
+  (link === undefined ? 0 : Buffer.byteLength(JSON.stringify(link)) + 1);
 
 /**
  * Carry the delivery facts beside the summary record: a second text block
  * the model reads, and `_meta` for clients that read structured metadata.
- * The structured content stays the summary, unchanged.
+ * A `resource_link` to the complete record follows, for clients that read
+ * resources; the cursor in the delivery facts stays the recovery every
+ * client can follow. The structured content stays the summary, unchanged.
  */
 const withAgentBudgetDelivery = (
   result: CallToolResult,
   delivery: AgentBudgetDelivery,
+  link: ResourceLink | undefined,
 ): CallToolResult => ({
   ...result,
-  content: [...result.content, agentBudgetDeliveryBlock(delivery)],
+  content: [
+    ...result.content,
+    agentBudgetDeliveryBlock(delivery),
+    ...(link === undefined ? [] : [link]),
+  ],
   _meta: { ...result._meta, [AGENT_BUDGET_DELIVERY_META]: delivery },
 });
 

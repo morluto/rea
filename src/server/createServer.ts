@@ -319,6 +319,8 @@ export const createServer = (
     recordEvidence,
     recordEvidenceWithUnknown,
   } = createSessionRecorders(server, session);
+  // Over-budget summaries link the complete record they replaced.
+  if (evidenceById !== undefined) server.serveRetainedEvidence(evidenceById);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
   server.registerTransportCloseHook(() => {
