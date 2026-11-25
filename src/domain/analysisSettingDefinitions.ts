@@ -479,7 +479,7 @@ export const ANALYSIS_SETTINGS = {
     minimum: MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
     maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "gdb",
-    relatedProviders: ["rizin"],
+    relatedProviders: ["rizin", "apple.lldb", "lldb"],
     operations: [
       "start_gdb_session",
       "gdb_console",
@@ -487,6 +487,9 @@ export const ANALYSIS_SETTINGS = {
       "start_rizin_debug_session",
       "rizin_debug_command",
       "close_rizin_debug_session",
+      "start_lldb_session",
+      "lldb_command",
+      "close_lldb_session",
     ],
   },
   "debugger.max_command_output_bytes": {

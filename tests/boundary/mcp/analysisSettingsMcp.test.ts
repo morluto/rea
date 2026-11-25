@@ -84,3 +84,54 @@ it("binds runtime settings through the shared table, outside analysis admission"
   expect(settings.read().overrides["asar.max_listing_bytes"]).toBe(4096);
   expect(admitted).toEqual([]);
 });
+
+it("inspects debugger.command_deadline_ms when filtered by lldb provider or operation", async () => {
+  const delivery = new ToolResultDelivery(1024 * 1024);
+  const server = new EvidenceMcpServer(
+    { name: "settings-test", version: "1" },
+    { capabilities: { tools: { listChanged: true } } },
+    undefined,
+    delivery,
+  );
+  const settings = new AnalysisSettings({});
+  registerServiceTools(
+    server,
+    { analysisSettings: { settings, delivery } },
+    {
+      logger: silentLogger,
+      withAdmittedAnalysis: () =>
+        Promise.reject(new Error("settings entered analysis admission")),
+    },
+  );
+  const client = new Client(
+    { name: "settings-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  open.push({ client, server });
+
+  const byProvider = await client.callTool({
+    name: "inspect_analysis_settings",
+    arguments: { provider: "apple.lldb" },
+  });
+  expect(byProvider.isError).not.toBe(true);
+  expect(byProvider.structuredContent).toMatchObject({
+    settings: expect.arrayContaining([
+      expect.objectContaining({ setting: "debugger.command_deadline_ms" }),
+    ]),
+  });
+
+  const byOperation = await client.callTool({
+    name: "inspect_analysis_settings",
+    arguments: { operation: "lldb_command" },
+  });
+  expect(byOperation.isError).not.toBe(true);
+  expect(byOperation.structuredContent).toMatchObject({
+    settings: expect.arrayContaining([
+      expect.objectContaining({ setting: "debugger.command_deadline_ms" }),
+    ]),
+  });
+});

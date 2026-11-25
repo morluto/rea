@@ -103,7 +103,7 @@ Persistent Apple Silicon LLDB sessions, including the MCP workflow and the one-s
 On supported Apple Silicon macOS hosts, four MCP tools manage the session lifecycle:
 
 - `start_lldb_session`: Initializes the daemon and optionally launches a local Mach-O binary (`path`) or attaches to a running process by PID (`pid`). Specifying both `path` and `pid` is rejected. ASLR is disabled by default (`disable_aslr: true`) to ensure deterministic memory layout across turns. Initial breakpoints may be specified by symbol, selector, or hex address.
-- `lldb_command`: Executes an unrestricted LLDB console command (e.g. `register read x0 x1`, `thread backtrace`, `memory read`, `po expr`) with thread timeout containment. Output is collected up to 2 MiB, safely truncated with `output_truncated: true` if exceeded, and returned as signed `rea.debugger.console-observation` Evidence.
+- `lldb_command`: Executes an unrestricted LLDB console command (e.g. `register read x0 x1`, `thread backtrace`, `memory read`, `po expr`) with thread timeout containment bounded by `debugger.command_deadline_ms`. Output is collected up to 2 MiB, safely truncated with `output_truncated: true` if exceeded, and returned as signed `rea.debugger.console-observation` Evidence.
 - `lldb_session_status`: Queries live inferior state (`process_state`, `pid`, `target`) directly from the active debugger instance.
 - `close_lldb_session`: Serializes after any in-flight command and releases the session. In accordance with target ownership boundaries, directly launched inferior processes are terminated (`target_state: "terminated"`), whereas borrowed targets attached by PID are detached safely (`target_state: "detached"`).
 
@@ -117,7 +117,7 @@ When REA cannot confirm that an owned Rizin, GDB, or LLDB process stopped, it ke
 
 ### Debugger launch settings
 
-GDB and Rizin share these settings in the environment that launches REA:
+GDB, Rizin, and LLDB share command deadline settings in the environment that launches REA:
 
 | Setting                                 | Default        | Accepted decimal integer |
 | --------------------------------------- | -------------- | ------------------------ |
@@ -127,15 +127,16 @@ GDB and Rizin share these settings in the environment that launches REA:
 | `REA_DEBUGGER_MAX_PENDING_COMMANDS`     | 16             | 1 to 256                 |
 
 Unset settings keep the defaults. Invalid values are refused when the setting
-is used instead of falling back. Change the command deadline and output budget
-for subsequent operations with `update_analysis_settings` using
-`debugger.command_deadline_ms` and `debugger.max_command_output_bytes`. Session
+is used instead of falling back. Change the command deadline for subsequent
+operations (`gdb_console`, `rizin_debug_command`, `lldb_command`) with
+`update_analysis_settings` using `debugger.command_deadline_ms`, and the output
+budget for GDB and Rizin with `debugger.max_command_output_bytes`. Session
 and pending-command capacities require a restart. To change the launch values,
 update REA's environment and restart; for MCP, edit the client registration and
 restart that server.
 
-These settings also apply to one-shot `rea debug-with-gdb` and
-`rea debug-with-rizin` commands. They do not change the fixed initial-prompt
+These settings also apply to one-shot `rea debug-with-gdb`,
+`rea debug-with-rizin`, and `rea debug-with-lldb` commands. They do not change the fixed initial-prompt
 or owned-cleanup waits, Rizin's fixed frame and frame-count limits, or the
 limits of `inspect_with_objdump` and `execute_rizin_command`. GDB
 initialization and normal-close detach MI requests use the configured command

@@ -27,9 +27,10 @@ const run = createVerifierRun();
 const commands = await createVerifierCommands();
 const commandInterruption = bindVerifierCommandInterruption(commands);
 const execOwned = commandInterruption.exec;
+const signal = commandInterruption.signal;
+const { throwIfInterrupted } = commandInterruption;
 
 const fixture = await VerifierFixture.open({ prefix: "rea-lldb-e2e-" });
-commandInterruption.retainWorkspaceIfInterrupted(fixture);
 const tempDir = fixture.path;
 const testSource = join(tempDir, "target.c");
 const targetBinary = join(tempDir, "target");
@@ -105,11 +106,12 @@ try {
 
   // 1. Start Session with initial breakpoint on compute_magic
   console.log("\n[1] Starting LLDB session with target:", targetBinary);
-  const startResult = await manager.start(undefined, {
+  const startResult = await manager.start(signal, {
     path: targetBinary,
     breakpoints: ["compute_magic"],
     stop_at_entry: true,
   });
+  throwIfInterrupted();
 
   assert.equal(
     startResult.ok,
@@ -128,10 +130,12 @@ try {
   const statusBefore = await manager.status(session_id);
   console.log("[+] Status:", statusBefore);
   assert.equal(statusBefore?.state, "ready");
+  throwIfInterrupted();
 
   // 3. Continue to the breakpoint at compute_magic
   console.log("\n[3] Continuing to breakpoint at 'compute_magic'...");
-  const contResult = await manager.execute(session_id, "continue");
+  const contResult = await manager.execute(session_id, "continue", signal);
+  throwIfInterrupted();
   assert.equal(
     contResult.ok,
     true,
@@ -146,7 +150,12 @@ try {
 
   // 4. Read ARM64 argument registers ($x0, $x1)
   console.log("\n[4] Reading ARM64 argument registers ($x0, $x1)...");
-  const regResult = await manager.execute(session_id, "register read x0 x1");
+  const regResult = await manager.execute(
+    session_id,
+    "register read x0 x1",
+    signal,
+  );
+  throwIfInterrupted();
   assert.equal(regResult.ok, true);
   console.log("[+] Registers:\n" + regResult.value.result.output);
   assert.ok(
@@ -156,7 +165,12 @@ try {
 
   // 5. Inspect Call Stack Backtrace
   console.log("\n[5] Retaining Thread Call-Stack Backtrace...");
-  const btResult = await manager.execute(session_id, "thread backtrace");
+  const btResult = await manager.execute(
+    session_id,
+    "thread backtrace",
+    signal,
+  );
+  throwIfInterrupted();
   assert.equal(btResult.ok, true);
   console.log("[+] Backtrace:\n" + btResult.value.result.output);
   assert.ok(
@@ -166,7 +180,8 @@ try {
 
   // 6. Resume execution to process completion
   console.log("\n[6] Resuming execution until process exit...");
-  const exitResult = await manager.execute(session_id, "continue");
+  const exitResult = await manager.execute(session_id, "continue", signal);
+  throwIfInterrupted();
   assert.equal(exitResult.ok, true);
   console.log("[+] Exit output:\n" + exitResult.value.result.output);
 
@@ -193,22 +208,26 @@ try {
     evidence.parameters.launch_provenance.caller_selected_path,
     targetBinary,
   );
+  throwIfInterrupted();
 
   // 8. Close LLDB Session for exited target
   console.log("\n[8] Closing LLDB session for exited target...");
   const closeResult = await manager.close(session_id);
+  throwIfInterrupted();
   assert.equal(closeResult.ok, true);
   console.log("[+] Close Result:", closeResult.value);
   assert.equal(closeResult.value.target_state, "exited");
 
   // 9. Live-target cleanup regression: verify live process is terminated cleanly
   console.log("\n[9] Testing live-target cleanup on running session...");
-  const liveStart = await manager.start(undefined, {
+  const liveStart = await manager.start(signal, {
     path: targetBinary,
     stop_at_entry: true,
   });
+  throwIfInterrupted();
   assert.equal(liveStart.ok, true);
   const liveClose = await manager.close(liveStart.value.session_id);
+  throwIfInterrupted();
   assert.equal(liveClose.ok, true);
   console.log("[+] Live Target Close Result:", liveClose.value);
   assert.equal(liveClose.value.target_state, "terminated");
@@ -223,9 +242,11 @@ try {
     const verifierRun = await completeVerifierRun(run);
     assertVerifierCleanupComplete(verifierRun.process_lineage);
   });
+  commandInterruption.retainWorkspaceIfInterrupted(fixture);
   try {
     await fixture.release();
   } finally {
-    commandInterruption.finish();
+    const releaseInterrupted = commandInterruption.finish();
+    if (releaseInterrupted !== undefined) throw releaseInterrupted;
   }
 }
