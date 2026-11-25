@@ -106,6 +106,7 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
         target_id: target.id,
         include_script_sources: true,
         observation_ms: 0,
+        detail: "complete",
       },
     });
     assert.notEqual(mcp.isError, true, JSON.stringify(mcp));

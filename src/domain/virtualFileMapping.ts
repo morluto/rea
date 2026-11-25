@@ -93,7 +93,7 @@ export const resolveMappedFileOffset = (
   return ok(found);
 };
 
-const spansOverlap = (
+export const spansOverlap = (
   address: bigint,
   size: bigint,
   otherAddress: bigint,

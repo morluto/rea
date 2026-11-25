@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import { evidenceSubjectTarget } from "../evidence.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   ffsTypeNameSchema,
   guidSchema,
   uefiResultSchemas,
   type UefiExtractResult,
 } from "../uefi/uefiFirmwareAnalysis.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -232,28 +232,13 @@ const pageBySize = (
   index: ExtractionIndex,
   view: FilesView,
   matches: ((file: ExtractedFile) => boolean) | undefined,
-) => {
-  const order = sizeOrder(r, index);
-  const rows: z.output<typeof fileRow>[] = [];
-  if (matches === undefined) {
-    // Unfiltered: the cached order already holds every position.
-    const end = Math.min(order.length, view.offset + view.limit);
-    for (let position = view.offset; position < end; position += 1) {
-      const i = order[position]!;
-      rows.push(indexedRow(r.files[i]!, i));
-    }
-    return { rows, total: order.length };
-  }
-  let total = 0;
-  for (const i of order) {
-    const file = r.files[i]!;
-    if (matches !== undefined && !matches(file)) continue;
-    if (total >= view.offset && rows.length < view.limit)
-      rows.push(indexedRow(file, i));
-    total += 1;
-  }
-  return { rows, total };
-};
+) =>
+  selectViewRows(
+    sizeOrder(r, index),
+    view,
+    matches === undefined ? undefined : (i) => matches(r.files[i]!),
+    (i) => indexedRow(r.files[i]!, i),
+  );
 
 const gapFilter = (view: GapsView) => {
   const kinds = view.gap_kinds;
@@ -291,15 +276,8 @@ export const projectUefiExtractionView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "uefi-extraction")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "UEFI extraction Evidence supports summary and uefi-extraction views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "UEFI extraction Evidence supports summary and uefi-extraction views.",
     );
   assertOwnedView<SummaryAnalysisView | UefiExtractionView>(
     view,

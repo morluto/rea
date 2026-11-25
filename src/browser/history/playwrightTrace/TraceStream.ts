@@ -1,7 +1,8 @@
 import { decodeStrictUtf8 } from "../../../domain/strictUtf8.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
-import { LosslessNumber, isSafeNumber } from "lossless-json";
+import { recordedJsonNumber } from "../../../domain/exactJsonNumber.js";
+import { LosslessNumber } from "lossless-json";
 import type {
   ArtifactEntry,
   ArtifactReader,
@@ -46,9 +47,7 @@ const RETAINED_TRACE_TYPES: ReadonlySet<string> = new Set([
 
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 const number = (value: unknown) =>
-  value instanceof LosslessNumber && isSafeNumber(value.value)
-    ? Number(value.value)
-    : null;
+  value instanceof LosslessNumber ? recordedJsonNumber(value.value) : null;
 
 const ensureTraceHeapHeadroom = (
   inputBytes: number,

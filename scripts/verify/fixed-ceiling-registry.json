@@ -162,6 +162,18 @@
       "reason": "The release exposure input allowance bounds bytes read, a resource policy."
     }
   },
+  "src/artifacts/tar/TarWalk.ts": {
+    "\"The tar extended-header allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    },
+    "\"The tar member metadata allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
+    }
+  },
   "src/browser/WebBundleAnalysisWorker.ts": {
     "\"The web-bundle worker transfer allowance\"": {
       "class": "pending",
@@ -505,6 +517,13 @@
       "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
     }
   },
+  "src/native/pe/PeUnwindRangesProvider.ts": {
+    "\"The PE exception-directory entry allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
+    }
+  },
   "src/native/pe/PeResourcesProvider.ts": {
     "\"The PE resource metadata allowance\"": {
       "class": "pending",
@@ -514,9 +533,8 @@
   },
   "src/pcap/PcapCommand.ts": {
     "\"The packet-tool output capture allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
+      "class": "protocol",
+      "reason": "Bounds only capinfos and tshark version and summary probes, whose replies are short fixed-format text; each tshark JSON pass reports producer_limits.output_bytes instead."
     }
   },
   "src/pcap/PcapOutput.ts": {
@@ -525,22 +543,10 @@
       "issue": 14237,
       "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
     },
-    "\"The tshark JSON decoding allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
-    },
     "\"The tshark JSON expansion allowance\"": {
       "class": "pending",
       "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
-    }
-  },
-  "src/pcap/PcapSnapshot.ts": {
-    "\"the owned capture snapshot allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "tshark JSON decoding, expansion, retained-fact, output and snapshot allowances are producer budgets."
+      "reason": "The decoded-JSON work across both tshark passes bounds the in-process parse; raising it needs a streaming decoder or a heap-aware control, so it stays fixed until then."
     }
   },
   "src/process/ArtifactAnalysisResources.ts": {
@@ -571,6 +577,12 @@
       "class": "pending",
       "issue": 14236,
       "reason": "Artifact path depth and tree-node allowances are resource policies."
+    }
+  },
+  "src/resources/artifactReadBudget.ts": {
+    "ceiling.name": {
+      "class": "forwarding",
+      "reason": "Relays the whole-file identity ceiling its caller names: 4 GiB minus one byte for PE-only readers, whose file offsets are 32-bit (format), and the 512 MiB artifact-size bound of the hardening and exports result schemas. max_file_bytes, a per-call parameter with details.limit, bounds what the readers read."
     }
   },
   "src/rust/RustBinaryProvider.ts": {

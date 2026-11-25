@@ -21,8 +21,8 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { err, ok } from "../result.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { ok } from "../result.js";
 
 const page = {
   kind: z.literal("endpoint-comparison"),
@@ -173,15 +173,8 @@ export const projectEndpointComparisonView = (
     SummaryAnalysisView | z.output<typeof endpointComparisonViewRequestSchema>
   >(admitted, "summary", "endpoint-comparison");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Endpoint comparisons support summary and endpoint-comparison pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Endpoint comparisons support summary and endpoint-comparison pages",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

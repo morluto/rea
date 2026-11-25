@@ -1,15 +1,13 @@
 import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
   resolveMappedFileOffset,
+  spansOverlap,
   type FileMapping,
   type ZeroFillMapping,
 } from "./virtualFileMapping.js";
 import type { PeDataDirectory } from "./peOptionalHeader.js";
-import {
-  decodeLimit,
-  ParseFailureError,
-  type TruncatedExtent,
-} from "./parseFailure.js";
+import { decodeLimit, ParseFailureError } from "./parseFailure.js";
+import type { TruncatedExtent } from "./targetFailure.js";
 
 /** Return whether the leading bytes begin with the 4-byte ELF magic (`\x7fELF`). */
 export const hasElfMagic = (bytes: Uint8Array): boolean =>
@@ -903,14 +901,3 @@ export const isZeroFilledSpan = (
   }
   return true;
 };
-
-const spansOverlap = (
-  address: bigint,
-  size: bigint,
-  otherAddress: bigint,
-  otherSize: bigint,
-): boolean =>
-  size > 0n &&
-  otherSize > 0n &&
-  address < otherAddress + otherSize &&
-  otherAddress < address + size;

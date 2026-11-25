@@ -5,6 +5,7 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import { GhidraRemoteError } from "./protocol.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
   ghidraMissingProgramNames,
@@ -269,6 +270,16 @@ const projectPrimarySessionError = (
       {
         ...context,
         related: { operations: relatedOperations },
+        // The bridge sends every matching entry for an ambiguous selector.
+        ...(failure.cause instanceof GhidraRemoteError &&
+        failure.cause.candidates !== undefined
+          ? {
+              ambiguousSelector: {
+                field: ["procedure"],
+                candidates: [...failure.cause.candidates],
+              },
+            }
+          : {}),
         userMessage: failure.message,
         conformsToInputContract: true,
         remediationAction: recovery,
@@ -801,7 +812,7 @@ export const ghidraStartupTimeoutGuidance = (
       ? `use update_analysis_settings with setting ghidra.startup_timeout_ms and action set above ${String(timeoutMs)}, or set REA_GHIDRA_STARTUP_TIMEOUT_MS in the launch environment for future REA processes`
       : `set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment of a new REA invocation, then rerun the command`;
     const retry = continuing
-      ? "Export useful Evidence and resolve any retained cleanup before starting a new provider attempt. Runtime updates apply to the next startup attempt without restarting REA."
+      ? "Export useful Evidence and resolve any retained cleanup before starting a new provider attempt. Runtime updates apply to the next startup attempt without restarting REA. Until the startup deadline changes, later calls in this session return this failure without importing again; close_binary then open_binary retries with unchanged settings."
       : "Resolve any retained cleanup before rerunning.";
     const client = continuing
       ? " The MCP client's tool-call deadline must also allow startup and the query."

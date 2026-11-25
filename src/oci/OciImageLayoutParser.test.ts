@@ -2145,7 +2145,7 @@ it("keeps malformed index.json as the primary when its handle close fails", asyn
     // The reader's close retries the handle, so only the primary is checked.
     const primary = primaryAnalysisError(result.error);
     expect(primary).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       failure: { kind: "malformed" },
     });
     // The completed oci-layout hash survives the index.json close failure.

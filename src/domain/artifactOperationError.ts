@@ -9,7 +9,7 @@ import {
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { LimitRef, ParseFailureKind } from "./parseFailure.js";
-import type { MalformedTargetFailure } from "./analysisErrorCore.js";
+import type { MalformedTargetFailure } from "./targetFailure.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";

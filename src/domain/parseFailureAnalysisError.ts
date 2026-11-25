@@ -1,6 +1,6 @@
 import {
   type ANALYSIS_RESOURCE_KINDS,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
   type ResourceConstraintRecovery,
@@ -68,10 +68,7 @@ export const parseFailureAnalysisError = (
   path: string,
   cause: unknown,
   options?: Omit<AnalysisErrorOptions, "cause">,
-):
-  | AnalysisMalformedTargetError
-  | AnalysisUnsupportedTargetError
-  | undefined => {
+): AnalysisTargetFailureError | AnalysisUnsupportedTargetError | undefined => {
   if (!(cause instanceof ParseFailureError)) return undefined;
   const { failure } = cause;
   switch (failure.kind) {
@@ -86,7 +83,7 @@ export const parseFailureAnalysisError = (
       );
     case "malformed":
     case "truncated":
-      return new AnalysisMalformedTargetError(operation, path, failure, {
+      return new AnalysisTargetFailureError(operation, path, failure, {
         ...options,
         cause,
       });

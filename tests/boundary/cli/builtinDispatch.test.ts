@@ -118,9 +118,7 @@ it.for([false, true])(
           tokenOffset: undefined,
         },
       );
-    expect(Number(render(true))).toBe(
-      estimateTokenCount(render(false).trimEnd()),
-    );
+    expect(Number(render(true))).toBe(estimateTokenCount(render(false)));
   },
 );
 
@@ -154,7 +152,11 @@ cliTest(
           "--mcp",
           ...declarations,
           "--token-limit",
-          "22",
+          String(
+            estimateTokenCount(
+              'code: MCP_MODE_REMOVED\nmessage: "Per-command [REDACTED]',
+            ),
+          ),
         ],
       });
     const control = await run([]);

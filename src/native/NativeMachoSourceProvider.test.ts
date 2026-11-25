@@ -539,7 +539,7 @@ it.each([
       const result = await client.execute("inspect_macho", {});
       if (result.ok) throw new Error("Expected malformed target refusal");
       expect(result.error).toMatchObject({
-        _tag: "AnalysisMalformedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "inspect_macho",
         path,
         failure: { kind: "malformed", detail: reason },

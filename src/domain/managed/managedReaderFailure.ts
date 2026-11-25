@@ -1,5 +1,5 @@
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
@@ -64,10 +64,7 @@ export const managedInspectionTargetFailure = (
   operation: string,
   path: string,
   cause: unknown,
-):
-  | AnalysisMalformedTargetError
-  | AnalysisUnsupportedTargetError
-  | undefined => {
+): AnalysisTargetFailureError | AnalysisUnsupportedTargetError | undefined => {
   if (!(cause instanceof ManagedReaderFailure)) return undefined;
   const { code, scope, offset, detail } = cause.issue;
   if (code === "resource-limit") return undefined;
@@ -75,7 +72,7 @@ export const managedInspectionTargetFailure = (
     return new AnalysisUnsupportedTargetError(operation, path, detail, {
       cause,
     });
-  return new AnalysisMalformedTargetError(
+  return new AnalysisTargetFailureError(
     operation,
     path,
     {
