@@ -46,6 +46,11 @@ cliTest(
       [["--command", "--agent", "amp"], "command", "--command"],
       [["extra", "-c="], "command", "-c"],
       [["extra", "--agent="], "agent", "--agent"],
+      // A separate empty string is not a value either; without this check the
+      // CLI would silently register with defaults. REA rejects it before writing.
+      [["--agent", ""], "agent", "--agent"],
+      [["--command", ""], "command", "--command"],
+      [["-c", ""], "command", "-c"],
     ] as const) {
       expect(await run(options), options.join(" ")).toMatchObject(
         optionError(field, flag),
