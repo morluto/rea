@@ -277,6 +277,31 @@ describe("constant path ownership and initialization", () => {
   });
 });
 
+describe("file URL path bases", () => {
+  // `path.join("file:", __dirname, ...)` prefixes the source directory, so the
+  // URL names a path under that directory and not `/preload.js`.
+  it.each([
+    [
+      "inline",
+      consumers('fileURLToPath(path.join("file:", __dirname, "preload.js"))'),
+    ],
+    [
+      "through a constant",
+      `const PRELOAD = fileURLToPath(path.join("file:", __dirname, "preload.js"));\n${consumers("PRELOAD")}`,
+    ],
+  ])(
+    "keeps a file URL after a source-directory prefix unknown %s",
+    (_label, body) => {
+      const text = [
+        COMMONJS_HEADER,
+        'const { fileURLToPath } = require("node:url");',
+        body,
+      ].join("\n");
+      expect(pathFacts(analyze("main.cjs", text))).toEqual(UNKNOWN);
+    },
+  );
+});
+
 describe("constant substitution bound", () => {
   it.each([
     {

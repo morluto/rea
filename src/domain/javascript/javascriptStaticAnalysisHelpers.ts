@@ -395,7 +395,9 @@ const staticFileUrlPathFact = (
       ? undefined
       : { path: resolved.path, base: "source-directory" };
   }
-  const value = staticPathFact(argument, pathIntrinsics)?.path;
+  // A URL whose spelling dropped an unproven base names some other path.
+  const fact = staticPathFact(argument, pathIntrinsics);
+  const value = fact?.base === "unknown" ? undefined : fact?.path;
   const rawPath = value?.split(/[?#]/u, 1)[0] ?? "";
   if (
     value === undefined ||
