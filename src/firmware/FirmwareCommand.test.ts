@@ -1,7 +1,15 @@
 import { createTestArtifactResourceScope } from "../../tests/fixtures/artifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { EventEmitter } from "node:events";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
@@ -254,7 +262,7 @@ it("rejects a directory configured as the firmware engine executable", async () 
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
     reason: expect.stringContaining(
-      `REA_BINWALK_COMMAND is not a readable executable regular file: ${command}: Configured path is not a regular file`,
+      `REA_BINWALK_COMMAND is not a readable executable regular file: ${command}`,
     ),
   });
 });
@@ -302,9 +310,47 @@ it("rejects a directory configured as the resource limiter executable", async ()
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
     reason: expect.stringContaining(
-      `Resource limiter is not an executable regular file: ${limiter}: Configured path is not a regular file; provide util-linux prlimit`,
+      `REA_FIRMWARE_PRLIMIT_COMMAND (util-linux prlimit) is not a readable executable regular file: ${limiter}`,
     ),
   });
+});
+
+it("preserves selected executable aliases while fingerprinting their resolved bytes", async () => {
+  const root = await createTestTempDirectory("rea-firmware-command-alias-");
+  const command = await executableFixture(root, "binwalk");
+  const limiter = await executableFixture(root, "prlimit");
+  const commandAlias = join(root, "selected-binwalk");
+  const limiterAlias = join(root, "selected-prlimit");
+  await symlink(command, commandAlias);
+  await symlink(limiter, limiterAlias);
+  const files = new FirmwareFileAccess();
+  try {
+    const resolved = await resolveFirmwareCommand(
+      {
+        REA_BINWALK_COMMAND: commandAlias,
+        REA_FIRMWARE_PRLIMIT_COMMAND: limiterAlias,
+      },
+      "binwalk",
+      "inspect_firmware_regions",
+      files,
+      "linux",
+    );
+    expect(resolved).toMatchObject({
+      command: {
+        invocationPath: commandAlias,
+        resolvedPath: await realpath(command),
+      },
+      limiter: {
+        invocationPath: limiterAlias,
+        resolvedPath: await realpath(limiter),
+      },
+      sha256: createHash("sha256")
+        .update(await readFile(command))
+        .digest("hex"),
+    });
+  } finally {
+    await files.close();
+  }
 });
 
 // A launched producer that writes its output, then stops on a limit signal.

@@ -28,7 +28,9 @@ import type {
   ProcessOwnershipBaseline,
   ProcessCleanupFailure,
   ProcessCleanupResult,
+  ProcessOwnershipHost,
 } from "./ProcessOwnership.js";
+import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
 import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
@@ -64,6 +66,8 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly platform?: NodeJS.Platform;
   /** Host environment used as the base for the child environment. */
   readonly hostEnvironment?: NodeJS.ProcessEnv;
+  /** Identity inspection owner shared by admission, baseline, and cleanup. */
+  readonly ownershipHost?: ProcessOwnershipHost;
   /** Opt into a writable protocol stream; other providers retain ignored stdin. */
   readonly stdin?: "pipe";
   /**
@@ -337,17 +341,18 @@ export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
   assertProcessOwnershipInspectionActive(options.signal);
-  await prepareProcessOwnershipInspection(options.signal);
+  const ownershipHost = options.ownershipHost ?? systemProcessOwnershipHost;
+  await prepareProcessOwnershipInspection(options.signal, ownershipHost);
   assertProcessOwnershipInspectionActive(options.signal);
   const platform = options.platform ?? HOST_PLATFORM.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
   let captureBaseline: ProcessOwnershipBaseline | undefined;
   if (sweepTokenOwnedProcesses) {
-    const capture = systemProcessOwnershipHost.captureBaseline;
+    const capture = ownershipHost.captureBaseline;
     if (capture === undefined)
       throw new ProcessAdmissionError("baseline_unavailable");
-    captureBaseline = await capture(options.signal);
+    captureBaseline = await capture.call(ownershipHost, options.signal);
     assertProcessOwnershipInspectionActive(options.signal);
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
@@ -427,6 +432,10 @@ export const spawnOwnedProviderProcess = async (
   return {
     process: child,
     ownership,
+    // Preserve the default launch contract: callers may own direct-child cleanup.
+    ...(options.ownershipHost === undefined
+      ? {}
+      : { cleanup: () => cleanupOwnedProcessGroup(ownership, ownershipHost) }),
     requestStop: (signal) => signalUnreapedGroup(child, pid, signal),
   };
 };

@@ -1230,6 +1230,12 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.mcpResponse, "MAXIMUM_RESPONSE_BYTES"),
     ),
     phaseBound(phases.toolsList),
+    bound(
+      "REA_PROCESS_TABLE_MAX_BYTES",
+      exportedNumber(owners.processTable, "DEFAULT_PROCESS_TABLE_MAX_BYTES"),
+      exportedNumber(owners.processTable, "MINIMUM_PROCESS_TABLE_MAX_BYTES"),
+      exportedNumber(owners.processTable, "MAXIMUM_PROCESS_TABLE_MAX_BYTES"),
+    ),
     bound("REA_RECONNECT_TIMEOUT_SECONDS", seconds, seconds, seconds),
     bound(
       "REA_SWIFTC_COMPILE_TIMEOUT_MS",
@@ -1289,6 +1295,7 @@ export const loadExportedNumericLimitBounds = async () => {
     mcpInput,
     mcpResponse,
     startupTimeout,
+    processTable,
     sdk,
   ] = await Promise.all([
     source("../../src/domain/analysisSettingDefinitions.ts"),
@@ -1302,6 +1309,7 @@ export const loadExportedNumericLimitBounds = async () => {
     source("../../src/config/mcpInputBudget.ts"),
     source("../../src/config/mcpResponseBudget.ts"),
     source("../../src/config/providerStartupTimeout.ts"),
+    source("../../src/config/processTableOutputBudget.ts"),
     import("@modelcontextprotocol/server"),
   ]);
   const owners = {
@@ -1314,6 +1322,7 @@ export const loadExportedNumericLimitBounds = async () => {
     mcpInput,
     mcpResponse,
     startupTimeout,
+    processTable,
     sdk,
   };
   const restart = restartOnlyBounds(owners);
@@ -1321,6 +1330,10 @@ export const loadExportedNumericLimitBounds = async () => {
     bounds: [...analysisSettingBounds(settings.ANALYSIS_SETTINGS), ...restart],
     names: {
       "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER,
+      MAXIMUM_PROCESS_TABLE_MAX_BYTES: exportedNumber(
+        processTable,
+        "MAXIMUM_PROCESS_TABLE_MAX_BYTES",
+      ),
       MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: exportedNumber(
         limits,
         "MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",

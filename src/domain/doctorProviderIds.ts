@@ -1,13 +1,15 @@
 /** Doctor's id for the desktop build host scope. */
 export const DESKTOP_BUILD_PROVIDER_ID = "desktop_build";
 
-/** Deep-analysis providers and the desktop build host, whose readiness doctor can select explicitly. */
+/** Analysis integrations and the desktop build host whose readiness doctor can select explicitly. */
 export const DOCTOR_PROVIDER_IDS = [
   "hopper",
   "ghidra",
   "ida",
   "jadx",
   "kuna",
+  "binwalk",
+  "unblob",
   DESKTOP_BUILD_PROVIDER_ID,
 ] as const;
 

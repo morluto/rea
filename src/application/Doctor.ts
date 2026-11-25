@@ -14,6 +14,7 @@ import {
   ArtifactReaderFailure,
   AnalysisCleanupLease,
   ArtifactResourceScope,
+  ArtifactResourceRetryFailure,
 } from "../resources/index.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
@@ -718,6 +719,13 @@ export interface RetainedProviderRequestBudgetResolver {
   readonly budgetSettings?: ProviderRequestBudgetResolver["budgetSettings"];
 }
 
+type SystemDoctorProviderInspection = (
+  resourceScope: RetainedResourceScope,
+  signal: AbortSignal,
+  clients: readonly string[],
+  configuration: DoctorProviderConfiguration,
+) => Promise<readonly DoctorProviderInspection[]>;
+
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
   readonly savedDefaults?: ReadonlySet<string> | undefined;
@@ -732,12 +740,14 @@ export interface SystemDoctorHostOptions {
     signal: AbortSignal,
     clients: readonly string[],
   ) => Promise<DoctorProviderConfiguration>;
-  readonly providerInspections?: (
-    resourceScope: RetainedResourceScope,
-    signal: AbortSignal,
+  /** Ordered groups pass the shared cleanup gate between provider inspections. */
+  readonly providerInspections?:
+    | SystemDoctorProviderInspection
+    | readonly SystemDoctorProviderInspection[];
+  /** Construct fresh ordered groups for each selected-client inspection. */
+  readonly providerInspectionGroups?: (
     clients: readonly string[],
-    configuration: DoctorProviderConfiguration,
-  ) => Promise<readonly DoctorProviderInspection[]>;
+  ) => readonly SystemDoctorProviderInspection[];
   readonly resolveProviderRequestBudget?: RetainedProviderRequestBudgetResolver;
   readonly linuxDemoRuntimeCheck?: (
     resourceScope: RetainedResourceScope,
@@ -837,6 +847,15 @@ export const systemDoctorHost = (
       }),
     run: (operation) => resources.track(operation),
   };
+  const providerInspectionGroups =
+    options.providerInspections === undefined
+      ? undefined
+      : typeof options.providerInspections === "function"
+        ? [options.providerInspections]
+        : options.providerInspections;
+  const hasProviderInspections =
+    providerInspectionGroups !== undefined ||
+    options.providerInspectionGroups !== undefined;
   const resolveProviderRequestBudget =
     options.resolveProviderRequestBudget === undefined
       ? undefined
@@ -865,22 +884,106 @@ export const systemDoctorHost = (
     environment,
     savedDefaults: options.savedDefaults,
   };
-  const selectConfiguration = (clients: readonly string[]) =>
-    options.selectProviderConfiguration?.(
-      resourceScope,
-      inspectionSignal,
-      clients,
-    ) ?? Promise.resolve(terminalConfiguration);
-  const inspectProviders = (
+  const selectConfiguration = (
     clients: readonly string[],
-    configuration: DoctorProviderConfiguration,
-  ) =>
-    options.providerInspections!(
-      resourceScope,
-      inspectionSignal,
-      clients,
-      configuration,
+    scope: RetainedResourceScope,
+  ) => {
+    if (controller.signal.aborted)
+      return Promise.reject(cancelledBy("doctor", inspectionSignal));
+    return (
+      options.selectProviderConfiguration?.(scope, inspectionSignal, clients) ??
+      Promise.resolve(terminalConfiguration)
     );
+  };
+  const createProviderResources = (): ArtifactResourceScope => {
+    const child = new ArtifactResourceScope();
+    // Selection can retain an owner before the provider view is consumed.
+    resources.retain({
+      kind: "lease",
+      resource: "provider-inspections",
+      lease: AnalysisCleanupLease.forCloseOwner(child, "provider-inspections"),
+    });
+    return child;
+  };
+  const retainedProviderScope = (
+    child: ArtifactResourceScope,
+  ): RetainedResourceScope => ({
+    retain: (owner, resource) =>
+      child.retain({
+        kind: "lease",
+        resource,
+        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+      }),
+    // Sibling probes must not drain each other's owners.
+    run: (operation) => child.track(operation),
+  });
+  const inspectProviders = async (
+    clients: readonly string[],
+    configuration?: DoctorProviderConfiguration,
+    selectedResources?: ArtifactResourceScope,
+  ): Promise<readonly DoctorProviderInspection[]> => {
+    const groups =
+      options.providerInspectionGroups?.(clients) ??
+      providerInspectionGroups ??
+      [];
+    const inspections: DoctorProviderInspection[] = [];
+    let completedGroups = 0;
+    let admitted = false;
+    try {
+      await resources.track(async () => {
+        const providerResources =
+          selectedResources ?? createProviderResources();
+        const providerScope = retainedProviderScope(providerResources);
+        const selectedConfiguration =
+          configuration ?? (await selectConfiguration(clients, providerScope));
+        for (const inspect of groups) {
+          admitted = false;
+          // Selection and completed groups share this invocation's cleanup
+          // gate; concurrent host facts keep their independent scopes.
+          inspections.push(
+            ...(await providerResources.run(async () => {
+              if (controller.signal.aborted)
+                throw cancelledBy("doctor", inspectionSignal);
+              admitted = true;
+              return inspect(
+                providerScope,
+                inspectionSignal,
+                clients,
+                selectedConfiguration,
+              );
+            })),
+          );
+          completedGroups++;
+        }
+      });
+    } catch (cause: unknown) {
+      const failure =
+        cause instanceof ArtifactResourceRetryFailure
+          ? doctorResourceCleanupFailure(cause)
+          : !admitted &&
+              controller.signal.aborted &&
+              cause instanceof ArtifactReaderFailure
+            ? cancelledBy("doctor", inspectionSignal)
+            : cause;
+      if (failure instanceof AnalysisError) {
+        const partial = failure.diagnostics?.provider_inspections;
+        failure.retainDiagnostics({
+          provider_inspections: [
+            ...inspections.map((inspection) =>
+              jsonValueSchema.parse(inspection),
+            ),
+            ...(Array.isArray(partial) ? partial : []),
+          ],
+          provider_inspection_groups: {
+            completed: completedGroups,
+            total: groups.length,
+          },
+        });
+      }
+      throw failure;
+    }
+    return inspections;
+  };
 
   const providerProbeHost = (
     probeEnvironment: Readonly<NodeJS.ProcessEnv>,
@@ -1016,32 +1119,35 @@ export const systemDoctorHost = (
         remediation: analysisErrorRemediationAction(error),
       };
     },
-    ...(options.providerInspections === undefined
+    ...(!hasProviderInspections
       ? {}
       : {
-          providerInspections: (clients) =>
-            resources.track(async () =>
-              inspectProviders(clients, await selectConfiguration(clients)),
-            ),
+          providerInspections: (clients) => inspectProviders(clients),
         }),
     ...(options.selectProviderConfiguration === undefined
       ? {}
       : {
           forProviderDiagnostics: (clients) =>
             resources.track(async () => {
-              const configuration = await selectConfiguration(clients);
+              const providerResources = createProviderResources();
+              const configuration = await selectConfiguration(
+                clients,
+                retainedProviderScope(providerResources),
+              );
               return {
                 configuration,
                 host: {
                   ...(configuration.environment === environment
                     ? terminalProbeHost
                     : providerProbeHost(configuration.environment)),
-                  ...(options.providerInspections === undefined
+                  ...(!hasProviderInspections
                     ? {}
                     : {
                         providerInspections: () =>
-                          resources.track(() =>
-                            inspectProviders(clients, configuration),
+                          inspectProviders(
+                            clients,
+                            configuration,
+                            providerResources,
                           ),
                       }),
                 },
@@ -1088,18 +1194,7 @@ export const systemDoctorHost = (
         await resources.close();
         return undefined;
       } catch (cause: unknown) {
-        const observation = ArtifactReaderFailure.cleanupObservation(
-          cause,
-          "doctor resources",
-        );
-        const failure = new ProviderCleanupError(
-          "rea",
-          observation.resources,
-          { reason: observation.reason },
-          { cause, operation: "doctor" },
-        );
-        bindArtifactFileCleanup(cause, failure);
-        throw failure;
+        throw doctorResourceCleanupFailure(cause);
       }
     },
     clientRegistrations: (
@@ -1158,6 +1253,21 @@ export const systemDoctorHost = (
             }),
           ),
       };
+};
+
+const doctorResourceCleanupFailure = (cause: unknown): ProviderCleanupError => {
+  const observation = ArtifactReaderFailure.cleanupObservation(
+    cause,
+    "doctor resources",
+  );
+  const failure = new ProviderCleanupError(
+    "rea",
+    observation.resources,
+    { reason: observation.reason },
+    { cause, operation: "doctor" },
+  );
+  bindArtifactFileCleanup(cause, failure);
+  return failure;
 };
 
 const readMacosVersion = async (

@@ -8,16 +8,10 @@ import {
   ArtifactReaderFailure,
 } from "../resources/index.js";
 import {
-  selectArtifactCommandPath,
-  type ArtifactCommandPath,
-} from "../process/ArtifactCommandPath.js";
-import {
   FIRMWARE_TOOL_REQUIREMENTS,
   type FirmwareEngineName,
 } from "../contracts/firmware/firmwareToolRequirements.js";
 import { randomUUID } from "node:crypto";
-import { access, stat } from "node:fs/promises";
-import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
   AnalysisCapabilityUnavailableError,
@@ -51,6 +45,10 @@ import {
 } from "../process/ProviderProcess.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import { FirmwareFileAccess } from "./FirmwareFiles.js";
+import {
+  firmwareLimiterPath,
+  inspectFirmwareExecutable,
+} from "./FirmwareConfiguration.js";
 import {
   checkFirmwareStagingBudget,
   type FirmwareStagingUsage,
@@ -106,25 +104,6 @@ export const firmwareToolUnavailable = (
 export const firmwareHostSupported = (platform: NodeJS.Platform): boolean =>
   platform === "linux";
 
-/**
- * Why a configured tool path cannot run, or undefined when `accessPath` grants
- * `mode` and `statPath` is a regular file.
- */
-const executableRegularFileRefusal = async (
-  accessPath: string,
-  statPath: string,
-  mode: number,
-): Promise<string | undefined> => {
-  try {
-    await access(accessPath, mode);
-    return (await stat(statPath)).isFile()
-      ? undefined
-      : "Configured path is not a regular file";
-  } catch (cause: unknown) {
-    return errorMessage(cause);
-  }
-};
-
 /** Resolve explicitly supplied executable paths; never install or search for engines. */
 export const resolveFirmwareCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
@@ -147,66 +126,36 @@ export const resolveFirmwareCommand = async (
       operation,
       `This integration requires Linux and an absolute ${variable} path to the caller-supplied tool`,
     );
-  const selection = await selectArtifactCommandPath(configured, signal).catch(
-    (cause: unknown) => {
-      if (cause instanceof ArtifactReaderFailure) throw cause;
-      throw firmwareToolUnavailable(
-        engine,
-        operation,
-        `${variable} is unavailable: ${errorMessage(cause)}`,
-      );
-    },
+  const command = await inspectFirmwareExecutable(
+    configured,
+    variable,
+    true,
+    signal,
   );
-  const command = selection.invocationPath;
-  const engineUnavailable = (reason: string) =>
-    firmwareToolUnavailable(
-      engine,
-      operation,
-      `${variable} is not a readable executable regular file: ${command}: ${reason}`,
-    );
-  const engineRefusal = await executableRegularFileRefusal(
-    command,
-    command,
-    constants.R_OK | constants.X_OK,
+  if (!command.ok)
+    throw firmwareToolUnavailable(engine, operation, command.error);
+  const limiter = await inspectFirmwareExecutable(
+    firmwareLimiterPath(environment),
+    "REA_FIRMWARE_PRLIMIT_COMMAND (util-linux prlimit)",
+    false,
+    signal,
   );
-  if (engineRefusal !== undefined) throw engineUnavailable(engineRefusal);
+  if (!limiter.ok)
+    throw firmwareToolUnavailable(engine, operation, limiter.error);
   let sha256: string;
   try {
-    sha256 = await files.hash(selection.resolvedPath, signal);
+    sha256 = await files.hash(command.value.resolvedPath, signal);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw engineUnavailable(errorMessage(cause));
-  }
-  const limiter =
-    environment.REA_FIRMWARE_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
-  if (!isAbsolute(limiter))
     throw firmwareToolUnavailable(
       engine,
       operation,
-      "REA_FIRMWARE_PRLIMIT_COMMAND must be absolute",
+      `${variable} could not be fingerprinted: ${command.value.invocationPath}: ${errorMessage(cause)}`,
     );
-  const limiterUnavailable = (reason: string) =>
-    firmwareToolUnavailable(
-      engine,
-      operation,
-      `Resource limiter is not an executable regular file: ${limiter}: ${reason}; provide util-linux prlimit`,
-    );
-  let limiterSelection: ArtifactCommandPath;
-  try {
-    limiterSelection = await selectArtifactCommandPath(limiter, signal);
-  } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw limiterUnavailable(errorMessage(cause));
   }
-  const limiterRefusal = await executableRegularFileRefusal(
-    limiterSelection.resolvedPath,
-    limiter,
-    constants.X_OK,
-  );
-  if (limiterRefusal !== undefined) throw limiterUnavailable(limiterRefusal);
   return {
-    command: selection,
-    limiter: limiterSelection,
+    command: command.value,
+    limiter: limiter.value,
     sha256,
     fileSizeCeiling: await files.fileSizeCeiling(signal),
   };
