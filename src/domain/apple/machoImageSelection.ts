@@ -5,7 +5,6 @@ import {
   fatSliceOverlapReason,
   findOverlappingFatSlices,
   inspectFatSliceRange,
-  MACHO_FORMAT,
   machoFailure,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -18,8 +17,6 @@ import {
 import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
 
 type UniversalMachoHeader = Extract<FatContainerHeader, { state: "parsed" }>;
-
-export { MACHO_FORMAT };
 
 /**
  * The universal file's own failure, raised once here. `failure.kind` is

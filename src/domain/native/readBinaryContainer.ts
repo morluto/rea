@@ -5,14 +5,12 @@ import {
 } from "../binaryContainer.js";
 import {
   classifyFatContainerEvidence,
+  MACHO_FORMAT,
   readFatContainerHeader,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
 } from "../apple/machoContainer.js";
-import {
-  MACHO_FORMAT,
-  readUniversalMachoImageFromReader,
-} from "../apple/machoImageSelection.js";
+import { readUniversalMachoImageFromReader } from "../apple/machoImageSelection.js";
 import {
   readElfImage,
   readElfImageCooperative,
