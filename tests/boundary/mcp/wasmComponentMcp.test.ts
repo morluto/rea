@@ -1,5 +1,5 @@
 import type { Client } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -16,6 +16,7 @@ import {
   vec,
   vecOf,
 } from "../../../src/wasm/WasmComponentBinary.fixture.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -62,20 +63,15 @@ componentMcpTest(
         reason: "available",
       }),
     );
-    const advertised = (await client.listTools()).tools.find(
-      (tool) => tool.name === "inspect_wasm_component",
-    );
-    if (advertised?.outputSchema === undefined)
-      throw new Error("The component tool must publish both schemas");
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
-    expect(ajv.validateSchema(inputSchema)).toBe(true);
-    expect(ajv.validateSchema(outputSchema)).toBe(true);
+    const { ajv, canonicalInputSchema, outputSchema, toolDefinition } =
+      await advertisedMcpToolSchemas(client, "inspect_wasm_component");
     expect(
-      ajv.validate(inputSchema, { path: "/artifacts/c.wasm", execute: true }),
+      ajv.validate(canonicalInputSchema, {
+        path: "/artifacts/c.wasm",
+        execute: true,
+      }),
     ).toBe(false);
-    expect(advertised.annotations).toMatchObject({
+    expect(toolDefinition.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
@@ -133,7 +129,8 @@ componentMcpTest(
     const core = join(root, "core.wasm");
     await writeFile(core, Uint8Array.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
     const malformed = join(root, "malformed.wasm");
-    await writeFile(malformed, component([0x07, 0x05, 0x00]));
+    const malformedBytes = Buffer.from(component([0x07, 0x05, 0x00]));
+    await writeFile(malformed, malformedBytes);
 
     const unsupported = await client.callTool({
       name: "inspect_wasm_component",
@@ -156,15 +153,17 @@ componentMcpTest(
     });
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {
-        code: "invalid_request",
+        code: "unsupported_target",
+        message: expect.stringContaining("at offset 10"),
         details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining("at offset 10"),
-            },
-          ],
+          operation: "inspect_wasm_component",
+          failure_kind: "malformed",
+          partial_observation: {
+            kind: "file-snapshot-hash",
+            path: malformed,
+            sha256: createHash("sha256").update(malformedBytes).digest("hex"),
+            bytes: malformedBytes.length,
+          },
         },
       },
     });

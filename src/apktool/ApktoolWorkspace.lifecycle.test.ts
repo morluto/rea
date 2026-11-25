@@ -5,14 +5,18 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import {
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   ArtifactFileCancelled,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
+import {
+  cancelDuringCleanup,
+  controlledCleanup,
+} from "../../tests/support/lifecycleHarness.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -47,17 +51,15 @@ it.each(["source", "snapshot", "output"] as const)(
         : kind === "snapshot"
           ? join(root.path, "input.apk")
           : output;
-    let denied = true;
-    const closes = vi.fn();
+    const descriptor = controlledCleanup({
+      refused: true,
+      failure: new Error("authored close denial"),
+    });
     vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
       const handle = await actual.open(path, flags, mode);
       if (String(path) === selected) {
         const close = handle.close.bind(handle);
-        handle.close = async () => {
-          closes();
-          if (denied) throw new Error("authored close denial");
-          await close();
-        };
+        handle.close = () => descriptor.close(close);
       }
       return handle;
     });
@@ -75,17 +77,17 @@ it.each(["source", "snapshot", "output"] as const)(
         ArtifactReaderFailure,
       );
       await expect(fs.stat(root.path)).resolves.toBeDefined();
-      denied = false;
+      descriptor.allow();
       await workspace.close();
       expect(failure.cleanupLease.released).toBe(true);
-      const count = closes.mock.calls.length;
+      const count = descriptor.attempts;
       await workspace.close();
-      expect(closes).toHaveBeenCalledTimes(count);
+      expect(descriptor.attempts).toBe(count);
       await expect(fs.stat(root.path)).rejects.toMatchObject({
         code: "ENOENT",
       });
     } finally {
-      denied = false;
+      descriptor.allow();
       await workspace.close();
       await commands.close();
     }
@@ -104,10 +106,11 @@ it("retains a physical decode-output failure when cancellation arrives during de
   vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
     const handle = await actual.open(path, flags, mode);
     const close = handle.close.bind(handle);
-    handle.close = async () => {
-      controller.abort({ caller: "after malformed bytes" });
-      await close();
-    };
+    handle.close = cancelDuringCleanup(
+      controller,
+      { caller: "after malformed bytes" },
+      close,
+    );
     return handle;
   });
   try {
@@ -133,10 +136,7 @@ it("records cancellation observed during a successful output descriptor close", 
   vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
     const handle = await actual.open(path, flags, mode);
     const close = handle.close.bind(handle);
-    handle.close = async () => {
-      controller.abort(reason);
-      await close();
-    };
+    handle.close = cancelDuringCleanup(controller, reason, close);
     return handle;
   });
   try {
@@ -188,23 +188,29 @@ it.each([false, true])(
     const workspace = new ApktoolWorkspace(root, commands);
     const path = join(root.path, "malformed.xml");
     const controller = new AbortController();
-    let denied = deniedInitially;
+    const descriptor = controlledCleanup({
+      refused: deniedInitially,
+      failure: new Error("authored denial"),
+    });
     await fs.writeFile(path, Buffer.from([0xff]));
     vi.mocked(fs.open).mockImplementation(async (name, flags, mode) => {
       const handle = await actual.open(name, flags, mode);
+      const read = handle.read.bind(handle);
+      let readComplete = false;
+      handle.read = (async (...args: Parameters<typeof handle.read>) => {
+        const value = await read(...args);
+        if (value.bytesRead === 0) readComplete = true;
+        return value;
+      }) as typeof handle.read;
       const stat = handle.stat.bind(handle);
-      let calls = 0;
       handle.stat = ((...args: Parameters<typeof handle.stat>) =>
         stat(...args).then((value) => {
-          if (++calls === 3)
+          if (readComplete)
             controller.abort({ caller: "after bytes before interpretation" });
           return value;
         })) as typeof handle.stat;
       const close = handle.close.bind(handle);
-      handle.close = async () => {
-        if (denied) throw new Error("authored denial");
-        await close();
-      };
+      handle.close = () => descriptor.close(close);
       return handle;
     });
     try {
@@ -212,17 +218,20 @@ it.each([false, true])(
         .readText(path, 100, controller.signal)
         .catch((cause: unknown) => cause);
       expect(controller.signal.aborted).toBe(true);
-      expect(artifactFilePrimaryFailure(failure)).toMatchObject({
+      expect(artifactFilePrimaryFacts(failure).cause).toMatchObject({
         _tag: "AnalysisProtocolError",
       });
-      if (denied)
+      expect(artifactFilePrimaryFacts(failure).origin).toBe(
+        "owned-or-classified",
+      );
+      if (deniedInitially)
         await expect(workspace.close()).rejects.toBeInstanceOf(
           ArtifactReaderFailure,
         );
-      denied = false;
+      descriptor.allow();
       await workspace.close();
     } finally {
-      denied = false;
+      descriptor.allow();
       await workspace.close();
       await commands.close();
     }
@@ -399,3 +408,98 @@ it("reports raw retained-prefix bytes when UTF-8 decoding removes a BOM", async 
     await commands.close();
   }
 });
+
+it("classifies source state changes during snapshot copying as artifact changes", async () => {
+  const root = await PrivateRuntimeRoot.create({
+    prefix: "rea-apktool-changed-test-",
+  });
+  const commands = new ApktoolCommandCleanup();
+  const workspace = new ApktoolWorkspace(root, commands);
+  const input = join(root.path, "source.apk");
+  await fs.writeFile(input, "authored-apk");
+  let sourceReads = 0;
+  vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
+    const handle = await actual.open(path, flags, mode);
+    if (String(path) === input) {
+      const stat = handle.stat.bind(handle);
+      const read = handle.read.bind(handle);
+      handle.read = (async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const result = await read(buffer, offset, length, position);
+        if (result.bytesRead > 0) sourceReads += 1;
+        return result;
+      }) as typeof handle.read;
+      handle.stat = (async (...args: Parameters<typeof stat>) => {
+        const value = await stat(...args);
+        if (sourceReads > 0) {
+          if ("mtimeNs" in value) value.mtimeNs += 1n;
+          else value.mtimeMs += 1;
+        }
+        return value;
+      }) as typeof handle.stat;
+    }
+    return handle;
+  });
+  try {
+    await expect(
+      workspace.snapshotInput(input, "decode_android_resources"),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisArtifactChangedError",
+      operation: "decode_android_resources",
+      path: input,
+    });
+    expect(sourceReads).toBeGreaterThan(0);
+  } finally {
+    await workspace.close();
+    await commands.close();
+  }
+});
+
+it.each(["EACCES", "EPERM", "EIO", "ENOENT"] as const)(
+  "preserves the %s acquisition failure classification before snapshot admission",
+  async (code) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-apktool-admission-test-",
+    });
+    const commands = new ApktoolCommandCleanup();
+    const workspace = new ApktoolWorkspace(root, commands);
+    const input = join(root.path, "source.apk");
+    await fs.writeFile(input, "authored-apk");
+    const failure = Object.assign(new Error("authored source open failure"), {
+      code,
+    });
+    vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
+      if (String(path) === input) throw failure;
+      return await actual.open(path, flags, mode);
+    });
+    try {
+      const result: unknown = await workspace
+        .snapshotInput(input, "decode_android_resources")
+        .catch((cause: unknown) => cause);
+      if (code === "EIO") expect(result).toBe(failure);
+      else
+        expect(result).toMatchObject({
+          _tag:
+            code === "ENOENT"
+              ? "AnalysisInputError"
+              : "AnalysisAccessDeniedError",
+          operation: "decode_android_resources",
+          cause: failure,
+          ...(code === "ENOENT" ? {} : { path: input, systemCode: code }),
+        });
+      expect(workspace.snapshot).toBeUndefined();
+      await expect(fs.stat(join(root.path, "input.apk"))).rejects.toMatchObject(
+        {
+          code: "ENOENT",
+        },
+      );
+    } finally {
+      await workspace.close();
+      await commands.close();
+    }
+  },
+);

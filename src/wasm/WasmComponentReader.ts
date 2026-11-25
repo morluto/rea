@@ -1,36 +1,81 @@
+import { Budget } from "../domain/budget.js";
+import {
+  readLeb128,
+  SLEB64,
+  ULEB32,
+  ULEB64,
+  type Leb128Encoding,
+} from "../domain/leb128.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+
+/** The ParseFailure format of WebAssembly component binaries. */
+export const WASM_COMPONENT_FORMAT = "wasm-component";
+
 /**
  * Structural failure at an absolute file offset. `malformed` breaks the
  * pinned grammar's framing; `unsupported` is a well-framed construct the
  * decoder does not decode.
  */
-export class WasmComponentFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    readonly offset: number,
-    message: string,
-  ) {
-    super(`${message} at offset ${String(offset)}`);
-    this.name = "WasmComponentFormatFailure";
-  }
-}
+export type WasmComponentFormatFailure =
+  | ParseFailureError<"malformed">
+  | ParseFailureError<"unsupported">;
+
+/** The bytes at `offset` break the pinned grammar's framing. */
+export const malformedComponent = (
+  offset: number,
+  message: string,
+  cause?: unknown,
+): WasmComponentFormatFailure =>
+  malformedInput(
+    WASM_COMPONENT_FORMAT,
+    `${message} at offset ${String(offset)}`,
+    { offset, cause },
+  );
+
+/** Names the header field that identifies a selected core module. */
+export const CORE_MODULE_FIELD = "layer";
+
+/** The bytes at `offset` are well framed but outside the decoder's coverage. */
+export const unsupportedComponent = (
+  offset: number,
+  message: string,
+  field?: string,
+): WasmComponentFormatFailure =>
+  unsupportedInput(
+    WASM_COMPONENT_FORMAT,
+    `${message} at offset ${String(offset)}`,
+    { offset, ...(field === undefined ? {} : { field }) },
+  );
+
+/** A structural failure of this decoder, as opposed to a limit or any other cause. */
+export const isWasmComponentFormatFailure = (
+  cause: unknown,
+): cause is WasmComponentFormatFailure =>
+  cause instanceof ParseFailureError &&
+  cause.failure.format === WASM_COMPONENT_FORMAT &&
+  (cause.failure.kind === "malformed" || cause.failure.kind === "unsupported");
 
 /** Complete component results are returned inline, within this many UTF-8 bytes. */
 export const MAX_INLINE_RESULT_BYTES = 8 * 1024 * 1024;
 
 /** A decode-wide resource limit was reached before its facts were built. */
-export class WasmComponentLimitExceeded extends Error {
-  constructor(
-    readonly limit: "decoded-items" | "output-bytes",
-    readonly maximum: number,
-  ) {
-    super(
-      limit === "decoded-items"
-        ? `Decoded entries exceed ${String(maximum)}`
-        : `Decoded component facts exceed the ${String(maximum)}-byte inline output budget`,
-    );
-    this.name = "WasmComponentLimitExceeded";
-  }
-}
+export const componentLimit = (
+  name: "decoded-items" | "output-bytes",
+  maximum: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit(
+    WASM_COMPONENT_FORMAT,
+    name === "decoded-items"
+      ? `Decoded entries exceed ${String(maximum)}, so the complete result would exceed the inline output budget; no partial success is returned`
+      : `Decoded component facts exceed the ${String(maximum)}-byte inline output budget; no partial success is returned`,
+    { name, maximum },
+  );
 
 /**
  * Every decoded vector entry and section becomes at least one reported fact,
@@ -41,18 +86,15 @@ export const MAX_DECODED_ITEMS = MAX_INLINE_RESULT_BYTES / 16;
 
 /** Entries one decode may still create, shared by every reader it uses. */
 export class DecodeItemBudget {
-  #remaining = MAX_DECODED_ITEMS;
+  readonly #items = new Budget(MAX_DECODED_ITEMS);
 
   /** Reserve entries before decoding them. */
   take(count: number): void {
-    this.#remaining -= count;
-    if (this.#remaining < 0)
-      throw new WasmComponentLimitExceeded("decoded-items", MAX_DECODED_ITEMS);
+    this.#items.charge(count, () =>
+      componentLimit("decoded-items", MAX_DECODED_ITEMS),
+    );
   }
 }
-
-/** Names are length-prefixed bytes, so a leading U+FEFF is kept, not stripped. */
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Bounded cursor over one byte range; every offset is an absolute file offset. */
 export class WasmComponentReader {
@@ -76,11 +118,11 @@ export class WasmComponentReader {
   }
 
   malformed(message: string, at = this.#offset): WasmComponentFormatFailure {
-    return new WasmComponentFormatFailure("malformed", at, message);
+    return malformedComponent(at, message);
   }
 
   unsupported(message: string, at = this.#offset): WasmComponentFormatFailure {
-    return new WasmComponentFormatFailure("unsupported", at, message);
+    return unsupportedComponent(at, message);
   }
 
   byte(context: string): number {
@@ -98,63 +140,44 @@ export class WasmComponentReader {
     return this.#offset < this.end ? this.bytes[this.#offset] : undefined;
   }
 
-  /**
-   * Unsigned LEB128 limited to 32 bits, as in core WebAssembly: the fifth
-   * byte ends the value and carries only its top four bits.
-   */
+  /** Unsigned LEB128 limited to 32 bits, as in core WebAssembly. */
   u32(context: string): number {
-    const start = this.#offset;
-    let result = 0;
-    for (let index = 0; index < 4; index += 1) {
-      const byte = this.byte(context);
-      result += (byte & 0x7f) * 2 ** (7 * index);
-      if ((byte & 0x80) === 0) return result;
-    }
-    const last = this.byte(context);
-    if (last > 0x0f)
-      throw this.malformed(`Invalid u32 LEB128 in ${context}`, start);
-    return result + last * 2 ** 28;
+    return Number(this.#leb128("u32", ULEB32, context));
   }
 
   /** Unsigned LEB128 limited to 64 bits; values above 2^53 are not decoded. */
   u64(context: string): number {
     const start = this.#offset;
-    let result = 0n;
-    for (let index = 0; index < 10; index += 1) {
-      const byte = this.byte(context);
-      if (index === 9 && byte > 0x01)
-        throw this.malformed(`Invalid u64 LEB128 in ${context}`, start);
-      result |= BigInt(byte & 0x7f) << BigInt(7 * index);
-      if ((byte & 0x80) === 0) {
-        if (result > BigInt(Number.MAX_SAFE_INTEGER))
-          throw this.unsupported(
-            `${context} exceeds 2^53 and is not decoded`,
-            start,
-          );
-        return Number(result);
-      }
-    }
-    throw this.malformed(`Overlong u64 LEB128 in ${context}`, start);
+    const value = this.#leb128("u64", ULEB64, context);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER))
+      throw this.unsupported(
+        `${context} exceeds 2^53 and is not decoded`,
+        start,
+      );
+    return Number(value);
   }
 
-  /** Signed 33-bit LEB128 used by core heap types. */
+  /**
+   * Signed 33-bit LEB128 used by core heap types: at most five bytes whose
+   * unused high bits repeat the sign.
+   */
   s33(context: string): number {
     const start = this.#offset;
-    let result = 0;
-    for (let index = 0; index < 5; index += 1) {
-      const byte = this.byte(context);
-      result += (byte & 0x7f) * 2 ** (7 * index);
-      if ((byte & 0x80) === 0) {
-        const bits = 7 * (index + 1);
-        if (index === 4) {
-          const high = byte & 0x70;
-          if (high !== 0 && high !== 0x70)
-            throw this.malformed(`Invalid s33 LEB128 in ${context}`, start);
-        }
-        return (byte & 0x40) !== 0 && bits < 64 ? result - 2 ** bits : result;
-      }
-    }
-    throw this.malformed(`Overlong s33 LEB128 in ${context}`, start);
+    const value = this.#leb128("s33", SLEB64, context);
+    if (this.#offset - start > 5 || value < -(2n ** 32n) || value >= 2n ** 32n)
+      throw this.malformed(`Invalid s33 LEB128 in ${context}`, start);
+    return Number(value);
+  }
+
+  #leb128(type: string, encoding: Leb128Encoding, context: string): bigint {
+    const start = this.#offset;
+    const read = readLeb128(this.bytes, start, this.end, encoding);
+    if ("failure" in read)
+      throw read.failure === "truncated"
+        ? this.malformed(`Unexpected end of ${context}`, read.at)
+        : this.malformed(`Invalid ${type} LEB128 in ${context}`, start);
+    this.#offset = read.next;
+    return read.value;
   }
 
   /** Length-prefixed UTF-8 text, as `core:name`. */
@@ -162,10 +185,10 @@ export class WasmComponentReader {
     const length = this.u32(`${context} length`);
     const { start, end } = this.range(length, context);
     try {
-      return UTF8.decode(this.bytes.subarray(start, end));
+      // Names are length-prefixed bytes, so a leading U+FEFF is content.
+      return decodeStrictUtf8(this.bytes.subarray(start, end), "preserve");
     } catch (cause: unknown) {
-      void cause;
-      throw this.malformed(`Invalid UTF-8 in ${context}`, start);
+      throw malformedComponent(start, `Invalid UTF-8 in ${context}`, cause);
     }
   }
 

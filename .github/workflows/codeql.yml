@@ -1,0 +1,123 @@
+name: CodeQL production
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "tests/**"
+      - "scripts/fixtures/**"
+      - "scripts/verify/**"
+      - "scripts/verify-real-*.mjs"
+      - "scripts/verify-*-client.mjs"
+      - "**/*.test.*"
+      - "**/*.fixture.*"
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/*.md"
+      - "**/*.mermaid"
+      - "**/*.csv"
+      - "licenses/**"
+      - ".git-blame-ignore-revs"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "tests/**"
+      - "scripts/fixtures/**"
+      - "scripts/verify/**"
+      - "scripts/verify-real-*.mjs"
+      - "scripts/verify-*-client.mjs"
+      - "**/*.test.*"
+      - "**/*.fixture.*"
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/*.md"
+      - "**/*.mermaid"
+      - "**/*.csv"
+      - "licenses/**"
+      - ".git-blame-ignore-revs"
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-production-${{ github.event.pull_request.number || github.ref }}
+  # Let a main-branch baseline finish; supersede stale pull-request scans only.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scope:
+    # A repository administrator must disable default setup before enabling
+    # this workflow; default setup rejects advanced CodeQL result uploads.
+    if: vars.REA_CODEQL_ADVANCED == 'true'
+    name: Select production languages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      languages: ${{ steps.scope.outputs.languages }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # Keep the nonzero branch first: numeric 0 is falsy in Actions expressions.
+          fetch-depth: ${{ github.event_name != 'pull_request' && 1 || 0 }}
+          filter: blob:none
+          sparse-checkout: |
+            .nvmrc
+            scripts/ci
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version-file: .nvmrc
+      - name: Select CodeQL languages
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/ci/codeql-scope.mjs >> "$GITHUB_OUTPUT"
+
+  analyze:
+    needs: scope
+    if: vars.REA_CODEQL_ADVANCED == 'true' && needs.scope.outputs.run == 'true'
+    name: Analyze production (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        language: ${{ fromJSON(needs.scope.outputs.languages) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Initialize production analysis
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: .github/codeql/production.yml
+          threads: 2
+          ram: 4096
+      - name: Analyze production code
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          category: /language:${{ matrix.language }}
+          output: ${{ runner.temp }}/codeql-production-results
+          threads: 2
+          ram: 4096
+      - name: Retain complete analysis evidence
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codeql-production-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-production-results
+          if-no-files-found: error
+          retention-days: 7

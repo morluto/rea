@@ -1,5 +1,9 @@
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import type { RecordedCrash } from "../../domain/native/recordedCrash.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import {
+  isLinuxCoreNote,
+  type RecordedCrash,
+} from "../../domain/native/recordedCrash.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 /** Interpret source-bound ELF64 NT_FILE paths once, before GDB can open them. */
@@ -8,7 +12,7 @@ export function validateCoreFileMappingAuthority(
   snapshot: Buffer,
 ): Result<void, AnalysisCapabilityUnavailableError> {
   for (const note of report.notes) {
-    if (note.type !== "NT_FILE") continue;
+    if (!isLinuxCoreNote(note, 0x46494c45)) continue;
     const refuse = (reason: string) => {
       const message = `Core mapping note ${note.index} cannot be confined to the owned debugger sysroot: ${reason}.`;
       return err(
@@ -30,7 +34,13 @@ export function validateCoreFileMappingAuthority(
       start + Number(BigInt(note.descriptor_location.bytes)),
     );
     if (bytes.length < 16) return refuse("missing mapping table header");
-    const count = bytes.readBigUInt64LE(0);
+    // The count is the table's first 64-bit word; the shared reader checks that the
+    // retained range still holds it before reading.
+    const count = new BinaryReader(
+      bytes,
+      true,
+      "pwndbg-core-mapping-table",
+    ).word(0, 64);
     if (count > BigInt(Math.floor((bytes.length - 16) / 24)))
       return refuse("mapping count exceeds its descriptor");
     let position = 16 + Number(count) * 24;

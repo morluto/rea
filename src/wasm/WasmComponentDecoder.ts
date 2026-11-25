@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   WASM_COMPONENT_GRAMMAR,
   type DecodedComponent,
@@ -24,9 +22,13 @@ import {
 } from "./WasmComponentDefinitions.js";
 import { decodeCustomSection } from "./WasmComponentNames.js";
 import {
+  CORE_MODULE_FIELD,
   DecodeItemBudget,
-  WasmComponentFormatFailure,
+  isWasmComponentFormatFailure,
+  malformedComponent,
+  unsupportedComponent,
   WasmComponentReader,
+  type WasmComponentFormatFailure,
 } from "./WasmComponentReader.js";
 import {
   RelationshipBudget,
@@ -48,6 +50,7 @@ import {
   decodeCoreModuleInterface,
 } from "./WasmCoreModuleInterface.js";
 import { decodeCoreType } from "./WasmCoreTypes.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Bounds component nesting; deeper components are reported as not decoded. */
 export const MAX_COMPONENT_DEPTH = 16;
@@ -138,9 +141,7 @@ interface SectionContext {
 }
 
 const sha256 = (bytes: Uint8Array, range: Range): string =>
-  createHash("sha256")
-    .update(bytes.subarray(range.start, range.end))
-    .digest("hex");
+  sha256Hex(bytes.subarray(range.start, range.end));
 
 /**
  * Admitted component preamble, or a typed failure naming the observed bytes.
@@ -152,31 +153,25 @@ export const readComponentPreamble = (
   end: number,
 ): void => {
   if (end - start < 8)
-    throw new WasmComponentFormatFailure(
-      "malformed",
-      start,
-      "Truncated WebAssembly preamble",
-    );
+    throw malformedComponent(start, "Truncated WebAssembly preamble");
   const preamble = readWasmPreamble(bytes, start, end);
   if (preamble === undefined)
-    throw new WasmComponentFormatFailure(
-      "unsupported",
+    throw unsupportedComponent(
       start,
       "Not a WebAssembly binary (missing \\0asm magic)",
     );
   if (isCoreWasmModule(preamble))
-    throw new WasmComponentFormatFailure(
-      "unsupported",
+    throw unsupportedComponent(
       start,
       "Core WebAssembly module (layer 0), not a component; use inspect_wasm_artifact",
+      CORE_MODULE_FIELD,
     );
   const { version, layer } = preamble;
   if (
     version !== WASM_COMPONENT_GRAMMAR.version ||
     layer !== WASM_COMPONENT_GRAMMAR.layer
   )
-    throw new WasmComponentFormatFailure(
-      "unsupported",
+    throw unsupportedComponent(
       start + 4,
       `Component binary version 0x${version.toString(16)} layer 0x${layer.toString(16)} is not admitted; only version 0xd layer 0x1 is decoded`,
     );
@@ -309,7 +304,7 @@ const decodeRecordedSection = async (
       throw section.unsupported(`Unknown section id ${String(id)}`);
     await decode(context, section);
   } catch (cause: unknown) {
-    if (!(cause instanceof WasmComponentFormatFailure)) throw cause;
+    if (!isWasmComponentFormatFailure(cause)) throw cause;
     if (cause.kind === "malformed") throw cause;
     entry.status = "not_decoded";
     context.spaces.invalidate(SECTION_SORTS[id] ?? "all");
@@ -330,7 +325,10 @@ const recordNotDecoded = (
 ): void => {
   context.state.notDecoded.push({
     component: context.component.id,
-    range: { start: Math.max(failure.offset, range.start), end: range.end },
+    range: {
+      start: Math.max(failure.failure.offset ?? range.start, range.start),
+      end: range.end,
+    },
     kind: failure.kind,
     reason:
       subject === undefined

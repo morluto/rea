@@ -1,3 +1,4 @@
+import { Budget } from "../domain/budget.js";
 import type { DecodedComponent } from "../domain/wasm/wasmComponent.js";
 import type { ComponentSort } from "../domain/wasm/wasmComponentTypes.js";
 import type {
@@ -5,8 +6,8 @@ import type {
   IndexOrigin,
 } from "./WasmComponentIndexSpaces.js";
 import {
+  componentLimit,
   MAX_INLINE_RESULT_BYTES,
-  WasmComponentLimitExceeded,
 } from "./WasmComponentReader.js";
 
 /**
@@ -15,15 +16,12 @@ import {
  * size can grow multiplicatively; each fact is charged before it is kept.
  */
 export class RelationshipBudget {
-  #remaining = MAX_INLINE_RESULT_BYTES;
+  readonly #bytes = new Budget(MAX_INLINE_RESULT_BYTES);
 
   charge(fact: unknown): void {
-    this.#remaining -= Buffer.byteLength(JSON.stringify(fact), "utf8");
-    if (this.#remaining < 0)
-      throw new WasmComponentLimitExceeded(
-        "output-bytes",
-        MAX_INLINE_RESULT_BYTES,
-      );
+    this.#bytes.charge(Buffer.byteLength(JSON.stringify(fact), "utf8"), () =>
+      componentLimit("output-bytes", MAX_INLINE_RESULT_BYTES),
+    );
   }
 }
 

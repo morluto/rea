@@ -1,14 +1,13 @@
-import { createHash } from "node:crypto";
-
 import type {
   CapturedWebScript,
   ExportedWebScript,
 } from "./webScriptExport.js";
 import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
-const hash = (text: string): string =>
-  createHash("sha256").update(text).digest("hex");
-const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.-]+$/u;
+// Literal URL path characters that are also portable filename characters.
+// Percent escapes remain isolated: decoding them could change path identity.
+const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.!$&'()+,;=@-]+$/u;
 const RESERVED_SEGMENT = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu;
 
 /** One planned file, or an explicit missing source with no filesystem effect. */
@@ -16,6 +15,13 @@ export interface PlannedWebScript {
   readonly script: CapturedWebScript;
   readonly record: ExportedWebScript;
 }
+
+/** Stable isolated identity shared by planning and destination collision fallback. */
+export const isolatedWebScriptPath = (
+  source: CapturedWebScript["source"],
+  index: number,
+): string =>
+  `isolated/source-${index + 1}-${sha256Hex(JSON.stringify(source))}.js`;
 
 /** Preserve safe URL layouts only when every captured path is unambiguous. */
 export const planWebScriptExport = (
@@ -45,9 +51,7 @@ export const planWebScriptExport = (
         url: script.url,
         content: {
           state: "exported",
-          relative_path:
-            path ??
-            `isolated/source-${index + 1}-${hash(JSON.stringify(script.source))}.js`,
+          relative_path: path ?? isolatedWebScriptPath(script.source, index),
           layout: path === undefined ? "isolated" : "url-path",
           layout_reason: reason,
           sha256: script.content.sha256,
@@ -93,7 +97,7 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
       reason: "URL path is not an ordinary portable JavaScript module path.",
     };
   return {
-    path: `origins/${hash(url.origin)}/${parts.join("/")}`,
+    path: `origins/${sha256Hex(url.origin)}/${parts.join("/")}`,
     reason:
       urlDeclaresQueryOrFragment(url) ||
       url.username !== "" ||
@@ -103,30 +107,32 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
   };
 };
 
-// Register every exact prefix so a repeated path, or a file that is also a
-// directory prefix, isolates every affected source. Case-distinct spellings
-// stay distinct until the destination filesystem reports a collision.
+// Sort file paths with a separator that precedes every portable segment
+// character. Repetitions and descendants then follow their file prefix
+// contiguously, without allocating a string for every directory prefix.
 const conflictingPaths = (
   candidates: readonly CandidatePath[],
 ): Set<number> => {
-  const prefixes = new Map<string, { indices: number[]; files: number[] }>();
-  candidates.forEach(({ path }, index) => {
-    if (path === undefined) return;
-    const parts = path.split("/");
-    parts.forEach((_, position) => {
-      const spelling = parts.slice(0, position + 1).join("/");
-      const entry = prefixes.get(spelling) ?? { indices: [], files: [] };
-      entry.indices.push(index);
-      if (position === parts.length - 1) entry.files.push(index);
-      prefixes.set(spelling, entry);
-    });
-  });
+  const sorted = candidates.flatMap(({ path }, index) =>
+    path === undefined ? [] : [{ key: path.replaceAll("/", "\0"), index }],
+  );
+  sorted.sort((left, right) =>
+    left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+  );
   const conflicts = new Set<number>();
-  for (const entry of prefixes.values())
+  let root: (typeof sorted)[number] | undefined;
+  for (const candidate of sorted) {
     if (
-      entry.files.length > 1 ||
-      (entry.files.length > 0 && entry.indices.length > entry.files.length)
-    )
-      for (const index of entry.indices) conflicts.add(index);
+      root !== undefined &&
+      (candidate.key === root.key ||
+        (candidate.key.charCodeAt(root.key.length) === 0 &&
+          candidate.key.startsWith(root.key)))
+    ) {
+      conflicts.add(root.index);
+      conflicts.add(candidate.index);
+    } else {
+      root = candidate;
+    }
+  }
   return conflicts;
 };

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { access, rm, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { expect, onTestFinished } from "vitest";
 import { createFirmwareAnalysisProvider } from "../../../src/composition/firmware.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
@@ -8,12 +8,32 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../temporaryDirectory.js";
 
-/** Exercise real subprocess ownership with synthetic pinned producer representations. */
+/** Exercise the real limiter and process ownership with synthetic pinned reports. */
 export const firmwareFixture = async (mode = "normal", banner?: string) => {
   const root = await createTestTempDirectory("rea-firmware-test-");
   const path = join(root, "input.bin");
   await writeFile(path, Buffer.from("fixture-input-data"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const commands = {
+    binwalk: join(root, "binwalk"),
+    unblob: join(root, "unblob"),
+  };
+  for (const engine of ["binwalk", "unblob"] as const) {
+    const invocation = [
+      process.execPath,
+      // Keep the synthetic JS producer within the real engines' address-space ceiling.
+      "--jitless",
+      // Node 22 warns when jitless implicitly disables Wasm. Newer releases do
+      // not need this flag, and Node 26 no longer accepts it.
+      ...(process.versions.node.startsWith("22.") ? ["--no-expose-wasm"] : []),
+      fileURLToPath(new URL("./producer.mjs", import.meta.url)),
+      engine,
+    ]
+      .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
+      .join(" ");
+    await writeFile(commands[engine], `#!/bin/sh\nexec ${invocation} "$@"\n`, {
+      mode: 0o700,
+    });
+  }
   const launches: {
     cwd: string | undefined;
     pid: number | undefined;
@@ -23,33 +43,13 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
   const provider = createFirmwareAnalysisProvider(
     {
       ...process.env,
-      REA_BINWALK_COMMAND: "/usr/bin/true",
-      REA_UNBLOB_COMMAND: process.execPath,
+      REA_BINWALK_COMMAND: commands.binwalk,
+      REA_UNBLOB_COMMAND: commands.unblob,
+      REA_FIRMWARE_FIXTURE_MODE: mode,
+      ...(banner === undefined ? {} : { REA_FIRMWARE_FIXTURE_VERSION: banner }),
     },
     async (options) => {
-      const start = options.arguments.indexOf("--") + 2;
-      const args = options.arguments.slice(start);
-      const engine =
-        options.arguments[start - 1]?.endsWith("/true") === true
-          ? "binwalk"
-          : "unblob";
-      const spawned = await spawnOwnedProviderProcess({
-        ...options,
-        command: process.execPath,
-        expectedCommand: process.execPath,
-        arguments: [
-          fileURLToPath(new URL("./producer.mjs", import.meta.url)),
-          ...args,
-        ],
-        env: {
-          ...options.env,
-          REA_FIRMWARE_FIXTURE_MODE: mode,
-          REA_FIRMWARE_FIXTURE_ENGINE: engine,
-          ...(banner === undefined
-            ? {}
-            : { REA_FIRMWARE_FIXTURE_VERSION: banner }),
-        },
-      });
+      const spawned = await spawnOwnedProviderProcess(options);
       launches.push({
         cwd: options.cwd,
         pid: spawned.process.pid,
@@ -86,6 +86,7 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
     output: join(root, "output"),
     root,
     launches,
+    commands,
     close,
     restoreCleanup: () => {
       cleanupUnverified = false;

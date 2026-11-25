@@ -1,26 +1,30 @@
-import { constants } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
-import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
+import type { FileHandle } from "node:fs/promises";
+import {
+  unsupportedTarget,
+  type AnalysisTargetFailureError,
+} from "../domain/analysisErrorCore.js";
 import {
   isWasmComponent,
   readWasmPreamble,
 } from "../domain/wasm/wasmPreamble.js";
-import { wabtFailure } from "./WabtFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import {
+  ArtifactFileCleanupFailure,
+  withArtifactRegularFile,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import { wabtFailureDialect } from "./WabtFailures.js";
 
 /** WABT decodes core modules only; components route to their own decoder. */
 export const wasmComponentSelected = (
   path: string,
-): AnalysisUnsupportedTargetError =>
-  new AnalysisUnsupportedTargetError(
+): AnalysisTargetFailureError =>
+  unsupportedTarget(
     "inspect_wasm_artifact",
     path,
+    "wasm",
     "WebAssembly component (layer 1), not a core module; WABT decodes core modules only",
-    {
-      remediationAction:
-        "Decode WebAssembly components with inspect_wasm_component.",
-    },
+    { field: "layer", related: { operations: ["inspect_wasm_component"] } },
   );
 
 const probeHeader = async (file: FileHandle): Promise<boolean> => {
@@ -36,37 +40,31 @@ const probeHeader = async (file: FileHandle): Promise<boolean> => {
 };
 
 /**
- * Reject a component before any WABT configuration or command. An unreadable
- * path is left to the stable read, which reports it after tool checks. The
- * probe descriptor is owned like every stable read, so a failed close stays
- * retained by `scope` and its error resolves once a later close succeeds.
+ * Reject a component before any WABT configuration or command. A selection
+ * that is not a readable regular file is left to the stable read, which
+ * reports it after tool checks. The probe descriptor is owned like every
+ * stable read, so a failed close stays retained by `scope` and its error
+ * resolves once a later close succeeds.
  */
 export const rejectWasmComponent = async (
   path: string,
   scope: ArtifactResourceScope,
 ): Promise<void> => {
-  let file: FileHandle;
-  try {
-    file = await open(
-      path,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-  } catch (cause: unknown) {
-    // The authoritative stable read classifies inaccessible selections.
-    void cause;
-    return;
-  }
   let component: boolean;
   try {
-    component = await withArtifactFileHandle(
+    component = await withArtifactRegularFile(
       path,
-      file,
       scope,
       undefined,
-      probeHeader,
+      ({ handle }) => probeHeader(handle),
     );
   } catch (cause: unknown) {
-    throw wabtFailure(cause, "artifact", path);
+    if (cause instanceof ArtifactFileCleanupFailure)
+      throw classifyProviderFailure(
+        cause,
+        wabtFailureDialect("artifact", path),
+      );
+    return;
   }
   if (component) throw wasmComponentSelected(path);
 };

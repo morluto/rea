@@ -1,3 +1,4 @@
+import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -65,13 +66,14 @@ describe.skipIf(process.platform === "win32")(
         (await observeGroup(ABSENT_GROUP_ID)).get(ABSENT_GROUP_ID)?.state,
       ).toBe("empty");
 
-      const settlement = await observeSettlement(
-        "settlement-single-empty",
-        [ABSENT_GROUP_ID],
-        0,
-        () => undefined,
-        "linux",
-      );
+      const settlement = await observeSettlement({
+        runId: "settlement-single-empty",
+        processGroupIds: [ABSENT_GROUP_ID],
+        settleMs: 0,
+        recordEvent: () => undefined,
+        platform: "linux",
+        ownershipEvidence: new ProcessOwnershipEvidenceOwner(),
+      });
       expect(settlement.state).toBe("unverifiable");
     });
 
@@ -107,13 +109,17 @@ describe.skipIf(process.platform === "win32")(
             : undefined,
         ).toBe("alive");
 
-        const settlement = await observeSettlement(
-          runId,
-          [launched.ownership.processGroupId],
-          0,
-          () => undefined,
-          process.platform,
-        );
+        const ownershipEvidence = launched.ownership.evidenceOwner;
+        if (ownershipEvidence === undefined)
+          throw new Error("owned spawn omitted ownership evidence");
+        const settlement = await observeSettlement({
+          runId: runId,
+          processGroupIds: [launched.ownership.processGroupId],
+          settleMs: 0,
+          recordEvent: () => undefined,
+          platform: process.platform,
+          ownershipEvidence: ownershipEvidence,
+        });
         expect(settlement.state).toBe("alive_at_deadline");
       } finally {
         await stopOwnedFixture(launched.process, launched.ownership);
@@ -121,13 +127,14 @@ describe.skipIf(process.platform === "win32")(
     });
 
     it("still reports two consecutive empty observations as quiesced", async () => {
-      const settlement = await observeSettlement(
-        "settlement-two-empty",
-        [ABSENT_GROUP_ID],
-        1_000,
-        () => undefined,
-        "linux",
-      );
+      const settlement = await observeSettlement({
+        runId: "settlement-two-empty",
+        processGroupIds: [ABSENT_GROUP_ID],
+        settleMs: 1_000,
+        recordEvent: () => undefined,
+        platform: "linux",
+        ownershipEvidence: new ProcessOwnershipEvidenceOwner(),
+      });
       expect(settlement.state).toBe("quiesced");
     });
   },

@@ -16,17 +16,16 @@ import {
   withPreamble,
 } from "./WasmComponentBinary.fixture.js";
 import {
+  isWasmComponentFormatFailure,
   MAX_DECODED_ITEMS,
   MAX_INLINE_RESULT_BYTES,
-  WasmComponentFormatFailure,
-  WasmComponentLimitExceeded,
 } from "./WasmComponentReader.js";
 
 const failureOf = async (bytes: Uint8Array) => {
   try {
     await decodeWasmComponent(bytes);
   } catch (cause: unknown) {
-    if (cause instanceof WasmComponentFormatFailure) return cause;
+    if (isWasmComponentFormatFailure(cause)) return cause;
     throw cause;
   }
   throw new Error("Expected a component format failure");
@@ -411,8 +410,7 @@ describe("decodeWasmComponent resource bounds", () => {
         ),
       ),
     ).rejects.toMatchObject({
-      name: "WasmComponentLimitExceeded",
-      limit: "output-bytes",
+      failure: { kind: "limit", limit: { name: "output-bytes" } },
     });
   });
 
@@ -434,9 +432,10 @@ describe("decodeWasmComponent resource bounds", () => {
         ),
       ),
     ).rejects.toMatchObject({
-      name: "WasmComponentLimitExceeded",
-      limit: "output-bytes",
-      maximum: MAX_INLINE_RESULT_BYTES,
+      failure: {
+        kind: "limit",
+        limit: { name: "output-bytes", maximum: MAX_INLINE_RESULT_BYTES },
+      },
     });
   });
 
@@ -451,7 +450,12 @@ describe("decodeWasmComponent resource bounds", () => {
           ]),
         ),
       ),
-    ).rejects.toBeInstanceOf(WasmComponentLimitExceeded);
+    ).rejects.toMatchObject({
+      failure: {
+        kind: "limit",
+        limit: { name: "decoded-items", maximum: MAX_DECODED_ITEMS },
+      },
+    });
   });
 
   it("decodes a core module with 150,000 exports", async () => {

@@ -14,13 +14,33 @@ afterEach(async () => {
 });
 
 describe("real Hopper fixture binding", () => {
-  it("binds exact source-owned artifacts and their semantic oracle", async () => {
+  it("refuses the retired unversioned manifest before artifact admission", async () => {
+    const manifest = await fixtureManifest();
+    const parsed = JSON.parse(await readFile(manifest, "utf8"));
+    delete parsed.schemaVersion;
+    await writeFile(manifest, JSON.stringify(parsed));
+    await expect(loadRealHopperFixtureTargets(manifest)).rejects.toThrow(
+      "regenerate with npm run build:fixtures",
+    );
+  });
+
+  it("binds a caller-selected local manifest and its exact artifact digests", async () => {
     const manifest = await fixtureManifest();
     await expect(loadRealHopperFixtureTargets(manifest)).resolves.toMatchObject(
       {
-        primary: { path: join(root ?? "", "c") },
-        secondary: { path: join(root ?? "", "version-v2") },
-        large: { path: join(root ?? "", "large") },
+        manifestPath: manifest,
+        primary: {
+          path: join(root ?? "", "c"),
+          sha256: digest(Buffer.from("primary")),
+        },
+        secondary: {
+          path: join(root ?? "", "version-v2"),
+          sha256: digest(Buffer.from("secondary")),
+        },
+        large: {
+          path: join(root ?? "", "large"),
+          sha256: digest(Buffer.from("large")),
+        },
         largeOracle: {
           symbolPrefix: "_rea_inventory_",
           symbolCount: 1_205,
@@ -92,6 +112,8 @@ const fixtureManifest = async (): Promise<string> => {
   await writeFile(
     manifest,
     JSON.stringify({
+      schemaVersion: 2,
+      platform: "darwin",
       fixtures: [
         {
           name: "c",

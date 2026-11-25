@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
@@ -8,9 +9,10 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workflowGit } from "../../support/workflowGit.js";
+import { resolveTypeScriptCompiler } from "../../../scripts/run-typescript.mjs";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
-const turbo = join(repository, "node_modules/turbo/bin/turbo");
+const turbo = join(repository, "scripts/run-turbo.mjs");
 const reportScript = join(repository, "scripts/ci/static-check-report.mjs");
 const rootConfigSchema = z.object({
   globalDependencies: z.array(z.string()).optional(),
@@ -21,13 +23,18 @@ const dryRunSchema = z.object({
   tasks: z.array(z.object({ taskId: z.string(), hash: z.string() })),
 });
 
-const execute = (command: string, args: string[], cwd: string) =>
+const execute = (
+  command: string,
+  args: string[],
+  cwd: string,
+  env = process.env,
+) =>
   spawnSync(process.execPath, [command, ...args], {
     cwd,
     encoding: "utf8",
     timeout: 30_000,
     maxBuffer: 16 * 1024 * 1024,
-    env: process.env,
+    env,
   });
 
 const readRootConfig = async () =>
@@ -97,6 +104,7 @@ const runTurbo = (
   task: string,
   cacheDirectory: string,
   dryRun = false,
+  env = process.env,
 ) =>
   execute(
     turbo,
@@ -109,6 +117,7 @@ const runTurbo = (
       cacheDirectory,
     ],
     root,
+    env,
   );
 
 const taskHash = (root: string, task: string, cacheDirectory: string) => {
@@ -120,6 +129,48 @@ const taskHash = (root: string, task: string, cacheDirectory: string) => {
   if (entry === undefined) throw new Error(`Turbo omitted task ${task}`);
   return entry.hash;
 };
+
+it.skipIf(process.platform === "win32")(
+  "reruns the debt scan when the host Python tokenizer stops working",
+  async () => {
+    const root = await createTestTempDirectory("rea-static-todo-");
+    const host = await createTestTempDirectory("rea-static-todo-host-");
+    const cache = join(host, "cache");
+    const python = join(host, "python3");
+    const env = {
+      ...process.env,
+      PATH: [host, process.env.PATH ?? ""].join(delimiter),
+    };
+    await writeTaskFixture(root, ["scan:todos"], {
+      "scan:todos": "node scripts/scan-todos.mjs",
+    });
+    await mkdir(join(root, "scripts"));
+    await mkdir(join(root, "bridge"));
+    await symlink(
+      join(repository, "node_modules"),
+      join(root, "node_modules"),
+      "junction",
+    );
+    await writeFile(
+      join(root, "scripts/scan-todos.mjs"),
+      await readFile(join(repository, "scripts/scan-todos.mjs"), "utf8"),
+    );
+    await writeFile(
+      join(root, "bridge/sample.py"),
+      'sample = "TODO: example text"\n',
+    );
+    // Keep PATH and repository inputs fixed while the host interpreter changes.
+    await writeFile(python, "#!/bin/sh\nprintf '[]\\n'\n", { mode: 0o755 });
+    const warm = runTurbo(root, "scan:todos", cache, false, env);
+    expect(warm.status, warm.stdout + warm.stderr).toBe(0);
+
+    await writeFile(python, "#!/bin/sh\nexit 1\n");
+    const degraded = runTurbo(root, "scan:todos", cache, false, env);
+    const output = degraded.stdout + degraded.stderr;
+    expect(degraded.status, output).toBe(1);
+    expect(output).toContain("bridge/sample.py:1");
+  },
+);
 
 it("restores a real lint report across cold, warm, and fresh consumer checkouts", async () => {
   const producer = await createTestTempDirectory("rea-static-cache-producer-");
@@ -350,6 +401,13 @@ it.each([
     invalidatesCompile: false,
   },
   {
+    label: "compiler launcher",
+    path: "scripts/run-typescript.mjs",
+    content: 'throw new Error("compiler launcher changed");\n',
+    diagnostic: "compiler launcher changed",
+    invalidatesCompile: true,
+  },
+  {
     label: "source declaration",
     path: "src/types.d.mts",
     content: "export type SourceValue = 2;\n",
@@ -367,6 +425,20 @@ it.each([
     label: "script declaration",
     path: "scripts/value.d.cts",
     content: 'export type ScriptValue = "shadow";\n',
+    diagnostic: "TS2322",
+    invalidatesCompile: false,
+  },
+  {
+    label: "imported TypeScript script",
+    path: "scripts/helper.mts",
+    content: "export const scriptHelper = 2;\n",
+    diagnostic: "TS2322",
+    invalidatesCompile: false,
+  },
+  {
+    label: "imported JavaScript test helper",
+    path: "tests/helper.mjs",
+    content: "export const testHelper = 2;\n",
     diagnostic: "TS2322",
     invalidatesCompile: false,
   },
@@ -410,10 +482,14 @@ it.each([
       ["compile", "typecheck"],
       {
         // Exercise the real compiler phase with the production task inputs.
-        compile: "tsc -p tsconfig.build.json",
-        typecheck: "tsc --noEmit",
+        compile: "node scripts/run-typescript.mjs -p tsconfig.build.json",
+        typecheck: "node scripts/run-typescript.mjs --noEmit",
       },
       { "#compiler-scope": "./scripts/root-types.d.mts" },
+    );
+    await writeFile(
+      join(root, "scripts/run-typescript.mjs"),
+      await readFile(join(repository, "scripts/run-typescript.mjs")),
     );
     for (const name of [
       "tsconfig.json",
@@ -453,6 +529,18 @@ it.each([
     await writeFile(
       join(root, "scripts/api.d.mts"),
       'import type { Scope } from "#compiler-scope";\nexport type ApiScope = Scope;\n',
+    );
+    await writeFile(
+      join(root, "scripts/helper.mts"),
+      "export const scriptHelper = 1;\n",
+    );
+    await writeFile(
+      join(root, "tests/helper.mjs"),
+      "export const testHelper = 1;\n",
+    );
+    await writeFile(
+      join(root, "tests/use-helpers.ts"),
+      'import { scriptHelper } from "../scripts/helper.mjs";\nimport { testHelper } from "./helper.mjs";\nexport const checkedScript: 1 = scriptHelper;\nexport const checkedTest: 1 = testHelper;\n',
     );
     await writeFile(
       join(root, "tests/use-script.ts"),
@@ -547,13 +635,21 @@ it("invalidates checker task hashes for Node, ignore, and VitePress config chang
   await writeFile(join(root, ".npmrc"), "engine-strict=true\n");
   await writeFile(join(root, ".gitignore"), ".cache/\n");
   await writeFile(join(root, ".jscpd.json"), "{}\n");
-  await writeFile(join(root, "docs/.vitepress/config.ts"), "export {};\n");
+  const vitePressEntry = 'export { value } from "./documentation.js";\n';
+  const ownedHelpers = ["docs/.vitepress/documentation.ts", "tests/helper.mjs"];
+  const initialHelper = "export const value = 1;\n";
+  await writeFile(join(root, "docs/.vitepress/config.ts"), vitePressEntry);
+  for (const helper of ownedHelpers)
+    await writeFile(join(root, helper), initialHelper);
   await writeFile(
     join(root, "vitest.config.ts"),
     'import { CiTestSequencer } from "./tests/ciTestSequencer.js";\nexport const sequencer = CiTestSequencer;\n',
   );
   await writeFile(join(root, "src/input.ts"), "export {};\n");
-  await writeFile(join(root, "tests/input.ts"), "export {};\n");
+  await writeFile(
+    join(root, "tests/input.ts"),
+    'export { value } from "./helper.mjs";\n',
+  );
 
   const initial = new Map<string, string>();
   for (const task of ["jscpd", "knip", "metadata:check", "scan:todos"])
@@ -599,7 +695,19 @@ it("invalidates checker task hashes for Node, ignore, and VitePress config chang
     taskHash(root, "knip", cache),
     "knip must hash its configured VitePress entry",
   ).not.toBe(initial.get("knip"));
-  await writeFile(join(root, "docs/.vitepress/config.ts"), "export {};\n");
+  await writeFile(join(root, "docs/.vitepress/config.ts"), vitePressEntry);
+
+  for (const helper of ownedHelpers) {
+    await writeFile(join(root, helper), "export const value = 2;\n");
+    expect(taskHash(root, "knip", cache), helper).not.toBe(initial.get("knip"));
+    await writeFile(join(root, helper), initialHelper);
+  }
+  await mkdir(join(root, "docs/.vitepress/dist"), { recursive: true });
+  await writeFile(
+    join(root, "docs/.vitepress/dist/bundle.js"),
+    "export const value = 1;\n",
+  );
+  expect(taskHash(root, "knip", cache)).toBe(initial.get("knip"));
 
   await writeFile(join(root, "vitest.config.ts"), "export {};\n");
   expect(
@@ -611,4 +719,186 @@ it("invalidates checker task hashes for Node, ignore, and VitePress config chang
       taskHash(root, task, cache),
       `${task} must ignore vitest.config.ts`,
     ).toBe(initial.get(task));
+});
+
+it.skipIf(resolveTypeScriptCompiler().name !== "tsrs")(
+  "does not replay an official compiler success for a Rust compiler error",
+  async () => {
+    const root = await createTestTempDirectory("rea-cross-compiler-cache-");
+    const cache = await createTestTempDirectory("rea-cross-compiler-store-");
+    const require = createRequire(import.meta.url);
+    await mkdir(join(root, "scripts"));
+    await mkdir(join(root, "src"));
+    await mkdir(join(root, "node_modules/tsrs"), { recursive: true });
+    for (const name of ["typescript", "turbo"])
+      await symlink(
+        dirname(require.resolve(`${name}/package.json`)),
+        join(root, "node_modules", name),
+        "junction",
+      );
+    for (const name of ["run-typescript.mjs", "run-turbo.mjs"])
+      await writeFile(
+        join(root, "scripts", name),
+        await readFile(join(repository, "scripts", name)),
+      );
+    await writeTaskFixture(root, ["compile", "typecheck"], {
+      compile: "node scripts/run-typescript.mjs -p tsconfig.build.json",
+      typecheck: "node scripts/run-typescript.mjs --noEmit",
+    });
+    const rustPath = require.resolve("tsrs/package.json");
+    const rust = z
+      .object({ version: z.string(), bin: z.object({ tsrs: z.string() }) })
+      .parse(JSON.parse(await readFile(rustPath, "utf8")));
+    const writeInventory = (supported: boolean) =>
+      writeFile(
+        join(root, "node_modules/tsrs/package.json"),
+        JSON.stringify({
+          name: "tsrs",
+          version: rust.version,
+          bin: { tsrs: resolve(dirname(rustPath), rust.bin.tsrs) },
+          optionalDependencies: supported
+            ? { [`@tsrs/${process.platform}-${process.arch}`]: rust.version }
+            : {},
+        }),
+      );
+    await writeInventory(false);
+    await writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          rootDir: "src",
+          types: [],
+          lib: ["ES2023", "DOM"],
+          target: "ES2023",
+          module: "NodeNext",
+          outDir: "dist",
+        },
+        include: ["src/**/*.ts"],
+      }),
+    );
+    await writeFile(
+      join(root, "tsconfig.build.json"),
+      '{"extends":"./tsconfig.json"}\n',
+    );
+    await writeFile(
+      join(root, ".gitignore"),
+      "node_modules/\ndist/\n.cache/\n.turbo/\n",
+    );
+    // TS 7.0 accepts this contextual callback; TS 7.1 reports TS7031.
+    // The source stays identical while only the selected compiler changes.
+    await writeFile(
+      join(root, "src/repro.ts"),
+      [
+        "interface Options { signal?: AbortSignal }",
+        "interface Provider { inspect(options?: Options): Promise<void> }",
+        "declare const base: Provider;",
+        "const providers: Provider[] = [{ ...base, inspect: async ({ signal } = {}) => {",
+        "  if (signal?.aborted) throw signal.reason;",
+        "} }];",
+      ].join("\n"),
+    );
+    await workflowGit(root, ["init", "--initial-branch=main"]);
+    await workflowGit(root, ["add", "."]);
+    await workflowGit(root, ["commit", "-m", "test: seed compiler isolation"]);
+    const run = (task: string, dryRun = false) =>
+      execute(
+        join(root, "scripts/run-turbo.mjs"),
+        [
+          "run",
+          task,
+          ...(dryRun ? ["--dry=json"] : ["--output-logs=errors-only"]),
+          "--cache=local:rw",
+          "--cache-dir",
+          cache,
+        ],
+        root,
+      );
+    const hash = (task: string) => {
+      const result = run(task, true);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const entry = dryRunSchema
+        .parse(JSON.parse(result.stdout))
+        .tasks.find((value) => value.taskId === task);
+      if (entry === undefined) throw new Error(`Missing compiler task ${task}`);
+      return entry.hash;
+    };
+    const hashes = new Map<string, string>();
+    for (const task of ["compile", "typecheck"]) {
+      const cold = run(task);
+      expect(cold.status, cold.stdout + cold.stderr).toBe(0);
+      hashes.set(task, hash(task));
+      const warm = run(task);
+      expect(warm.status, warm.stdout + warm.stderr).toBe(0);
+      expect(warm.stdout).toMatch(/Cached:\s+1 cached/u);
+    }
+    await writeInventory(true);
+    for (const task of ["compile", "typecheck"]) {
+      const result = run(task);
+      expect(result.status, result.stdout + result.stderr).toBeGreaterThan(0);
+      expect(result.stdout + result.stderr).toContain("TS7031");
+      expect(result.stdout).toMatch(/Cached:\s+0 cached/u);
+      expect(hash(task)).not.toBe(hashes.get(task));
+    }
+  },
+);
+
+it("passes REA_OXLINT_THREADS and GITHUB_ACTIONS through Turbo lint without changing its cache hash", async () => {
+  const config = await readRootConfig();
+  const lintTask = config.tasks.lint;
+  expect(lintTask).toBeDefined();
+  const passThroughEnv = z.array(z.string()).parse(lintTask?.passThroughEnv);
+  expect(passThroughEnv).toEqual(
+    expect.arrayContaining(["REA_OXLINT_THREADS", "GITHUB_ACTIONS"]),
+  );
+  const root = await createTestTempDirectory("rea-turbo-lint-env-");
+  const cache = join(root, ".turbo-cache");
+  const observed = join(root, "observed.json");
+  await writeTaskFixture(root, ["lint"], {
+    lint: `node -e 'const fs=require("node:fs"); fs.writeFileSync(${JSON.stringify(observed)}, JSON.stringify({threads: process.env.REA_OXLINT_THREADS ?? null, ci: process.env.GITHUB_ACTIONS ?? null})); fs.mkdirSync(".cache/static-checks", {recursive: true}); fs.writeFileSync(".cache/static-checks/oxlint.json", "{}");'`,
+  });
+  await writeFile(
+    join(root, ".gitignore"),
+    "node_modules/\n.cache/\n.turbo/\n.turbo-cache/\nobserved.json\n",
+  );
+  await workflowGit(root, ["init", "--initial-branch=main"]);
+  await workflowGit(root, ["add", "."]);
+  await workflowGit(root, ["commit", "-m", "test: seed lint passthrough"]);
+  const runWithEnv = (envOverrides: Record<string, string>, dryRun = false) =>
+    spawnSync(
+      process.execPath,
+      [
+        turbo,
+        "run",
+        "lint",
+        ...(dryRun ? ["--dry=json"] : ["--output-logs=errors-only"]),
+        "--cache=local:rw",
+        "--cache-dir",
+        cache,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 30_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, ...envOverrides },
+      },
+    );
+  const hashOne = dryRunSchema
+    .parse(JSON.parse(runWithEnv({ REA_OXLINT_THREADS: "1" }, true).stdout))
+    .tasks.find((entry) => entry.taskId === "lint")?.hash;
+  const hashTwo = dryRunSchema
+    .parse(JSON.parse(runWithEnv({ REA_OXLINT_THREADS: "3" }, true).stdout))
+    .tasks.find((entry) => entry.taskId === "lint")?.hash;
+  expect(hashOne).toBeDefined();
+  expect(hashTwo).toBe(hashOne);
+  const executed = runWithEnv({
+    REA_OXLINT_THREADS: "1",
+    GITHUB_ACTIONS: "true",
+  });
+  expect(executed.status, executed.stdout + executed.stderr).toBe(0);
+  expect(JSON.parse(await readFile(observed, "utf8"))).toEqual({
+    threads: "1",
+    ci: "true",
+  });
 });

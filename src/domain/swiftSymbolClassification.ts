@@ -22,37 +22,64 @@ const NOMINAL_CATEGORIES: ReadonlyMap<string, SwiftTypeCategory> = new Map([
  */
 export const classifySwiftSymbol = (
   name: string,
-): { readonly category: SwiftTypeCategory | null } | undefined => {
+):
+  | {
+      readonly category: SwiftTypeCategory | null;
+      readonly protocolIdentity: boolean;
+    }
+  | undefined => {
   const prefix = /^_?(?:\$[sS]|_T0)/u.exec(name);
   if (prefix === null) {
-    if (!name.includes("_Tt")) return undefined;
+    if (!name.startsWith("_Tt")) return undefined;
     return {
       category:
         LEGACY_CATEGORIES.find(([prefix]) => name.startsWith(prefix))?.[1] ??
         null,
+      protocolIdentity: name.startsWith("_TtP"),
     };
   }
   const mangling = name.slice(prefix[0].length);
   let offset = identifierEnd(mangling, 0);
-  if (offset === undefined) return { category: null };
+  if (offset === undefined) return { category: null, protocolIdentity: false };
   let category: SwiftTypeCategory | null = null;
+  let protocolIdentity = false;
   for (;;) {
     const end = identifierEnd(mangling, offset);
-    if (end === undefined) break;
-    const kind = mangling.charAt(end);
+    if (end === undefined) {
+      // A protocol member retains its enclosing category, but only the exact
+      // descriptor terminal identifies the protocol itself.
+      protocolIdentity =
+        category === "protocols" && mangling.slice(offset) === "Mp";
+      // A zero-prefixed identifier uses word substitutions or Punycode. We
+      // cannot tell whether it continues a nested type or names a member, so
+      // retaining the outer category would be a guess.
+      if (
+        mangling.charAt(offset) === "0" ||
+        // A substituted module can introduce a constrained extension after
+        // the nominal type. This parser does not decode that context, so it
+        // cannot retain the preceding nominal category as the member's owner.
+        mangling.startsWith("AA", offset)
+      )
+        category = null;
+      break;
+    }
+    const kindOffset = filePrivateDiscriminatorEnd(mangling, end) ?? end;
+    const kind = mangling.charAt(kindOffset);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
       // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
       // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
       // suffix; unknown substitution encodings stay unclassified, never guessed.
-      if (mangling.slice(end) === "Mp") category = "protocols";
-      else if (kind === "E" && category !== null) category = "extensions";
+      if (mangling.slice(kindOffset) === "Mp") {
+        category = "protocols";
+        protocolIdentity = true;
+      } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
-    offset = end + 1;
+    offset = kindOffset + 1;
   }
-  return { category };
+  return { category, protocolIdentity };
 };
 
 /**
@@ -75,6 +102,16 @@ const SWIFT_MANGLING_PREFIXES = [
 export const isSwiftMangledSymbolName = (name: string): boolean =>
   SWIFT_MANGLING_PREFIXES.some((prefix) => name.startsWith(prefix));
 
+/**
+ * A Swift symbol carries either a demangler mangling or a name the category
+ * decoder already accepts, including visible runtime class names (`_Tt…`) and
+ * the optional leading underscore of legacy encodings (`__T0…`). Whether the
+ * nominal category can be decoded is a separate question, so it must not decide
+ * whether the symbol is Swift at all.
+ */
+export const isSwiftSymbolName = (name: string): boolean =>
+  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
+
 const identifierEnd = (
   mangling: string,
   offset: number,
@@ -91,4 +128,24 @@ const identifierEnd = (
   )
     return undefined;
   return end;
+};
+
+/**
+ * swiftc inserts `<length>_<hex>LL` between a private declaration's name and
+ * its nominal kind. The length-prefixed discriminator is itself an identifier,
+ * so reading the digit as the kind keeps the enclosing type's category.
+ */
+const filePrivateDiscriminatorEnd = (
+  mangling: string,
+  offset: number,
+): number | undefined => {
+  const lengthToken = /^[1-9][0-9]*/u.exec(mangling.slice(offset))?.[0];
+  if (
+    lengthToken === undefined ||
+    mangling.charAt(offset + lengthToken.length) !== "_"
+  )
+    return undefined;
+  const end = identifierEnd(mangling, offset);
+  if (end === undefined || !mangling.startsWith("LL", end)) return undefined;
+  return end + 2;
 };

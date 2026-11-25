@@ -1,9 +1,12 @@
 import type { DecodedComponent } from "../domain/wasm/wasmComponent.js";
 import { readWasmPreamble } from "../domain/wasm/wasmPreamble.js";
 import {
-  WasmComponentFormatFailure,
+  isWasmComponentFormatFailure,
+  malformedComponent,
+  unsupportedComponent,
   WasmComponentReader,
   type DecodeItemBudget,
+  type WasmComponentFormatFailure,
 } from "./WasmComponentReader.js";
 import { decodeCoreExternType } from "./WasmCoreTypes.js";
 
@@ -77,20 +80,17 @@ const headerFailure = (
 ): WasmComponentFormatFailure | null => {
   const preamble = readWasmPreamble(bytes, start, end);
   if (preamble === undefined)
-    return new WasmComponentFormatFailure(
-      "malformed",
+    return malformedComponent(
       start,
       "Embedded module has no WebAssembly header",
     );
   if (preamble.layer !== 0)
-    return new WasmComponentFormatFailure(
-      "unsupported",
+    return unsupportedComponent(
       start,
       `Embedded module has layer ${String(preamble.layer)}, not a core module`,
     );
   if (preamble.version !== 1)
-    return new WasmComponentFormatFailure(
-      "unsupported",
+    return unsupportedComponent(
       start,
       `Embedded core module version ${String(preamble.version)} is not decoded`,
     );
@@ -140,7 +140,7 @@ export const decodeCoreModuleInterface = (
         for (const entry of decodeExports(section)) exports.push(entry);
     }
   } catch (cause: unknown) {
-    if (!(cause instanceof WasmComponentFormatFailure)) throw cause;
+    if (!isWasmComponentFormatFailure(cause)) throw cause;
     return incomplete(cause, imports, exports);
   }
   return {

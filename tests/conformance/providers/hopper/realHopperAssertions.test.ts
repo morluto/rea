@@ -5,7 +5,7 @@ import {
   requireFunctionDossierOracle,
   requireFunctionDossier,
   requirePseudocode,
-} from "../../../../src/application/RealHopperAssertions.js";
+} from "../../../../scripts/lib/real-hopper-assertions.mjs";
 
 describe("Hopper verifier semantic rejection", () => {
   it("rejects empty and embedded per-item decompilation failures", () => {

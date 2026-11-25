@@ -1,6 +1,7 @@
 import type { DecodedComponent } from "../domain/wasm/wasmComponent.js";
 import {
-  WasmComponentFormatFailure,
+  isWasmComponentFormatFailure,
+  type WasmComponentFormatFailure,
   type WasmComponentReader,
 } from "./WasmComponentReader.js";
 import { decodeSort } from "./WasmComponentTypes.js";
@@ -59,7 +60,7 @@ export const decodeCustomSection = (
       decodeNameSubsection(names, id, reader.sub(size, "name subsection"));
     }
   } catch (cause: unknown) {
-    if (!(cause instanceof WasmComponentFormatFailure)) throw cause;
+    if (!isWasmComponentFormatFailure(cause)) throw cause;
     names.status = "invalid";
     names.reason = cause.message;
     return cause;

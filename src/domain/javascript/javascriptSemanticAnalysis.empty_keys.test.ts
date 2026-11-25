@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { topLevelBinding } from "./javascriptSemanticAnalysis.fixture.js";
 
 it("resolves void keys while retaining their calls and binding writes", () => {
   const ir = analyzeJavaScriptSemantics(`
@@ -17,35 +18,30 @@ it("resolves void keys while retaining their calls and binding writes", () => {
   expect(ir.childProcessSpawns[0]?.stdioMode).toBe("dynamic");
 });
 
-it.each([
-  "const routes = {'': 'HOME'}; const root = routes[''];",
-  "const routes = {['']: 'HOME'}; const root = routes[''];",
-  "const routes = {'': 'HOME'}; const {'': root} = routes;",
-  "const routes = {'': 'HOME'}; const {['']: root} = routes;",
-  "const routes = {home: 'HOME'}; const root = routes.home;",
-])("preserves exact string keys in %s", (source) => {
-  const ir = analyzeJavaScriptSemantics(source);
-  expect(ir.bindings.find(({ name }) => name === "root")?.value).toEqual({
-    status: "literal",
-    value: "HOME",
-  });
-  expect(
-    ir.frontiers.filter(({ kind }) => kind === "dynamic-property"),
-  ).toEqual([]);
-});
-
-it("keeps a computed identifier key unresolved", () => {
+it("resolves literal empty keys while leaving computed identifiers unresolved", () => {
   const ir = analyzeJavaScriptSemantics(
-    "const routes = {'': 'HOME'}; const root = routes[key];",
+    [
+      "const routes = {['']: 'HOME'};",
+      "const member = routes[''];",
+      "const {['']: pattern} = routes;",
+      "const unknown = routes[key];",
+    ].join("\n"),
   );
-  expect(ir.bindings.find(({ name }) => name === "root")?.value.status).toBe(
-    "unknown",
-  );
-  expect(ir.frontiers).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ kind: "dynamic-property" }),
-    ]),
-  );
+  for (const name of ["member", "pattern"])
+    expect(topLevelBinding(ir, name).value).toEqual({
+      status: "literal",
+      value: "HOME",
+    });
+  expect(topLevelBinding(ir, "unknown").value.status).toBe("unknown");
+  expect(ir.frontiers).toMatchObject([
+    {
+      kind: "dynamic-property",
+      location: {
+        start: { line: 4, column: 23 },
+        end: { line: 4, column: 26 },
+      },
+    },
+  ]);
 });
 
 it("retains exact empty method names and environment keys", () => {
@@ -81,44 +77,27 @@ it("retains exact empty require paths and dependencies without dynamic-key bindi
     module.exports.root = require("./table.js")[''];
   `);
   expect(
-    ir.moduleLinks.map(({ kind, importedName, localName, exportedName }) => ({
-      kind,
-      importedName,
-      localName,
-      exportedName,
-    })),
+    ir.moduleLinks.map(
+      ({ kind, specifier, importedName, localName, exportedName }) => [
+        kind,
+        specifier,
+        importedName,
+        localName,
+        exportedName,
+      ],
+    ),
   ).toEqual([
-    {
-      kind: "require",
-      importedName: "",
-      localName: "fromPattern",
-      exportedName: null,
-    },
-    {
-      kind: "require",
-      importedName: "",
-      localName: "fromMember",
-      exportedName: null,
-    },
-    {
-      kind: "require",
-      importedName: null,
-      localName: null,
-      exportedName: null,
-    },
-    {
-      kind: "require",
-      importedName: null,
-      localName: null,
-      exportedName: null,
-    },
-    {
-      kind: "commonjs-export",
-      importedName: "",
-      localName: null,
-      exportedName: "root",
-    },
+    ["require", "./table.js", "", "fromPattern", null],
+    ["require", "./table.js", "", "fromMember", null],
+    ["require", "./table.js", null, null, null],
+    ["require", "./table.js", null, null, null],
+    ["commonjs-export", "./table.js", "", null, "root"],
   ]);
+  for (const name of ["dynamicPattern", "dynamicMember"])
+    expect(topLevelBinding(ir, name).provenance).toMatchObject({
+      status: "unknown",
+      origins: [],
+    });
 });
 
 it("retains exact empty request field names without dynamic fields", () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
 import {
@@ -311,7 +312,7 @@ export const wasmComponentSchema = z.strictObject({
   type_scopes: z.array(typeScopeSchema),
   gated_features: z.array(gatedFeatureSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     not_decoded: z.array(notDecodedSchema),
   }),
   limitations: z.array(z.string()),

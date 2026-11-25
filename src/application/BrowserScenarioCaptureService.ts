@@ -1,17 +1,22 @@
-import type { ExecutionOptions } from "./AnalysisProvider.js";
-import type { BrowserScenarioCapturePort } from "./BrowserScenarioCapturePort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "./BrowserScenarioEvidence.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { err, type Result } from "../domain/result.js";
 import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
-import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  keepIncompleteObservation,
+} from "./ProviderOperationExecution.js";
+
+import { jsonValueSchema } from "../domain/jsonValue.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 const PROVIDER_ID = "rea-playwright-browser-scenario";
@@ -31,42 +36,59 @@ export const captureBrowserScenario = async (
       ),
     );
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   const captured = await provider.captureScenario(scenario, options);
   if (!captured.ok) {
-    const partial = captured.error.partialObservation;
-    if (
-      partial !== undefined &&
-      "kind" in partial &&
-      partial.kind === "browser-scenario-observation"
-    ) {
-      const report = browserScenarioCaptureSchema.safeParse(partial.capture);
+    keepIncompleteObservation(
+      captured.error,
+      OPERATION,
+      "Browser scenario provider retained a non-JSON incomplete observation.",
+    );
+    const seen = new Set<AnalysisError>();
+    const promoted = new Map<object, Evidence>();
+    let owner: AnalysisError | undefined = captured.error;
+    while (owner !== undefined && !seen.has(owner)) {
+      seen.add(owner);
+      const partial = owner.partialObservation;
       if (
-        report.success &&
-        report.data.steps.every(({ status }) => status === "completed")
+        partial !== undefined &&
+        "kind" in partial &&
+        partial.kind === "browser-scenario-observation"
       ) {
-        captured.error.partialObservation = createBrowserScenarioEvidence(
-          scenario,
-          report.data,
-          provider.identity(),
-        );
-      } else if (!report.success) {
-        if (captured.error instanceof AnalysisCancelledError)
-          return err(
-            new AnalysisOutputError(
-              OPERATION,
-              "Browser scenario provider retained a malformed completed capture.",
-              { cause: report.error },
-            ),
-          );
-        return captured;
+        const report = browserScenarioCaptureSchema.safeParse(partial.capture);
+        // Every cleanup primary may become the selected error after release.
+        if (
+          report.success &&
+          report.data.steps.every(({ status }) => status === "completed")
+        ) {
+          const evidence =
+            promoted.get(partial) ??
+            createBrowserScenarioEvidence(
+              scenario,
+              {
+                source: jsonValueSchema.parse(partial.capture),
+                facts: report.data,
+              },
+              provider.identity(),
+            );
+          promoted.set(partial, evidence);
+          owner.partialObservation = evidence;
+        }
       }
+      owner = owner.cleanupPrimary;
     }
     return captured;
   }
-  const report = browserScenarioCaptureSchema.safeParse(captured.value);
+  const json = jsonValueSchema.safeParse(captured.value);
+  if (!json.success)
+    return err(
+      new AnalysisOutputError(
+        OPERATION,
+        "Browser scenario provider returned non-JSON capture data.",
+        { cause: json.error },
+      ),
+    );
+  const report = browserScenarioCaptureSchema.safeParse(json.data);
   if (!report.success)
     return err(
       new AnalysisOutputError(
@@ -76,7 +98,11 @@ export const captureBrowserScenario = async (
       ),
     );
   return completeProviderEvidence(
-    createBrowserScenarioEvidence(scenario, report.data, provider.identity()),
+    createBrowserScenarioEvidence(
+      scenario,
+      { source: json.data, facts: report.data },
+      provider.identity(),
+    ),
     options.signal,
   );
 };

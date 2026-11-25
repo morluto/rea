@@ -1,27 +1,31 @@
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { WasmComponentPort } from "../application/wasm/WasmComponentPort.js";
 import {
-  ArtifactFileCleanupFailure,
-  artifactFileCancellationCause,
+  ArtifactResourceScope,
+  artifactFilePrimaryFacts,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+  projectArtifactCloseFailure,
+  projectStableArtifactFailure,
+  readStableArtifact,
+  type ArtifactReaderFailure,
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { WasmComponentPort } from "../ports/wasm/WasmComponentPort.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  cancelledBy,
+  fixedCeilingConstraint,
+  isAborted,
+  unsupportedTarget,
+  type AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import type { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   WASM_COMPONENT_GRAMMAR,
@@ -29,177 +33,136 @@ import {
   type InspectWasmComponentInput,
   type WasmComponent,
 } from "../domain/wasm/wasmComponent.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import { decodeWasmComponent } from "./WasmComponentDecoder.js";
+import { WASM_COMPONENT_PROVIDER_IDENTITY } from "./WasmComponentProviderIdentity.js";
 import {
+  componentLimit,
+  CORE_MODULE_FIELD,
+  isWasmComponentFormatFailure,
   MAX_INLINE_RESULT_BYTES,
-  WasmComponentFormatFailure,
-  WasmComponentLimitExceeded,
+  WASM_COMPONENT_FORMAT,
 } from "./WasmComponentReader.js";
 
-/** Bundled decoder identity; the admitted grammar is pinned separately. */
-export const WASM_COMPONENT_PROVIDER_IDENTITY = {
-  id: "wasm-component-binary",
-  name: "REA WebAssembly component decoder",
-  version: "1",
-} as const;
 const OPERATION = "inspect_wasm_component";
 const INPUT_BYTES = 8 * 1024 * 1024;
 
-/**
- * The decoder cancels with `signal.throwIfAborted()`, which throws the
- * signal's own reason. Only that exact value is cancellation; a read failure
- * that merely coincides with a later abort keeps its own classification.
- */
-const isDecoderAbort = (cause: unknown, signal?: AbortSignal): boolean =>
-  signal?.aborted === true && cause === signal.reason;
-
-/** Decoder failures: bounded output and unadmitted or malformed encodings. */
-const decoderFailure = (
-  cause: WasmComponentLimitExceeded | WasmComponentFormatFailure,
+/** The decoder's own allowances; the input and report bounds have no control yet. */
+const limitConstraint = (
+  failure: ParseFailureError<"limit">,
   path: string,
-): AnalysisError => {
-  if (cause instanceof WasmComponentLimitExceeded)
-    return cause.limit === "decoded-items"
-      ? new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          `${cause.message} for ${path}, so the complete result would exceed the inline output budget; no partial success is returned.`,
-          { maximum_decoded_entries: cause.maximum },
-          { cause },
-        )
-      : new AnalysisResourceConstraintError(
-          OPERATION,
-          "transport",
-          `${cause.message} for ${path}; no partial success is returned.`,
-          { maximum_output_bytes: cause.maximum },
-          { cause },
-        );
-  return cause.kind === "unsupported"
-    ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
-        cause,
-        ...(cause.message.includes("inspect_wasm_artifact")
-          ? {
-              remediationAction:
-                "Inspect core WebAssembly modules with inspect_wasm_artifact.",
-            }
-          : {}),
-      })
-    : new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: `Selected artifact ${path}: ${cause.message}`,
-        },
-      ]);
-};
-
-const failureForPrimary = (
-  cause: unknown,
-  path: string,
-  signal?: AbortSignal,
-): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (isDecoderAbort(cause, signal))
-    return new AnalysisCancelledError(OPERATION, { cause });
-  if (
-    cause instanceof WasmComponentLimitExceeded ||
-    cause instanceof WasmComponentFormatFailure
-  )
-    return decoderFailure(cause, path);
-  if (cause instanceof ArtifactReaderFailure) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { maximum_input_bytes: INPUT_BYTES },
-        {
-          cause,
-          remediationAction:
-            "Select a suitable stable artifact within the reported input byte allowance. Do not truncate required bytes; retrying the unchanged oversized input will fail again.",
-        },
-      );
-    if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(
-    WASM_COMPONENT_PROVIDER_IDENTITY.id,
-    OPERATION,
-    {
-      cause,
-      diagnostics: {
+): AnalysisResourceConstraintError => {
+  const { name, maximum } = failure.failure.limit;
+  return name === "decoded-items"
+    ? parseLimitConstraint(OPERATION, "memory", failure, {
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
-      },
-    },
-  );
+        legacyMaximumKey: "maximum_decoded_entries",
+        ...fixedAllowanceOptions(
+          "The decoded component entry allowance",
+          "report",
+          { limit: maximum, unit: "entries" },
+        ),
+      })
+    : parseLimitConstraint(OPERATION, "transport", failure, {
+        path,
+        legacyMaximumKey: "maximum_output_bytes",
+        ...fixedAllowanceOptions(
+          "The inline component report allowance",
+          "report",
+          { limit: maximum, unit: "bytes" },
+        ),
+      });
 };
 
+const fileSizeConstraint = (
+  failure: ArtifactReaderFailure,
+): AnalysisResourceConstraintError =>
+  fixedCeilingConstraint(
+    OPERATION,
+    "file-size",
+    failure.message,
+    fixedAllowanceOptions("the component input allowance", "input", {
+      limit: INPUT_BYTES,
+      unit: "bytes",
+    }).fixedAllowance,
+    { cause: failure },
+  );
+
 /**
- * Primary failure, with any retained read cleanup failure attached and bound
- * to its descriptor lease, so a later successful close resolves it.
+ * Classify one failed inspection, keeping the completed file identity and any
+ * unresolved read cleanup on the reported failure.
  */
 const failureFor = (
   cause: unknown,
   path: string,
+  snapshot: CompletedIdentity | undefined,
   signal?: AbortSignal,
-): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(cause.fileCleanupFailure.outcome.cause, path, signal)
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path, signal);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const error = analysisErrorWithCleanupFailure(
-    primary,
-    cleanupFailure(cause, cause.cleanup),
-    OPERATION,
+) => {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: WASM_COMPONENT_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path,
+      description: "WebAssembly component",
+      recognise: (failure) => {
+        // The decoder throws the signal's own reason. Only that exact value is
+        // cancellation; a read failure that merely coincides with a later
+        // abort keeps its own classification.
+        if (isAborted(signal) && failure === signal.reason)
+          return cancelledBy(OPERATION, signal);
+        if (isParseLimit(failure, WASM_COMPONENT_FORMAT))
+          return limitConstraint(failure, path);
+        if (
+          isWasmComponentFormatFailure(failure) &&
+          failure.failure.field === CORE_MODULE_FIELD
+        )
+          return unsupportedTarget(
+            OPERATION,
+            path,
+            WASM_COMPONENT_FORMAT,
+            failure.message,
+            {
+              cause: failure,
+              field: failure.failure.field,
+              ...(failure.failure.offset === undefined
+                ? {}
+                : { offset: failure.failure.offset }),
+              related: { operations: ["inspect_wasm_artifact"] },
+            },
+          );
+        return undefined;
+      },
+      fileSize: fileSizeConstraint,
+      unclassified: (failure) =>
+        new ProviderAdapterError(
+          WASM_COMPONENT_PROVIDER_IDENTITY.id,
+          OPERATION,
+          {
+            cause: failure,
+            diagnostics: { path, reason: errorMessage(failure) },
+          },
+        ),
+    }),
   );
-  bindArtifactFileCleanup(cause, error);
-  return error;
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    path,
+    WASM_COMPONENT_PROVIDER_IDENTITY.id,
+    OPERATION,
+    snapshot,
+  );
 };
 
-const cleanupFailure = (
-  cause: ArtifactReaderFailure,
-  cleanup: NonNullable<ArtifactReaderFailure["cleanup"]>,
-): ProviderCleanupError =>
-  new ProviderCleanupError(
-    WASM_COMPONENT_PROVIDER_IDENTITY.id,
-    cleanup.resources,
-    { reason: cleanup.reason },
-    { operation: OPERATION, cause },
-  );
+/** Byte identity of a stable read that completed before a later failure. */
+interface CompletedIdentity {
+  readonly sha256: string;
+  readonly bytes: number;
+}
 
 const LIMITATIONS = [
   "Decoding is structural against the pinned component-model Binary.md grammar. Type correctness, name uniqueness, index bounds and canonical ABI rules are not validated, so a decoded component can still be invalid.",
@@ -218,14 +181,11 @@ export class WasmComponentProvider implements WasmComponentPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = cleanupFailure(cause, cause.cleanup);
-      bindArtifactFileCleanup(cause, error);
-      throw error;
+      throw projectArtifactCloseFailure(
+        cause,
+        WASM_COMPONENT_PROVIDER_IDENTITY.id,
+        OPERATION,
+      );
     }
   }
 
@@ -233,32 +193,37 @@ export class WasmComponentProvider implements WasmComponentPort {
     input: InspectWasmComponentInput,
     options?: ExecutionOptions,
   ): Promise<Result<WasmComponent, AnalysisError>> {
+    let completed: CompletedIdentity | undefined;
     try {
-      return await this.#resources.run(() => this.#inspect(input, options));
+      return await this.#resources.run(async () => {
+        const snapshot = await readStableArtifact(
+          input.path,
+          INPUT_BYTES,
+          options?.signal,
+          undefined,
+          this.#resources,
+        );
+        completed = { sha256: snapshot.sha256, bytes: snapshot.bytes.length };
+        assertArtifactReadActive(options?.signal);
+        return ok(await this.#decode(input.path, snapshot, options?.signal));
+      });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, options?.signal));
+      return err(failureFor(cause, input.path, completed, options?.signal));
     }
   }
 
-  async #inspect(
-    input: InspectWasmComponentInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<WasmComponent, AnalysisError>> {
-    const snapshot = await readStableArtifact(
-      input.path,
-      INPUT_BYTES,
-      options?.signal,
-      undefined,
-      this.#resources,
-    );
-    assertArtifactReadActive(options?.signal);
-    const decoded = await decodeWasmComponent(snapshot.bytes, options?.signal);
+  async #decode(
+    path: string,
+    snapshot: StableArtifactSnapshot,
+    signal: AbortSignal | undefined,
+  ): Promise<WasmComponent> {
+    const decoded = await decodeWasmComponent(snapshot.bytes, signal);
     const invalidNames = decoded.components.some(
       (component) => component.names?.status === "invalid",
     );
     const report = {
       artifact: {
-        path: input.path,
+        path,
         sha256: snapshot.sha256,
         bytes: snapshot.bytes.length,
       },
@@ -295,10 +260,7 @@ export class WasmComponentProvider implements WasmComponentPort {
       Buffer.byteLength(JSON.stringify(report), "utf8") >
       MAX_INLINE_RESULT_BYTES
     )
-      throw new WasmComponentLimitExceeded(
-        "output-bytes",
-        MAX_INLINE_RESULT_BYTES,
-      );
+      throw componentLimit("output-bytes", MAX_INLINE_RESULT_BYTES);
     const parsed = wasmComponentSchema.safeParse(report);
     if (!parsed.success)
       throw new AnalysisOutputError(
@@ -306,7 +268,7 @@ export class WasmComponentProvider implements WasmComponentPort {
         "Component decoder produced invalid ranges or report values.",
         { cause: parsed.error },
       );
-    assertArtifactReadActive(options?.signal);
-    return ok(parsed.data);
+    assertArtifactReadActive(signal);
+    return parsed.data;
   }
 }
