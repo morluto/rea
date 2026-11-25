@@ -117,9 +117,8 @@ cliTest(
         category: fixture.category,
         details: {
           operation: "inspect_artifact",
-          path,
           failure_kind: fixture.kind,
-          format: fixture.format,
+          format: "format" in fixture ? fixture.format : "android-boot-image",
         },
       });
       expect((await readFile(path)).equals(fixture.bytes)).toBe(true);

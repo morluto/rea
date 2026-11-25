@@ -54,9 +54,7 @@ for (const { operation, session, cases } of await loadTargetFailureReaders()) {
         const call = await cli.sharedMcpCall!();
         if (session === true) {
           const opened = await call("open_binary", { path });
-          expect(opened.isError, JSON.stringify(opened.content)).not.toBe(
-            true,
-          );
+          expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
         }
         const response = await call(operation, {
           ...(session === true ? {} : { path }),

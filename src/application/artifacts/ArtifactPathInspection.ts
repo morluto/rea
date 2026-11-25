@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
@@ -17,8 +17,8 @@ import type {
   RetainedResourceScope,
 } from "../../ports/AnalysisProvider.js";
 import {
-  type ArtifactResourceScope,
   translateArtifactFailure,
+  type ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { InspectArtifactDirectory } from "../../ports/artifacts/ArtifactDirectoryInspectionPort.js";
 import type { DirectAnalysisDependencies } from "../DirectAnalysisDependencies.js";

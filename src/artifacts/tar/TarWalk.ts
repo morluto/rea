@@ -155,13 +155,16 @@ const withPax = (
 const paxRecordBytes = (key: string, value: string): number =>
   Buffer.byteLength(key) + Buffer.byteLength(value) + PAX_ENTRY_OVERHEAD_BYTES;
 
-/** Bytes the merged global map will retain, before that map is allocated. */
-const mergedPaxBytes = (
+/**
+ * How many bytes merging `records` adds to the retained global map, before
+ * that map is allocated. Only the changed keys are counted, so a run of tiny
+ * global headers costs their own size, not the whole map's.
+ */
+const mergedPaxBytesDelta = (
   base: TarPaxRecords,
   records: TarPaxRecords,
 ): number => {
   let bytes = 0;
-  for (const [key, value] of base) bytes += paxRecordBytes(key, value);
   for (const [key, value] of records) {
     const previous = base.get(key);
     if (value === "") {
@@ -169,7 +172,7 @@ const mergedPaxBytes = (
     } else if (previous === undefined) bytes += paxRecordBytes(key, value);
     else bytes += Buffer.byteLength(value) - Buffer.byteLength(previous);
   }
-  return Math.max(0, bytes);
+  return bytes;
 };
 
 const decimal = (value: string | undefined): bigint | undefined =>
@@ -382,7 +385,10 @@ export const walkTar = async (
           if (typeflag === TAR_TYPEFLAGS.paxGlobal) {
             // Charge the map that withPax is about to copy. Repeated global
             // headers otherwise accumulate without reaching this budget.
-            const nextBytes = mergedPaxBytes(global, pax.records);
+            const nextBytes = Math.max(
+              0,
+              chargedGlobalPax + mergedPaxBytesDelta(global, pax.records),
+            );
             if (nextBytes > chargedGlobalPax)
               retained.charge(
                 nextBytes - chargedGlobalPax,
