@@ -1,4 +1,3 @@
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 
@@ -12,7 +11,7 @@ import {
 import { buildIso9660Image } from "../domain/iso9660/iso9660.fixture.js";
 import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 
 vi.mock("node:timers/promises", async (importOriginal) => {
   const timers = await importOriginal<typeof import("node:timers/promises")>();
@@ -21,14 +20,8 @@ vi.mock("node:timers/promises", async (importOriginal) => {
 
 const SECTOR = 2048;
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-iso9660-boundary-"),
-    "image.iso",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-iso9660-boundary-", "image.iso", bytes);
 
 const inventory = async (
   bytes: Buffer,

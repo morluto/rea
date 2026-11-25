@@ -11,7 +11,10 @@ import {
   materializeArtifactInventory,
   scanCanonicalArtifactInventory,
 } from "../../../tests/fixtures/artifactInventory.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../../tests/fixtures/temporaryDirectory.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
@@ -110,12 +113,8 @@ const pyzWithInternedModuleName = (name: string, body: Buffer): Buffer => {
   return Buffer.concat([ordinary.subarray(0, tableOffset), table]);
 };
 
-const writeArchive = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-pyinstaller-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeArchive = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-pyinstaller-", name, bytes);
 
 const sampleMembers = (
   script: Buffer,
