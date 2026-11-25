@@ -801,6 +801,7 @@
 * **macho:** read LC_BUILD_VERSION fields through BinaryReader ([a0d2357](https://github.com/morluto/rea/commit/a0d2357230bdce24510436ee405d263fceb47870)), refs [#11865](https://github.com/morluto/rea/issues/11865)
 * **macho:** use binary facts for native diagnostic admission ([#13929](https://github.com/morluto/rea/issues/13929)) ([7ce3e5d](https://github.com/morluto/rea/commit/7ce3e5d208fe213882de9427835b993a9a36945c))
 * **managed:** read custom-attribute prologs and resource lengths through BinaryReader ([2bd8963](https://github.com/morluto/rea/commit/2bd8963062fa664e7c6fab0410547480778a5ea5)), refs [#11865](https://github.com/morluto/rea/issues/11865)
+* **managed:** share method and field graph registration ([#14471](https://github.com/morluto/rea/issues/14471)) ([9ea3af4](https://github.com/morluto/rea/commit/9ea3af4bb8554c8141ae7af2f4fc454a64001d2c))
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), refs [#11859](https://github.com/morluto/rea/issues/11859)
 * **native:** extract NativeAotPeImage from nativeAotPe ([#13998](https://github.com/morluto/rea/issues/13998)) ([4d5b059](https://github.com/morluto/rea/commit/4d5b059c640aa5b690116bdffefba4085a1c3ebd))
 * **native:** extract NativeMacosErrorProjection from NativeMacOSProvider ([#13741](https://github.com/morluto/rea/issues/13741)) ([3306133](https://github.com/morluto/rea/commit/33061332ef3e386a9412841925128160e31bd1a0))
