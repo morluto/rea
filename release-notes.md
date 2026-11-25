@@ -1352,6 +1352,7 @@
 * **providers:** consolidate refusal and finalization checks ([#12985](https://github.com/morluto/rea/issues/12985)) ([efe2da7](https://github.com/morluto/rea/commit/efe2da79a86e89f596c1741d73ea18b583b3ccac))
 * **providers:** consolidate selection diagnostics checks ([#12982](https://github.com/morluto/rea/issues/12982)) ([01022e9](https://github.com/morluto/rea/commit/01022e9afe83462c4d9e7dc6502785d8c0108cea))
 * **providers:** share availability and target support fixtures ([#14434](https://github.com/morluto/rea/issues/14434)) ([e21bf86](https://github.com/morluto/rea/commit/e21bf8661cc323819b768e9b79698aa1cbd0b7e2))
+* **providers:** share deferred artifact finalization setup ([#14547](https://github.com/morluto/rea/issues/14547)) ([b6b3694](https://github.com/morluto/rea/commit/b6b36947cd16f4a2680c0f97c8c3701526ea7d6a))
 * **providers:** share Java probe preparation cleanup ([#14530](https://github.com/morluto/rea/issues/14530)) ([5424e90](https://github.com/morluto/rea/commit/5424e90b0288f48e9e206d0eef631bda3b95bcbc))
 * **providers:** share layout and crash inspection fixtures ([#14435](https://github.com/morluto/rea/issues/14435)) ([7676a38](https://github.com/morluto/rea/commit/7676a386a12ecb3168a3872bc515222ca26b166d))
 * **providers:** share process group and workspace cleanup assertions ([#14487](https://github.com/morluto/rea/issues/14487)) ([da1ba03](https://github.com/morluto/rea/commit/da1ba036c9133795d6ad0b8329e53e587bdd31b5))
