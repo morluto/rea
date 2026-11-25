@@ -59,21 +59,26 @@ const delayImportFixture = () => {
   const directory = optional + 112 + 13 * 8;
   const section = optional + 240;
   const descriptors = 512;
-  const bytes = Buffer.alloc(descriptors + 96);
+  const bytes = Buffer.alloc(descriptors + 192);
   identity.copy(bytes);
   bytes.writeUInt16LE(1, 70); // NumberOfSections
   bytes.writeUInt16LE(240, 84); // SizeOfOptionalHeader
   bytes.writeUInt32LE(16, optional + 108);
   bytes.writeUInt32LE(0x1000, directory);
   bytes.writeUInt32LE(64, directory + 4);
-  bytes.writeUInt32LE(96, section + 8); // VirtualSize
+  bytes.writeUInt32LE(192, section + 8); // VirtualSize
   bytes.writeUInt32LE(0x1000, section + 12);
-  bytes.writeUInt32LE(96, section + 16); // SizeOfRawData
+  bytes.writeUInt32LE(192, section + 16); // SizeOfRawData
   bytes.writeUInt32LE(descriptors, section + 20);
   bytes.writeUInt32LE(0xc000_0040, section + 36);
   bytes.writeUInt32LE(1, descriptors);
-  bytes.writeUInt32LE(0x1050, descriptors + 4);
-  bytes.writeUInt32LE(0x1040, descriptors + 12);
+  bytes.writeUInt32LE(0x10b0, descriptors + 4);
+  bytes.writeUInt32LE(0x1080, descriptors + 12);
+  bytes.writeUInt32LE(0x1040, descriptors + 16);
+  bytes.writeBigUInt64LE(1n, descriptors + 64);
+  bytes.writeBigUInt64LE(2n, descriptors + 72);
+  bytes.writeBigUInt64LE(1n, descriptors + 128);
+  bytes.writeBigUInt64LE(2n, descriptors + 136);
   return { bytes, manifest, directory, section, descriptors };
 };
 
@@ -151,6 +156,73 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       );
       bytes.writeUInt32LE(0, descriptors + 32);
       bytes.writeUInt32LE(64, directory + 4);
+
+      // The first thunk remains mapped and writable in each refusal below.
+      bytes.writeUInt32LE(136, section + 8);
+      bytes.writeUInt32LE(136, section + 16);
+      await writeArtifact();
+      const unmappedTail = await run();
+      expect(unmappedTail.exitCode).not.toBe(0);
+      expect(unmappedTail.stderr).toContain("outside writable PE data");
+
+      // A second mapping can hold later slots; its permissions matter too.
+      const tailSection = section + 40;
+      bytes.writeUInt16LE(2, 70);
+      bytes.writeUInt32LE(56, tailSection + 8);
+      bytes.writeUInt32LE(0x1088, tailSection + 12);
+      bytes.writeUInt32LE(56, tailSection + 16);
+      bytes.writeUInt32LE(descriptors + 136, tailSection + 20);
+      bytes.writeUInt32LE(0x4000_0040, tailSection + 36);
+      await writeArtifact();
+      const readOnlyTail = await run();
+      expect(readOnlyTail.exitCode).not.toBe(0);
+      expect(readOnlyTail.stderr).toContain("outside writable PE data");
+      // The loader reads a null terminator but does not patch that slot.
+      bytes.writeBigUInt64LE(0n, descriptors + 72);
+      bytes.writeBigUInt64LE(0n, descriptors + 136);
+      await writeArtifact();
+      const readOnlyTerminator = await run();
+      expect(readOnlyTerminator.exitCode, readOnlyTerminator.stderr).toBe(0);
+      bytes.writeBigUInt64LE(2n, descriptors + 72);
+      bytes.writeBigUInt64LE(2n, descriptors + 136);
+
+      bytes.writeUInt32LE(0xc000_0040, tailSection + 36);
+      await writeArtifact();
+      const writableTail = await run();
+      expect(writableTail.exitCode, writableTail.stderr).toBe(0);
+      // Import names can live in read-only data while every function slot
+      // lives in a separate writable mapping.
+      bytes.writeUInt32LE(0x4000_0040, section + 36);
+      bytes.writeUInt32LE(0x1088, descriptors + 12);
+      bytes.writeBigUInt64LE(1n, descriptors + 136);
+      bytes.writeBigUInt64LE(2n, descriptors + 144);
+      await writeArtifact();
+      const readOnlyNames = await run();
+      expect(readOnlyNames.exitCode, readOnlyNames.stderr).toBe(0);
+      bytes.writeUInt32LE(0xc000_0040, section + 36);
+      bytes.writeUInt32LE(0x1080, descriptors + 12);
+      bytes.writeBigUInt64LE(2n, descriptors + 136);
+      bytes.writeBigUInt64LE(0n, descriptors + 144);
+      bytes.writeUInt16LE(1, 70);
+      bytes.fill(0, tailSection, tailSection + 40);
+      bytes.writeUInt32LE(192, section + 8);
+      bytes.writeUInt32LE(192, section + 16);
+
+      bytes.writeBigUInt64LE(3n, descriptors + 144);
+      bytes.writeBigUInt64LE(4n, descriptors + 152);
+      await writeArtifact();
+      const unterminatedIat = await run();
+      expect(unterminatedIat.exitCode).not.toBe(0);
+      expect(unterminatedIat.stderr).toContain("outside writable PE data");
+      bytes.writeBigUInt64LE(0n, descriptors + 144);
+      bytes.writeBigUInt64LE(0n, descriptors + 152);
+
+      bytes.writeBigUInt64LE(0n, descriptors + 136);
+      await writeArtifact();
+      const earlyNullIat = await run();
+      expect(earlyNullIat.exitCode).not.toBe(0);
+      expect(earlyNullIat.stderr).toContain("inconsistent with its name table");
+      bytes.writeBigUInt64LE(2n, descriptors + 136);
 
       bytes.writeUInt32LE(0x4000_0040, section + 36);
       await writeArtifact();

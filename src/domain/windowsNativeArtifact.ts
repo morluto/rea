@@ -214,6 +214,27 @@ export const validateWindowsNativeDelayImports = (
     return fail("has an unmapped delay-import directory");
   const start = owner.offset + directory.address - owner.virtual_address;
   const reader = new BinaryReader(bytes, true, "pe");
+  const thunkAt = (rva: number, writable: boolean): bigint | undefined => {
+    const section = locate(rva, PE64_THUNK_BYTES);
+    if (
+      section === undefined ||
+      (writable && (section.characteristics & IMAGE_SCN_MEM_WRITE) === 0)
+    )
+      return undefined;
+    return reader.word(section.offset + rva - section.virtual_address, 64);
+  };
+  // The name table owns the import count. An early null in the IAT cannot
+  // hide later imports whose slots the delay loader still needs to write.
+  const writableIat = (iatRva: number, namesRva: number): boolean => {
+    for (let offset = 0; ; offset += PE64_THUNK_BYTES) {
+      const name = thunkAt(namesRva + offset, false);
+      if (name === undefined) return false;
+      const address = thunkAt(iatRva + offset, name !== 0n);
+      if (address === undefined) return false;
+      if (name === 0n) return address === 0n;
+      if (address === 0n) return false;
+    }
+  };
   const isNullDescriptor = (offset: number) =>
     bytes
       .subarray(offset, offset + DELAY_DESCRIPTOR_BYTES)
@@ -227,14 +248,14 @@ export const validateWindowsNativeDelayImports = (
     const attributes = reader.u32(descriptor);
     const nameRva = reader.u32(descriptor + 4);
     const iatRva = reader.u32(descriptor + 12);
+    const namesRva = reader.u32(descriptor + 16);
     if (descriptor > start && isNullDescriptor(descriptor))
       return ok(undefined);
-    if (attributes !== 1 || nameRva === 0 || iatRva === 0)
+    if (attributes !== 1 || nameRva === 0 || iatRva === 0 || namesRva === 0)
       return fail("has an invalid RVA-based delay-import descriptor");
-    const iat = locate(iatRva, PE64_THUNK_BYTES);
-    if (iat === undefined || (iat.characteristics & IMAGE_SCN_MEM_WRITE) === 0)
+    if (!writableIat(iatRva, namesRva))
       return fail(
-        "has a delay-import address table outside writable PE data; check the MinGW linker",
+        "has a delay-import address table outside writable PE data or inconsistent with its name table; check the MinGW linker",
       );
   }
   // GNU ld places the null descriptor immediately after the advertised size.
