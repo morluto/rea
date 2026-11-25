@@ -141,8 +141,10 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
   await writeFile(path, properties);
   await truncate(path, MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES + 1);
   let reads = 0;
+  const admitted: FileHandle[] = [];
   controls.file = (handle, opened) => {
     if (opened === path) {
+      admitted.push(handle);
       const read = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(
         (...args: Parameters<typeof handle.read>) => {
@@ -185,8 +187,10 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
       },
     });
     expect(reads).toBe(0);
+    expect(admitted.map(({ fd }) => fd)).toEqual([-1]);
   } finally {
     await resources.close();
+    for (const handle of admitted) if (handle.fd !== -1) await handle.close();
   }
 });
 
@@ -305,7 +309,7 @@ it.each(["replace", "grow", "shrink", "disappear"] as const)(
     const path = join(root, "application.properties");
     const replacement = join(root, "replacement");
     await writeFile(path, properties);
-    await writeFile(replacement, properties);
+    if (change === "replace") await writeFile(replacement, properties);
     controls.file = (handle, opened) => {
       if (opened !== path) return;
       controls.file = undefined;

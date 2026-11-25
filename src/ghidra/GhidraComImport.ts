@@ -1,4 +1,5 @@
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import { hasDosMzMagic } from "../domain/dosMz.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -163,8 +164,7 @@ export const selectGhidraComImport = (
 ): GhidraComImportSelection => {
   if (!filename.toLowerCase().endsWith(".com"))
     return binaryFallback("filename_extension");
-  if (bytes.length > 1 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return binaryFallback("mz_signature");
+  if (hasDosMzMagic(bytes)) return binaryFallback("mz_signature");
   if (ghidraComRecognitionScore(bytes) < COM_SCORE_THRESHOLD)
     return binaryFallback("recognition_score");
   return comLoaderSelection();

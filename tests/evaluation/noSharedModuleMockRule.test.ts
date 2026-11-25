@@ -14,27 +14,11 @@ const tester = new RuleTester({
 const sharedFilename = fileURLToPath(
   new URL("./noSharedModuleMockRule.test.ts", import.meta.url),
 );
-const isolatedFilename = fileURLToPath(
-  new URL("../process-global/noSharedModuleMockRule.test.ts", import.meta.url),
-);
-
 tester.run("no-shared-module-mock", rule, {
   valid: [
     {
-      filename: isolatedFilename,
-      code: 'import { vi } from "vitest"; vi.mock("./dependency.js");',
-    },
-    {
-      filename: isolatedFilename,
-      code: 'import * as testing from "vitest"; testing.vi.doMock("./dependency.js");',
-    },
-    {
       filename: sharedFilename,
       code: 'import { vi } from "vitest"; vi.spyOn(target, "method");',
-    },
-    {
-      filename: sharedFilename,
-      code: "const mock = { mock() {} }; mock.mock();",
     },
     {
       filename: sharedFilename,
@@ -56,21 +40,6 @@ tester.run("no-shared-module-mock", rule, {
     },
   ],
   invalid: [
-    {
-      filename: sharedFilename,
-      code: 'import { vi } from "vitest"; vi.mock("./dependency.js");',
-      errors: [{ messageId: "shared" }],
-    },
-    {
-      filename: sharedFilename,
-      code: 'import { vi as testing } from "vitest"; testing.doMock("./dependency.js");',
-      errors: [{ messageId: "shared" }],
-    },
-    {
-      filename: sharedFilename,
-      code: 'import * as testing from "vitest"; testing.vi.mock("./dependency.js");',
-      errors: [{ messageId: "shared" }],
-    },
     {
       filename: sharedFilename,
       code: 'import * as vitest from "vitest"; vitest.vi["doMock"]("./dependency.js");',

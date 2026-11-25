@@ -79,6 +79,7 @@ interface ElectronFrameInventory {
 }
 
 interface ElectronFrameRead extends ElectronFrameInventory {
+  readonly main: ElectronPageInspection["frames"][number];
   readonly unprovenDocuments: ReadonlySet<string>;
   readonly generations: ReadonlyMap<string, number>;
 }
@@ -157,15 +158,15 @@ const runElectronInspection = async (
   startedAt: string,
 ): Promise<ElectronPageInspection> => {
   const initialRead = await authorizeInitialFrames(context, state);
-  const initialFrames = initialRead.frames;
-  const main = initialFrames.at(0);
-  if (main === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  const { frames: initialFrames, main } = initialRead;
   if (
     !initialRead.unprovenDocuments.has(main.frame_id) &&
     unprovenFrameIds(initialRead, state).has(main.frame_id)
   )
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+    throw new BrowserObservationError(
+      "inspect_electron_page",
+      "target_changed",
+    );
   state.mainFrameId = main.frame_id;
   state.lastProvenMainDocument = state.frameDocuments.get(main.frame_id);
   authorizeFrameGenerations(initialRead, state);
@@ -206,7 +207,10 @@ const runElectronInspection = async (
   }
   await report(context.progress, 3, "Electron inspection complete");
   if (state.navigationDuringCapture)
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+    throw new BrowserObservationError(
+      "inspect_electron_page",
+      "target_changed",
+    );
   return {
     browser: context.discovery.version,
     target: {
@@ -521,8 +525,8 @@ const readCurrentFrames = async (
     context.asarHeaderAdmission,
     context.signal,
   );
-  selectedMainFrame(inventory, state.mainFrameId);
-  return { ...inventory, generations, unprovenDocuments };
+  const main = selectedMainFrame(inventory, state.mainFrameId);
+  return { ...inventory, main, generations, unprovenDocuments };
 };
 
 const markUnstableFrameRead = (
@@ -605,29 +609,9 @@ const assertStableMainFrame = async (
   state: ElectronInspectionState,
   expectedPath: string,
 ): Promise<ElectronPageInspection["frames"]> => {
-  const generations = new Map(state.frameGenerations);
-  const documents = new Map(state.frameDocuments);
-  const result = await context.connection.send(
-    "Page.getFrameTree",
-    {},
-    context.sessionId,
-    context.signal,
-  );
-  const unprovenDocuments = seedFrameDocuments(
-    result,
-    generations,
-    documents,
-    state,
-  );
   const completeness = new CdpCaptureCompleteness();
-  const inventory = await captureFrames(
-    result,
-    completeness,
-    context.asarHeaderAdmission,
-    context.signal,
-  );
-  const { frames } = inventory;
-  const main = selectedMainFrame(inventory, state.mainFrameId);
+  const read = await readCurrentFrames(context, state, completeness);
+  const { frames, main, generations, unprovenDocuments } = read;
   if (
     main.file_path !== expectedPath ||
     state.navigationDuringCapture ||
@@ -636,11 +620,11 @@ const assertStableMainFrame = async (
       (generations.get(state.mainFrameId) ?? 0) !==
         (state.frameGenerations.get(state.mainFrameId) ?? 0))
   )
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
-  markUnstableFrameRead(
-    { ...inventory, generations, unprovenDocuments },
-    state,
-  );
+    throw new BrowserObservationError(
+      "inspect_electron_page",
+      "target_changed",
+    );
+  markUnstableFrameRead(read, state);
   if (
     completeness
       .snapshot()
@@ -850,9 +834,15 @@ const selectedMainFrame = (
 ): ElectronPageInspection["frames"][number] => {
   const main = inventory.frames[0];
   if (main === undefined || inventory.parents.get(main.frame_id) !== null)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(
+      "inspect_electron_page",
+      "target_not_allowed",
+    );
   if (selectedId !== undefined && main.frame_id !== selectedId)
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+    throw new BrowserObservationError(
+      "inspect_electron_page",
+      "target_changed",
+    );
   return main;
 };
 

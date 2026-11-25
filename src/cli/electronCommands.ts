@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 import type { CliInstance } from "./types.js";
@@ -7,11 +8,10 @@ import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolCon
 import { contractNamed } from "./contractCliDescription.js";
 import {
   admittedContractInput,
-  inspectWithService,
   registerContractCommand,
-  registerContractDocumentCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";

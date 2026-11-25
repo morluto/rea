@@ -1,4 +1,5 @@
 import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
@@ -8,7 +9,11 @@ import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import {
+  GHIDRA_RAW_ENTRY_CONTEXT,
+  ghidraRawBinaryLanguage,
+} from "./GhidraRawBinaryLanguage.js";
+import { isLegacyRawLoad, rawEntryRoleAndBasis } from "../domain/rawBinary.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   GHIDRA_COM_EXECUTABLE_FORMAT,
@@ -26,6 +31,7 @@ const limitations = [
 ];
 
 export type GhidraDosImage = {
+  readonly kind: "exact";
   readonly header: DosMzHeader;
   readonly loadSegment: number;
   readonly modified: Buffer;
@@ -36,11 +42,13 @@ export type GhidraDosImage = {
   >[];
 };
 
+type GhidraDosOrderDependent = { readonly kind: "order-dependent" };
+
 /** Prepare initialized bytes and relocation facts without copying overlays. */
 export const prepareGhidraDosLoadImage = (
   bytes: Buffer,
   evidence: MzHeaderEvidence,
-): Result<GhidraDosImage, string> => {
+): Result<GhidraDosImage | GhidraDosOrderDependent, string> => {
   if (evidence.windowsHeader.state === "candidate")
     return err("MZ Windows new-header candidate is unresolved");
   if (evidence.windowsHeader.state === "header-needed")
@@ -56,52 +64,52 @@ export const prepareGhidraDosLoadImage = (
     return err("DOS MZ initialized image was not completely captured");
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
-  const applied = [];
+  const reader = new BinaryReader(bytes, true, "dos-mz");
+  const fixedOffsets = new Set<number>();
+  const expectedRelocations: GhidraDosImage["expectedRelocations"][number][] =
+    [];
   for (const {
     segment,
     offset,
     moduleOffset,
     fileOffset,
   } of header.relocations) {
-    const original = modified
-      .subarray(fileOffset, fileOffset + 2)
-      .toString("hex");
-    const relocated =
-      (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
+    // Ghidra derives each word from file bytes, then applies the fixups in
+    // an unspecified order. Adjacent words disagree at the shared byte:
+    // one adds 0x10 to it as a high byte and the other keeps it as a low byte.
+    if (fixedOffsets.has(fileOffset - 1) || fixedOffsets.has(fileOffset + 1))
+      return ok({ kind: "order-dependent" });
+    fixedOffsets.add(fileOffset);
+    const relocated = (reader.u16(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    applied.push({
-      segment,
-      offset,
-      moduleOffset,
-      fileOffset,
-      original,
-      relocated,
-    });
-  }
-  // Application records describe their own fixup; the bridge reads memory
-  // once all fixups have completed, including later overlapping writes.
-  const expectedRelocations = applied.map(
-    ({ segment, offset, moduleOffset, fileOffset, original, relocated }) => ({
+    // The exact layout admits disjoint or identical writes, so later records
+    // cannot change this final memory window.
+    expectedRelocations.push({
       address: address(loadSegment * 16 + moduleOffset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
       status: "APPLIED",
       type: 0,
       values: [segment, offset, relocated],
-      original_bytes_hex: original,
-      memory_bytes_hex: modified
-        .subarray(fileOffset, fileOffset + 2)
-        .toString("hex"),
-    }),
-  );
-  return ok({ header, loadSegment, modified, expectedRelocations });
+      original_bytes_hex: bytes.toString("hex", fileOffset, fileOffset + 2),
+      memory_bytes_hex: modified.toString("hex", fileOffset, fileOffset + 2),
+    });
+  }
+  return ok({
+    kind: "exact",
+    header,
+    loadSegment,
+    modified,
+    expectedRelocations,
+  });
 };
 
 export type GhidraDosLoadImageSource = {
   readonly sha256: string;
   readonly fileBytes: number;
-  readonly modifiedSha256: string;
-  readonly image: GhidraDosImage;
+  readonly image:
+    | (GhidraDosImage & { readonly modifiedSha256: string })
+    | GhidraDosOrderDependent;
 };
 
 /** Verify measured MZ import state against complete identity and prepared image facts. */
@@ -114,7 +122,20 @@ export const attestGhidraDosLoadImage = (
     return err(
       "Ghidra load-image snapshot digest does not match the admitted target",
     );
-  const { header, loadSegment, modified, expectedRelocations } = source.image;
+  if (source.image.kind === "order-dependent")
+    return ok(
+      nativeLoadImageSchema.parse({
+        status: "unsupported",
+        reason:
+          "Overlapping DOS MZ relocation writes have no established application order.",
+        observations,
+        limitations: [
+          "Ghidra derives relocation values from original file words. The reported relocation records and memory bytes are measurements from this import; independent final-byte verification requires an established write order.",
+        ],
+      }),
+    );
+  const { header, loadSegment, modified, modifiedSha256, expectedRelocations } =
+    source.image;
   const { checks, check } = createLoadImageChecks();
   check(
     "executable_format",
@@ -135,7 +156,7 @@ export const attestGhidraDosLoadImage = (
   );
   check(
     "modified_file_sha256",
-    source.modifiedSha256,
+    modifiedSha256,
     observedSource?.modified_sha256 ?? null,
   );
   const entryAddress = address(
@@ -515,8 +536,13 @@ export const attestGhidraRawBinaryLoadImage = (
     return err(
       "Ghidra raw-binary snapshot digest does not match the admitted target",
     );
-  const language = ghidraRawBinaryLanguage(target.architecture);
-  const base = BigInt(target.entryPoint);
+  const { rawLoad } = target;
+  const language = ghidraRawBinaryLanguage(
+    target.architecture,
+    rawLoad.architectureVariant,
+  );
+  const { baseAddress, entryPoint } = rawLoad;
+  const base = BigInt(baseAddress);
   const last = hexAddress(base + BigInt(snapshot.bytes) - 1n);
   const { checks, check } = createLoadImageChecks();
   const source = observations.source_files[0];
@@ -570,7 +596,7 @@ export const attestGhidraRawBinaryLoadImage = (
   );
   check(
     "mapping.start",
-    target.entryPoint,
+    baseAddress,
     mapping?.start ?? null,
     0,
     mapping?.start ?? null,
@@ -592,22 +618,92 @@ export const attestGhidraRawBinaryLoadImage = (
   );
   check(
     "entry_point",
-    target.entryPoint,
-    observations.entry_points.find((entry) => entry === target.entryPoint) ??
-      null,
+    entryPoint,
+    observations.entry_points.find((entry) => entry === entryPoint) ?? null,
   );
   check("relocation_records", [], observations.relocations);
+  if (rawLoad.architectureVariant !== undefined)
+    // Processor-defined labels are not applied to a variant load, so the
+    // committed entry is the only external entry.
+    check("entry_points", [entryPoint], [...observations.entry_points].sort());
+  if (rawLoad.entryIsaMode !== undefined) {
+    // The bridge reports the register committed for this import, not one chosen by language name.
+    const context = GHIDRA_RAW_ENTRY_CONTEXT[rawLoad.entryIsaMode];
+    check(
+      `entry_context.${context.register}`,
+      context.value,
+      observations.entry_context
+        .find((item) => item.address === entryPoint)
+        ?.registers.find((register) => register.name === context.register)
+        ?.value_hex ?? null,
+    );
+  }
+  const status = checks.every((item) => item.matched) ? "verified" : "mismatch";
+  if (!isLegacyRawLoad(rawLoad))
+    return ok(
+      nativeLoadImageSchema.parse({
+        status,
+        layout: "segments",
+        version: 1,
+        format: "raw-binary",
+        target_sha256: target.sha256,
+        architecture: target.architecture,
+        ...(rawLoad.architectureVariant === undefined
+          ? {}
+          : { architecture_variant: rawLoad.architectureVariant }),
+        language_id: language.languageId,
+        compiler_spec_id: language.compilerSpecId,
+        file_bytes: snapshot.bytes,
+        segments: [
+          {
+            name: "image",
+            address: baseAddress,
+            size: snapshot.bytes,
+            backing: { kind: "source-range", source: 0, offset: 0 },
+          },
+        ],
+        entries: [
+          {
+            address: entryPoint,
+            ...(rawLoad.entryIsaMode === undefined
+              ? {}
+              : { isa_mode: rawLoad.entryIsaMode }),
+            ...rawEntryRoleAndBasis(rawLoad),
+          },
+        ],
+        ...(rawLoad.entrySource.kind === "vector-table"
+          ? {
+              vector_table: {
+                address: rawLoad.entrySource.address,
+                initial_stack_pointer: rawLoad.entrySource.initialStackPointer,
+                reset_vector: rawLoad.entrySource.resetVector,
+              },
+            }
+          : {}),
+        observations,
+        checks,
+        // What the load maps, labels and models, and where Reset came from,
+        // are session limitations, which every result of the session carries.
+        limitations: [
+          "Raw binary is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
+          "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the committed base, entry and entry context, and the bound Ghidra language with its fixed byte order. File offset 0 is mapped at the base. No original executable bytes are changed.",
+          "Verification requires the committed entry to be the only external entry.",
+          "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
+        ],
+      }),
+    );
   return ok(
     nativeLoadImageSchema.parse({
-      status: checks.every((item) => item.matched) ? "verified" : "mismatch",
+      status,
       format: "raw-binary",
       target_sha256: target.sha256,
       architecture: target.architecture,
       language_id: language.languageId,
       compiler_spec_id: language.compilerSpecId,
-      base_address: target.entryPoint,
+      base_address: baseAddress,
       file_bytes: snapshot.bytes,
-      entry: { address: target.entryPoint, file_offset: 0 },
+      // Admission maps file offset 0 at the entry for this Evidence shape.
+      entry: { address: entryPoint, file_offset: 0 },
       observations,
       checks,
       limitations: [

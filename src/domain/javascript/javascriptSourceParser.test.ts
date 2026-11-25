@@ -4,7 +4,6 @@ import * as t from "@babel/types";
 import {
   parseJavaScriptSource,
   parseRecoveredJavaScript,
-  parserPluginsForPath,
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
   javaScriptThisOwner,
@@ -72,9 +71,7 @@ it.each([
   (source, path, context) => {
     const parsed = parseJavaScriptSource(source, path);
     if (parsed === null) throw new Error("Expected parsed source");
-    const recovered = parseRecoveredJavaScript(source, path, {
-      plugins: parserPluginsForPath(path),
-    }).file;
+    const recovered = parseRecoveredJavaScript(source, path, {}).file;
     expect(javaScriptRuntimeContext(parsed.program)).toBe(context);
     expect(javaScriptRuntimeContext(recovered.program)).toBe(context);
     expect(javaScriptRuntimeContext(t.cloneNode(parsed.program, true))).toBe(
@@ -95,9 +92,7 @@ it.each([
     const parsed = parseJavaScriptSource(source, path);
     if (parsed === null) throw new Error("Expected parsed source");
     expect(javaScriptProgramStrictness(parsed.program)).toBe(strictness);
-    const recovered = parseRecoveredJavaScript(source, path, {
-      plugins: parserPluginsForPath(path),
-    }).file;
+    const recovered = parseRecoveredJavaScript(source, path, {}).file;
     expect(javaScriptProgramStrictness(recovered.program)).toBe(strictness);
   },
 );

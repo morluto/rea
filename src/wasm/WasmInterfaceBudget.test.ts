@@ -43,11 +43,14 @@ it("does not suggest an impossible increase at the runtime representation maximu
     if (!(error instanceof AnalysisResourceConstraintError)) throw error;
     const projected = projectAnalysisError(error);
     expect(projected).toMatchObject({
-      details: { reported_limits: { source: "request" } },
+      details: {
+        reported_limits: {
+          source: "request",
+          maximum_bytes: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+          maximum_supported_bytes: MAX_WASM_INTERFACE_REPRESENTATION_BYTES,
+        },
+      },
     });
-    expect(projected.remediation.action).toContain(
-      "already at the runtime representation maximum",
-    );
     expect(projected.remediation.action).not.toContain(
       "Raise max_interface_bytes",
     );

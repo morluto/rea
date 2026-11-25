@@ -1,5 +1,6 @@
 import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { beforeAll, expect, it } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { z } from "zod";
@@ -201,21 +202,6 @@ beforeAll(() => {
   cli = createCli({});
 });
 
-const serve = async (argv: readonly string[]) => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
-
 const advertisedInput = (stdout: string): InputJsonSchema => {
   const document = JSON.parse(stdout) as {
     args?: {
@@ -284,7 +270,11 @@ it("advertises the parsed document for every JSON-input command", async () => {
     documents.map(({ command }) => command).sort(),
   );
   for (const { command, schema, callerPaths = [] } of documents) {
-    const served = await serve([command, "--schema", "--json"]);
+    const served = await serveInProcessCli(cli, [
+      command,
+      "--schema",
+      "--json",
+    ]);
     expect(served.exitCode, served.stdout).toBe(0);
     const inputJson = advertisedInput(served.stdout);
     expect(inputJson.contentSchema, command).toBeDefined();
@@ -305,7 +295,7 @@ it("advertises the parsed document for every JSON-input command", async () => {
 it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
   const input = advertisedInput(
     (
-      await serve([
+      await serveInProcessCli(cli, [
         cliCommandFor("compare_source_to_bundle"),
         "--schema",
         "--json",
@@ -342,10 +332,10 @@ it("advertises caller paths as local spellings the CLI resolves, not URLs", asyn
     expect(validate(document(path)), path).toBe(false);
 });
 
-it("validates representative parsed documents with the advertised schema", async () => {
+it("advertises coverage input that admits a complete document and checks its boundary", async () => {
   const input = advertisedInput(
     (
-      await serve([
+      await serveInProcessCli(cli, [
         cliCommandFor("evaluate_reconstruction_coverage"),
         "--schema",
         "--json",
@@ -380,8 +370,11 @@ it("validates representative parsed documents with the advertised schema", async
     boundaries: [],
   };
   const accepted = { coverage, boundary_id: "main" };
+  const { boundaries: _boundaries, ...withoutBoundaries } = coverage;
   const rejected = [
     { coverage, boundary_id: "" },
+    { coverage, boundary_id: "main section" },
+    { ...accepted, coverage: withoutBoundaries },
     { coverage },
     { coverage, boundary_id: "main", extra: true },
     { coverage: { arbitrary: true }, boundary_id: "main" },
@@ -402,7 +395,7 @@ it("validates representative parsed documents with the advertised schema", async
 it("names the feature-trace, semantic-query, and browser-scenario fields", async () => {
   const trace = advertisedInput(
     (
-      await serve([
+      await serveInProcessCli(cli, [
         cliCommandFor("trace_application_feature"),
         "--schema",
         "--json",
@@ -421,7 +414,7 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
 
   const semantic = advertisedInput(
     (
-      await serve([
+      await serveInProcessCli(cli, [
         cliCommandFor("trace_javascript_semantics"),
         "--schema",
         "--json",
@@ -436,7 +429,7 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
 
   const browser = advertisedInput(
     (
-      await serve([
+      await serveInProcessCli(cli, [
         cliCommandFor("capture_browser_scenario"),
         "--schema",
         "--json",
@@ -458,32 +451,10 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   );
 });
 
-it("advertises the reconstruction documents their readers admit", async () => {
-  const coverage = advertisedInput(
-    (
-      await serve([
-        cliCommandFor("evaluate_reconstruction_coverage"),
-        "--schema",
-        "--json",
-      ])
-    ).stdout,
-  );
-  // The reader authenticates the embedded bundle, but --schema still shows
-  // the document it admits, as the MCP contract does.
-  expect(coverage.contentSchema?.properties?.coverage).toMatchObject({
-    type: "object",
-    required: expect.arrayContaining(["evidence_bundle", "boundaries"]),
-  });
-  // boundary_id is a stable identifier (#9919), so its pattern is advertised.
-  expect(coverage.contentSchema?.properties?.boundary_id).toMatchObject({
-    type: "string",
-    pattern: expect.any(String),
-  });
-  expect(coverage.contentSchema?.required).toEqual(["coverage", "boundary_id"]);
-
+it("advertises the reconstruction obligation ledger its reader admits", async () => {
   const ledger = advertisedInput(
     (
-      await serve([
+      await serveInProcessCli(cli, [
         cliCommandFor("build_reconstruction_obligation_ledger"),
         "--schema",
         "--json",
@@ -504,7 +475,7 @@ it("advertises the reconstruction documents their readers admit", async () => {
 });
 
 it("prints the nested document in the default schema format", async () => {
-  const served = await serve([
+  const served = await serveInProcessCli(cli, [
     cliCommandFor("trace_application_feature"),
     "--schema",
   ]);

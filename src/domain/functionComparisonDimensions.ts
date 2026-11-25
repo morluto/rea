@@ -162,10 +162,10 @@ const compareText = (
         "Exact text comparison requires one provider identity.",
       ],
     });
-  const changes = diffLines(left, right, {
-    timeout: 100,
-    maxEditLength: 10_000,
-  });
+  const identical = left === right;
+  const changes = identical
+    ? []
+    : diffLines(left, right, { timeout: 100, maxEditLength: 10_000 });
   if (changes === undefined)
     return unresolvedDimension({
       dimension,
@@ -186,14 +186,15 @@ const compareText = (
     }),
     { added_lines: 0, removed_lines: 0, hunks: 0 },
   );
+  const leftCount = [...left].length;
   return dimensionResult({
     dimension,
     status: delta.hunks === 0 ? "unchanged" : "changed",
     left,
     right,
     ...context,
-    leftCount: [...left].length,
-    rightCount: [...right].length,
+    leftCount,
+    rightCount: identical ? leftCount : [...right].length,
     textDelta: delta,
     limitations,
   });
@@ -401,7 +402,10 @@ const compareReferencedStrings = (
       continue;
     }
     if (leftRows === undefined || rightRows === undefined) {
-      if (leftUnlocated || rightUnlocated)
+      // Only an unlocated row on the missing side could occupy this offset.
+      const missingSideHasUnlocated =
+        leftRows === undefined ? leftUnlocated : rightUnlocated;
+      if (missingSideHasUnlocated)
         limitations.add(
           `Referenced string membership at source offset ${offset} is ambiguous because another source location is unavailable.`,
         );

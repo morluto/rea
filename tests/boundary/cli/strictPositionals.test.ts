@@ -5,25 +5,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { expect, it } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 import { createCli } from "../../../src/cli.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type CliInstance = ReturnType<typeof createCommandCli>;
-const serve = async (cli: CliInstance, argv: string[]) => {
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv, "--json"], {
-    env: {},
-    stdout: (text) => {
-      stdout += text;
-    },
-    exit: (code) => {
-      exitCode = code;
-    },
-  });
-  return { stdout, exitCode };
-};
+const serve = (cli: CliInstance, argv: string[]) =>
+  serveInProcessCli(cli, [...argv, "--json"]);
 
 it("rejects surplus public CLI inputs before importing and retains the one-path control", async () => {
   const directory = await createTestTempDirectory(
@@ -209,24 +198,27 @@ it("validates every dry-run literal before lossy coercion while retaining bare a
     const result = await serve(cli, [
       "setup",
       `--dry-run=${literal}`,
-      "--dryRun=false",
+      "--dry-run=false",
     ]);
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({ code: "PARSE_ERROR" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+      retryable: false,
+    });
   }
   expect({ runs, defaults }).toEqual({ runs: 0, defaults: 0 });
   for (const [tokens, expected] of [
     [["--dry-run"], true],
-    [["--dryRun=true"], true],
     [["--dry-run=false"], false],
     [["--no-dry-run"], false],
-    [["--no-dryRun", "--dry-run"], true],
+    [["--no-dry-run", "--dry-run"], true],
   ] as const) {
     const result = await serve(cli, ["setup", ...tokens]);
     expect(result.exitCode, result.stdout).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ dryRun: expected });
   }
-  expect({ runs, defaults }).toEqual({ runs: 5, defaults: 5 });
+  expect({ runs, defaults }).toEqual({ runs: 4, defaults: 4 });
 });
 
 it("keeps flag-shaped option data untouched while validating only bound dry-run values", async () => {

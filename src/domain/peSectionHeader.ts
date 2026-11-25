@@ -1,6 +1,13 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok } from "./result.js";
 
 export const PE_SECTION_HEADER_BYTES = 40;
+
+/** A zero VirtualSize falls back to the section's raw size. */
+export const peSectionVirtualExtent = (
+  virtualSize: number,
+  rawSize: number,
+): number => (virtualSize === 0 ? rawSize : virtualSize);
 
 /** Locate the COFF section table from the declared optional-header span. */
 export const peSectionTableExtent = (
@@ -48,19 +55,20 @@ export const readPeSectionHeader = (bytes: Buffer) => {
       kind: "malformed" as const,
       message: "PE section header is truncated",
     });
+  const reader = new BinaryReader(bytes, true, "pe");
   const name = bytes.subarray(0, 8);
   const nul = name.indexOf(0);
-  const virtual_size = bytes.readUInt32LE(8);
-  const raw_size = bytes.readUInt32LE(16);
+  const virtual_size = reader.u32(8);
+  const raw_size = reader.u32(16);
   return ok({
     name: name.toString("latin1", 0, nul < 0 ? name.length : nul),
     virtual_size,
-    virtual_address: bytes.readUInt32LE(12),
+    virtual_address: reader.u32(12),
     raw_size,
-    offset: bytes.readUInt32LE(20),
-    characteristics: bytes.readUInt32LE(36),
+    offset: reader.u32(20),
+    characteristics: reader.u32(36),
     // Content excludes file-alignment padding; raw_size remains available to
     // consumers that validate physical file ranges.
-    size: virtual_size === 0 ? raw_size : Math.min(virtual_size, raw_size),
+    size: Math.min(peSectionVirtualExtent(virtual_size, raw_size), raw_size),
   });
 };

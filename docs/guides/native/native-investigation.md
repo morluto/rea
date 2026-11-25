@@ -101,9 +101,12 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
-For Ghidra case-insensitive literal searches of procedures or strings,
-`raw_result` contains bridge candidates before REA applies Unicode-aware
-matching. Use `normalized_result` for matches; a raw candidate need not match.
+For Ghidra case-insensitive literal searches of procedures or strings, use
+`normalized_result` for matches. REA applies Unicode-aware matching to the
+bridge's candidates. When that removes a candidate or a matched secondary
+name, `raw_result` contains the bridge candidates, which need not match, and
+`limitations` says so. When it removes nothing, the candidates are the matches
+and `raw_result` is `null`; that is not missing evidence.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -456,7 +459,7 @@ configuration errors and do not fall back to 128. The setting is read from
 the environment that starts REA, while MCP `regex.worker_heap_request_mib`
 can override it for workers belonging to newly accepted searches. Use
 `update_analysis_settings` for either runtime control; accepted work keeps its
-budget. See the [settings design](../../design/limits-and-recovery.md).
+budget. See the [analysis settings and recovery](../../reference/limits-and-recovery.md).
 A heap failure names the effective request, known source, default, floor, and
 maximum. A positive Node.js
 `--max-old-space-size` on the process that starts
@@ -685,12 +688,13 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
-checks complete JVM framing within the same 16 MiB class identity bound as the
-Mach-O image reader. A complete class remains unsupported even if its constant
-pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
-malformed FAT interpretation remains unresolved. Malformed recognized FAT
-declarations retain their format-specific reasons.
+prefix as a validated JVM class. When the shared header fields form a plausible
+JVM version, target admission and the Mach-O image reader check complete JVM
+framing up to 16 MiB. A complete class remains
+unsupported even if its constant pool resembles a known FAT CPU declaration.
+Above that bound, a malformed FAT interpretation remains unresolved if the
+prefix could still belong to a JVM class. A header that rules out a JVM class
+allows the reader to report a recognized FAT range error directly.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -700,6 +704,10 @@ Available CPU type, subtype/capability bits, byte range, and alignment remain
 checked against the source bytes. Inventory records source ranges and hashes, and
 extraction copies those ranges without running the target. This does not
 expand any analysis provider's supported architectures.
+An unnamed architecture can carry a numeric CPU type and base subtype in
+`lipo`'s label. The `PTR_AUTH_VERSION` line identifies a userspace or kernel
+ABI, while the exact version and full subtype code remain unknown when that
+line is the only capability information.
 Malformed successful `lipo` output reports a format failure with its parse
 diagnostic.
 Apple lipo's hidden ARM64 compatibility row is retained separately from the
@@ -709,10 +717,35 @@ per-row `hidden` marker from lipo output. Mach-O image and Electron fuse
 inspection include the row in architecture selection while retaining that
 marker in their reported slices.
 
+The four app resource commands, `inspect_plist`, `inspect_asset_catalog`,
+`inspect_keyed_archive`, and `decode_interface_builder`, use a separate read-only
+resource session when the CLI input is a bundle directory. They do not require
+`CFBundleExecutable`, resolve a program by filename convention, or establish
+executable identity. For MCP, select the app with `open_bundle_resources` before
+querying its resources. `inspect_plist` defaults to the selected bundle's
+Info.plist. A declared executable is not opened or validated by this resource
+route either.
+
+Resource-only Evidence has a null `subject`; results identify the selected
+root through `resource_root`, and executable target digests remain null. Use
+the reported per-resource provenance for the bytes actually read. A supported
+Info.plist layout identifies a resource root; it does not establish that the
+plist contents or every resource can be decoded. Parsing, resource selection,
+and filesystem failures remain explicit outcomes of their respective readers.
+
+Executable analysis still uses `open_binary` and the ordinary binary admission
+checks. Missing or invalid executable declarations, unsafe program names, and
+unresolved program paths remain typed failures on that route. Resource sessions
+do not support binary-only operations or binary analysis snapshots. See the
+[resource session contract](../../reference/mcp-contracts.md#identity-and-discovery)
+for session status and provenance semantics.
+
 `inspect_plist.format` describes the selected source, not plutil's conversion
 format. Sources explicitly identified as XML, binary or JSON retain those
-labels. For generic text, a bounded source-prefix probe recognizes leading XML
-markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
+labels. For any other `file` description, a bounded source-prefix probe
+recognizes leading XML markup, including UTF-8 and BOM-marked UTF-16 sources.
+`file` reports `data` for XML containing a control character or NUL byte, which
+CoreFoundation can still read; the probe labels it `xml`. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
@@ -723,7 +756,11 @@ directly when their number facts need no further classification; explicitly
 identified JSON sources can have scalar roots. Unidentified primitive text keeps
 its existing conversion route, so OpenStep `123` remains a string. OpenStep,
 unsupported XML encodings such as UTF-32 and declared legacy encodings, and JSON
-numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
+numbers requiring XML type facts retain the `plutil` route. So does XML that
+REA's XML reader rejects as not well-formed, which CoreFoundation can still
+accept: a limitation names REA's reason, and a document `plutil` also rejects
+stays refused with its diagnostic. Plist structure errors in well-formed XML
+remain refusals without conversion. Invalid UTF-8 and
 encoding-declaration mismatches remain explicit failures. Direct-source
 provenance records `file` without claiming conversion; conversion limitations
 and invocations appear only when conversion actually ran.
@@ -761,7 +798,13 @@ Selected plist paths preserve filesystem resolution, including `..` after a
 directory symlink and trailing directory separators. Resource-only bundle
 sessions resolve relative selections from the bundle root with the same path
 semantics as executable sessions; the reported source path retains those
-selected segments.
+selected segments. `source_sha256` identifies the stable bytes used for
+classification, decoding, and any native conversion. In an executable session the
+Evidence subject remains the open program, the same binding as other
+bundle-resource observations. A resource-only session keeps a null subject.
+For either bundle session, the selected plist must resolve inside the opened
+bundle. Use `rea inspect-plist <path>` or open the plist itself in MCP when
+it resides outside the bundle.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
@@ -823,11 +866,11 @@ command timeout does not raise these budgets.
 
 `inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
 slice, not only the selected one. It decodes only the FAT table, slice headers
-and load commands. Like every Mach-O container read, a `0xcafebabe` input of at
-most 16 MiB is first read whole to rule out a JVM class file, so that read
-includes code bytes; larger inputs and thin images read only the structures
-above. A slice is `encrypted` when its single encryption command has a nonzero
-`cryptid`, `not-encrypted` when `cryptid` is zero, and `absent` only when every
+and load commands. A `0xcafebabe` input of at most 16 MiB with a plausible JVM
+version is first read whole to resolve its identity. That read can include code
+bytes. Other inputs read only the structures above. A slice is `encrypted`
+when its single encryption command has a nonzero `cryptid`, `not-encrypted`
+when `cryptid` is zero, and `absent` only when every
 load command was read and none was an encryption command. A command whose width
 or `cmdsize` contradicts the image, more than one such command, or a range past
 the slice is `malformed`; a slice whose commands could not be fully read is
@@ -923,6 +966,8 @@ complete observation.
   shared/cyclic references, class descriptors, raw serialized fields and
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
+  Named parser limits report the exhausted bound and its maximum in
+  `details.reported_limits` on a `partial` error.
   Binary references retain their serialized type-8 UID identity; ordinary
   dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
   Foundation's single numeric `CF$UID` dictionary convention for references;
@@ -977,6 +1022,10 @@ complete observation.
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
   XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
+  Bundle executable resolution and Hopper's minimum-version check admit
+  `Info.plist` only when its opened descriptor is a regular file of at most
+  64 MiB. A symlink at the selected path can resolve to that regular file.
+  The separate 16 MiB budget applies to the decoded representation.
   App bundle `Info.plist` executable resolution uses the same decoder as keyed
   archives and Interface Builder. The decoder consumes an initial
   BOM and rejects malformed byte sequences, unsupported encoding declarations,
@@ -1192,7 +1241,8 @@ complete observation.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
-import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+import, including its binding stream, library ordinal, resolved library, weak status, and addend. Weak streams use
+the implicit weak-lookup ordinal `-3` until an opcode supplies another ordinal. A literal filter is
 applied to the original names before that join; if the filter selects only an
 alias, the output keeps that exact row. `identity_coverage` distinguishes a
 complete selected-inventory scan from partial, unsupported, and unknown cases.
@@ -1587,12 +1637,11 @@ projection; these estimates are not a hard process-memory bound. Keyed-archive
 object identities always come from their original `$objects` table indices.
 Authored `objectID`, `object-id`, `archiveUID` and `id` fields remain ordinary
 object data and do not change inventory, reference, connector or hierarchy
-identity. This changes keyed-archive graph IDs that previously used authored
-`objectID` or `object-id` values: `interface_builder_object_id` and linked node
-IDs now use the decimal table UID, while the authored values remain in attributes.
-For example, an authored `objectID: "2"` on table entry 1 now identifies object
-`"1"`; its graph node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs
-and native NIBArchive IDs keep their existing source-specific meaning.
+identity: `interface_builder_object_id` and linked node IDs use the decimal
+table UID, and the authored values remain in attributes. For example, an
+authored `objectID: "2"` on table entry 1 identifies object `"1"`; its graph
+node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs and native
+NIBArchive IDs keep their source-specific meaning.
 Connector endpoints require encoded UID references to archived objects; strings
 and dictionaries that merely resemble resolved reference stubs do not establish
 identity. Inline hierarchy dictionaries have no table identity and count as
@@ -1683,9 +1732,41 @@ missing match does not establish absence from uninitialized or excluded memory.
 See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
-Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
+### Name and import selectors
+
+`find_xrefs_to_name`, `xrefs`, `procedure_callers` and incoming
+`procedure_references` resolve one name the same way on every provider. An
+exact observed name wins. Otherwise a provider-reported import matches by its
+imported name or library-qualified name, so `VirtualAlloc` and
+`kernel32.dll::VirtualAlloc` both select Ghidra's `KERNEL32.DLL::VirtualAlloc`
+(the library compares without case). `find_xrefs_to_name` then tries the
+provider's procedure lookup and reports the provider's spelling as
+`resolved_name`. Hopper reports imported names without their library, so a
+library-qualified name stays unresolved there and lists the bare-name rows as
+`candidates`; REA does not select one.
+
+`procedure_callers` and incoming `procedure_references` also answer a symbol or
+address outside every procedure, such as an imported name, an import
+address-table slot or a data label. The result lists the provider's recorded
+references to that address, each with its containing procedure, and identifies
+the target without a body. Providers may disagree about which reference sites
+belong to a function: on one MSVC x64 DLL, Ghidra and Hopper reported the same
+18 references to `VirtualAlloc`, and Hopper placed one more of them inside a
+procedure.
+
+Name lookup reports distinct candidate addresses as an input ambiguity;
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
+
+On `find_xrefs_to_name`, `limit` and the zero-based `offset` slice the
+addresses in provider order after reference lookup. Omitting both returns
+the available provider list. A page reports `observed_xrefs` before slicing
+and `total_xrefs` only when the provider confirms it did not cap the read.
+`provider_truncated` is null when the provider did not report a cap status.
+`truncated` is true when the page or provider omitted rows, false when the
+provider confirms an uncapped read and the page includes every row, and null
+when completeness remains unknown. Advancing the offset can retrieve other
+observed rows, within the available provider list.
 
 Hopper procedure names must identify a procedure entry. A non-entry symbol returns
 an input diagnostic with its coordinate and containing procedure; an explicit

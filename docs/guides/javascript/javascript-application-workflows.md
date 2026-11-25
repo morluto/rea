@@ -145,6 +145,33 @@ shared content remain separate rows with the same canonical node identity.
 These rows select application-graph observations. Semantic relationships and
 semantic unknown records remain in complete parent Evidence and trace tools.
 
+`where.properties` additionally selects exact retained property values, such as
+`[{"key": "operation", "values": ["send"]}]`. Every listed key must be retained
+with one of its JSON scalar values; a missing key or non-scalar value never
+matches, and `values: []` matches none.
+
+To count distinct values instead of paging observations, use
+`javascript-fact-groups` with the same `where` and the property names to group
+by:
+
+```json
+{
+  "kind": "javascript-fact-groups",
+  "where": { "paths": ["preload.js"], "kinds": ["ipc-channel"] },
+  "group_by": ["operation", "channel"]
+}
+```
+
+Each row reports one distinct combination with its `observation_count` and
+`node_count`. A missing key is omitted from the combination, distinct from a
+retained null such as an unresolved dynamic channel. Rows are ordered by the
+canonical JSON of their values; the default offset/limit is 0/256 and the page
+total counts distinct combinations. When every grouped value is a present JSON
+scalar, read that group's observations, with provenance, through
+`javascript-facts` and the same `where` plus matching `where.properties`.
+`where.properties` cannot select array, object or missing values, so read
+such groups by paging `javascript-facts` with the same `where`.
+
 Rows follow retained node/observation order. The default offset/limit is 0/64;
 follow `coverage.next_offset`. Page totals count matching retained observations,
 while `source_coverage` preserves caller selection and application/semantic
@@ -214,8 +241,9 @@ candidates. A boundary nested inside another expression or compound assignment
 does not establish a direct result binding.
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
-seed and the complete reachable subgraph; callers do not choose node, relation,
-depth, function, module, seed-match, or page budgets.
+seed and its complete reachable subgraph within the admitted graph. Callers
+do not choose node, relation, depth, function, module, seed-match, or page
+budgets. Extraction limits and unknowns can still leave coverage partial.
 
 The extractor covers lexical definitions and reads, literal seeds, static
 property slots, object reads/writes/spreads/destructuring, closure captures,
@@ -241,6 +269,18 @@ assignment. Computed method keys belong to the enclosing callable; parameter
 defaults and method bodies belong to the method. Uncertain later property reads
 remain opt-in through `include_ambiguous_dynamic_edges`.
 
+Destructuring retains dependencies from the source slots proved at the time
+of the read. A later write does not replace an earlier proved dependency.
+After a nested pattern is proved to receive a nullish value and throw, later
+bindings in that pattern retain candidate paths with no proven initializer.
+If the selected slot is known to be undefined, the proof includes the nested
+pattern's default initializer.
+A numeric key in an object pattern selects a named property directly.
+Nested array patterns can preserve dependencies for later bindings when
+element selection is known and iterator closing cannot invoke a return hook.
+Holes, accessors, and unknown iteration keep the affected dependencies
+uncertain.
+
 Binary, logical, unary, template, conditional, and sequence expressions retain
 `influences` edges from supported immediate inputs to the result, then to a
 direct declaration, assignment, call argument, or return. These are static
@@ -248,15 +288,16 @@ dependencies, not aliases or proof that the expression executed; conditional
 operands and logical-assignment writes carry `conditional: true`. Unsupported
 operand dependencies, unmodeled receiving containers, dynamic call results,
 and sequence side effects remain unknown. An applicable
-unknown makes the trace status `partial` even when a seed was found. Literal
+unknown makes the trace status `partial` when no applicable ambiguity takes
+precedence, even when a seed was found. Literal
 operator operands, direct call arguments and directly returned scalar literals
 can also be seeds. Older graphs that only recorded a call-site literal remain
 searchable. The offered per-file node capacity also bounds the producer's
 expression and operand collections before graph projection.
 Expression nodes and unknowns share the existing per-file graph admission
 budgets; omitted facts make graph coverage truncated and the trace partial.
-Consumers that previously treated `found` as compatible with a relevant
-unknown should handle `partial` and inspect the returned unknowns. Retained
+A relevant unknown makes the trace `partial`; inspect the returned unknowns.
+Retained
 graphs without `influences` edges remain readable but do not gain edges until
 the application is analyzed again.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
@@ -318,7 +359,9 @@ behavioral absence.
 Semantic relations use static-inference authority. `resolved` means the static
 target identity was unique within admitted analysis; it does not mean the path
 executed. Candidate edges are excluded by default, require explicit opt-in, and
-keep the result ambiguous. Runtime Evidence can later corroborate an exact
+keep the result ambiguous. An exact edge may still be present when other
+possible dependencies make the overall trace ambiguous. Runtime Evidence can
+later corroborate an exact
 mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
 
@@ -337,8 +380,7 @@ shorter; smaller values keep their existing JSON key. This keeps large values
 out of identity and display metadata without expanding short values or
 truncating their Evidence.
 
-New analyses therefore produce different IDs for hashed literals from the
-earlier payload-bearing role keys. Use IDs returned by the selected parent
+Use IDs returned by the selected parent
 graph and read literal values from `properties.value`, rather than decoding
 role keys or labels. Previously stored graphs and their original IDs remain
 valid inputs.
@@ -357,7 +399,6 @@ shorter of the exact value and `<kind> endpoint`; semantic request/response
 labels use the shorter of the endpoint and operation method. These labels are
 display metadata, not endpoint lookup values.
 
-New analyses therefore change hashed endpoint IDs and longer endpoint labels.
 Use IDs from the selected graph and read the complete endpoint properties;
 previously stored graphs still support their original IDs. Literal endpoint
 search, semantic tracing, and version comparison use the preserved values.
@@ -367,9 +408,8 @@ Event and listener nodes likewise preserve the complete event name in
 digest rule, scoped to the emitter; repeated registrations, removals, and
 dispatches keep one event per exact emitter/name pair. Long event labels use
 `event`, and listener labels use the shorter of `<method>:<name>` and
-`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
-change hashed event IDs and longer event/listener labels; query the preserved
-name or select IDs from the parent graph. Previously stored graphs keep their
+`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. Query
+the preserved name or select IDs from the parent graph. Previously stored graphs keep their
 original IDs and remain valid trace inputs.
 
 Empty string event names remain exact identities and can be selected with an
@@ -521,9 +561,10 @@ properties. Dynamic child writes such as `copy[key].value = 2` remain conservati
 about which original slot was selected. Object rest
 excludes consumed keys, array rest excludes the consumed prefix for known
 arrays, and later explicit data properties and methods replace earlier object
-spread references. A known array prefix does not expose values from a following
-spread. Accessors, custom or uncertain iteration, unknown computed keys, and
-unknown spread lengths retain conservative uncertainty.
+spread references. A bounded dense inline array spread can supply exact slots
+and keep the positions of later elements known. Accessors, sparse or unknown
+spread sources, custom or uncertain iteration, and unknown computed keys keep
+the affected reads uncertain.
 Getter-local aliases of `this`, including direct destructuring and assignments,
 retain their receiver when a returned shared reference is written. These writes
 invalidate the earlier literal instead of claiming the getter executed or the
@@ -545,8 +586,8 @@ Writes through an object getter's returned receiver retain that uncertainty
 when the object is an array element, nested inside mixed object/array
 containers, or assigned to a previously declared identifier. Saving the getter
 result in an alias does not make its old field values immutable. Known array
-indices include holes; an element after a spread has only a minimum possible
-index. For these returned-reference writes, unrelated properties and known
+indices include holes. After a spread with unknown length, a later element
+has only a minimum possible index. For these returned-reference writes, unrelated properties and known
 array prefixes remain precise. Accessor applicability uses the shared object
 reference owner for literal definition order, own-property shadowing, known
 array elements and explicit literal prototypes. Getter invocation effects
@@ -636,10 +677,8 @@ A partial comparison still records an unknown in the MCP session when matching
 uncertain projections produce no changes and `summary.unknown` is zero.
 
 The output includes exact selector candidates, omissions, Evidence links,
-coverage, and limitations; it does not execute JavaScript. When runtime
-semantics matter, run behavioral probes directly against the relevant
-application versions and capture them through the available browser, Electron,
-or process workflows.
+coverage, and limitations; it does not execute JavaScript. See
+[runtime evidence](#runtime-evidence) when runtime semantics matter.
 
 ## CLI and verification
 

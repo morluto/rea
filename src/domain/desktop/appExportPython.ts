@@ -1,5 +1,6 @@
 import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import { ZIP_SIGNATURES } from "../zipPackageFormat.js";
+import { SQLITE_HEADER } from "../sqliteFormat.js";
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
@@ -29,6 +30,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from itertools import islice
 import binascii
 import contextlib
 import copy
@@ -37,6 +39,7 @@ import io
 import json
 import math
 import os
+import errno
 import re
 import sqlite3
 import struct
@@ -90,7 +93,7 @@ KEYFILE_CONTROL_LINE = re.compile(${JSON.stringify(KEYFILE_CONTROL_LINE)})
 KEYFILE_ENTRY_LINE = re.compile(${JSON.stringify(KEYFILE_ENTRY_LINE)})
 LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
 ECMASCRIPT_TRIM_CHARACTERS = ${PYTHON_ECMASCRIPT_TRIM_CHARACTERS}
-SQLITE_HEADER = b"SQLite format 3\x00"
+SQLITE_HEADER = bytes(${JSON.stringify([...SQLITE_HEADER].map((character) => character.charCodeAt(0)))})
 GVDB_HEADER = b"GVariant"
 ZIP_SIGNATURES = (${ZIP_SIGNATURES.map((signature) => `bytes(${JSON.stringify(signature)})`).join(", ")})
 ZIP_HEADER = ZIP_SIGNATURES[0]
@@ -197,8 +200,44 @@ def _ensure_state_aliases(home: Path) -> None:
 
 
 def _dconf(arguments: list, environment: dict) -> str:
-    return subprocess.run(["dconf", *arguments], env={**os.environ, **environment}, capture_output=True, text=True,
-                          check=True).stdout
+    child_environment = {**os.environ, **environment}
+    refusal = None
+    missing = None
+    for directory in os.get_exec_path(child_environment):
+        command = os.path.join(directory, "dconf")
+        if not os.path.isabs(command):
+            command = os.path.join(os.getcwd(), command)
+        try:
+            child = subprocess.Popen([command, *arguments], env=child_environment,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except OSError as error:
+            # Popen identifies an exec failure with the executable filename;
+            # parent capacity, pipe setup and cwd failures are not PATH misses.
+            if error.filename != command:
+                raise
+            # Match Python's executable search: retain the first non-missing
+            # spawn error, but never retry a child that actually started.
+            if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                missing = error
+            elif refusal is None:
+                refusal = error
+            continue
+        break
+    else:
+        if refusal is not None:
+            raise refusal
+        if missing is not None:
+            raise missing
+        raise FileNotFoundError(errno.ENOENT, "dconf is not installed (dconf-cli)", "dconf")
+    with child:
+        try:
+            stdout, stderr = child.communicate()
+        except BaseException:
+            child.kill()
+            raise
+        result = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+        result.check_returncode()
+        return result.stdout
 
 
 def _load_dconf(home: Path) -> None:
@@ -215,8 +254,13 @@ def _load_dconf(home: Path) -> None:
             keyfiles.mkdir()
             if database.is_file():
                 profile = Path(scratch, "profile")
-                profile.write_text(f"file-db:{database}\n")
-                existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile)})
+                with database.open("rb") as source:
+                    # Parent ownership survives wrappers replacing stdin or closing child fds.
+                    source_path = f"/proc/{os.getpid()}/fd/{source.fileno()}"
+                    # Missing descriptor paths must not become a successful empty dump.
+                    os.stat(source_path)
+                    profile.write_text(f"file-db:{source_path}\n")
+                    existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())})
                 (keyfiles / "00-existing").write_text(existing)
             (keyfiles / "01-captured").write_text(_respelled(DCONF, home))
             _dconf(["compile", str(Path(scratch, "user")), str(keyfiles)], {})
@@ -339,10 +383,9 @@ def _sqlite(path: Path) -> dict:
 
 
 def _text(text: str) -> dict:
-    lines = LINE_BREAK.split(text)
-    if lines[-1] == "":
-        lines.pop()
-    view = {"lines": lines[:MAX_LINES], "line_count": len(lines), "truncated": len(lines) > MAX_LINES}
+    count = text.count("\n") + int(bool(text) and not text.endswith("\n"))
+    lines = list(islice(_each_line(text), min(MAX_LINES, count)))
+    view = {"lines": lines, "line_count": count, "truncated": count > MAX_LINES}
     return {"format": "text", "view": view, "truncated": view["truncated"]}
 
 

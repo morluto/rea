@@ -49,13 +49,60 @@ jobs:
       - name: Install fixture and debugger prerequisites in the disposable container
         shell: bash
         run: |
-          apt-get update -qq
-          apt-get install --yes --no-install-recommends \
-            ca-certificates git python3-venv gcc libc6-dev strace gdb
+          packages=(--yes --no-install-recommends ca-certificates git python3-venv gcc libc6-dev strace gdb)
+          # Fail on stale or partial indexes. Bound network acquisition
+          # separately so an interrupted download never interrupts dpkg.
+          # Package installation does not consume translated descriptions.
+          os_release="${REA_OS_RELEASE:-/etc/os-release}"
+          is_ubuntu_noble=false
+          if [ -r "$os_release" ]; then
+            . "$os_release"
+            if [[ "${ID:-}" == ubuntu && "${VERSION_CODENAME:-}" == noble ]]; then
+              is_ubuntu_noble=true
+            fi
+          fi
+          refresh_timeout="150s"
+          if [[ "$is_ubuntu_noble" == true ]]; then
+            refresh_timeout="75s"
+          fi
+          if timeout --kill-after=5s "$refresh_timeout" \
+            apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update; then
+            :
+          else
+            status=$?
+            if [[ "$is_ubuntu_noble" == true ]]; then
+              echo "Recorded-crash APT index refresh failed (exit ${status}); retrying with the Ubuntu Azure archive" >&2
+              sources_root="${REA_APT_SOURCES_ROOT:-/etc/apt}"
+              for source in "${sources_root}/sources.list" "${sources_root}/sources.list.d/ubuntu.sources"; do
+                if [ -f "$source" ]; then
+                  # Keep source stanzas, signing keys, suites, and components intact;
+                  # ca-certificates is not installed yet so keep http://.
+                  sed -i.azure.bak -E 's#https?://(archive|security)\.ubuntu\.com/ubuntu(/|[[:space:]]|$)#http://azure.archive.ubuntu.com/ubuntu\2#g' "$source"
+                fi
+              done
+              timeout --kill-after=5s 75s \
+                apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update || {
+                  status=$?
+                  echo "::error::Recorded-crash APT index refresh failed (exit ${status})"
+                  exit "$status"
+                }
+            else
+              echo "::error::Recorded-crash APT index refresh failed (exit ${status})"
+              exit "$status"
+            fi
+          fi
+          timeout --kill-after=5s 180s \
+            apt-get -o Acquire::Retries=2 --download-only install "${packages[@]}" || {
+              status=$?
+              echo "::error::Recorded-crash APT package download failed (exit ${status})"
+              exit "$status"
+            }
+          apt-get --no-download install "${packages[@]}"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -74,8 +121,13 @@ jobs:
           core_pwndbg_root="${RUNNER_TEMP}/rea-core-pwndbg"
           core_pwndbg_venv="${RUNNER_TEMP}/rea-core-pwndbg-venv"
           python3 -m venv "${core_decoder_root}"
-          "${core_decoder_root}/bin/python" -m pip install --disable-pip-version-check \
-            'pwntools==4.15.0' 'pyelftools==0.33' 'unicorn==2.1.2' 'uv==0.12.0'
+          decoder_packages=('pwntools==4.15.0' 'pyelftools==0.33' 'unicorn==2.1.2' 'uv==0.12.0')
+          pip_install=("${core_decoder_root}/bin/python" -m pip install --disable-pip-version-check --timeout 20 --retries 2)
+          if ! "${pip_install[@]}" "${decoder_packages[@]}"; then
+            # pip cannot retry a successfully returned but truncated index document.
+            echo '::warning::Decoder dependency install failed; retrying once without the pip cache'
+            "${pip_install[@]}" --no-cache-dir "${decoder_packages[@]}"
+          fi
           git init "${core_pwndbg_root}"
           git -C "${core_pwndbg_root}" remote add origin https://github.com/pwndbg/pwndbg.git
           git -C "${core_pwndbg_root}" fetch --depth=1 origin 55596aa676a2756efb8d67034f31675170eabe48

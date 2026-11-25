@@ -1,3 +1,4 @@
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 import { Writable } from "node:stream";
 
 import { createCommandCli } from "../../support/cli/commandCli.js";
@@ -8,18 +9,12 @@ import { describe, expect, it } from "vitest";
 
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const capture = (args: readonly string[]) => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
+  const { destination, text: readText } = captureOutput();
   const output = createCliResultOutput(
     parseCliOutputArguments(args),
     destination,
@@ -28,7 +23,7 @@ const capture = (args: readonly string[]) => {
   return {
     output,
     destination,
-    text: () => Buffer.concat(chunks).toString("utf8"),
+    text: readText,
   };
 };
 const lines = (text: string): unknown[] =>

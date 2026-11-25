@@ -15,6 +15,10 @@ import {
   processCaptureComparisonSchema,
   type ProcessCaptureComparison,
 } from "./process/processComparison.js";
+import {
+  webScreenshotDiffSchema,
+  type WebScreenshotDiff,
+} from "./webScreenshot.js";
 import { err, ok, type Result } from "./result.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
 
@@ -22,6 +26,7 @@ type ComparisonResults = {
   readonly compare_artifacts: ArtifactComparisonResult;
   readonly compare_functions: FunctionComparisonResult;
   readonly compare_process_captures: ProcessCaptureComparison;
+  readonly compare_web_screenshots: WebScreenshotDiff;
 };
 
 /** One admitted comparison's envelope and its operation-specific parsed facts. */
@@ -109,6 +114,15 @@ export function readComparisonResult(
     if (!links.ok) return links;
     const sources = validateNormalizedViewSources(evidence, parsed.value);
     if (!sources.ok) return sources;
+    return ok({ operation, evidence, result: parsed.value });
+  }
+  if (operation === "compare_web_screenshots") {
+    const parsed = readEvidencePayload(
+      webScreenshotDiffSchema,
+      evidence.normalized_result,
+      { within: ["normalized_result"] },
+    );
+    if (!parsed.ok) return parsed;
     return ok({ operation, evidence, result: parsed.value });
   }
   const parsed = readEvidencePayload(

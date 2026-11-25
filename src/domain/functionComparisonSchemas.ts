@@ -63,7 +63,7 @@ const functionDimensionContextShape = {
     .exactOptional(),
 };
 
-const functionDimensionSchema = z.union([
+const functionDimensionSchema = z.discriminatedUnion("status", [
   z.object({
     ...functionDimensionContextShape,
     status: z.literal("unchanged"),
@@ -206,7 +206,7 @@ export const functionNormalizedViewsSchema = z
     }
   });
 
-const functionMatchSchema = z.union([
+const functionMatchSchema = z.discriminatedUnion("method", [
   z.object({
     status: z.literal("matched"),
     method: z.literal("symbol"),

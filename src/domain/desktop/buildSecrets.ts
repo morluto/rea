@@ -9,6 +9,11 @@ import {
   lowercasePercentEscapes,
 } from "../explicitSensitiveValues.js";
 
+const UTF16LE_FATAL = new TextDecoder("utf-16le", { fatal: true });
+const UTF16BE_FATAL = new TextDecoder("utf-16be", { fatal: true });
+const UTF16LE_ESCAPE_MARKER = Buffer.from([0x5c, 0, 0x75, 0]);
+const UTF16BE_ESCAPE_MARKER = Buffer.from([0, 0x5c, 0, 0x75]);
+
 /** A secret's handle: the name of one file in the build host's secrets folder. */
 export const buildSecretHandleSchema = z
   .string()
@@ -117,14 +122,14 @@ const jsonEscapedSecrets = (
         if (at % 2 === 0) return true;
       return false;
     };
-    const encoding = hasAligned(Buffer.from([0x5c, 0, 0x75, 0]))
-      ? "utf-16le"
-      : hasAligned(Buffer.from([0, 0x5c, 0, 0x75]))
-        ? "utf-16be"
+    const decoder = hasAligned(UTF16LE_ESCAPE_MARKER)
+      ? UTF16LE_FATAL
+      : hasAligned(UTF16BE_ESCAPE_MARKER)
+        ? UTF16BE_FATAL
         : undefined;
-    if (encoding !== undefined) {
+    if (decoder !== undefined) {
       try {
-        text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+        text = decoder.decode(bytes);
       } catch {
         return found;
       }

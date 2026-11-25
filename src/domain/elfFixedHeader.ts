@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import type {
   BinaryArchitecture,
   RawOnlyArchitecture,
@@ -27,6 +28,9 @@ export interface ElfFixedHeader extends Omit<ElfHeaderFacts, "version"> {
   readonly architecture: ElfArchitecture | null;
 }
 
+export const elfFixedHeaderWidth = (bits: 32 | 64): 52 | 64 =>
+  bits === 32 ? 52 : 64;
+
 /**
  * Decode common ELF framing and fixed fields; version and declared-size admission belong to consumers.
  *
@@ -49,7 +53,7 @@ export const readElfHeaderFacts = (
   if (bytes[6] !== 1) return err("unsupported ELF identification version");
 
   const elfClass = classByte === 1 ? 32 : 64;
-  const minimumSize = elfClass === 32 ? 52 : 64;
+  const minimumSize = elfFixedHeaderWidth(elfClass);
   if (
     !Number.isSafeInteger(totalBytes) ||
     totalBytes < bytes.length ||
@@ -60,21 +64,18 @@ export const readElfHeaderFacts = (
       `truncated ELF header: an ELF${elfClass} header needs ${minimumSize} bytes; the file has ${totalBytes}`,
     );
   const littleEndian = dataByte === 1;
-  const readU16 = (offset: number): number =>
-    littleEndian ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
-  const readU32 = (offset: number): number =>
-    littleEndian ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
-  const machine = readU16(18);
-  const headerSize = readU16(elfClass === 32 ? 40 : 52);
+  const reader = new BinaryReader(bytes, littleEndian, "elf");
+  const machine = reader.u16(18);
+  const headerSize = reader.u16(elfClass === 32 ? 40 : 52);
   return ok({
     elfClass,
     byteOrder: littleEndian ? "little" : "big",
     headerSize,
     machine,
-    type: readU16(16),
-    flags: readU32(elfClass === 32 ? 36 : 48),
+    type: reader.u16(16),
+    flags: reader.u32(elfClass === 32 ? 36 : 48),
     osAbi: bytes[7]!,
-    version: readU32(20),
+    version: reader.u32(20),
     abiVersion: bytes[8]!,
   });
 };
@@ -98,7 +99,7 @@ export const admitElfFixedHeaderFacts = (
   // NVIDIA CUBIN uses ELFOSABI_CUDA and a vendor ABI version in e_version.
   if (facts.version !== 1 && !(facts.machine === 190 && facts.osAbi === 0x33))
     return err("unsupported ELF header version");
-  const minimumSize = facts.elfClass === 32 ? 52 : 64;
+  const minimumSize = elfFixedHeaderWidth(facts.elfClass);
   if (facts.headerSize < minimumSize || facts.headerSize > totalBytes)
     return err("invalid ELF header size");
   return ok({
@@ -115,9 +116,8 @@ export const admitElfFixedHeaderFacts = (
 };
 
 /**
- * The CPU family an ELF machine names. A machine that is a family only for one
- * ELF class needs that class from the caller; without it the machine stays
- * unclassified.
+ * The CPU family an ELF machine names, with class checks where required.
+ * Callers that read only the machine retain their historical inventory labels.
  */
 export const elfArchitecture = (
   machine: number,
@@ -130,8 +130,8 @@ export const elfArchitecture = (
       return "x86_64";
     case 8: // EM_MIPS: ISA, ABI and byte order remain separate ELF facts.
       return "mips";
-    case 20: // EM_PPC; byte order and processor variant remain ELF declarations.
-      return "powerpc";
+    case 20: // EM_PPC is the 32-bit machine. Preserve machine-only inventory labels.
+      return elfClass === 64 ? undefined : "powerpc";
     case 21:
       // EM_PPC64 objects are ELF64. An ELF32 header that claims it would pass
       // for EM_PPC downstream, where only class and byte order remain.

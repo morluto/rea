@@ -71,8 +71,8 @@ export const buildGodotPck1 = (
 /**
  * Build a pack with the layout Godot's exporter writes (and GDRE Tools
  * reproduces): format 2 places the directory after a 96-byte header and
- * members after it; format 3 stores members first and a pack-relative
- * directory offset.
+ * members after it. Formats 3 and 4 add an eight-byte directory offset to
+ * the header and store members before the directory.
  */
 export const buildGodotPck = (
   version: 2 | 3 | 4,
@@ -107,7 +107,7 @@ export const buildGodotPck = (
       ];
     }),
   ]);
-  const headerBytes = 96;
+  const headerBytes = version === 2 ? 96 : 104;
   const fileBase = version === 2 ? headerBytes + directory.length : headerBytes;
   const header = Buffer.concat([
     Buffer.from("GDPC"),
@@ -117,7 +117,7 @@ export const buildGodotPck = (
     pckU32(1),
     pckU32(options.packFlags ?? (version >= 3 ? 2 : 0)),
     pckU64(fileBase),
-    pckU64(version >= 3 ? headerBytes + dataBytes : 0),
+    ...(version >= 3 ? [pckU64(headerBytes + dataBytes)] : []),
   ]);
   const paddedHeader = Buffer.concat([
     header,

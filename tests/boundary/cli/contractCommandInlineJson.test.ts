@@ -2,11 +2,11 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import {
   commandRoute,
-  registerContractCommand,
   registerRoutedCommand,
-} from "../../../src/cli/contractCommand.js";
+} from "../../../src/cli/routedContractCommand.js";
 import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";

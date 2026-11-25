@@ -18,7 +18,7 @@ import {
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
 import { silentLogger } from "../../../src/logger.js";
-import type { RizinDebugToolOptions } from "../../../src/server/serviceToolBindings.js";
+import type { RizinDebugToolOptions } from "../../../src/server/debuggerToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createBinarySessionTargets,
@@ -30,11 +30,12 @@ import {
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
   "reports Rizin launch provenance and lossy frame decoding through MCP",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-provenance-"));
+    const directory = await createTestTempDirectory("rea-rizin-provenance-");
     const provider = join(directory, "fake-rizin-provenance.mjs");
     await writeFile(
       provider,
@@ -113,7 +114,6 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
         },
       ]);
     }
@@ -190,7 +190,7 @@ it("admits Rizin startup across a bound analysis session", async () => {
 it.skipIf(process.platform === "win32")(
   "propagates MCP cancellation into a running Rizin debugger command",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-mcp-cancel-"));
+    const directory = await createTestTempDirectory("rea-rizin-mcp-cancel-");
     const provider = join(directory, "fake-rizin.mjs");
     const commandPath = join(directory, "command-started");
     await writeFile(
@@ -254,7 +254,6 @@ process.stdin.on("data", async (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
         },
       ]);
     }

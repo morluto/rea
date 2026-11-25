@@ -1003,3 +1003,87 @@ it("keeps wrapped route ancestry, navigation and unknown named parents in the re
     await worker.close();
   }
 });
+
+it.each([
+  ["preload-discovery", "before", 1],
+  ["preload-discovery", "after", 1],
+  ["analysis", "before", 2],
+  ["analysis", "after", 2],
+] as const)(
+  "after a %s member-mutation refusal %s an accepted source, the next checkout uses %i launch(es)",
+  async (purpose, order, expectedLaunches) => {
+    const scope = new ArtifactResourceScope();
+    const launches: number[] = [];
+    const launcher: typeof spawnOwnedProviderProcess = async (request) => {
+      const spawned = await spawnOwnedProviderProcess(request);
+      if (spawned.process.pid !== undefined) launches.push(spawned.process.pid);
+      return spawned;
+    };
+    const limits = {
+      heapMb: 128,
+      timeoutMs: 30_000,
+      memberMutationAllowance: { aliasStates: 8, source: "runtime" } as const,
+    };
+    // Four conditional self-selections before one member write (#8294).
+    const refused = source(
+      "refused.js",
+      [
+        "function probe(input, env) { var m; if (env.first) m = env.first.info;",
+        ...Array.from(
+          { length: 4 },
+          (_, index) =>
+            `if (/case${String(index)}/.test(input)) m = m[${String(index % 2)}];`,
+        ),
+        "m[1] = input.length; return m; } module.exports = probe;",
+      ].join(" "),
+    );
+    const accepted = source("accepted.js", "module.exports = 1;");
+    try {
+      const first = await createJavaScriptSourceAnalysis(limits, 2, {
+        scope,
+        launcher,
+      });
+      try {
+        const capacity = { nodes: 0, unknowns: 0 };
+        const analyze = (file: typeof accepted) =>
+          first.analyze(
+            file,
+            capacity,
+            undefined,
+            undefined,
+            "commonjs",
+            purpose,
+          );
+        // A refusal of the last discovered source must not discard the
+        // healthy worker either.
+        for (const file of order === "before"
+          ? [refused, accepted]
+          : [accepted, refused]) {
+          const result = await analyze(file);
+          if (file === accepted && !result.ok) throw result.error.error;
+          if (file === refused) expect(result.ok).toBe(false);
+        }
+      } finally {
+        await first.close();
+      }
+      // Discovery's refused source is analyzed again by the normal pass, so
+      // only discovery parks its healthy worker; other failures still close it.
+      const next = await createJavaScriptSourceAnalysis(limits, 1, {
+        scope,
+        launcher,
+      });
+      try {
+        const result = await next.analyze(accepted, {
+          nodes: 100,
+          unknowns: 100,
+        });
+        if (!result.ok) throw result.error.error;
+      } finally {
+        await next.close();
+      }
+      expect(launches).toHaveLength(expectedLaunches);
+    } finally {
+      await scope.close();
+    }
+  },
+);

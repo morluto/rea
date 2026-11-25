@@ -149,6 +149,40 @@ describe("readElfDependencies", () => {
   });
 });
 
+it.each([
+  { table: "program header", allowance: 111, offsetField: 32 },
+  { table: "dynamic", allowance: 112, offsetField: 64 + 56 + 8 },
+])(
+  "validates the declared ELF $table extent before its table budget",
+  async ({ table, allowance, offsetField }) => {
+    const needed = Array.from(
+      { length: 8 },
+      (_, index) => `lib${String(index)}.so`,
+    );
+    const image = elfImage({ needed });
+    const policy = desktopLibraryPolicy({ table_bytes: allowance });
+    const read = () =>
+      readElfDependencies(readImage(image), image.length, policy);
+    expect(await read()).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining(
+          `ELF ${table} table reached library-policy.table_bytes=${String(allowance)} bytes`,
+        ),
+      },
+    });
+    image.writeBigUInt64LE(BigInt(image.length), offsetField);
+    expect(await read()).toEqual({
+      ok: false,
+      error: {
+        kind: "unreadable",
+        identity: { machine: 183, bits: 64, byte_order: "little" },
+        reason: `ELF ${table} table is truncated`,
+      },
+    });
+  },
+);
+
 describe("ELF filesystem string admission", () => {
   it.each(["libé.so", "lib选择.so", "\uFEFFlib.so", "lib\uFFFD.so"])(
     "preserves the filesystem bytes of needed library %s",
