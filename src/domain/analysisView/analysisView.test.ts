@@ -1731,7 +1731,7 @@ it("rejects unsupported parent operations and incompatible collections", () => {
   );
   expect(unsupported).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   const modulesOnLayout = projectAnalysisView(layoutParent(), {
     kind: "page",

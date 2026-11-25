@@ -71,7 +71,7 @@ it.each(["compact"] as const)(
         artifact_limits: { node_sea: { asset_count: 1 } },
       });
       expect(parseMcpToolError(assetRefusal).error).toMatchObject({
-        code: "truncated",
+        code: "partial",
         retryable: true,
         details: {
           operation: "inspect_artifact",
@@ -205,7 +205,7 @@ it("reports the PE parser budget when Node SEA inventory exhausts it", async () 
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
   const reply = await call("inspect_artifact", {});
   expect(parseMcpToolError(reply).error).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: false,
     details: {
       operation: "inspect_artifact",

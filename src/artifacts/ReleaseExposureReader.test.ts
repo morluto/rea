@@ -45,6 +45,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
+  malformedArtifact,
 } from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
@@ -4159,11 +4160,13 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
 
 describe("ReleaseExposureReader cleanup-bearing read failures", () => {
   const cleanupFailure = (
-    reason: "limit" | "format",
+    reason: "limit" | "malformed",
     resource: string,
   ): ArtifactReaderFailure =>
     ArtifactReaderFailure.withCleanup(
-      new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
+      reason === "malformed"
+        ? malformedArtifact("source-map", `${reason} failure: ${resource}`)
+        : new ArtifactReaderFailure(reason, `${reason} failure: ${resource}`),
       { reason: "close failed", resources: [resource] },
     );
 
@@ -4236,7 +4239,7 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
     const selected = join(root, "app");
     await writeFile(selected, "selected");
     inventoryRead.impl = () =>
-      Promise.reject(cleanupFailure("format", selected));
+      Promise.reject(cleanupFailure("malformed", selected));
     const reader = new ReleaseExposureReader();
     try {
       const result = await reader.inspect(

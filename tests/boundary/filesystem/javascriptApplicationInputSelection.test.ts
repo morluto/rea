@@ -123,10 +123,12 @@ describe("JavaScript application input selection", () => {
     expect(await analyzeFailure({ input_path: binary })).toMatchObject({
       code: "unsupported_target",
       category: "unsupported_target",
-      remediation: { action: expect.stringContaining(".asar") },
       details: {
         operation: "analyze_javascript_application",
         path: binary,
+        failure_kind: "unsupported",
+        // The owner names the accepted inputs; the projection owns recovery.
+        reason: expect.stringContaining(".asar"),
       },
     });
   });
@@ -159,7 +161,15 @@ describe("JavaScript application input selection", () => {
         },
       },
     });
-    expect(projected.remediation.action).toContain("entries_by_format");
+    expect(projected).toMatchObject({
+      details: {
+        failure_kind: "unrecognized",
+        reason: expect.stringContaining("entries_by_format"),
+      },
+    });
+    expect(projected.remediation.action).toContain(
+      "inspect_desktop_application",
+    );
     expect(JSON.stringify(projected)).not.toContain("tool.exe");
   });
 

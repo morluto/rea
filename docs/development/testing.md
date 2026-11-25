@@ -99,7 +99,7 @@ it or select another revision.
 Source typechecking needs no compiled runtime or generated test metadata.
 Typecheck, runtime compilation, and Frida binding verification share
 `scripts/run-typescript.mjs`. The pinned tsrs package supplies Linux x64/arm64
-(GNU and musl) and macOS arm64 compilers. Windows and other unsupported hosts
+(GNU and musl) and macOS x64/arm64 compilers. Windows and other unsupported hosts
 retain the existing stable official TypeScript compiler. Its upstream version
 can differ from tsrs, so both compiler tasks hash the selected package and version
 through `scripts/run-turbo.mjs` before cache lookup. Outputs from different
@@ -166,7 +166,8 @@ no compiled-runtime prerequisite, not a fixed time budget.
 duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
-`static-deep-check-reports`, including after that gate fails.
+`static-deep-check-reports`, including after that gate fails. On reruns, both
+artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
@@ -239,8 +240,9 @@ collected assertions can be awaited later. `import/no-duplicates` warns with
 no escaping for clients: the presentation re-emits every advertised pattern in
 the portable grammar (`src/contracts/portablePattern.ts`).
 
-Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
-`oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
+Fast lint stays syntax-based. `npm run lint:typed` defaults to the locked
+`oxlint-tsgolint` executable and honors an explicit `OXLINT_TSGOLINT_PATH`.
+It records native plus typed diagnostics in
 `.cache/static-checks/typed-oxlint.json`. Production `src` treats
 `no-misused-promises` as an error; tests/fixtures warn. `no-floating-promises` is
 an error throughout the lint inventory. `return-await` is an error in
@@ -1300,8 +1302,8 @@ publish timing history. Fast runs publish `test-timings-fast` and full runs
 publish `test-timings-full`. The build job accepts only verified artifacts from
 successful default-branch CI runs that match its tier. It lists one page of
 matching artifacts and checks up to five producer runs individually. When
-eligible artifacts remain, it can check them against one page of successful CI
-runs. A tier with no qualifying artifact leaves history unset. The build
+eligible artifacts remain, it can check them against up to three pages of
+successful CI runs within the shared 20-second lookup budget. A tier with no qualifying artifact leaves history unset. The build
 downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are

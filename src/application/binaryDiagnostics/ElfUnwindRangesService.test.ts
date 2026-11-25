@@ -1,4 +1,4 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfUnwindRangesService } from "./ElfUnwindRangesService.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
@@ -15,7 +15,6 @@ import {
 } from "../../native/elf/ElfUnwindTables.fixture.js";
 import { ok } from "../../domain/result.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -369,23 +368,12 @@ it("rejects a report that fails the output schema", async () => {
 });
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late ElfUnwindRanges cancellation" };
-  const service = new ElfUnwindRangesService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late ElfUnwindRanges cancellation",
+    (inspect) => new ElfUnwindRangesService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_elf_unwind_ranges",
     normalized_result: report,
   });

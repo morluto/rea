@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 930; runtime: 167.
+Locked package entries: 933; runtime: 167.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -1525,61 +1525,76 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@toon-format/toon/v/4.4.0
   Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-4.4.0.tgz
   Integrity: sha512-A6UcsVoWbNdhdLNhJbe6JpRlocmf/DZGG57fur3bd8oQtsjBaKWo2hHbOU2zTuy+byUmLIOyP1xJeitopCZzpQ==
-@tsrs/darwin-arm64@0.18.0-ts7.1.0-dev.20260929 | development, optional | Apache-2.0
+@tsrs/darwin-arm64@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
   Lockfile path: node_modules/@tsrs/darwin-arm64
-  Package: https://www.npmjs.com/package/@tsrs/darwin-arm64/v/0.18.0-ts7.1.0-dev.20260929
-  Archive: https://registry.npmjs.org/@tsrs/darwin-arm64/-/darwin-arm64-0.18.0-ts7.1.0-dev.20260929.tgz
-  Integrity: sha512-sAirMpaGA9uRQm2W+t4zC7PjnijNuFa4PCSIfLKKo0JyAUCRfnMeev0UGBQ9F3g+9Nz187tvikUs5Irh5+eajA==
-@tsrs/linux-arm64-gnu@0.18.0-ts7.1.0-dev.20260929 | development, optional | Apache-2.0
+  Package: https://www.npmjs.com/package/@tsrs/darwin-arm64/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/darwin-arm64/-/darwin-arm64-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-VMsXBPFD0SO5p7XrXhLutPmnpHc4kMIt7uztBJoHr/5Jd6qC8eH/TomobdPGugw27U3uiW2wJDqYjqYq5fxoCA==
+@tsrs/darwin-x64@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
+  Lockfile path: node_modules/@tsrs/darwin-x64
+  Package: https://www.npmjs.com/package/@tsrs/darwin-x64/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/darwin-x64/-/darwin-x64-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-cNVbvIaKasKYjAI4aBfCE+gpa188JMb3GORyK9SDMZOEib9toEAAO7XCImOkazkLPq45UZxmxfCgBKMpMNWfug==
+@tsrs/linux-arm64-gnu@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
   Lockfile path: node_modules/@tsrs/linux-arm64-gnu
-  Package: https://www.npmjs.com/package/@tsrs/linux-arm64-gnu/v/0.18.0-ts7.1.0-dev.20260929
-  Archive: https://registry.npmjs.org/@tsrs/linux-arm64-gnu/-/linux-arm64-gnu-0.18.0-ts7.1.0-dev.20260929.tgz
-  Integrity: sha512-zm9/z9yylig68JiZF4Aq0Cm26n09KEU8YoQRlG7tdDWTBNAIViYw8knxnWYsjMWVZ2XiU4mYq1xdrOKuOgABHg==
-@tsrs/linux-arm64-musl@0.18.0-ts7.1.0-dev.20260929 | development, optional | Apache-2.0
+  Package: https://www.npmjs.com/package/@tsrs/linux-arm64-gnu/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/linux-arm64-gnu/-/linux-arm64-gnu-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-g1wZyn53DDQsIeu19i0YTYZCwY8eEZetR2MjgZK8XIznA6GSir67pEBaAsxpLZzOD7Z6UPjnoSP6w6ft08JnWQ==
+@tsrs/linux-arm64-musl@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
   Lockfile path: node_modules/@tsrs/linux-arm64-musl
-  Package: https://www.npmjs.com/package/@tsrs/linux-arm64-musl/v/0.18.0-ts7.1.0-dev.20260929
-  Archive: https://registry.npmjs.org/@tsrs/linux-arm64-musl/-/linux-arm64-musl-0.18.0-ts7.1.0-dev.20260929.tgz
-  Integrity: sha512-Lw7VVU/YQ9JcarODICEiwzMLdFqZprqh5RGTgbS5Uc6I95P635/g5xA1pOC8RVs4efBvAR30J54iDG3l5JEYiw==
-@tsrs/linux-x64-gnu@0.18.0-ts7.1.0-dev.20260929 | development, optional | Apache-2.0
+  Package: https://www.npmjs.com/package/@tsrs/linux-arm64-musl/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/linux-arm64-musl/-/linux-arm64-musl-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-vt23JfDe8ECKOC9G7dpYY3dzC8EFKBKuNCLaYbTJgemKN0GbxvWN3chm5LotjNYuROv2cED1AUTJEE1+k5oDGw==
+@tsrs/linux-x64-gnu@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
   Lockfile path: node_modules/@tsrs/linux-x64-gnu
-  Package: https://www.npmjs.com/package/@tsrs/linux-x64-gnu/v/0.18.0-ts7.1.0-dev.20260929
-  Archive: https://registry.npmjs.org/@tsrs/linux-x64-gnu/-/linux-x64-gnu-0.18.0-ts7.1.0-dev.20260929.tgz
-  Integrity: sha512-EdBwBgNICGu1r1h23ixdcKwsMo6E9ll7ZsY3mNERNYqE1Pwdtcat99d5E7zB1J+oy/Xk6YqiizaB6nolIjpDTw==
-@tsrs/linux-x64-musl@0.18.0-ts7.1.0-dev.20260929 | development, optional | Apache-2.0
+  Package: https://www.npmjs.com/package/@tsrs/linux-x64-gnu/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/linux-x64-gnu/-/linux-x64-gnu-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-4QlsTwQSAnx5KrNeWDg/+HKSjBhsFPU2JsMZzK2vn+8hxNXDD3gbiP6dP7dD7ohdJdSAy+jm6uY2F4XyLpIyRQ==
+@tsrs/linux-x64-musl@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
   Lockfile path: node_modules/@tsrs/linux-x64-musl
-  Package: https://www.npmjs.com/package/@tsrs/linux-x64-musl/v/0.18.0-ts7.1.0-dev.20260929
-  Archive: https://registry.npmjs.org/@tsrs/linux-x64-musl/-/linux-x64-musl-0.18.0-ts7.1.0-dev.20260929.tgz
-  Integrity: sha512-LHk+AOAtXuTlhJhOJ2+elriEIX17ycXljojeNxrrzckOipTG1LksoVWuCSas2nu00EnWAzrdKpt9oqPylUKZfQ==
-@turbo/darwin-64@2.11.11 | development, optional | MIT
+  Package: https://www.npmjs.com/package/@tsrs/linux-x64-musl/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/linux-x64-musl/-/linux-x64-musl-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-ZGwwZiaA8hUh5kKIktDifI5b9pfprjU0so4Pkkx9NLvgdIhJVjYt0sGOVdNPDdpk6NG+96ld8sH70hRUav7w/g==
+@tsrs/win32-arm64@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
+  Lockfile path: node_modules/@tsrs/win32-arm64
+  Package: https://www.npmjs.com/package/@tsrs/win32-arm64/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/win32-arm64/-/win32-arm64-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-P6WGeHGKNz3+BLrC0aBDiEHTvqTl95T15sBv20om3y7RwFpTNCWUYuxkDXUWciltxyGgjRh1enUJ4dTUZ7SQbQ==
+@tsrs/win32-x64@7.1.0-beta.tsrs2 | development, optional | Apache-2.0
+  Lockfile path: node_modules/@tsrs/win32-x64
+  Package: https://www.npmjs.com/package/@tsrs/win32-x64/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/@tsrs/win32-x64/-/win32-x64-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-ICto2KzEv99ScmQInd/ItESq0V8MBA7MYakNEQX45cgqGLeFIrv64X9X/avNcRJVqOE1SvAGXk68uysAPOqjWA==
+@turbo/darwin-64@2.11.12 | development, optional | MIT
   Lockfile path: node_modules/@turbo/darwin-64
-  Package: https://www.npmjs.com/package/@turbo/darwin-64/v/2.11.11
-  Archive: https://registry.npmjs.org/@turbo/darwin-64/-/darwin-64-2.11.11.tgz
-  Integrity: sha512-HMMeUIEAsmyIbSYn1ySvF/4gGMa0joiTMq4dQDuloIAnOpbtFT3JEiVsYnASdTWDXvplbRbZlqjU1EBeSR9G1A==
-@turbo/darwin-arm64@2.11.11 | development, optional | MIT
+  Package: https://www.npmjs.com/package/@turbo/darwin-64/v/2.11.12
+  Archive: https://registry.npmjs.org/@turbo/darwin-64/-/darwin-64-2.11.12.tgz
+  Integrity: sha512-IF9fY2GVKpwSs+aAmby8BKb8qgGPZl0lhBER3HpPRxfY5jtA3veKXPqphiI5+jEhqXh3OXXpG73kHv990lqfWQ==
+@turbo/darwin-arm64@2.11.12 | development, optional | MIT
   Lockfile path: node_modules/@turbo/darwin-arm64
-  Package: https://www.npmjs.com/package/@turbo/darwin-arm64/v/2.11.11
-  Archive: https://registry.npmjs.org/@turbo/darwin-arm64/-/darwin-arm64-2.11.11.tgz
-  Integrity: sha512-+8iySNgqYWY6PZYUQzYu6zn0C04z2OEq1vQ6oMGsJ9sxN6wOpg1gzi1AJ5VKDHviWvMUjhqng51hTEQZOuiqYQ==
-@turbo/linux-64@2.11.11 | development, optional | MIT
+  Package: https://www.npmjs.com/package/@turbo/darwin-arm64/v/2.11.12
+  Archive: https://registry.npmjs.org/@turbo/darwin-arm64/-/darwin-arm64-2.11.12.tgz
+  Integrity: sha512-2gEvJbwUEupoWFbMPCDU1ZxHXRqaq3w92gFBZ4+7ovJw90qONecUvX8IOQe/8pr3qMmYMiNjA5/+HkUNmTTFgg==
+@turbo/linux-64@2.11.12 | development, optional | MIT
   Lockfile path: node_modules/@turbo/linux-64
-  Package: https://www.npmjs.com/package/@turbo/linux-64/v/2.11.11
-  Archive: https://registry.npmjs.org/@turbo/linux-64/-/linux-64-2.11.11.tgz
-  Integrity: sha512-uImTKFYCFKsoFxjaXeJXlMPv4uU3OIIDjyzoIwYVqOtu9LnCZ/5/fzu/WP6+G9YfwGAPRplTHkKFfcI5t97RGw==
-@turbo/linux-arm64@2.11.11 | development, optional | MIT
+  Package: https://www.npmjs.com/package/@turbo/linux-64/v/2.11.12
+  Archive: https://registry.npmjs.org/@turbo/linux-64/-/linux-64-2.11.12.tgz
+  Integrity: sha512-2yULGKE5+uVxU0ELgq3vprzBE/Ua/Loaui0eO1E17hFyCeesG9UpQpWmTlf/MjaU0kTlVAh6CfbMsziaTELSMw==
+@turbo/linux-arm64@2.11.12 | development, optional | MIT
   Lockfile path: node_modules/@turbo/linux-arm64
-  Package: https://www.npmjs.com/package/@turbo/linux-arm64/v/2.11.11
-  Archive: https://registry.npmjs.org/@turbo/linux-arm64/-/linux-arm64-2.11.11.tgz
-  Integrity: sha512-Y7xffSVfyyYRGzNy6PLdrFL4xXN6iTuR3W0SyJvH/yd3d4defA6dansZwJpPDVnIpD8a2Qn256DwY/Qin4Ip4g==
-@turbo/windows-64@2.11.11 | development, optional | MIT
+  Package: https://www.npmjs.com/package/@turbo/linux-arm64/v/2.11.12
+  Archive: https://registry.npmjs.org/@turbo/linux-arm64/-/linux-arm64-2.11.12.tgz
+  Integrity: sha512-OK2PbiujzK3y3WleafqL6eUa5SaKvsTFOnpSIXD6jDxAPqlF8bEr/VWxbThHWvN8XV/4iKi/mDXJAM9Tpx9PDg==
+@turbo/windows-64@2.11.12 | development, optional | MIT
   Lockfile path: node_modules/@turbo/windows-64
-  Package: https://www.npmjs.com/package/@turbo/windows-64/v/2.11.11
-  Archive: https://registry.npmjs.org/@turbo/windows-64/-/windows-64-2.11.11.tgz
-  Integrity: sha512-e2WqNtkPGo3QDwNNwwBo89Dx3PtSJ9Wp9QuRNzn80rrRnSHB+1mfBMZTpdHjA8/G/sG9rl76TdWdpgVsimjRdg==
-@turbo/windows-arm64@2.11.11 | development, optional | MIT
+  Package: https://www.npmjs.com/package/@turbo/windows-64/v/2.11.12
+  Archive: https://registry.npmjs.org/@turbo/windows-64/-/windows-64-2.11.12.tgz
+  Integrity: sha512-2LOX0kvuvtDtLYH2HQinE3v4Ch8OcR+8gO1RacAP1s1j/m1Spf/HbBGn0EOlkEBsBzKnnxFnYqBGYvBfzrtLNg==
+@turbo/windows-arm64@2.11.12 | development, optional | MIT
   Lockfile path: node_modules/@turbo/windows-arm64
-  Package: https://www.npmjs.com/package/@turbo/windows-arm64/v/2.11.11
-  Archive: https://registry.npmjs.org/@turbo/windows-arm64/-/windows-arm64-2.11.11.tgz
-  Integrity: sha512-LURivfmgv34Osm8NR1gZGx4vdlux9KAgRM+FoooXNG0838ff0+akWZ76iPSke0NS2rsf7Z4Gw+YSaygzNTZuRA==
+  Package: https://www.npmjs.com/package/@turbo/windows-arm64/v/2.11.12
+  Archive: https://registry.npmjs.org/@turbo/windows-arm64/-/windows-arm64-2.11.12.tgz
+  Integrity: sha512-Mg8HvtTCJLIfNdrXaU+CoLRzrMIgWBRTBohatbrsdfyO0Iw6Nvr6gC2bwiQXflSQ8u/7yWJ/J91f/H2u52lqeQ==
 @tybys/wasm-util@0.10.4 | development, optional | MIT
   Lockfile path: node_modules/@tybys/wasm-util
   Package: https://www.npmjs.com/package/@tybys/wasm-util/v/0.10.4
@@ -2510,11 +2525,11 @@ eventsource-parser@3.1.0 | runtime | MIT
   Package: https://www.npmjs.com/package/eventsource-parser/v/3.1.0
   Archive: https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz
   Integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==
-evmole@0.9.4 | runtime | MIT
+evmole@0.9.6 | runtime | MIT
   Lockfile path: node_modules/evmole
-  Package: https://www.npmjs.com/package/evmole/v/0.9.4
-  Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.4.tgz
-  Integrity: sha512-bXy0WM9YHff/wj4WWrfRH4jtQlxxBbC0oNx/AMzmrLrzzn63w5RKzQohNYNHjoclc/Yb3x6Rg8k/j33lbCmHtw==
+  Package: https://www.npmjs.com/package/evmole/v/0.9.6
+  Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
+  Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
 execa@9.6.1 | development | MIT
   Lockfile path: node_modules/execa
   Package: https://www.npmjs.com/package/execa/v/9.6.1
@@ -2865,11 +2880,11 @@ isexe@2.0.0 | runtime | ISC
   Package: https://www.npmjs.com/package/isexe/v/2.0.0
   Archive: https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz
   Integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==
-isomorphic-git@1.44.15 | runtime | MIT
+isomorphic-git@1.44.16 | runtime | MIT
   Lockfile path: node_modules/isomorphic-git
-  Package: https://www.npmjs.com/package/isomorphic-git/v/1.44.15
-  Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.15.tgz
-  Integrity: sha512-jm7drCsGNOuyAKCKiZ9n0WtGImsEjfTbms0HxLHJF3H8A+luGSerLnVFeAo/gADjF8PrdLzmO/p2G/0IqjNwig==
+  Package: https://www.npmjs.com/package/isomorphic-git/v/1.44.16
+  Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.16.tgz
+  Integrity: sha512-ejYi++i9TdYwJoypfdNWEWQgltDqlDgvX9yX/QKa9ZSvny9iFwFXw0KgAqYxWHRqFsCacmJPiNtErfgaoq6W+Q==
 ignore@5.3.2 | runtime | MIT
   Lockfile path: node_modules/isomorphic-git/node_modules/ignore
   Package: https://www.npmjs.com/package/ignore/v/5.3.2
@@ -4100,11 +4115,11 @@ tslib@2.8.1 | development | 0BSD
   Package: https://www.npmjs.com/package/tslib/v/2.8.1
   Archive: https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz
   Integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==
-tsrs@0.18.0-ts7.1.0-dev.20260929 | development | Apache-2.0
+tsrs@7.1.0-beta.tsrs2 | development | Apache-2.0
   Lockfile path: node_modules/tsrs
-  Package: https://www.npmjs.com/package/tsrs/v/0.18.0-ts7.1.0-dev.20260929
-  Archive: https://registry.npmjs.org/tsrs/-/tsrs-0.18.0-ts7.1.0-dev.20260929.tgz
-  Integrity: sha512-9T0b4Uam/yMFIK16GUx0fUrJqYZnJ/gvSmV9JB8NTyDePvwCI45WFWxyEV/UMV3KfdNRJG/PBsm3fSIB9WmWsA==
+  Package: https://www.npmjs.com/package/tsrs/v/7.1.0-beta.tsrs2
+  Archive: https://registry.npmjs.org/tsrs/-/tsrs-7.1.0-beta.tsrs2.tgz
+  Integrity: sha512-T6O1mYbPe7B5ZSudwqJcn7hfn66w3wXsCd+GpXyDPsRmei71W6WAidlj+QWaYgmfpbmMqzcryKcg5aVg8DOSXw==
 tsx@4.23.15 | development | MIT
   Lockfile path: node_modules/tsx
   Package: https://www.npmjs.com/package/tsx/v/4.23.15
@@ -4120,11 +4135,11 @@ tunnel-agent@0.6.0 | runtime, optional | Apache-2.0
   Package: https://www.npmjs.com/package/tunnel-agent/v/0.6.0
   Archive: https://registry.npmjs.org/tunnel-agent/-/tunnel-agent-0.6.0.tgz
   Integrity: sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w==
-turbo@2.11.11 | development | MIT
+turbo@2.11.12 | development | MIT
   Lockfile path: node_modules/turbo
-  Package: https://www.npmjs.com/package/turbo/v/2.11.11
-  Archive: https://registry.npmjs.org/turbo/-/turbo-2.11.11.tgz
-  Integrity: sha512-AI4UJbUE/2cVZdoXJ4PODc8qvrjhQQX9Fa93eKGOI6Ims/w7+kUIb9T1jhlgSnZcf+gtUruci/ohSwqtNNC5Yw==
+  Package: https://www.npmjs.com/package/turbo/v/2.11.12
+  Archive: https://registry.npmjs.org/turbo/-/turbo-2.11.12.tgz
+  Integrity: sha512-NbxpCtwXayklTelyQowpb6Qv483qLP+95cSD/gnpBaIL/tw14JtPhl1XIRwkz/tG2k5cq1De+xhX6/ph713Inw==
 type-fest@3.13.1 | development | (MIT OR CC0-1.0)
   Lockfile path: node_modules/type-fest
   Package: https://www.npmjs.com/package/type-fest/v/3.13.1

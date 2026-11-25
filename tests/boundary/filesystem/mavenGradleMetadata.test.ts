@@ -40,7 +40,7 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
         const result = await inspect(invalid);
         expect(result).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisMalformedTargetError" },
+          error: { _tag: "AnalysisTargetFailureError" },
         });
       }
       const unfamiliar = await inspect(
@@ -108,7 +108,7 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
       expect(await inspect(["runtime", "runtime"])).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisMalformedTargetError",
+          _tag: "AnalysisTargetFailureError",
           failure: {
             detail: expect.stringContaining("duplicate variant name"),
           },
@@ -117,7 +117,7 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
       expect(await inspect([false])).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisMalformedTargetError",
+          _tag: "AnalysisTargetFailureError",
           failure: { detail: expect.stringContaining("variant.name") },
         },
       });

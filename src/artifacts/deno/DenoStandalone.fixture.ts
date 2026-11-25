@@ -1,4 +1,9 @@
-import { write32, write64 } from "../../native/BinaryInteger.fixture.js";
+import {
+  uint32LE as u32,
+  uint64LE as u64,
+  write32,
+  write64,
+} from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
@@ -45,18 +50,6 @@ export interface DenoSectionFixture {
 }
 
 const u8 = (value: number): Buffer => Buffer.from([value]);
-
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-
-const u64 = (value: number | bigint): Buffer => {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
-  return bytes;
-};
 
 const asBytes = (value: Buffer | string): Buffer =>
   typeof value === "string" ? Buffer.from(value, "utf8") : value;

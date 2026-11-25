@@ -1,5 +1,5 @@
 import { BinaryReader } from "../binaryContainer.js";
-import type { TruncatedExtent } from "../parseFailure.js";
+import type { TruncatedExtent } from "../targetFailure.js";
 import {
   hasJvmClassHeader,
   isJvmClassFile,
@@ -230,15 +230,6 @@ const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
     wide: magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64,
     littleEndian: magic === FAT_CIGAM || magic === FAT_CIGAM_64,
   };
-};
-
-/** Classify a Mach-O signature without admitting a thin header or FAT table. */
-export const machoContainerKindFromMagic = (
-  magic: number,
-): "thin" | "fat32" | "fat64" | null => {
-  if (thinMachoFormat(magic) !== null) return "thin";
-  const fat = readFatMagicFormat(magic);
-  return fat === null ? null : fat.wide ? "fat64" : "fat32";
 };
 
 /** Observe the fixed FAT header without table, count-limit or container-identity admission. */

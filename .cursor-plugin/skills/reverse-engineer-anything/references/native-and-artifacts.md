@@ -209,6 +209,17 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## PE x64 exception-directory function ranges
+
+Use `inspect_pe_unwind_ranges` for an explicit local x64 PE32+ image when the
+question is where functions start and end without a PDB, or whether a
+provider's procedure inventory agrees with the compiler's records. The CLI
+equivalent is `inspect-pe-unwind-ranges PATH`. Primary entries start functions;
+chained entries are fragments of the entry named by `primary_index`, not
+separate functions. Leaf functions have no entry, so a missing entry is not
+absence. Compare provider addresses minus `image_base` with the RVAs. See
+[PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
+
 ## Binary hardening
 
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
@@ -962,6 +973,17 @@ Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
 stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
+
+ISO 9660 disc images (`CD001` at sector 16, any filename, even `.hop`) use
+the same inspection and extraction workflows on every host, without mounting.
+Volume identifiers and dates are target-derived. One tree is walked: an
+eligible Joliet tree when present, else the primary tree (`name_source`).
+Files only in an unwalked tree are not listed, so coverage is `unknown`
+whenever the image has another tree. Unsafe names become `entry-<index>`
+with the stored identifier in `source_path`. Separated multi-extent and interleaved files are listed with
+unavailable hashes, so extract other files by `occurrence_ids`. Rock Ridge,
+UDF, and El Torito boot images are not decoded. See
+[ISO 9660 disc images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/iso9660-images.md).
 
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,

@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
   readStableArtifact,
@@ -14,6 +14,7 @@ import {
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import {
+  hasElfMagic,
   BinaryFormatFailure,
   BinaryResourceFailure,
   binaryResourceCeiling,
@@ -47,28 +48,17 @@ import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
 
-const isElf = (bytes: Buffer): boolean =>
-  bytes.length >= 4 &&
-  bytes[0] === 0x7f &&
-  bytes[1] === 0x45 &&
-  bytes[2] === 0x4c &&
-  bytes[3] === 0x46;
-
 /** Portable ELF and Mach-O initializer reader over one stable regular file. */
 export class NativeInitializersProvider implements NativeInitializersPort {
   readonly identity = NATIVE_INITIALIZERS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NATIVE_INITIALIZERS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NATIVE_INITIALIZERS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -137,7 +127,7 @@ const inspectSelected = async (
   page: { readonly offset: number; readonly limit: number },
   signal: AbortSignal | undefined,
 ): Promise<NativeInitializerInspection> => {
-  if (isElf(selected.bytes)) {
+  if (hasElfMagic(selected.bytes)) {
     if (selected.selection !== null)
       throw new BinaryFormatFailure(
         "malformed",

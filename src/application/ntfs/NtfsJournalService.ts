@@ -24,6 +24,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
@@ -99,8 +100,12 @@ const readFailure = (
   }
   if (
     cause instanceof ArtifactReaderFailure &&
-    (cause.reason === "path" || cause.reason === "format")
+    cause.parseFailure !== undefined
   )
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
+      cause,
+    });
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
     return inputFailure(parameter, cause.message, cause);
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

@@ -20,6 +20,7 @@ import {
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import {
+  containsText,
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
@@ -121,14 +122,6 @@ await withVerifierCleanup(async () => {
       strict: false,
       validateFormats: false,
     });
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      if (value && typeof value === "object")
-        return Object.values(value).some((nested) =>
-          containsText(nested, text),
-        );
-      return false;
-    };
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "copilot",

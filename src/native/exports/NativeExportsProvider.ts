@@ -4,7 +4,7 @@ import {
   artifactFileCeilingConstraint,
   artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -47,16 +47,12 @@ export class NativeExportsProvider implements NativeExportsPort {
   readonly identity = NATIVE_EXPORTS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NATIVE_EXPORTS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NATIVE_EXPORTS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {

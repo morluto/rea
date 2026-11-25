@@ -37,6 +37,8 @@ import {
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import {
+  elfSectionFitsFile,
+  elfSectionLocation,
   readElfImage,
   readElfImageCooperative,
   readElfImageFromReader,
@@ -76,32 +78,6 @@ const DEBUG_SECTION_NAMES = [
 const DEBUGLINK_CRC_BYTES = 4;
 const LINK_NAME_SCAN_CHUNK_BYTES = 1024 * 1024;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-
-const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
-  offset >= 0n &&
-  size >= 0n &&
-  offset <= BigInt(fileLength) &&
-  size <= BigInt(fileLength) - offset;
-
-const locationOf = (
-  section: ElfSection,
-): { offset: number; bytes: number } | null => {
-  if (
-    !fits(
-      section.declared_range.offset,
-      section.declared_range.size,
-      Number.MAX_SAFE_INTEGER,
-    )
-  )
-    return null;
-  return {
-    offset: Number(section.declared_range.offset),
-    bytes: Number(section.declared_range.size),
-  };
-};
-
-const inFile = (section: ElfSection, fileLength: number): boolean =>
-  fits(section.declared_range.offset, section.declared_range.size, fileLength);
 
 const untrustedName = (
   text: string,
@@ -149,8 +125,12 @@ const locateSection = (
       location: null,
       reason: "duplicate",
     };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, fileLength))
+  const location = elfSectionLocation(section);
+  if (
+    section.type === 8 ||
+    location === null ||
+    !elfSectionFitsFile(section, fileLength)
+  )
     return {
       status: "malformed",
       location: null,

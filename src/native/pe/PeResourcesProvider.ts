@@ -6,7 +6,7 @@ import {
   artifactFileCeilingConstraint,
   artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -42,16 +42,12 @@ export class PeResourcesProvider implements PeResourcesPort {
   readonly identity = PE_RESOURCES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_RESOURCES_PROVIDER.id,
-        "inspect_pe_resources",
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_RESOURCES_PROVIDER,
+      "inspect_pe_resources",
+    );
   }
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {

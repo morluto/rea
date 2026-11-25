@@ -42,3 +42,30 @@ export const sliceTextByTokenWindow = (
     truncated: true,
   };
 };
+
+export const formatTokenWindow = (
+  text: string,
+  {
+    tokenLimit,
+    tokenOffset,
+  }: {
+    readonly tokenLimit: number | undefined;
+    readonly tokenOffset: number | undefined;
+  },
+):
+  | { readonly truncated: false; readonly text: string }
+  | {
+      readonly truncated: true;
+      readonly text: string;
+      readonly nextOffset: number | undefined;
+    } => {
+  if (tokenLimit === undefined && tokenOffset === undefined)
+    return { truncated: false, text };
+  const window = sliceTextByTokenWindow(text, tokenOffset ?? 0, tokenLimit);
+  if (!window.truncated) return { truncated: false, text: window.text };
+  return {
+    truncated: true,
+    text: `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`,
+    nextOffset: window.end < window.total ? window.end : undefined,
+  };
+};
