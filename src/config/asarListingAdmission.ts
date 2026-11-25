@@ -1,5 +1,5 @@
 import { defaultedNumberSettingParser } from "./optionalSetting.js";
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 import {
   DEFAULT_ASAR_MAX_LISTING_BYTES,
   MAXIMUM_ASAR_MAX_LISTING_BYTES,
@@ -20,11 +20,11 @@ export const DEFAULT_ASAR_LISTING_ADMISSION: AsarListingAdmission = {
 
 const constraint = `${ASAR_LISTING_ADMISSION_SETTING} must be a positive decimal safe integer in bytes, at most ${String(MAXIMUM_ASAR_MAX_LISTING_BYTES)}; the default is ${String(DEFAULT_ASAR_MAX_LISTING_BYTES)} bytes.`;
 
-export const asarMaxListingBytesSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u, { error: constraint })
-  .transform(Number)
-  .pipe(z.number().int().min(1).max(MAXIMUM_ASAR_MAX_LISTING_BYTES));
+export const asarMaxListingBytesSchema = positiveDecimalIntegerSchema(
+  1,
+  MAXIMUM_ASAR_MAX_LISTING_BYTES,
+  constraint,
+);
 
 export const parseAsarListingAdmission =
   defaultedNumberSettingParser<AsarListingAdmission>(
