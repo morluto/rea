@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 
 import { expect, it, vi } from "vitest";

@@ -1,5 +1,4 @@
 import { truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 

@@ -6,7 +6,6 @@ import { expect, it, vi } from "vitest";
 
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
 import {
-  ArtifactReaderFailure,
   artifactFixedLimitFailure,
   malformedArtifact,
 } from "../resources/index.js";
