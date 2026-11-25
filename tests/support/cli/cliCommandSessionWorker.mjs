@@ -1,8 +1,11 @@
 import { Readable, Writable } from "node:stream";
-import { access } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  compiledRuntimeExists,
+  missingCompiledRuntimeMessage,
+} from "../../../scripts/lib/cli-compiled-runtime.mjs";
 import { prepareCliProcessEnvironment } from "../../../scripts/lib/cli-process-environment.mjs";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
@@ -35,10 +38,8 @@ prepareCliProcessEnvironment(
   process.platform,
   packageJson.version,
 );
-if (!(await compiledRuntimeExists(runtimeFiles))) {
-  process.stderr.write(
-    `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
-  );
+if (!(await compiledRuntimeExists(packageRoot, runtimeFiles))) {
+  process.stderr.write(missingCompiledRuntimeMessage(packageRoot));
   process.exit(1);
 }
 
@@ -252,25 +253,4 @@ function captureWrite(chunks) {
     if (typeof done === "function") done();
     return true;
   };
-}
-
-async function compiledRuntimeExists(paths) {
-  for (const path of paths) {
-    try {
-      await access(resolve(packageRoot, path));
-    } catch (cause) {
-      if (isMissing(cause)) return false;
-      throw cause;
-    }
-  }
-  return true;
-}
-
-function isMissing(cause) {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    cause.code === "ENOENT"
-  );
 }

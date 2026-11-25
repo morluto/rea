@@ -1,9 +1,9 @@
 #!/usr/bin/env node
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
   copyFile,
   mkdir,
@@ -74,10 +74,7 @@ const report = {
   phases: [],
   target: null,
 };
-const sha = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 async function phase(name, operation) {
   const start = performance.now();
   try {
@@ -180,7 +177,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     ],
     { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
   );
-  const targetDigest = await sha(target);
+  const targetDigest = await sha256File(target);
   report.target = {
     sha256: targetDigest,
     source: `self-built C struct/function ${process.platform === "darwin" ? "object" : "executable"} fixture; never executed`,
@@ -472,7 +469,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       return {};
     },
   );
-  assert.equal(await sha(target), targetDigest);
+  assert.equal(await sha256File(target), targetDigest);
   assert.deepEqual(await readdir(runtime), []);
   const checkpointFiles = await readdir(
     join(checkpointDirectory, (await readdir(checkpointDirectory))[0]),

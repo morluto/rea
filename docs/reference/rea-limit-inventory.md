@@ -62,9 +62,8 @@ override is `source: "runtime"`. The structured field is `update_mode: "runtime"
 | `native.matching_representation_bytes`       | `REA_NATIVE_MATCHING_REPRESENTATION_BYTES`       | `src/domain/analysisResourceLimits.ts`                        | 100663296                                 |     1 |                             1073741824 | per operation         |
 | `delivery.agent_result_budget_bytes`         | `REA_AGENT_RESULT_BUDGET_BYTES`                  | `src/domain/analysisResourceLimits.ts`                        | 32768                                     |  4096 |                               10485760 | per operation         |
 
-`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
-limit: an over-budget result is retained and delivered as its summary with an
-`inspect_analysis_view` cursor, never refused.
+See [Agent result budget](limits-and-recovery.md#agent-result-budget) for
+`delivery.agent_result_budget_bytes` delivery and recovery behavior.
 
 An out-of-range `update_analysis_settings` value is rejected by the setting's
 schema. Invalid launch seeds that the global environment parser accepts as
