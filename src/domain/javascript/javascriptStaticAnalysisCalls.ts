@@ -917,7 +917,8 @@ const OPEN_AUTHORITY = /^(?:[a-z][a-z\d+.-]*:)?\/\/[^/?#\\@]*$/iu;
  * A literal that ends inside a URL authority, such as `"https://user:"`,
  * leaves its userinfo open: the following pieces belong to it up to the `@`
  * that ends it, as in `"https://user:" + "secret@" + host`. A path, query or
- * fragment delimiter before any `@` closes the authority without userinfo.
+ * fragment delimiter before any `@` closes the authority without userinfo,
+ * and so does a dynamic piece, whose text may hold one.
  */
 const removeSplitUserinfo = (
   pieces: readonly UrlTextPiece[],
@@ -926,8 +927,13 @@ const removeSplitUserinfo = (
   let open: { readonly index: number; readonly from: number } | undefined;
   for (let index = 0; index < pieces.length; index++) {
     const piece = pieces[index];
+    // A dynamic piece may end the authority itself, so the text after it
+    // can be a path: keep it as written.
     const text = piece === null ? undefined : redacted.get(piece!);
-    if (text === undefined) continue;
+    if (text === undefined) {
+      open = undefined;
+      continue;
+    }
     if (open !== undefined) {
       const end = text.search(/[@/?#\\]/u);
       if (end === -1) continue;

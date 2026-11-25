@@ -632,9 +632,12 @@ it.each([
   },
 );
 
-it("keeps literals after a closed URL authority", () => {
-  const source =
-    'fetch("https://api.example.test" + "/to/" + "user:secret@x" + path);';
+it.each([
+  'fetch("https://api.example.test" + "/to/" + "user:secret@x" + path);',
+  // The dynamic piece may hold the host and a path, as in
+  // "api.example.test/users/", so the address after it is path text.
+  'fetch("https://" + hostAndPath + "person@example.test" + suffix);',
+])("keeps literals after a URL authority that may be closed: %s", (source) => {
   expect(endpoints(source)).toEqual([
     {
       kind: "network",
