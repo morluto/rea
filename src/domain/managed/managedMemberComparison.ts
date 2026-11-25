@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -281,9 +282,7 @@ const callEdgesByCaller = (
     ManagedMemberInspection["call_edges"][number][]
   >();
   for (const edge of result.call_edges) {
-    const callerEdges = edges.get(edge.caller_token);
-    if (callerEdges === undefined) edges.set(edge.caller_token, [edge]);
-    else callerEdges.push(edge);
+    appendToMapList(edges, edge.caller_token, edge);
   }
   return edges;
 };
@@ -305,10 +304,7 @@ const fieldAccessesByCaller = (
       access.target_identity_sha256 !== null
         ? { ...access, target_identity_sha256: null }
         : access;
-    const callerAccesses = accesses.get(access.method_token);
-    if (callerAccesses === undefined)
-      accesses.set(access.method_token, [observed]);
-    else callerAccesses.push(observed);
+    appendToMapList(accesses, access.method_token, observed);
   }
   return accesses;
 };

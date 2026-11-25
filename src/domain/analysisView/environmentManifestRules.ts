@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
   spelledLikeObserved,
@@ -165,9 +166,7 @@ const rebucket = (
       group.origin,
       ...group.parts.map(keyOf),
     ]);
-    const bucket = buckets.get(key);
-    if (bucket === undefined) buckets.set(key, [group]);
-    else bucket.push(group);
+    appendToMapList(buckets, key, group);
   }
   return [...buckets.values()].map((bucket) =>
     mergeGroups(bucket, shapeOf(bucket)),
@@ -296,9 +295,7 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
           index === position ? null : partKey(part),
         ),
       ]);
-      const bucket = buckets.get(key);
-      if (bucket === undefined) buckets.set(key, [group]);
-      else bucket.push(group);
+      appendToMapList(buckets, key, group);
     }
     for (const bucket of buckets.values())
       appendAll(output, mergeSiblings(bucket, position));
@@ -390,9 +387,7 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
           index === position || index === position + 1 ? null : partKey(part),
         ),
       ]);
-      const bucket = buckets.get(key);
-      if (bucket === undefined) buckets.set(key, [group]);
-      else bucket.push(group);
+      appendToMapList(buckets, key, group);
     }
     for (const bucket of buckets.values())
       appendAll(output, mergePairBucket(bucket, position));

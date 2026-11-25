@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
   invalidAnalysisViewSubject,
@@ -192,9 +193,7 @@ const indexedDnsQueries = (
   if (byName !== undefined) return byName;
   const grouped = new Map<string, DnsQuery[]>();
   for (const entry of capture.dns_queries) {
-    const existing = grouped.get(entry.query);
-    if (existing === undefined) grouped.set(entry.query, [entry]);
-    else existing.push(entry);
+    appendToMapList(grouped, entry.query, entry);
   }
   byName = grouped;
   dnsQueriesByName.set(capture, byName);
