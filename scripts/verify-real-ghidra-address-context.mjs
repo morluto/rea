@@ -1,3 +1,4 @@
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir } from "node:fs/promises";
@@ -7,9 +8,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
-  requireMcpOperationResult,
-  requireMcpOutput,
   requireMcpToolError,
+  requireMcpAnalysisEvidenceOrSessionResult,
 } from "./lib/mcp-verifier-results.mjs";
 import {
   assertVerifierCleanupComplete,
@@ -54,6 +54,9 @@ let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
+const call = createGhidraVerifierMcpOperations(client, {
+  timeout: 240000,
+}).decodedCall(requireMcpAnalysisEvidenceOrSessionResult);
 let report;
 let connected = false;
 let primaryFailure;
@@ -367,13 +370,3 @@ if (primaryFailure !== undefined) throw primaryFailure.cause;
 process.stdout.write(
   JSON.stringify({ verifier_run: verifierRun, ...report }) + "\n",
 );
-
-async function call(name, args = {}) {
-  const result = await client.callTool(
-    { name, arguments: args },
-    { timeout: 240000 },
-  );
-  return ["open_binary", "binary_session", "close_binary"].includes(name)
-    ? requireMcpOperationResult(result, name)
-    : requireMcpOutput(result, name);
-}

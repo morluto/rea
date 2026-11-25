@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -303,13 +304,9 @@ try {
       transport.stderr?.on("data", (chunk) => {
         stderr = (stderr + chunk.toString()).slice(-65536);
       });
-      const call = async (name, args = {}) => {
-        const reply = await client.callTool(
-          { name, arguments: args },
-          { timeout: 180000 },
-        );
-        return requireMcpOperationResult(reply, name);
-      };
+      const call = createGhidraVerifierMcpOperations(client, {
+        timeout: 180000,
+      }).decodedCall(requireMcpOperationResult);
       try {
         await client.connect(transport);
         const selected = await call("open_binary", {
@@ -473,13 +470,9 @@ try {
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
     });
-    const call = async (name, args = {}) => {
-      const reply = await client.callTool(
-        { name, arguments: args },
-        { timeout: 180000 },
-      );
-      return requireMcpOperationResult(reply, name);
-    };
+    const call = createGhidraVerifierMcpOperations(client, {
+      timeout: 180000,
+    }).decodedCall(requireMcpOperationResult);
     try {
       await client.connect(transport);
       if (missingExtension) {
