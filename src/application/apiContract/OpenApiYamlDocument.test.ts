@@ -360,7 +360,7 @@ it("keeps collection-valued sequence items and names the selected format in pars
   });
   if (unsupportedVersionResult.ok) throw new Error("expected a refusal");
   expect(unsupportedVersionResult.error._tag).toBe(
-    "AnalysisUnsupportedTargetError",
+    "AnalysisTargetFailureError",
   );
 });
 
