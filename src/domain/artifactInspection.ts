@@ -13,6 +13,7 @@ import {
   artifactMd5PairSchema,
 } from "./artifactIntegrity.js";
 import { z } from "zod";
+import { basename } from "node:path";
 
 import {
   artifactInventoryResultSchema,
@@ -161,10 +162,20 @@ export interface ArtifactInspectionRootImage {
   readonly managed?: boolean | undefined;
 }
 
+/**
+ * The caller's path for the inventory root. Inventory keeps only the graph,
+ * so a format whose classifier is byte-based rather than path-based can only
+ * learn the root's file name here.
+ */
+export interface ArtifactInspectionRootPath {
+  readonly path: string;
+}
+
 /** Project one successful inventory Evidence record into an inspection report. */
 export const createArtifactInspection = (
   inventoryInput: unknown,
   rootImage?: ArtifactInspectionRootImage,
+  rootPath?: ArtifactInspectionRootPath,
 ): ArtifactInspectionResult => {
   const inventoryEvidence = parseInventoryEvidence(inventoryInput);
   const inventory = artifactInventoryResultSchema.parse(
@@ -179,7 +190,7 @@ export const createArtifactInspection = (
     inventoryEvidence.evidence_id,
     rootImage,
   );
-  const nextProbes = probesFor(inventory, rootImage);
+  const nextProbes = probesFor(inventory, rootImage, rootPath);
   const branches = allUnexploredBranches(
     inventory,
     inventoryEvidence.evidence_id,
@@ -391,9 +402,10 @@ const contradictions = (
 const probesFor = (
   inventory: ArtifactInventoryResult,
   rootImage: ArtifactInspectionRootImage | undefined,
+  rootPath: ArtifactInspectionRootPath | undefined,
 ): ArtifactInspectionResult["next_probes"] => {
   const probes = uniqueOperations([
-    ...formatProbes(inventory, rootImage),
+    ...formatProbes(inventory, rootImage, rootPath),
     ...(rootImage === undefined ||
     rootImage.format === inventory.manifest.root_format
       ? []
@@ -422,6 +434,7 @@ const uniqueOperations = (
 const formatProbes = (
   inventory: ArtifactInventoryResult,
   rootImage: ArtifactInspectionRootImage | undefined,
+  rootPath: ArtifactInspectionRootPath | undefined,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
   // The JavaScript analyzer selects extracted files by source suffix, so a
@@ -468,7 +481,29 @@ const formatProbes = (
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
+  // A Cargo manifest has no byte recognizer, so only its name routes it when
+  // inventory classified the bytes by path at all.
+  const manifest = cargoManifestProbe(format, rootPath);
+  if (manifest !== undefined) return [manifest];
   return probesForFormat(format);
+};
+
+const CARGO_MANIFEST_FILE_NAME = "cargo.toml";
+
+const cargoManifestProbe = (
+  format: ArtifactInventoryResult["manifest"]["root_format"],
+  rootPath: ArtifactInspectionRootPath | undefined,
+): ArtifactInspectionResult["next_probes"][number] | undefined => {
+  if (format !== "file" && format !== "unknown") return undefined;
+  if (rootPath === undefined) return undefined;
+  if (basename(rootPath.path).toLowerCase() !== CARGO_MANIFEST_FILE_NAME)
+    return undefined;
+  return {
+    operation: "inspect_cargo_manifest",
+    rationale:
+      "Read this Cargo.toml with inspect_cargo_manifest: declarations are inventoried offline and no build, registry or network request runs.",
+    authority: "artifact-bytes",
+  };
 };
 
 // An ESP image that its reader found at the start of a flash dump read from

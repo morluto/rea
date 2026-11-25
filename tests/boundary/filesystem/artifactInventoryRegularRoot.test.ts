@@ -19,6 +19,10 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { artifactInventorySubject } from "../../../src/domain/artifactInventoryEvidence.js";
+import { createArtifactInspection } from "../../../src/domain/artifactInspection.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import {
@@ -209,6 +213,38 @@ it("retains root identity without asserting absent children for an unclassified 
   expect(inventory.coverage).toEqual({ scope: "root", status: "complete" });
   expect(inventory.limitations).toEqual([
     expect.stringMatching(/root bytes only.*child.*not examined/iu),
+  ]);
+});
+
+it("routes a plain Cargo.toml by name because no recognizer claims its bytes", async () => {
+  const root = await createTestTempDirectory("rea-cargo-manifest-root-");
+  const path = join(root, "Cargo.toml");
+  await writeFile(path, '[package]\nname = "fixture"\nversion = "0.1.0"\n');
+  const inventory = await inventoryArtifact(path);
+  expect(inventory.manifest.root_format).toBe("file");
+
+  const inspection = createArtifactInspection(
+    createEvidence(
+      artifactInventorySubject(path, inventory),
+      ARTIFACT_GRAPH_PROVIDER,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: inventory,
+        rawResult: null,
+        limitations: inventory.limitations,
+        locations: [],
+      },
+      { immutable: true },
+    ),
+    undefined,
+    { path },
+  );
+  expect(inspection.next_probes).toEqual([
+    expect.objectContaining({
+      operation: "inspect_cargo_manifest",
+      authority: "artifact-bytes",
+    }),
   ]);
 });
 

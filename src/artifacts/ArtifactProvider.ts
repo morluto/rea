@@ -72,6 +72,7 @@ import {
   artifactInspectionSources,
   createArtifactInspection,
   type ArtifactInspectionRootImage,
+  type ArtifactInspectionRootPath,
 } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -146,6 +147,7 @@ export class ArtifactProvider implements AnalysisProvider {
         (inventory) => ({
           subject: artifactInventorySubject(path, inventory),
           rootImage: undefined,
+          rootPath: { path },
         }),
         options,
       );
@@ -591,6 +593,7 @@ class ArtifactClient implements AnalysisClient {
       (inventory) => ({
         subject: subjectFor(this.target, inventory),
         rootImage: rootImage(this.target, inventory.manifest),
+        rootPath: rootPathFor(this.target, inventory.manifest),
       }),
       options,
     );
@@ -650,6 +653,7 @@ const inspectInventory = async (
   describe: (inventory: ArtifactInventoryResult) => {
     readonly subject: InventorySubject;
     readonly rootImage: ArtifactInspectionRootImage | undefined;
+    readonly rootPath: ArtifactInspectionRootPath | undefined;
   },
   options: ExecutionOptions | undefined,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
@@ -670,7 +674,7 @@ const inspectInventory = async (
   const inventoryResult = freezeJsonSnapshot(
     await inventory(inventoryParameters),
   );
-  const { subject, rootImage: image } = describe(inventoryResult);
+  const { subject, rootImage: image, rootPath } = describe(inventoryResult);
   // Sealed at creation, the nested Evidence is borrowed when the session
   // records it as a source, rather than parsed and digested again.
   const inventoryEvidence = createEvidence(
@@ -689,7 +693,7 @@ const inspectInventory = async (
   );
   // The returned execution and its Evidence then reuse this owned report.
   const result = freezeJsonSnapshot(
-    createArtifactInspection(inventoryEvidence, image),
+    createArtifactInspection(inventoryEvidence, image, rootPath),
   );
   await options?.progress?.report({
     phase: "inspect_artifact.inventory",
@@ -744,6 +748,19 @@ const rootImage = (
     ? { format: target.format }
     : undefined;
 };
+
+/**
+ * The caller's path for the inventory root, when the root is the open
+ * target's own bytes. Inventory keeps no path, so a manifest whose reader is
+ * selected by name is only reachable from here.
+ */
+const rootPathFor = (
+  target: BinaryTarget,
+  manifest: { readonly root_sha256: string },
+): ArtifactInspectionRootPath | undefined =>
+  manifest.root_sha256 === target.sha256
+    ? { path: target.sourcePath ?? target.path }
+    : undefined;
 
 /**
  * The inventory root as an Evidence subject. When the root is the open
