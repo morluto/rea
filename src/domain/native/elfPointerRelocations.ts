@@ -748,17 +748,22 @@ export function* readElfRelocationWritesSteps(
   }
   let symbolCountRead = false;
   let symbolCount: number | undefined;
-  function* symbolLinkValue(
+  function* boundedDynamicSymbol(
     symbolIndex: number,
-  ): Generator<undefined, bigint | undefined> {
-    if (symbolIndex === 0) return 0n;
+  ): Generator<undefined, ReturnType<typeof dynamicSymbol>> {
     if (!symbolCountRead) {
       symbolCountRead = true;
       symbolCount = yield* countSymbols();
     }
     if (symbolCount === undefined || symbolIndex >= symbolCount)
       return undefined;
-    const symbol = dynamicSymbol(symbolIndex);
+    return dynamicSymbol(symbolIndex);
+  }
+  function* symbolLinkValue(
+    symbolIndex: number,
+  ): Generator<undefined, bigint | undefined> {
+    if (symbolIndex === 0) return 0n;
+    const symbol = yield* boundedDynamicSymbol(symbolIndex);
     if (symbol === undefined) return undefined;
     const { section_index, type, value } = symbol;
     // Undefined/reserved sections, TLS offsets and IFUNC resolvers do not
@@ -774,18 +779,18 @@ export function* readElfRelocationWritesSteps(
    * image's own dynamic symbol records. Undefined when that size is unreadable
    * or the span leaves the address space.
    */
-  const copyWidth = (
+  function* copyWidth(
     destination: bigint,
     symbolIndex: number,
-  ): number | undefined => {
-    const symbol = dynamicSymbol(symbolIndex);
+  ): Generator<undefined, number | undefined> {
+    const symbol = yield* boundedDynamicSymbol(symbolIndex);
     if (symbol === undefined) return undefined;
     const { size } = symbol;
     return size <= BigInt(Number.MAX_SAFE_INTEGER) &&
       destination + size <= 1n << BigInt(input.bits)
       ? Number(size)
       : undefined;
-  };
+  }
   // Consumers do work across each COPY span, which repeated or overlapping
   // records would multiply, so the spans together are limited to the file size.
   let copyAllowance = bytes.length;
@@ -811,7 +816,7 @@ export function* readElfRelocationWritesSteps(
       addend: explicitAddend ?? null,
     };
     if (kind === copy) {
-      const width = copyWidth(destination, symbolIndex);
+      const width = yield* copyWidth(destination, symbolIndex);
       if (width === undefined)
         unsupported("ELF COPY relocation write size is not established");
       else if (width > copyAllowance)
