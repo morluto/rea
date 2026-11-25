@@ -1,8 +1,12 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
@@ -21,6 +25,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 /** Source forms and text from completed WASM Evidence; this never executes a VM. */
 export const wasmViewRequestSchema = z.strictObject({
@@ -71,6 +76,8 @@ export const wasmSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
+const readWasmArtifact = createAnalysisViewResultReader(wasmArtifactSchema);
+
 /** Read the exact retained WABT forms with source identity and explicit uncertainty. */
 export const projectWasmArtifactView = (
   parent: AnalysisViewParent,
@@ -80,38 +87,20 @@ export const projectWasmArtifactView = (
     SummaryAnalysisView | z.output<typeof wasmViewRequestSchema>
   >(admitted, "summary", "wasm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "WASM Evidence supports summary and wasm views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "WASM Evidence supports summary and wasm views.",
     );
-  const parsed = parseAnalysisViewResult(wasmArtifactSchema, parent);
+  const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (
     !wasmArtifactMatchesSubject(
       report.artifact,
-      parent.subject == null
-        ? null
-        : {
-            sha256: parent.subject.digest.sha256,
-            format: parent.subject.format,
-          },
+      evidenceSubjectTarget(parent.subject),
     )
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "WASM parent Evidence subject must identify the report's file format and SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "WASM parent Evidence subject must identify the report's file format and SHA-256.",
     );
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -161,7 +150,6 @@ export const projectWasmArtifactView = (
       },
       coverage: completeWithinViewCoverage(
         report.sections.length + report.imports.length + report.exports.length,
-        report.sections.length + report.imports.length + report.exports.length,
       ),
     });
   if (view.facet === "tool_profile") {
@@ -179,7 +167,7 @@ export const projectWasmArtifactView = (
       kind: "wasm" as const,
       view,
       item: report.tool_profile,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
       ...shared,
     });
   }

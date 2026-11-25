@@ -1,52 +1,45 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
+import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
-import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
-import {
-  assertArtifactSelectedSource,
-  resolveArtifactSourcePath,
-} from "../ArtifactSelectedSource.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
 import {
   openRootArtifact,
   hashStableRootArtifactHandle,
-} from "../inventory/hashStableRootArtifact.js";
+  abortIfNeeded,
+  withArtifactRegularFile,
+  type ArtifactCleanupAttempt,
+  type ArtifactResourceOwner,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  SafeOutputTreeDestinationRefusal,
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+  assertArtifactFileSelectedSource,
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
+  resolveAsarHeaderAdmission,
+} from "../../resources/index.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
-import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
-import type {
-  ArtifactCleanupAttempt,
-  ArtifactResourceOwner,
-  ArtifactResourceScope,
-} from "../ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPathWithinRoot } from "../../domain/localPath.js";
-import { SafeOutputTreeDestinationRefusal } from "../SafeOutputTreeAdmission.js";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { SafeOutputTree } from "../SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -55,7 +48,7 @@ import {
   type ArtifactNode,
   type ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
-import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
+import { unsupportedTarget } from "../../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventoryForExtractionInScope } from "../inventory/ArtifactInventory.js";
@@ -64,6 +57,7 @@ import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrity
 
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
+  readonly readerLimits?: ArtifactReaderLimits;
   readonly asarHeaderAdmission?: AsarHeaderAdmission;
   /** Caller inputs when the target was explicitly selected as an ESP flash image. */
   readonly espFlashSelection?: EspFlashSelection | undefined;
@@ -84,7 +78,12 @@ export const extractArtifact = async (
   input: ArtifactExtractionInput,
   signal?: AbortSignal,
 ): Promise<ArtifactExtractionResult> =>
-  input.resourceScope.run(() => extractArtifactInScope(input, signal));
+  input.resourceScope.run(async () => {
+    const result = await extractArtifactInScope(input, signal);
+    return input.readerLimits === undefined
+      ? result
+      : { ...result, effective_limits: input.readerLimits };
+  });
 
 const extractArtifactInScope = async (
   input: ArtifactExtractionInput,
@@ -110,6 +109,7 @@ const extractArtifactInScope = async (
           resolveAsarHeaderAdmission(input.environment),
         espFlashSelection: input.espFlashSelection,
         integrity: input.integrityPolicy,
+        readerLimits: input.readerLimits,
       },
       probeFacts,
     );
@@ -175,15 +175,15 @@ export const materializeArtifactInventoryInScope = async (
     try {
       canonicalSource = await realpath(sourcePath);
     } catch (cause: unknown) {
-      abortIfNeeded(signal);
       if (inventorySourceChanged(cause))
         throw new ArtifactReaderFailure(
           "integrity",
           `Inventoried source changed: ${sourcePath}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }
+    abortIfNeeded(signal);
     if ((await lstat(canonicalSource)).isDirectory()) {
       const { canonicalOutput } = await SafeOutputTree.resolveDestination(
         input.outputRoot,
@@ -203,27 +203,30 @@ export const materializeArtifactInventoryInScope = async (
     containerMetadata?.kind === "godot-pck" &&
     containerMetadata.directory_status !== "available"
   )
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      "godot-pck",
       `Godot PCK directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   if (
     containerMetadata?.kind === "unityfs" &&
     containerMetadata.directory_status !== "available"
   )
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      "unityfs",
       `UnityFS directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   if (
     containerMetadata?.kind === "wxapkg" &&
     containerMetadata.directory_status !== "available"
   )
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      "wxapkg",
       `wxapkg directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   const { available, selected: activeOccurrences } =
@@ -241,9 +244,10 @@ export const materializeArtifactInventoryInScope = async (
     // REA never decrypts archive entries, so an encrypted entry makes the
     // complete extraction unsupported rather than the archive invalid.
     if (occurrence.encrypted)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         "extract_artifact",
         input.selectedPath ?? input.inputPath,
+        snapshot.manifest.root_format,
         `Archive entry ${occurrence.logical_path} is encrypted; REA does not decrypt archive entries, so the archive cannot be extracted completely`,
       );
     // Inventory retains unavailable source occurrences, but extraction cannot
@@ -272,7 +276,7 @@ export const materializeArtifactInventoryInScope = async (
       occurrence.logical_path === "."
     )
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         `Selected occurrence is not an extractable regular child file: ${occurrence.logical_path} (${occurrence.occurrence_id})`,
       );
     const node = nodes.get(occurrence.artifact_id);
@@ -280,6 +284,7 @@ export const materializeArtifactInventoryInScope = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Selected occurrence has no inventory node: ${occurrence.occurrence_id}`,
+        { integrityCheck: "inventory-node" },
       );
     return { occurrence, node };
   });
@@ -365,7 +370,7 @@ const materializeSelection = async ({
       throw cause;
     }
     const traversal = new ArtifactTraversalObservation();
-    traversal.onCoverage({
+    traversal.record({
       status: inventory.coverage.status,
       limitations: inventory.limitations,
     });
@@ -470,7 +475,7 @@ const writeSelectedEntries = async ({
     else queue.occurrences.push(occurrence);
   }
   const registry = new ArtifactPathRegistry();
-  for await (const entry of reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(reader, signal)) {
     const path = normalizeArtifactPath(entry.path);
     // Logical declarations may share a query path with a real file. They do
     // not consume that file's selection or participate in materialization.
@@ -485,6 +490,7 @@ const writeSelectedEntries = async ({
       throw new ArtifactReaderFailure(
         "integrity",
         `Regular artifact entry is missing from inventory: ${path}`,
+        { integrityCheck: "inventory-node" },
       );
     }
     queue.next += 1;
@@ -518,6 +524,7 @@ const writeSelectedEntries = async ({
     throw new ArtifactReaderFailure(
       "integrity",
       `Inventoried regular artifact entries were not materialized: ${[...expected.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
+      { integrityCheck: "traversal-coverage" },
     );
 };
 
@@ -627,6 +634,27 @@ const createExtractionResult = (
  * The target kind, not the host, is unsupported by extraction. The error keeps
  * the caller's spelling of the path; I/O uses the canonical path.
  */
+const hasExecutablePack = async (
+  probes: ArtifactEmbeddedFormatProbes,
+): Promise<boolean> => {
+  if (
+    (await probes.nodeSea()) !== undefined ||
+    (await probes.pyInstaller()) !== undefined
+  )
+    return true;
+  const bun = await probes.bunStandalone();
+  if (
+    bun.status === "present" ||
+    (await probes.denoStandalone()).status === "present" ||
+    (await probes.dotnetBundle()) !== undefined
+  )
+    return true;
+  if (bun.status === "limited") throw bun.failure;
+  const seaFailure = probes.completedFacts().nodeSeaRecognitionFailure;
+  if (seaFailure !== undefined) throw seaFailure;
+  return false;
+};
+
 const requireExtractableFormat = async (
   path: string,
   input: Pick<
@@ -636,6 +664,7 @@ const requireExtractableFormat = async (
     | "inputFormat"
     | "resourceScope"
     | "expectedRootSha256"
+    | "readerLimits"
   >,
   signal?: AbortSignal,
 ): Promise<ArtifactEmbeddedFormatProbeFacts | undefined> => {
@@ -650,14 +679,17 @@ const requireExtractableFormat = async (
       input.resourceScope,
       signal,
       async (source) => {
-        const probes = new ArtifactEmbeddedFormatProbes(path, source, signal);
+        const probes = new ArtifactEmbeddedFormatProbes(
+          path,
+          source,
+          signal,
+          undefined,
+          input.readerLimits,
+        );
         const pack =
           (await probes.godotPck()) !== undefined ||
           ((format === "elf" || format === "pe" || format === "mach-o") &&
-            ((await probes.nodeSea()) !== undefined ||
-              (await probes.pyInstaller()) !== undefined ||
-              (await probes.bunStandalone()).status === "present" ||
-              (await probes.dotnetBundle()) !== undefined));
+            (await hasExecutablePack(probes)));
         if (pack && input.expectedRootSha256 !== undefined) {
           const digest = await hashStableRootArtifactHandle(
             path,
@@ -675,9 +707,10 @@ const requireExtractableFormat = async (
       },
     );
     if (!detected.pack)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         "extract_artifact",
         input.selectedPath ?? input.inputPath,
+        format,
         `Artifact format has no extraction reader: ${format}`,
       );
     return detected.probeFacts;
@@ -696,6 +729,8 @@ const createReader = async (
     | "asarHeaderAdmission"
     | "resourceScope"
     | "espFlashSelection"
+    | "readerLimits"
+    | "integrityPolicy"
   >,
   manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
@@ -710,12 +745,12 @@ const createReader = async (
       abortIfNeeded(signal);
       if (
         inventorySourceChanged(cause) ||
-        (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+        (cause instanceof ArtifactReaderFailure && cause.reason === "path")
       )
         throw new ArtifactReaderFailure(
           "integrity",
           `Inventoried source changed: ${path}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       throw cause;
     }
@@ -756,6 +791,8 @@ const createReader = async (
           ),
           admission: transferredSource?.admission,
           espFlashSelection: input.espFlashSelection,
+          readerLimits: input.readerLimits,
+          integrity: input.integrityPolicy,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??
@@ -763,19 +800,27 @@ const createReader = async (
               : undefined,
         });
   if (reader === undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      containerFormat,
       `Artifact format has no extraction reader: ${containerFormat}`,
     );
   return reader;
 };
 
 const preflight = (entry: ArtifactEntry): void => {
-  if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
+  // A directory or other non-byte entry is the caller's selection; an
+  // encrypted member holds bytes REA cannot read.
+  if (entry.kind !== "file" && entry.kind !== "slice")
     throw new ArtifactReaderFailure(
-      "format",
+      "path",
       `Selected artifact entry cannot be read: ${entry.path}`,
+    );
+  if (entry.encrypted)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `Selected artifact entry is encrypted: ${entry.path}`,
     );
 };
 

@@ -6,7 +6,11 @@ let window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 360, height: 18
 window.title = "REA source-owned UI verification"
 window.animationBehavior = .none
 final class FixtureController: NSObject {
-  @objc func increment(_ sender: NSButton) { sender.title = "REA fixture incremented" }
+  private var count = 0
+  @objc func increment(_ sender: NSButton) {
+    count += 1
+    sender.title = "REA fixture incremented \(count)"
+  }
 }
 let controller = FixtureController()
 let button = NSButton(frame: NSRect(x: 30, y: 60, width: 280, height: 40))

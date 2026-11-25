@@ -1,31 +1,82 @@
-import { symlinkTargetIdentity } from "../../domain/process/symlinkTarget.js";
 import type {
   FilesystemCheckpoint,
   ProcessFilesystemSnapshot,
 } from "../../domain/process/processCapture.js";
 import { sep } from "node:path";
 
+type UnobservedSubtree = NonNullable<
+  ProcessFilesystemSnapshot["coverage"]["unobserved_subtrees"]
+>[number];
+
+interface IndexedAbsenceSnapshot {
+  readonly completeRoots: ReadonlySet<string>;
+  readonly subtreesByPath:
+    | ReadonlyMap<
+        string,
+        { readonly subtree: UnobservedSubtree; readonly index: number }
+      >
+    | undefined;
+}
+
+const indexAbsenceSnapshot = (
+  snapshot: ProcessFilesystemSnapshot,
+): IndexedAbsenceSnapshot => {
+  const subtrees = snapshot.coverage.unobserved_subtrees;
+  let subtreesByPath:
+    | Map<
+        string,
+        { readonly subtree: UnobservedSubtree; readonly index: number }
+      >
+    | undefined;
+  if (subtrees !== undefined) {
+    subtreesByPath = new Map();
+    for (let index = 0; index < subtrees.length; index += 1) {
+      const subtree = subtrees[index]!;
+      if (!subtreesByPath.has(subtree.path))
+        subtreesByPath.set(subtree.path, { subtree, index });
+    }
+  }
+  return {
+    completeRoots: new Set(snapshot.completeRoots),
+    subtreesByPath,
+  };
+};
+
 const unobservedAbsenceReason = (
   path: string,
   phase: "before" | "after",
-  snapshot: ProcessFilesystemSnapshot,
+  indexed: IndexedAbsenceSnapshot,
 ): string | undefined => {
   const alias = path.slice(0, path.indexOf(":"));
-  if (!snapshot.completeRoots.includes(alias))
+  if (!indexed.completeRoots.has(alias))
     return `The ${phase} snapshot did not exhaust path enumeration under ${alias}; absence remains unknown.`;
   const rootPath = `${alias}:.`;
   if (path === rootPath) return undefined;
-  if (snapshot.coverage.unobserved_subtrees === undefined)
+  const subtreesByPath = indexed.subtreesByPath;
+  if (subtreesByPath === undefined)
     return `The ${phase} snapshot has no subtree coverage facts; descendant absence remains unknown.`;
-  for (const subtree of snapshot.coverage.unobserved_subtrees) {
-    const below =
-      subtree.path === rootPath
-        ? path.startsWith(`${alias}:`)
-        : path.startsWith(`${subtree.path}${sep}`);
-    if (below || (subtree.reason === "observer_owned" && path === subtree.path))
-      return `The ${phase} snapshot did not observe the subtree at ${subtree.path} (${subtree.reason}); descendant absence remains unknown.`;
+  if (subtreesByPath.size === 0) return undefined;
+  let best:
+    | { readonly subtree: UnobservedSubtree; readonly index: number }
+    | undefined;
+  const consider = (
+    entry:
+      | { readonly subtree: UnobservedSubtree; readonly index: number }
+      | undefined,
+  ): void => {
+    if (entry !== undefined && (best === undefined || entry.index < best.index))
+      best = entry;
+  };
+  if (path.startsWith(`${alias}:`)) consider(subtreesByPath.get(rootPath));
+  const exact = subtreesByPath.get(path);
+  if (exact?.subtree.reason === "observer_owned") consider(exact);
+  for (let cut = path.lastIndexOf(sep); cut !== -1;) {
+    consider(subtreesByPath.get(path.slice(0, cut)));
+    cut = cut > 0 ? path.lastIndexOf(sep, cut - 1) : -1;
   }
-  return undefined;
+  return best === undefined
+    ? undefined
+    : `The ${phase} snapshot did not observe the subtree at ${best.subtree.path} (${best.subtree.reason}); descendant absence remains unknown.`;
 };
 
 /** Classify effects only from observed path absence, metadata, and content hashes. */
@@ -35,6 +86,8 @@ export const classifyFilesystemEffects = (
 ): FilesystemCheckpoint["effects"] => {
   const beforeByPath = new Map(before.files.map((file) => [file.path, file]));
   const afterByPath = new Map(after.files.map((file) => [file.path, file]));
+  let beforeIndexed: IndexedAbsenceSnapshot | undefined;
+  let afterIndexed: IndexedAbsenceSnapshot | undefined;
   return [...new Set([...beforeByPath.keys(), ...afterByPath.keys()])]
     .sort()
     .map((path) => {
@@ -42,9 +95,17 @@ export const classifyFilesystemEffects = (
       const afterFile = afterByPath.get(path) ?? null;
       const reason =
         beforeFile === null
-          ? unobservedAbsenceReason(path, "before", before)
+          ? unobservedAbsenceReason(
+              path,
+              "before",
+              (beforeIndexed ??= indexAbsenceSnapshot(before)),
+            )
           : afterFile === null
-            ? unobservedAbsenceReason(path, "after", after)
+            ? unobservedAbsenceReason(
+                path,
+                "after",
+                (afterIndexed ??= indexAbsenceSnapshot(after)),
+              )
             : undefined;
       if (reason !== undefined)
         return {
@@ -76,33 +137,9 @@ export const classifyFilesystemEffects = (
         beforeFile.mode !== afterFile.mode ||
         beforeFile.size !== afterFile.size;
       const beforeTarget =
-        beforeFile.type === "symlink"
-          ? symlinkTargetIdentity(beforeFile)
-          : null;
+        beforeFile.type === "symlink" ? beforeFile.symlink_target_hex : null;
       const afterTarget =
-        afterFile.type === "symlink" ? symlinkTargetIdentity(afterFile) : null;
-      // Different decoded spellings prove different bytes even when an old
-      // capture cannot recover either target's complete byte identity.
-      const targetTextChanged =
-        beforeFile.type === "symlink" &&
-        afterFile.type === "symlink" &&
-        beforeFile.symlink_target !== null &&
-        afterFile.symlink_target !== null &&
-        beforeFile.symlink_target !== afterFile.symlink_target;
-      if (
-        !metadataChanged &&
-        !targetTextChanged &&
-        beforeFile.type === "symlink" &&
-        afterFile.type === "symlink" &&
-        (beforeTarget === null || afterTarget === null)
-      )
-        return {
-          path,
-          status: "unknown",
-          before: beforeFile,
-          after: afterFile,
-          reason: "A legacy symlink target has no unambiguous byte identity.",
-        } as const;
+        afterFile.type === "symlink" ? afterFile.symlink_target_hex : null;
       if (
         !metadataChanged &&
         beforeFile.type === "file" &&
@@ -121,7 +158,6 @@ export const classifyFilesystemEffects = (
         path,
         status:
           metadataChanged ||
-          targetTextChanged ||
           beforeTarget !== afterTarget ||
           beforeFile.sha256 !== afterFile.sha256
             ? "modified"

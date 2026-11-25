@@ -5,10 +5,8 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { JadxSession } from "../../../src/android/JadxSession.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 
 /** Warm the real protocol fixture, then fail only the selected mapping owner. */
 const mappingCloseFailure = async (cleanupFailure?: () => boolean) => {
@@ -106,7 +104,7 @@ it("retries a retained mapping descriptor before a request without mapping can r
     fixture.allowClose();
     try {
       await provider.close();
-      await verifyJadxFixtureCleanup(launches);
+      await expectProviderLaunchCleanup(launches);
     } finally {
       fixture.close.mockRestore();
       execute.mockRestore();
@@ -148,13 +146,10 @@ it.each([false, true])(
       vi.advanceTimersByTime(60_000);
       vi.useRealTimers();
       await expect
-        .poll(
-          () => ({
-            fd: owner.handle.fd,
-            cleanupIncomplete: failed.error.cleanupIncomplete,
-          }),
-          { timeout: 5_000 },
-        )
+        .poll(() => ({
+          fd: owner.handle.fd,
+          cleanupIncomplete: failed.error.cleanupIncomplete,
+        }))
         .toEqual({ fd: -1, cleanupIncomplete: false });
       expect(failed.error.cause).toBe(originalCause);
       expect(fixture.attempts.every((attempt) => attempt === owner)).toBe(true);
@@ -166,7 +161,7 @@ it.each([false, true])(
           throw new Error("Missing retained workspace");
         await expect(access(workspace)).resolves.toBeUndefined();
       } else {
-        await verifyJadxFixtureCleanup(launches);
+        await expectProviderLaunchCleanup(launches);
       }
     } finally {
       vi.useRealTimers();
@@ -175,7 +170,7 @@ it.each([false, true])(
         fixture.allowClose();
         try {
           await fixture.provider.close();
-          await verifyJadxFixtureCleanup(fixture.launches);
+          await expectProviderLaunchCleanup(fixture.launches);
         } finally {
           fixture.close.mockRestore();
         }

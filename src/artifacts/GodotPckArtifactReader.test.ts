@@ -7,7 +7,7 @@ import {
   pckU64,
   type GodotPckMember,
 } from "../../tests/fixtures/godotPck.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
@@ -18,9 +18,15 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+} from "../resources/ArtifactReader.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
+import { DEFAULT_GODOT_READER_LIMITS } from "../domain/artifactReaderLimits.js";
 
 const writePck = async (bytes: Buffer): Promise<string> => {
   const path = join(await createTestTempDirectory("rea-godot-pck-"), "game");
@@ -30,9 +36,11 @@ const writePck = async (bytes: Buffer): Promise<string> => {
 
 const list = async (
   reader: GodotPckArtifactReader,
+  options?: ArtifactTraversalOptions,
 ): Promise<ArtifactEntry[]> => {
   const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
+  for await (const entry of reader.entries(undefined, options))
+    entries.push(entry);
   return entries;
 };
 
@@ -53,6 +61,102 @@ const members: readonly GodotPckMember[] = [
   { path: "project.binary", data: "" },
   { path: "data/é.json", data: '{"session":"Session1"}' },
 ];
+
+it("recovers the same PCK directory after raising encoded metadata admission", async () => {
+  const bytes = buildGodotPck(4, [{ path: "a", data: "extends Node\n" }]);
+  const path = await writePck(bytes);
+  const refused = new GodotPckArtifactReader(path, undefined, {
+    ...DEFAULT_GODOT_READER_LIMITS,
+    directory_bytes: 320,
+  });
+  try {
+    await expect(list(refused)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+      readerLimit: {
+        parameter: "artifact_limits.godot.directory_bytes",
+        effective_value: 320,
+      },
+    });
+  } finally {
+    await refused.close();
+  }
+  const recovered = new GodotPckArtifactReader(path, undefined, {
+    ...DEFAULT_GODOT_READER_LIMITS,
+    directory_bytes: 4096,
+  });
+  try {
+    const entries = await list(recovered);
+    expect(entries).toMatchObject([{ path: "a", declaredSize: 13 }]);
+    expect(await text(await recovered.open(entries[0]!))).toBe(
+      "extends Node\n",
+    );
+  } finally {
+    await recovered.close();
+  }
+});
+
+it("refuses a fully framed path over the remaining metadata budget", async () => {
+  const path = await writePck(
+    buildGodotPck(2, [
+      { path: "a", data: "" },
+      { path: "b".repeat(64), data: "" },
+    ]),
+  );
+  const reader = new GodotPckArtifactReader(path, undefined, {
+    ...DEFAULT_GODOT_READER_LIMITS,
+    directory_bytes: 1400,
+  });
+  try {
+    await expect(list(reader)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+      readerLimit: {
+        parameter: "artifact_limits.godot.directory_bytes",
+        effective_value: 1400,
+      },
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("applies selected aggregate work before yielding Godot members", async () => {
+  const path = await writePck(
+    buildGodotPck(4, [{ path: "res://main.gd", data: "extends Node\n" }]),
+  );
+  const refused = new GodotPckArtifactReader(
+    path,
+    undefined,
+    DEFAULT_GODOT_READER_LIMITS,
+    12,
+  );
+  try {
+    await expect(list(refused)).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: "artifact_limits.expanded_bytes",
+        effective_value: 12,
+        required_value: 13,
+      },
+    });
+  } finally {
+    await refused.close();
+  }
+  const recovered = new GodotPckArtifactReader(
+    path,
+    undefined,
+    DEFAULT_GODOT_READER_LIMITS,
+    13,
+  );
+  try {
+    expect(await list(recovered)).toMatchObject([
+      { path: "main.gd", declaredSize: 13 },
+    ]);
+  } finally {
+    await recovered.close();
+  }
+});
 
 describe("GodotPckArtifactReader format 1", () => {
   it.each([false, true])(
@@ -104,7 +208,11 @@ describe("GodotPckArtifactReader format 1", () => {
 
   it("keeps a valid empty Godot 3 format 1 inventory complete", async () => {
     await withReader(buildGodotPck1([]), async (reader) => {
-      expect(await list(reader)).toEqual([]);
+      const coverage: ArtifactReaderTraversal[] = [];
+      expect(
+        await list(reader, { onCoverage: (facts) => coverage.push(facts) }),
+      ).toEqual([]);
+      expect(coverage).toEqual([{ status: "complete", limitations: [] }]);
       expect(reader.formatMetadata()).toMatchObject({
         format_version: 1,
         directory_status: "available",
@@ -122,12 +230,12 @@ describe("GodotPckArtifactReader format 1", () => {
     [
       "out-of-pack data",
       { path: "bad.bin", data: "x", offset: 1n << 40n },
-      "format",
+      "malformed",
     ],
     [
       "oversized data",
       { path: "bad.bin", data: "x", size: 1n << 40n },
-      "format",
+      "malformed",
     ],
   ] as const)("refuses Godot 3 format 1 %s", async (_, member, reason) => {
     await withReader(buildGodotPck1([member]), async (reader) => {
@@ -138,7 +246,7 @@ describe("GodotPckArtifactReader format 1", () => {
   it("rejects a truncated Godot 3 format 1 directory", async () => {
     const pack = buildGodotPck1([{ path: "a.gd", data: "x" }]);
     await withReader(pack.subarray(0, 110), async (reader) => {
-      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+      await expect(list(reader)).rejects.toMatchObject({ reason: "malformed" });
     });
   });
 });
@@ -198,6 +306,24 @@ describe("GodotPckArtifactReader", () => {
     });
   });
 
+  it("reports a changed carrier before refusing an encrypted member", async () => {
+    const path = await writePck(
+      buildGodotPck(3, [{ path: "secret.gd", data: "x", flags: 1 }]),
+    );
+    const reader = new GodotPckArtifactReader(path);
+    try {
+      const [entry] = await list(reader);
+      if (entry === undefined) throw new Error("expected one entry");
+      await appendFile(path, "changed");
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "container-identity",
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
   it.each([
     ["encrypted", 3],
     ["sparse-bundle", 6],
@@ -234,13 +360,13 @@ describe("GodotPckArtifactReader", () => {
     });
   });
 
-  it("rejects oversized encoded path metadata before allocating its declared bytes", async () => {
+  it("reports an oversized path that cannot fit in the pack as truncated", async () => {
     const bytes = buildGodotPck(2, members);
     bytes.writeUInt32LE(0xffff_ffff, 100);
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
-        reason: "limit",
-        boundary: "memory",
+        reason: "truncated",
+        parseFailure: { kind: "truncated", format: "godot-pck" },
       });
     });
   });
@@ -254,19 +380,23 @@ describe("GodotPckArtifactReader", () => {
     [
       "a member count that cannot fit",
       buildGodotPck(3, members, { fileCount: 0xffff_ffff }),
-      "format",
+      "malformed",
     ],
     [
       "member data beyond the pack",
       buildGodotPck(3, [{ path: "big.bin", data: "x", size: 1n << 40n }]),
-      "format",
+      "malformed",
     ],
     [
       "an unknown format 5 pack",
       Buffer.concat([Buffer.from("GDPC"), pckU32(5), Buffer.alloc(120)]),
       "unavailable",
     ],
-    ["bytes without a pack", Buffer.from("not a godot pack at all"), "format"],
+    [
+      "bytes without a pack",
+      Buffer.from("not a godot pack at all"),
+      "malformed",
+    ],
     [
       "a trailer pointing outside the file",
       Buffer.concat([
@@ -274,7 +404,7 @@ describe("GodotPckArtifactReader", () => {
         pckU64(1n << 40n),
         Buffer.from("GDPC"),
       ]),
-      "format",
+      "malformed",
     ],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
@@ -306,7 +436,7 @@ describe("GodotPckArtifactReader member streams", () => {
   );
 
   it("types cancellation during a member read instead of crashing", async () => {
-    const data = "x".repeat(4 * 1024 * 1024);
+    const data = "x".repeat(256 * 1024);
     await withReader(
       buildGodotPck(3, [{ path: "big.bin", data }]),
       async (reader) => {
@@ -315,26 +445,39 @@ describe("GodotPckArtifactReader member streams", () => {
         const controller = new AbortController();
         const stream = await reader.open(entry, controller.signal);
         const chunks = stream[Symbol.asyncIterator]();
-        await chunks.next();
-        controller.abort();
-        await expect(chunks.next()).rejects.toMatchObject({
-          reason: "cancelled",
-        });
+        const prefix = await chunks.next();
+        if (prefix.done || !Buffer.isBuffer(prefix.value))
+          throw new Error("Expected member data before cancellation");
+        expect(prefix.value.byteLength).toBeLessThan(data.length);
+        const reason = new Error("stopped after reading a member prefix");
+        controller.abort(reason);
+        const failure = await chunks.next().catch((cause: unknown) => cause);
+        if (!(failure instanceof ArtifactReaderFailure))
+          throw new Error("Expected a typed member cancellation", {
+            cause: failure,
+          });
+        expect(failure.reason).toBe("cancelled");
+        expect(failure.cause).toBe(reason);
       },
     );
   });
 
   it("keeps the reader usable after a consumer abandons a member", async () => {
-    const data = "x".repeat(4 * 1024 * 1024);
+    const data = "x".repeat(256 * 1024);
     await withReader(
       buildGodotPck(3, [{ path: "big.bin", data }]),
       async (reader) => {
         const [entry] = await list(reader);
         if (entry === undefined) throw new Error("expected one entry");
         const abandoned = await reader.open(entry);
-        await abandoned[Symbol.asyncIterator]().next();
+        const prefix = await abandoned[Symbol.asyncIterator]().next();
+        if (prefix.done || !Buffer.isBuffer(prefix.value))
+          throw new Error("Expected member data before abandonment");
+        expect(prefix.value.byteLength).toBeLessThan(data.length);
+        const closed = once(abandoned, "close");
         abandoned.destroy();
-        expect((await text(await reader.open(entry))).length).toBe(data.length);
+        await closed;
+        expect(await text(await reader.open(entry))).toBe(data);
       },
     );
   });
@@ -505,5 +648,38 @@ describe("Godot PCK logical-byte admission", () => {
         expect(entries.every((entry) => entry.encrypted)).toBe(true);
       },
     );
+  });
+});
+
+it.each([
+  [
+    "before the embedded pack",
+    embedGodotPck(
+      buildGodotPck1([
+        { path: "a.bin", data: "a", offset: 1n, md5: Buffer.alloc(16) },
+      ]),
+    ),
+    "member starts before the pack",
+  ],
+  [
+    "inside the directory",
+    buildGodotPck(3, [
+      { path: "a.bin", data: "a", offset: 4n, md5: Buffer.alloc(16) },
+    ]),
+    "member overlaps the directory",
+  ],
+  [
+    "across the directory boundary",
+    buildGodotPck(4, [
+      { path: "a.bin", data: "a", offset: 2n, size: 4n, md5: Buffer.alloc(16) },
+    ]),
+    "member overlaps the directory",
+  ],
+] as const)("refuses a member %s", async (_label, bytes, message) => {
+  await withReader(bytes, async (reader) => {
+    await expect(list(reader)).rejects.toMatchObject({
+      reason: "malformed",
+      message: expect.stringContaining(message),
+    });
   });
 });

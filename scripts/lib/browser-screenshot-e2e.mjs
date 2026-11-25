@@ -3,26 +3,23 @@ import {
   requireMcpToolError,
 } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webScreenshotSchema } from "../../dist/domain/webScreenshot.js";
-import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
+import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { createVerifierCommands } from "./verify-commands.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
-  const browser = await chromium.connectOverCDP(endpoint);
-  const context = await browser.newContext({
-    viewport: { width: 2048, height: 1536 },
-    deviceScaleFactor: 1,
-  });
+  const commands = await createVerifierCommands();
   const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -31,17 +28,32 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
   };
   let client;
   let transport;
-  try {
+  let browser;
+  let context;
+  return withVerifierCleanup(async () => {
+    browser = await chromium.connectOverCDP(endpoint);
+    context = await browser.newContext({
+      viewport: { width: 2048, height: 1536 },
+      deviceScaleFactor: 1,
+    });
     const page = await context.newPage();
     await page.goto(`${origin}/screenshot-noise`);
     await page.waitForFunction(() => document.body.dataset.ready === "true");
+    assert.deepEqual(
+      await page.evaluate(() => [
+        document.documentElement.scrollWidth,
+        document.documentElement.scrollHeight,
+      ]),
+      [2048, 1536],
+      "Noise canvas must fill the intended viewport without document overflow",
+    );
     const targets = await (await fetch(`${endpoint}/json/list`)).json();
     const target = targets.find((value) => value.url === page.url());
     assert.ok(
       target,
       "Owned screenshot page is absent from actual CDP discovery",
     );
-    const { stdout } = await promisify(execFile)(
+    const { stdout } = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -85,7 +97,9 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       // The SDK defaults to a 10 MiB receive buffer; inline PNG output is larger.
       maxBufferSize,
     });
-    client = new Client({ name: "browser-screenshot-real-e2e", version: "1" });
+    client = completeEvidenceClient(
+      new Client({ name: "browser-screenshot-real-e2e", version: "1" }),
+    );
     await client.connect(transport);
     const captured = await client.callTool(
       {
@@ -120,18 +134,13 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       matched_large_buffer: true,
       png_bytes: bytes.byteLength,
     };
-  } finally {
-    try {
-      if (client !== undefined) await client.close();
-    } finally {
-      try {
-        if (transport !== undefined) await transport.close();
-      } finally {
-        await context.close();
-        await browser.close();
-      }
-    }
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => context?.close(),
+    () => browser?.close(),
+    () => commands.close(),
+  ]);
 }
 
 const verifyDefaultScreenshotDelivery = async ({
@@ -148,10 +157,12 @@ const verifyDefaultScreenshotDelivery = async ({
     env: environment,
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "browser-screenshot-default-e2e",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "browser-screenshot-default-e2e",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport);
     const constrained = await client.callTool(

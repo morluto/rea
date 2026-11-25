@@ -14,13 +14,9 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
+import { javaScriptExecutions } from "./javascriptSemanticExecutionPoints.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 import type {
-  IterationSourceValue,
-  SemanticIterationSource,
-} from "./javascriptSemanticIterationFacts.js";
-
-export type {
   IterationSourceValue,
   SemanticIterationSource,
 } from "./javascriptSemanticIterationFacts.js";
@@ -30,6 +26,8 @@ export interface SemanticPropertyReadSource
   extends IterationSourceValue, SourceGuards {
   readonly mutation: t.Node;
   readonly lookup: "prototype" | "own";
+  /** The language protocol invokes a callable value read from this slot. */
+  readonly invoke?: true;
 }
 
 interface PatternSource extends IterationSourceValue {
@@ -238,7 +236,17 @@ const visit = (
   }
   if (t.isArrayPattern(pattern)) {
     if (source !== undefined && source.restStartIndex === undefined)
-      add(sources, source, mutation, guards);
+      sources.push({
+        kind: "iteration",
+        node: source.node,
+        projection: source.projection,
+        mutation,
+        ...(t.isVariableDeclarator(mutation) ||
+        t.isAssignmentExpression(mutation)
+          ? { arrayPattern: pattern }
+          : {}),
+        ...guards,
+      });
     const selectedGuards = {
       ...guards,
       iterationSources: [
@@ -297,21 +305,13 @@ const guardedBodyMayCall = (body: t.BlockStatement): boolean => {
       for (const child of children)
         pending.push({ node: child, parent: node, finish: false });
     } else {
+      // Without scope proof an identifier may resolve through a global accessor,
+      // including when its enclosing operator itself performs no coercion.
       const direct =
-        t.isCallExpression(node) ||
-        t.isOptionalCallExpression(node) ||
-        t.isNewExpression(node) ||
-        t.isTaggedTemplateExpression(node) ||
-        t.isMemberExpression(node) ||
-        t.isOptionalMemberExpression(node) ||
-        t.isBinaryExpression(node) ||
-        t.isUnaryExpression(node) ||
-        t.isUpdateExpression(node) ||
-        t.isSpreadElement(node) ||
-        t.isForOfStatement(node) ||
-        t.isAwaitExpression(node) ||
-        ((t.isVariableDeclarator(node) || t.isAssignmentExpression(node)) &&
-          semanticSourceFacts(node, parent).propertyReads.length > 0);
+        javaScriptExecutions(node, parent).length > 0 ||
+        (t.isIdentifier(node) &&
+          parent !== null &&
+          t.isReferenced(node, parent));
       guardedExecutions.set(
         node,
         direct ||
@@ -337,6 +337,7 @@ const semanticSourceFacts = (
       t.isAssignmentExpression(node) ||
       t.isForOfStatement(node) ||
       t.isSpreadElement(node) ||
+      t.isAwaitExpression(node) ||
       t.isYieldExpression(node) ||
       t.isCatchClause(node) ||
       t.isFunction(node)
@@ -372,11 +373,15 @@ const semanticSourceFacts = (
         mutation: node,
         lookup: "own",
       });
-  } else if (
-    t.isYieldExpression(node) &&
-    node.delegate &&
-    node.argument != null
-  )
+  } else if (t.isAwaitExpression(node))
+    propertyReads.push({
+      node: node.argument,
+      projection: ["then"],
+      mutation: node,
+      lookup: "prototype",
+      invoke: true,
+    });
+  else if (t.isYieldExpression(node) && node.delegate && node.argument != null)
     add(sources, { node: node.argument, projection: [] }, node, {});
   else if (
     t.isCatchClause(node) &&

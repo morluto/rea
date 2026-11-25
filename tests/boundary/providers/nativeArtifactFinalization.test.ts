@@ -8,125 +8,129 @@ import { inspectPeResourcesInputSchema } from "../../../src/domain/native/peReso
 import { inspectPeCertificatesInputSchema } from "../../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../../src/domain/native/peImports.js";
 import { inspectElfNotesInputSchema } from "../../../src/domain/native/elfNotes.js";
+import { inspectKernelBuildConfigInputSchema } from "../../../src/domain/native/kernelBuildConfig.js";
+import { KernelBuildConfigProvider } from "../../../src/native/elf/KernelBuildConfigProvider.js";
+import { kernelBuildConfigFixture } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
 import { inspectKernelModuleInputSchema } from "../../../src/domain/native/kernelModule.js";
+import { inspectElfDependenciesInputSchema } from "../../../src/domain/native/elfDependencies.js";
 import { inspectNativeExportsInputSchema } from "../../../src/domain/native/nativeExports.js";
 import { inspectAppleIpsInputSchema } from "../../../src/domain/native/appleIps.js";
+import { inspectWindowsShortcutInputSchema } from "../../../src/domain/native/windowsShortcut.js";
 import { inspectApkSignatureInputSchema } from "../../../src/domain/apkSignature/apkSignatureQuery.js";
 import { PeResourcesProvider } from "../../../src/native/pe/PeResourcesProvider.js";
 import { PeCertificatesProvider } from "../../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../../src/native/pe/PeImportsProvider.js";
+import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
+import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
+import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
 import { AppleIpsProvider } from "../../../src/native/apple/AppleIpsProvider.js";
+import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import { ApkSignatureProvider } from "../../../src/apkSignature/ApkSignatureProvider.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const inspectionFactory =
+  <Input, Inspection>(
+    Provider: new () => {
+      inspect: (input: Input, options: { signal: AbortSignal }) => Inspection;
+      close(): Promise<void>;
+    },
+    schema: { parse(value: { path: string }): Input },
+  ) =>
+  () => {
+    const provider = new Provider();
+    return {
+      inspect: (path: string, signal: AbortSignal) =>
+        provider.inspect(schema.parse({ path }), { signal }),
+      close: () => provider.close(),
+    };
+  };
 
 const cases = [
   {
     name: "PE resources",
-    make: () => {
-      const provider = new PeResourcesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectPeResourcesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(PeResourcesProvider, inspectPeResourcesInputSchema),
   },
   {
     name: "PE certificates",
-    make: () => {
-      const provider = new PeCertificatesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectPeCertificatesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      PeCertificatesProvider,
+      inspectPeCertificatesInputSchema,
+    ),
   },
   {
     name: "PE imports",
-    make: () => {
-      const provider = new PeImportsProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectPeImportsInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(PeImportsProvider, inspectPeImportsInputSchema),
   },
   {
     name: "ELF notes",
-    make: () => {
-      const provider = new ElfNotesProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectElfNotesInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
+    fixture: elfNoteFixture,
+    report: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ type_name: "gnu_build_id" }),
+      ]),
     },
+    make: inspectionFactory(ElfNotesProvider, inspectElfNotesInputSchema),
+  },
+  {
+    name: "kernel build config",
+    fixture: kernelBuildConfigFixture,
+    report: { config: { status: "present", option_count: 9 } },
+    make: inspectionFactory(
+      KernelBuildConfigProvider,
+      inspectKernelBuildConfigInputSchema,
+    ),
   },
   {
     name: "kernel modules",
-    make: () => {
-      const provider = new KernelModuleProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectKernelModuleInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
+    fixture: kernelModuleFixture,
+    report: { applicability: "applicable", signature: { status: "present" } },
+    make: inspectionFactory(
+      KernelModuleProvider,
+      inspectKernelModuleInputSchema,
+    ),
+  },
+  {
+    name: "ELF dependencies",
+    fixture: elfDependencyFixture,
+    report: {
+      needed: expect.arrayContaining([
+        expect.objectContaining({ name: "libc.so.6" }),
+      ]),
     },
+    make: inspectionFactory(
+      ElfDependenciesProvider,
+      inspectElfDependenciesInputSchema,
+    ),
   },
   {
     name: "native exports",
-    make: () => {
-      const provider = new NativeExportsProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectNativeExportsInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      NativeExportsProvider,
+      inspectNativeExportsInputSchema,
+    ),
   },
   {
     name: "Apple IPS",
-    make: () => {
-      const provider = new AppleIpsProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectAppleIpsInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(AppleIpsProvider, inspectAppleIpsInputSchema),
+  },
+  {
+    name: "Windows shortcut",
+    make: inspectionFactory(
+      WindowsShortcutProvider,
+      inspectWindowsShortcutInputSchema,
+    ),
   },
   {
     name: "APK signatures",
-    make: () => {
-      const provider = new ApkSignatureProvider();
-      return {
-        inspect: (path: string, signal: AbortSignal) =>
-          provider.inspect(inspectApkSignatureInputSchema.parse({ path }), {
-            signal,
-          }),
-        close: () => provider.close(),
-      };
-    },
+    make: inspectionFactory(
+      ApkSignatureProvider,
+      inspectApkSignatureInputSchema,
+    ),
   },
 ] as const;
 
@@ -137,18 +141,14 @@ const modes = [
   "close-both",
 ] as const;
 
-it.each(
-  cases.flatMap(({ name, make }) =>
-    modes.map((mode) => ({ name, make, mode })),
-  ),
-)(
+it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
   "retains completed $name acquisition through $mode",
-  async ({ make, mode }) => {
+  async (entry) => {
+    const { make, mode } = entry;
     const root = await createTestTempDirectory("rea-native-finalization-");
     const path = join(root, "selected.bin");
-    // The descriptor must finalize before any format parser runs, so one
-    // physical file can exercise every acquisition boundary.
-    const bytes = peResourceFixture().bytes;
+    const bytes =
+      "fixture" in entry ? entry.fixture() : peResourceFixture().bytes;
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason =
@@ -171,16 +171,22 @@ it.each(
     try {
       const result = await provider.inspect(path, controller.signal);
       if (result.ok) throw new Error("Expected finalization failure");
-      const acquired = {
-        kind: "file-snapshot-hash",
+      const artifact = {
         path,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
       };
-      expect(result.error.partialObservation).toEqual(acquired);
+      const observation = result.error.partialObservation;
+      if ("report" in entry)
+        expect(observation).toMatchObject({ artifact, ...entry.report });
+      else
+        expect(observation).toEqual({
+          kind: "file-snapshot-hash",
+          ...artifact,
+        });
       expect(
         projectAnalysisError(result.error).details?.partial_observation,
-      ).toEqual(acquired);
+      ).toEqual(observation);
       const failedClose = mode === "close-failure" || mode === "close-both";
       expect(result.error.cleanupIncomplete).toBe(failedClose);
       if (failedClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);

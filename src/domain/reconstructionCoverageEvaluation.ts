@@ -1,3 +1,5 @@
+import { appendToMapList } from "./appendToMapList.js";
+import { reconstructionUnknownHeads } from "./reconstructionUnknowns.js";
 import type { ReconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import type {
   ReconstructionClosureResult,
@@ -364,46 +366,59 @@ const verifierResultMatchesContract = (
       ownership.disposition === "implemented" ? [ownership.owner_sha256] : [],
     ),
   );
+  if (
+    result.contract_sha256 !== contract.contract_sha256 ||
+    result.normalization_sha256 !== contract.normalization_sha256 ||
+    result.repeats < contract.minimum_repeats ||
+    claim.required_authority !== contract.authority
+  )
+    return false;
+  const contractClaimIds = new Set(contract.claim_ids);
+  const contractDimensions = new Set(contract.dimensions);
+  const coveredDimensions = new Set(result.covered_dimensions);
+  const resultArtifactDigests = new Set(result.artifact_sha256s);
+  const resultOwnerDigests = new Set(result.owner_sha256s);
   return (
-    result.contract_sha256 === contract.contract_sha256 &&
-    result.normalization_sha256 === contract.normalization_sha256 &&
     result.covered_claim_ids.includes(claim.claim_id) &&
-    result.covered_claim_ids.every((item) =>
-      contract.claim_ids.includes(item),
+    result.covered_claim_ids.every((item) => contractClaimIds.has(item)) &&
+    claim.required_dimensions.every(
+      (item) => contractDimensions.has(item) && coveredDimensions.has(item),
     ) &&
-    claim.required_dimensions.every((item) =>
-      contract.dimensions.includes(item),
-    ) &&
-    claim.required_dimensions.every((item) =>
-      result.covered_dimensions.includes(item),
-    ) &&
-    result.covered_dimensions.every((item) =>
-      contract.dimensions.includes(item),
-    ) &&
+    result.covered_dimensions.every((item) => contractDimensions.has(item)) &&
     result.artifact_sha256s.every((item) =>
       indexes.artifactDigests.has(item),
     ) &&
-    expectedArtifactDigests.every((item) =>
-      result.artifact_sha256s.includes(item),
-    ) &&
+    expectedArtifactDigests.every((item) => resultArtifactDigests.has(item)) &&
     result.owner_sha256s.every((item) => indexes.ownerDigests.has(item)) &&
-    expectedOwnerDigests.every((item) => result.owner_sha256s.includes(item)) &&
-    result.repeats >= contract.minimum_repeats &&
-    claim.required_authority === contract.authority
+    expectedOwnerDigests.every((item) => resultOwnerDigests.has(item))
   );
 };
 
 export const evaluateReconstructionCoverageRisks = (
   context: ReconstructionEvaluationContext,
 ): void => {
-  for (const unknownId of context.coverage.residual_unknown_ids)
-    if (!context.boundary.allowed_unknown_ids.includes(unknownId))
+  const unknownHeads = reconstructionUnknownHeads(
+    context.coverage.evidence_bundle.unknowns,
+  );
+  const allowedUnknownIds = new Set(context.boundary.allowed_unknown_ids);
+  for (const unknownId of new Set(context.coverage.residual_unknown_ids)) {
+    const unknown = unknownHeads.get(unknownId);
+    if (unknown?.status === "resolved") continue;
+    if (!allowedUnknownIds.has(unknownId)) {
+      if (unknown !== undefined)
+        addEvidence(context, [
+          ...unknown.supporting_evidence_ids,
+          ...unknown.contradicting_evidence_ids,
+          ...unknown.mutation_evidence_ids,
+        ]);
       addReason(
         context,
         "active-unknown",
         unknownId,
         "Active residual unknown is not permitted by the completion boundary.",
       );
+    }
+  }
   for (const contradiction of context.coverage.contradictions)
     if (
       contradiction.status === "active" &&
@@ -435,16 +450,24 @@ export const evaluateReconstructionPackageProofs = (
       return artifact === undefined ? [] : [artifact.artifact_sha256];
     },
   );
+  const proofsByKind = new Map<
+    string,
+    ReconstructionCoverageData["package_proofs"][number][]
+  >();
+  for (const proof of context.coverage.package_proofs) {
+    appendToMapList(proofsByKind, proof.kind, proof);
+  }
   for (const kind of context.boundary.required_package_proof_kinds) {
-    const proofs = context.coverage.package_proofs.filter(
-      (proof) => proof.kind === kind,
-    );
+    const proofs = proofsByKind.get(kind) ?? [];
     const applicable = (
       proof: ReconstructionCoverageData["package_proofs"][number],
-    ): boolean =>
-      requiredArtifactDigests.every((digest) =>
-        proof.artifact_sha256s.includes(digest),
-      ) && packageProofHasComparableEvidence(proof, context.evidenceById);
+    ): boolean => {
+      const proofDigests = new Set(proof.artifact_sha256s);
+      return (
+        requiredArtifactDigests.every((digest) => proofDigests.has(digest)) &&
+        packageProofHasComparableEvidence(proof, context.evidenceById)
+      );
+    };
     const applicableProofs = proofs.filter(applicable);
     addEvidence(
       context,

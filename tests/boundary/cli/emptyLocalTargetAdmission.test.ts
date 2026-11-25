@@ -1,10 +1,13 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { registerUtilityCommands } from "../../../src/cli/utilityCommands.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const registry = () => {
@@ -16,11 +19,27 @@ const registry = () => {
     vi.fn(async (_path: string, ..._rest: unknown[]) => failure);
   const runDirectAnalysis = run();
   const runProviderAnalysis = run();
-  const cli = Cli.create("empty-target-admission", { sync: false });
-  registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
+  const runManagedProviderEvidence = vi.fn(
+    async (_path: string, ..._rest: unknown[]) =>
+      ({
+        ok: false,
+        error: new AnalysisInputError("inspect_managed_members", undefined, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: "Admitted target control",
+          },
+        ]),
+      }) as const,
+  );
+  const cli = createCommandCli();
+  registerArtifactCommands(cli, silentLogger, runProviderAnalysis, {});
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
-  registerManagedCommands(cli, silentLogger, runProviderAnalysis);
+  registerManagedCommands(cli, silentLogger, {
+    runProviderAnalysis,
+    runManagedProviderEvidence,
+  });
   registerUtilityCommands(
     cli,
     silentLogger,
@@ -31,17 +50,14 @@ const registry = () => {
     },
   );
   const serve = async (argv: readonly string[]): Promise<unknown> => {
-    let stdout = "";
-    await cli.serve([...argv, "--json"], {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
-    });
+    const { stdout } = await serveInProcessCli(cli, [...argv, "--json"]);
     return JSON.parse(stdout);
   };
-  return { serve, runs: [runDirectAnalysis, runProviderAnalysis] };
+  return {
+    serve,
+    runs: [runDirectAnalysis, runProviderAnalysis],
+    runManagedProviderEvidence,
+  };
 };
 
 // Each command with its other required arguments; the target comes first.
@@ -64,6 +80,7 @@ const commands: readonly (readonly string[])[] = [
   ["read-bytes", "0x1000"],
   ["address-to-file-offset", "0x1000"],
   ["trace-native-values", "main"],
+  ["inspect-native-data-type", "--type", "/MyStruct"],
   ["inspect-native-instruction", "0x1000"],
   ["resolve-native-call-targets", "0x1000"],
   ["inspect-native-dispatch-metadata"],
@@ -121,12 +138,79 @@ it.each([
 ])(
   "rejects an empty compare-managed-members $field before reading either input",
   async ({ argv, field }) => {
-    const { serve } = registry();
+    const { serve, runManagedProviderEvidence } = registry();
     expect(await serve(["compare-managed-members", ...argv])).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
         expect.objectContaining({ path: field, code: "too_small" }),
       ],
     });
+    expect(runManagedProviderEvidence).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  {
+    command: "inspect-plist",
+    field: "relativePath",
+    valid: "Contents/Info.plist",
+    invalid: ["", "Contents/a\x00b"],
+  },
+  {
+    command: "trace-dylib-resolution",
+    field: "root",
+    valid: ["Contents/MacOS/app"],
+    invalid: [[""], ["Contents/a\x00b"], ["../outside"]],
+  },
+])(
+  "advertises the $field option constraints",
+  async ({ command, field, valid, invalid }) => {
+    const { serve } = registry();
+    const schema = (await serve([command, "--schema"])) as { options: object };
+    const validate = new Ajv2020({ strict: false }).compile(schema.options);
+    expect(validate({})).toBe(true);
+    expect(validate({ [field]: valid })).toBe(true);
+    for (const value of invalid)
+      expect(validate({ [field]: value })).toBe(false);
+  },
+);
+
+it("rejects an empty or NUL --snapshot option before analysis", async () => {
+  const { serve, runs } = registry();
+  expect(await serve(["inspect", ".", "--snapshot", ""])).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "snapshot", code: "too_small" }),
+    ],
+  });
+  expect(
+    await serve(["inspect", ".", "--snapshot", "snap\x00shot"]),
+  ).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "snapshot", code: "invalid_format" }),
+    ],
+  });
+  for (const run of runs) expect(run).not.toHaveBeenCalled();
+});
+
+it.each([
+  { argv: ["inspect-plist", ".", "--relative-path"], field: "relativePath" },
+  { argv: ["trace-dylib-resolution", ".", "--root"], field: "root" },
+])(
+  "rejects an empty or NUL $field option on the CLI and names that option",
+  async ({ argv, field }) => {
+    const { serve, runs } = registry();
+    for (const value of ["", "Contents/a\x00b"]) {
+      const result = (await serve([...argv, value])) as {
+        code: string;
+        fieldErrors: readonly { path: string }[];
+      };
+      expect(result.code).toBe("VALIDATION_ERROR");
+      expect(
+        new Set(result.fieldErrors.map(({ path }) => path.split(".")[0])),
+      ).toEqual(new Set([field]));
+    }
+    for (const run of runs) expect(run).not.toHaveBeenCalled();
   },
 );

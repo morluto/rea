@@ -1,29 +1,24 @@
-import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { planOutputTree } from "./DesktopOutputTree.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   parseDesktopTask,
   type desktopTaskSchema,
   type DesktopTask,
 } from "../../domain/desktop/appTask.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
+import { appStateViews } from "../../domain/desktop/appStateViews.js";
 import {
   evaluateTaskChecks,
   type TaskCheckOutcome,
 } from "../../domain/desktop/appTaskChecks.js";
-import {
-  renderTaskSteps,
-  renderTaskVerifier,
-  taskVerifierArtifact,
-} from "../../domain/desktop/appTaskPython.js";
+import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import {
   admitWitnessStage,
-  appStateViews,
   stageExpectation,
   stageVerdict,
   unrestoredChecks,
@@ -32,24 +27,36 @@ import {
   type WitnessStage,
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import {
+  silentProgressReporter,
+  type ProgressReporter,
+} from "../../ports/ProgressReporter.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
+import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
+import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
+import {
+  bundleTaskDifference,
+  judgeScreenTask,
+  type Graded,
+  type WitnessBundle,
+} from "./DesktopBuildWitnessBundle.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -58,7 +65,12 @@ const FRESH =
 /** The computer routes the witness reads. */
 export type WitnessedComputer = Pick<
   AgentEnvComputer,
-  "appData" | "startRecording" | "endRecording" | "recordingSegments"
+  | "appData"
+  | "startRecording"
+  | "endRecording"
+  | "recordingSegments"
+  | "exec"
+  | "callTool"
 >;
 
 type WitnessSummary = {
@@ -76,6 +88,10 @@ export type CheckedTask = {
   readonly passed: number;
   readonly failed: number;
   readonly results: TaskCheckOutcome[];
+  /** Whether the app's files had held for the settle window when they were graded, rather than at its bound. */
+  readonly settled: boolean;
+  /** Whether a read still in flight at the settle bound was cut, so the last completed read was graded. */
+  readonly read_cut: boolean;
   readonly witness: WitnessSummary | null;
 };
 
@@ -86,52 +102,19 @@ const refused = (userMessage: string, remediationAction: string) =>
     conformsToInputContract: true,
   });
 
-const taskDigest = (task: DesktopTask) =>
-  createHash("sha256").update(JSON.stringify(task)).digest("hex");
+const taskDigest = (task: DesktopTask) => sha256Hex(JSON.stringify(task));
 
-/** Whether a folder can take the record: absent, or empty. */
-const usableFolder = async (directory: string): Promise<boolean> =>
-  readdir(directory).then(
-    (entries) => entries.length === 0,
-    (cause: unknown) =>
-      (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
-  );
-
-/** The most bytes REA reads of each of the bundle's files for the task. */
-const BUNDLE_FILE_BYTES = 1024 * 1024;
-const stepsSchema = z.array(
-  z.looseObject({ type: z.string(), env_id: z.string().optional() }),
-);
-
-/** Why the bundle's steps and verifier for the task are not what the export writes for it; undefined when they are. */
-const bundleTaskDifference = async (
-  bundle: string,
-  task: DesktopTask,
-  signal: AbortSignal,
-): Promise<string | undefined> => {
-  const stepsPath = `tasks/${task.name}.json`;
-  const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
-  const [steps, verifier] = await Promise.all(
-    [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), BUNDLE_FILE_BYTES, signal),
-    ),
-  );
-  if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
-    return `the bundle at ${bundle} has no readable ${Buffer.isBuffer(steps) ? verifierPath : stepsPath}.`;
-  const parsed = safeParseUtf8Json(steps);
-  const listed = parsed.ok ? parsed.value : undefined;
-  const app = stepsSchema
-    .safeParse(listed)
-    .data?.find((step) => step.type === "deploy_env")?.env_id;
-  if (
-    app === undefined ||
-    !isDeepStrictEqual(listed, JSON.parse(renderTaskSteps(task, app)))
-  )
-    return `the bundle's ${stepsPath} differs from this task's steps.`;
-  return verifier.toString("utf8") === renderTaskVerifier(task, app)
-    ? undefined
-    : `the bundle's ${verifierPath} differs from this task's checks.`;
-};
+/** A retry cannot redirect an ended witness to another folder. */
+const recordDirectoryRefusal = (
+  expected: string,
+  requested: string | undefined,
+): AnalysisError | undefined =>
+  requested !== undefined && requested !== expected
+    ? refused(
+        `This witness's record belongs to ${expected}, not ${requested}.`,
+        "Ask again without directory or with the original folder; another witness needs a fresh computer.",
+      )
+    : undefined;
 
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
@@ -144,6 +127,11 @@ interface OpenWitness extends EndedWitness {
   record?: WitnessRecord;
   /** A manifest whose segments still need to be fetched. */
   pendingManifest?: RecordingManifest | undefined;
+  /**
+   * The action log as it stood when the record was first written. A retry
+   * uses this copy, so later activity cannot drop the witnessed actions.
+   */
+  logged?: Pick<ReadonlyActionLog, "entries" | "dropped">;
   /**
    * A published record whose handles are still open. The error already carries
    * the record and the cleanup lease; every later close failure returns it.
@@ -171,9 +159,16 @@ const summaryOf = (
 });
 
 /** The pass and fail counts of one set of results. */
-const counted = (task: DesktopTask, results: TaskCheckOutcome[]) => {
+const counted = (task: DesktopTask, { results, settled, read_cut }: Graded) => {
   const passed = results.filter((result) => result.passed).length;
-  return { task: task.name, passed, failed: results.length - passed, results };
+  return {
+    task: task.name,
+    passed,
+    failed: results.length - passed,
+    results,
+    settled,
+    read_cut,
+  };
 };
 
 /**
@@ -199,6 +194,7 @@ export const retryPublishedCleanup = async (
 
 export class DesktopBuildWitness {
   #witness: OpenWitness | undefined;
+  readonly readers: DesktopRemoteTaskReaders;
   /**
    * The request id of this computer's one witness recording, fixed before any
    * start is sent: a seed retried after a lost reply asks for the same id,
@@ -206,12 +202,29 @@ export class DesktopBuildWitness {
    */
   readonly #recordingRequest = `rea-witness:${randomUUID()}`;
 
-  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. */
+  readonly #bundle: WitnessBundle | undefined;
+  readonly #redact: (value: JsonValue) => JsonValue;
+  readonly #readHostFile: HostFileReader;
+
+  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. `redact` puts known secrets' handles in place of their values in the record. */
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
-    private readonly bundle?: string,
-  ) {}
+    private readonly settle: BuildSettle = SETTLE_TIMING,
+    options: {
+      readonly bundle?: WitnessBundle | undefined;
+      readonly redact?: (value: JsonValue) => JsonValue;
+      readonly readHostFile: HostFileReader;
+    },
+  ) {
+    this.#bundle = options.bundle;
+    this.#redact = options.redact ?? ((value) => value);
+    this.#readHostFile = options.readHostFile;
+    this.readers = new DesktopRemoteTaskReaders(
+      (argv, timeout, signal, requestId) =>
+        this.computer.exec(argv, timeout, signal, requestId),
+    );
+  }
 
   async check(
     input: {
@@ -220,8 +233,9 @@ export class DesktopBuildWitness {
       readonly directory?: string | undefined;
     },
     signal: AbortSignal,
+    progress: ProgressReporter = silentProgressReporter,
   ): Promise<Result<CheckedTask, AnalysisError>> {
-    const parsed = parseDesktopTask(input.task, isPortableBundleName);
+    const parsed = parseDesktopTask(input.task);
     if (!parsed.ok)
       return err(
         refused(
@@ -231,8 +245,15 @@ export class DesktopBuildWitness {
       );
     const task = parsed.value;
     const { stage } = input;
-    if (stage !== undefined && this.#witness?.state === "saving")
-      return this.#resave(this.#witness, task, stage, signal);
+    if (stage !== undefined && this.#witness?.state === "saving") {
+      const directoryRefusal = recordDirectoryRefusal(
+        this.#witness.directory,
+        input.directory,
+      );
+      return directoryRefusal === undefined
+        ? this.#resave(this.#witness, task, stage, signal)
+        : err(directoryRefusal);
+    }
     const saved =
       stage === undefined
         ? undefined
@@ -243,27 +264,48 @@ export class DesktopBuildWitness {
         ? undefined
         : await this.#admit(task, stage, input.directory, signal);
     if (admitted?.ok === false) return admitted;
-    const graded = await this.#grade(task, signal);
+    const graded = await this.#grade(task, signal, progress);
     if (!graded.ok) return graded;
-    const results = graded.value;
-    const checked = counted(task, results);
+    const checked = counted(task, graded.value);
     if (stage === undefined || admitted === undefined)
       return ok({ ...checked, witness: null });
-    const filed = await this.#file(stage, admitted.value, results, signal);
+    const filed = await this.#file(stage, admitted.value, graded.value, signal);
     return filed.ok ? ok({ ...checked, witness: filed.value }) : filed;
   }
 
-  /** The task's checks against the app's live views, one result per check. */
+  /** The task's checks against the app's views once its files settle, and its readers' views read then, one result per check. */
   async #grade(
     task: DesktopTask,
     signal: AbortSignal,
-  ): Promise<Result<TaskCheckOutcome[], AnalysisError>> {
+    progress: ProgressReporter,
+  ): Promise<Result<Graded, AnalysisError>> {
+    if (isScreenTask(task))
+      return judgeScreenTask(this.computer, this.#bundle, task, signal);
     try {
-      const views = appStateViews(
-        await this.computer.appData("data/get", signal),
+      const read = await settledAppData(
+        (turn) => this.computer.appData("data/get", turn),
+        this.settle,
+        signal,
+        (message) =>
+          progress
+            .report({ phase: CHECK, completed: 0, total: null, message })
+            .catch(() => undefined),
       );
+      const views = appStateViews(read.parts);
+      const readers = await this.readers.read(task.readers ?? [], signal);
       return views.ok
-        ? ok([...evaluateTaskChecks(task.checks, views.value)])
+        ? ok({
+            results: [
+              ...evaluateTaskChecks(
+                task.checks,
+                views.value,
+                readers,
+                this.#redact,
+              ),
+            ],
+            settled: read.settled,
+            read_cut: read.readCut,
+          })
         : err(
             refused(
               views.error,
@@ -275,7 +317,7 @@ export class DesktopBuildWitness {
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `Reading the app's state failed: ${errorText(cause)}`,
+              userMessage: `Reading the app's state failed: ${errorMessage(cause)}`,
               cause,
             }),
       );
@@ -290,7 +332,7 @@ export class DesktopBuildWitness {
   async #file(
     stage: WitnessStage,
     actionsBefore: number,
-    results: TaskCheckOutcome[],
+    { results, settled, read_cut }: Graded,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     const witness = this.#witness;
@@ -328,6 +370,8 @@ export class DesktopBuildWitness {
       checked_at: new Date().toISOString(),
       expectation: stageExpectation(stage),
       held,
+      settled,
+      read_cut,
       results,
       ...(unrestored.length === 0
         ? {}
@@ -361,12 +405,19 @@ export class DesktopBuildWitness {
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
+    witness.logged ??= {
+      entries: [...this.actions.entries],
+      dropped: this.actions.dropped,
+    };
     const written = await writeWitnessRecord(
       this.computer,
       witness,
-      this.actions,
-      signal,
-      witness.pendingManifest,
+      witness.logged,
+      {
+        signal,
+        redact: this.#redact,
+        pendingManifest: witness.pendingManifest,
+      },
     );
     if (written.kind === "retry") {
       if (written.manifest !== undefined)
@@ -376,7 +427,9 @@ export class DesktopBuildWitness {
     witness.pendingManifest = undefined;
     witness.record = written.record;
     if (written.kind === "published") {
-      witness.published = { error: written.error, release: written.release };
+      if (written.release === undefined) witness.state = "saved";
+      else
+        witness.published = { error: written.error, release: written.release };
       return err(written.error);
     }
     witness.state = "saved";
@@ -402,15 +455,13 @@ export class DesktopBuildWitness {
     )
       return undefined;
     // A folder the record was not saved to gets nothing written, so it is refused.
-    if (directory !== undefined && directory !== witness.directory)
-      return err(
-        refused(
-          `This witness's record was saved to ${witness.directory}, not ${directory}.`,
-          "Ask again without directory or with the folder it was saved to; another witness needs a fresh computer.",
-        ),
-      );
+    const directoryRefusal = recordDirectoryRefusal(
+      witness.directory,
+      directory,
+    );
+    if (directoryRefusal !== undefined) return err(directoryRefusal);
     return ok({
-      ...counted(task, filed.results),
+      ...counted(task, filed),
       witness: summaryOf(filed, null, witness.record),
     });
   }
@@ -436,7 +487,10 @@ export class DesktopBuildWitness {
       );
     const saved = await this.#save(witness, filed, signal);
     return saved.ok
-      ? ok({ ...counted(task, filed.results), witness: saved.value })
+      ? ok({
+          ...counted(task, filed),
+          witness: saved.value,
+        })
       : saved;
   }
 
@@ -485,17 +539,24 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    if (!(await usableFolder(directory)))
-      return err(
-        refused(
-          `${directory} exists and is not empty.`,
-          "Give a new or empty folder.",
-        ),
-      );
+    // Admit the folder by the same rule the record is saved under, so the
+    // seed cannot accept a folder (a symlink, a file, a denied path) that the
+    // save would refuse.
+    try {
+      await planOutputTree(directory, { operation: CHECK, field: "directory" });
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) return err(cause);
+      throw cause;
+    }
     let differs: string | undefined;
-    if (this.bundle !== undefined) {
+    if (this.#bundle !== undefined) {
       try {
-        differs = await bundleTaskDifference(this.bundle, task, signal);
+        differs = await bundleTaskDifference(
+          this.#bundle.path,
+          task,
+          signal,
+          this.#readHostFile,
+        );
       } catch (cause: unknown) {
         // A cancelled read, an I/O failure, or a handle that would not close
         // stays a Result. A cleanup lease stays bound to that error.
@@ -534,7 +595,7 @@ export class DesktopBuildWitness {
     } catch (cause: unknown) {
       return err(
         new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-          userMessage: `The witness could not start its recording: ${errorText(cause)}`,
+          userMessage: `The witness could not start its recording: ${errorMessage(cause)}`,
           cause,
         }),
       );

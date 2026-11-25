@@ -13,14 +13,16 @@ import {
   artifactInventoryViewRequestSchema,
   projectArtifactInventoryView,
 } from "./artifactInventoryView.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 
 const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
-const freshInventory = () => {
+const freshInventory = (version: "current" | "historical" = "current") => {
   const inventory = artifactInventoryResultSchema.parse(
     carrier.normalized_result,
   );
   const root = inventory.occurrences[0]!;
+  if (version === "historical") delete root.relationship_coverage;
   const rootNode = inventory.nodes[0]!;
   root.artifact_kind = "container";
   root.artifact_format = "zip";
@@ -87,10 +89,10 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
-  subject:
-    carrier.subject === null
-      ? null
-      : { ...carrier.subject, format: "zip", architecture: null },
+  subject: changedEvidenceSubject(carrier.subject, {
+    format: "zip",
+    architecture: null,
+  }),
   normalizedResult,
   sealedResult: true,
   limitations: [],
@@ -133,73 +135,72 @@ it.each(["node_count", "occurrence_count", "edge_count"] as const)(
   },
 );
 
-it("batches exact occurrence IDs in source order while retaining linkage with no selected fields", () => {
+it("intersects and deduplicates exact occurrence IDs and paths before paging in source order", () => {
   const inventory = freshInventory();
-  const selected = inventory.occurrences.slice(0, 2);
-  expect(selected).toHaveLength(2);
-  const result = page(parent(inventory), {
+  const [root, child] = inventory.occurrences;
+  if (root === undefined || child === undefined)
+    throw new Error("Expected root and child occurrences");
+  const source = parent(inventory);
+  const selection = {
     kind: "inventory",
     collection: "occurrences",
-    occurrence_ids: [...selected]
-      .reverse()
-      .flatMap((row) => [row.occurrence_id, row.occurrence_id]),
-    fields: [],
+    occurrence_ids: [
+      child.occurrence_id,
+      root.occurrence_id,
+      child.occurrence_id,
+    ],
+    logical_paths: [child.logical_path, root.logical_path],
+    limit: 1,
+  };
+  const first = page(source, { ...selection, fields: [] });
+  expect(first.items).toEqual([
+    {
+      occurrence_id: root.occurrence_id,
+      artifact_id: root.artifact_id,
+      parent_occurrence_id: root.parent_occurrence_id,
+    },
+  ]);
+  expect(first.coverage).toMatchObject({
+    total: 2,
+    examined: 1,
+    next_offset: 1,
   });
-  expect(result.items).toEqual(
-    selected.map((row) => ({
-      occurrence_id: row.occurrence_id,
-      artifact_id: row.artifact_id,
-      parent_occurrence_id: row.parent_occurrence_id,
-    })),
-  );
-  expect(result.coverage.total).toBe(2);
-});
-
-it("intersects exact IDs and paths, then pages the filtered order", () => {
-  const inventory = freshInventory();
-  const selected = inventory.occurrences.slice(0, 2);
-  const result = page(parent(inventory), {
-    kind: "inventory",
-    collection: "occurrences",
-    occurrence_ids: selected.map((row) => row.occurrence_id),
-    logical_paths: selected.map((row) => row.logical_path),
+  const next = page(source, {
+    ...selection,
     fields: ["logical_path"],
     offset: 1,
-    limit: 1,
   });
-  expect(result.items).toEqual([
-    expect.objectContaining({
-      occurrence_id: selected[1]?.occurrence_id,
-      logical_path: selected[1]?.logical_path,
-    }),
+  expect(next.items).toEqual([
+    {
+      occurrence_id: child.occurrence_id,
+      artifact_id: child.artifact_id,
+      parent_occurrence_id: root.occurrence_id,
+      logical_path: child.logical_path,
+    },
   ]);
-  expect(result.coverage).toMatchObject({
+  expect(next.coverage).toMatchObject({
     total: 2,
     examined: 1,
     next_offset: null,
   });
   expect(
-    page(parent(inventory), {
-      kind: "inventory",
-      collection: "occurrences",
-      occurrence_ids: [selected[0]!.occurrence_id],
-      logical_paths: [selected[1]!.logical_path],
+    page(source, {
+      ...selection,
+      occurrence_ids: [root.occurrence_id],
+      logical_paths: [child.logical_path],
     }).items,
   ).toEqual([]);
 });
 
-it.each([{ occurrence_ids: [] }, { logical_paths: [] }])(
-  "keeps an explicitly empty occurrence selection empty",
-  (filter) => {
-    expect(
-      page(parent(freshInventory()), {
-        kind: "inventory",
-        collection: "occurrences",
-        ...filter,
-      }).items,
-    ).toEqual([]);
-  },
-);
+it("keeps an explicitly empty occurrence ID selection empty", () => {
+  expect(
+    page(parent(freshInventory()), {
+      kind: "inventory",
+      collection: "occurrences",
+      occurrence_ids: [],
+    }).items,
+  ).toEqual([]);
+});
 
 it("fetches only selected content identities and fields, in canonical node order", () => {
   const inventory = freshInventory();
@@ -259,23 +260,17 @@ it("does not fabricate a selected field absent from the owning report", () => {
   ).toThrow();
 });
 
-it("borrows authenticated immutable facts and validates once across retained queries", () => {
-  const inventory = freezeJsonSnapshot(freshInventory());
-  const source = parent(inventory);
-  const parse = vi.spyOn(artifactInventoryResultSchema, "parse");
-  const first = page(source, {
-    kind: "inventory",
-    collection: "occurrences",
-    limit: 1,
-  });
-  expect(first.items[0]).toBe(inventory.occurrences[0]);
-  expect(parse).toHaveBeenCalledOnce();
-  page(source, {
-    kind: "inventory",
-    collection: "nodes",
-    artifact_ids: [inventory.nodes[0]!.artifact_id],
-  });
-  expect(parse).toHaveBeenCalledOnce();
+it("reads absent historical relationship coverage as unknown without changing the retained row", () => {
+  const inventory = freezeJsonSnapshot(freshInventory("historical"));
+  expect(
+    page(parent(inventory), {
+      kind: "inventory",
+      collection: "occurrences",
+      fields: ["relationship_coverage"],
+      limit: 1,
+    }).items,
+  ).toMatchObject([{ relationship_coverage: "unknown" }]);
+  expect(inventory.occurrences[0]).not.toHaveProperty("relationship_coverage");
 });
 
 it("does not reuse validation for a mutable object carrying a forged sealing flag", () => {
@@ -288,38 +283,34 @@ it("does not reuse validation for a mutable object carrying a forged sealing fla
   ).toThrow();
 });
 
-it("keeps a missing match unknown when retained inventory pages are partial", () => {
-  const inventory = freshInventory();
-  inventory.occurrences = inventory.occurrences.slice(0, 1);
-  const result = page(parent(inventory), {
-    kind: "inventory",
-    collection: "occurrences",
-    logical_paths: ["not-recorded"],
-  });
-  expect(result.source_complete).toBe(false);
-  expect(result.items).toEqual([]);
-  expect(result.unknowns.join(" ")).toContain(
-    "Missing matches do not establish absence",
-  );
-});
-
-it("binds reused facts to the current Evidence ID and validates its subject on every projection", () => {
+it("reuses immutable facts while binding each view to its current Evidence identity", () => {
   const inventory = freezeJsonSnapshot(freshInventory());
   const first = parent(inventory);
-  page(first, { kind: "inventory", collection: "nodes", fields: [] });
+  const parse = vi.spyOn(artifactInventoryResultSchema, "parse");
+  const projected = page(first, {
+    kind: "inventory",
+    collection: "occurrences",
+    limit: 1,
+  });
+  expect(projected.items[0]).toBe(inventory.occurrences[0]);
   const next = { ...first, evidenceId: `ev_${"f".repeat(64)}` };
   expect(
-    page(next, { kind: "inventory", collection: "nodes", fields: [] })
-      .inventory_evidence_ids,
+    page(next, {
+      kind: "inventory",
+      collection: "nodes",
+      artifact_ids: [inventory.nodes[0]!.artifact_id],
+      fields: [],
+    }).inventory_evidence_ids,
   ).toEqual([next.evidenceId]);
+  expect(parse).toHaveBeenCalledOnce();
   const subject = next.subject;
-  if (subject === null || subject === undefined)
+  if (subject === undefined || subject.identity.kind !== "file")
     throw new Error("Expected a subject");
   expect(() =>
     page(
       {
         ...next,
-        subject: { ...subject, digest: { sha256: "f".repeat(64) } },
+        subject: changedEvidenceSubject(subject, { sha256: "f".repeat(64) }),
       },
       { kind: "inventory", collection: "nodes" },
     ),

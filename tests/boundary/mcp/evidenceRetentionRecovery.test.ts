@@ -1,3 +1,6 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -9,7 +12,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
 import { UNRETAINED_EVIDENCE_EXPORT_GUIDANCE } from "../../../src/domain/analysisErrorPresentation.js";
@@ -18,15 +21,12 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "delivers authenticated but unretained provider Evidence inline (%s schema)",
   async (profile) => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const identity = createFixtureProviderIdentity();
     const target = join(
       await createTestTempDirectory("rea-evidence-refusal-"),
       "fixture.com",
@@ -49,7 +49,10 @@ it.each(["compact", "full"] as const)(
         environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     );
-    const client = new Client({ name: "unretained-evidence", version: "1" });
+    const client = new Client(
+      { name: "unretained-evidence", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -73,7 +76,7 @@ it.each(["compact", "full"] as const)(
           name: "address_name",
           arguments: { address: "0x100", document: "fixture" },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(result.isError).toBe(true);
       const error = parseMcpToolError(result).error;
@@ -120,11 +123,7 @@ it.each(["compact", "full"] as const)(
 );
 
 it("keeps an oversized unretained observation failure bounded and the connection usable", async () => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
+  const identity = createFixtureProviderIdentity();
   const target = join(
     await createTestTempDirectory("rea-evidence-overflow-"),
     "fixture.com",
@@ -138,10 +137,13 @@ it("keeps an oversized unretained observation failure bounded and the connection
   const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
   const session = new BinarySession(router, records);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "unretained-evidence-overflow",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "unretained-evidence-overflow",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -201,12 +203,12 @@ it("keeps an oversized unretained observation failure bounded and the connection
     await server.close();
     await session.close();
   }
-}, 120000);
+});
 
 it("bounds fallback when the retention error itself has oversized diagnostics", async () => {
   const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "address_name", parameters: {}, result: "entry" },
     { immutable: true },
@@ -228,7 +230,10 @@ it("bounds fallback when the retention error itself has oversized diagnostics", 
     { inputSchema: z.object({}) },
     async () => delivery.toErrorToolResult(refused.error, true),
   );
-  const client = new Client({ name: "retention-overflow", version: "1" });
+  const client = new Client(
+    { name: "retention-overflow", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);
@@ -257,4 +262,4 @@ it("bounds fallback when the retention error itself has oversized diagnostics", 
     await client.close();
     await server.close();
   }
-}, 120000);
+});

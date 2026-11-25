@@ -1,7 +1,28 @@
+import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { createHmac } from "node:crypto";
+
+export const listenCutterServer = async (
+  server: ReturnType<typeof createServer>,
+  invalidAddress = "Expected an ephemeral IPv4 listener",
+): Promise<number> => {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error(invalidAddress);
+  return address.port;
+};
+
+export const windowsDescriptorReaderFixture = () => ({
+  verifyDirectory: () => true,
+  readDescriptor: (root: string, name: string, maxBytes: number) => {
+    const bytes = readFileSync(join(root, name));
+    if (bytes.byteLength > maxBytes) throw new Error("Descriptor too large");
+    return bytes;
+  },
+});
 
 /** Authenticate real v2 frames before dispatching controlled bridge replies. */
 export const authenticatedServer = (
@@ -119,6 +140,7 @@ export const writeDescriptor = async (
     readonly currentFile?: string | null;
     readonly documentGeneration?: number;
     readonly maxRequestBytes?: number;
+    readonly bridgeSourceSha256?: string | null;
   } = {},
 ): Promise<void> =>
   writeFile(
@@ -136,6 +158,9 @@ export const writeDescriptor = async (
       ...(options.maxRequestBytes === undefined
         ? {}
         : { max_request_bytes: options.maxRequestBytes }),
+      ...(options.bridgeSourceSha256 === undefined
+        ? {}
+        : { bridge_source_sha256: options.bridgeSourceSha256 }),
     }),
     { mode: 0o600 },
   );

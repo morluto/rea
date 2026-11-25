@@ -2,10 +2,9 @@ import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -19,21 +18,22 @@ import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import {
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
   bundleTarballDigest,
+  changedArtifact,
   packageTarballRefusal,
   withBundleTarball,
   writeEnvironmentBundle,
 } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
-import { readRegularFile } from "../RegularFileRead.js";
+import { readRegularFile } from "../../process/RegularFileRead.js";
 import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
@@ -41,7 +41,6 @@ import {
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
-  registryPackageSource,
   type EnvironmentPackageSource,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
@@ -90,7 +89,7 @@ export interface EnvironmentExportResult {
   readonly manifest_evidence_id: string;
   /** Whether the bundle serves from the state the export derived, as `environment-serve` reports it. */
   readonly state: PreparedState["report"];
-  readonly package_source: JsonValue;
+  readonly package_source: EnvironmentPackageSource;
   readonly files: readonly WrittenBundleFile[];
 }
 
@@ -149,6 +148,10 @@ const accessDeniedError = (
     if (code === "EACCES" || code === "EPERM") {
       const options = {
         cause,
+        ...(cause instanceof ArtifactReaderFailure &&
+        cause.partialObservation !== undefined
+          ? { partialObservation: cause.partialObservation }
+          : {}),
         ...(diagnostics === undefined ? {} : { diagnostics }),
         ...(cause instanceof ArtifactReaderFailure &&
         cause.cleanup !== undefined
@@ -327,11 +330,7 @@ export const readEnvironmentExportFile = async (
         cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
       return err(
         primary instanceof AnalysisError
-          ? analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([primary, cleanup])
+          ? analysisErrorWithCleanupDependencies(primary, cleanup, operation)
           : cleanup,
       );
     }
@@ -383,41 +382,41 @@ export const readEnvironmentExportInputs = async (
   return ok({ manifest: manifest.value, evidence: evidence.value });
 };
 
-const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
-  source.kind === "registry"
-    ? { kind: "registry", specifier: source.specifier }
-    : { kind: "tarball", path: source.path };
-
-const changedArtifact = (
-  cause: RegularFileChangedError,
-): AnalysisArtifactChangedError =>
-  new AnalysisArtifactChangedError(
-    ENVIRONMENT_EXPORT_OPERATION,
-    cause.path,
-    cause.message,
-    { cause },
-  );
-
 /** A reader failure as an output refusal that keeps an unconfirmed cleanup bound to its owner. */
 const readerFailureError = (
   cause: ArtifactReaderFailure,
   directory: string | undefined,
 ): AnalysisOutputError => {
   const host = hostSystemError(cause);
+  const publication = cause.partialObservation;
+  const published =
+    publication !== undefined &&
+    "kind" in publication &&
+    publication.kind === "environment-bundle-publication";
   const error = new AnalysisOutputError(
     ENVIRONMENT_EXPORT_OPERATION,
     host === undefined ? cause.message : `${cause.message}: ${host.message}`,
     {
       cause,
+      ...(cause.partialObservation === undefined
+        ? {}
+        : { partialObservation: cause.partialObservation }),
       // Only a host failure gets host recovery; an integrity or other
       // refusal keeps its own message without disk-space advice.
       ...(cause.cleanup !== undefined
         ? { cleanup: cause.cleanup }
         : directory === undefined
           ? {}
-          : host === undefined
-            ? { diagnostics: { output_directory: directory } }
-            : hostWriteFailure(directory)),
+          : published
+            ? {
+                userMessage: `The bundle was published to ${directory}, but a later operation failed: ${cause.message}`,
+                remediationAction:
+                  "Inspect the published bundle and resolve the reported failure before using or replacing it.",
+                diagnostics: { output_directory: directory },
+              }
+            : host === undefined
+              ? { diagnostics: { output_directory: directory } }
+              : hostWriteFailure(directory)),
     },
   );
   bindArtifactFileCleanup(cause, error);
@@ -453,14 +452,10 @@ export const packageTarballBytes = async (
 export const exportEnvironmentBundle = async (
   input: EnvironmentExportInput,
 ): Promise<Result<EnvironmentExportResult, AnalysisError>> => {
-  const packageSource: EnvironmentPackageSource =
-    input.packageTarball === undefined
-      ? registryPackageSource()
-      : { kind: "tarball", path: input.packageTarball };
   // The bundle's server prepares the state at startup; preparing it here, once the name is checked, predicts what it serves.
   const plan = planEnvironmentBundle(input.source, {
     name: input.name,
-    packageSource,
+    packageTarball: input.packageTarball,
     served: (name) =>
       input.served ??
       prepareServedState(input.source, input.evidence.value, {
@@ -512,7 +507,7 @@ export const exportEnvironmentBundle = async (
     evidence_id: input.source.evidenceId,
     manifest_evidence_id: input.source.manifestEvidenceId,
     state: plan.value.state,
-    package_source: packageSourceValue(plan.value.packageSource),
+    package_source: plan.value.packageSource,
     files,
   });
 };

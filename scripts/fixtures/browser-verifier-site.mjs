@@ -64,7 +64,7 @@ export async function startBrowserVerifierSite() {
     }
     if (request.url === "/screenshot-noise") {
       response.setHeader("content-type", "text/html");
-      response.end(`<!doctype html><html><body style="margin:0"><canvas width="2048" height="1536"></canvas><script>
+      response.end(`<!doctype html><html><body style="margin:0"><canvas style="display:block" width="2048" height="1536"></canvas><script>
         const context = document.querySelector('canvas').getContext('2d');
         const image = context.createImageData(2048, 1536);
         let state = 0x6d2b79f5;

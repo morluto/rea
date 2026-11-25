@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const gates = vi.hoisted(() => {
@@ -17,6 +18,7 @@ const gates = vi.hoisted(() => {
     hashClose: createGate(),
     identityRead: createGate(),
     opens: 0,
+    selectedPath: null as string | null,
     failClose: false,
     holdHashClose: false,
     holdIdentityRead: false,
@@ -33,6 +35,7 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
         const descriptor = await original.openRegularFile(...args);
+        if (args[0] !== gates.selectedPath) return descriptor;
         const { handle } = descriptor;
         const index = gates.opens++;
         const read = handle.read.bind(handle);
@@ -59,8 +62,8 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import {
   inspectKunaInstallation,
   kunaInstallationCancellation,
@@ -71,6 +74,7 @@ import { session } from "./kunaSessionFixture.js";
 
 beforeEach(() => {
   gates.opens = 0;
+  gates.selectedPath = null;
   gates.failClose = false;
   gates.holdHashClose = false;
   gates.holdIdentityRead = false;
@@ -91,6 +95,7 @@ it
   async (phase) => {
     const root = await createTestTempDirectory("rea-kuna-inspection-lifetime-");
     const executable = await writeFakeKuna(root);
+    gates.selectedPath = executable;
     const scope = new ArtifactResourceScope();
     const resourceScope: RetainedResourceScope = {
       retain: (owner, resource) =>
@@ -106,7 +111,11 @@ it
     gates.holdIdentityRead = phase === "identity-read";
     const inspection = inspectKunaInstallation(
       { REA_KUNA_COMMAND: executable },
-      { resourceScope, signal: controller.signal },
+      {
+        platform: HOST_PLATFORM.platform,
+        resourceScope,
+        signal: controller.signal,
+      },
     );
 
     const inspectionOutcome = inspection.then(
@@ -157,7 +166,7 @@ it
     gates.hashClose.release();
     gates.identityRead.release();
     const fixture = await session("rea-kuna-session-finalization-");
-    gates.opens = 0;
+    gates.selectedPath = fixture.kuna;
     gates.hashClose = gates.createGate();
     gates.identityRead = gates.createGate();
     gates.holdHashClose = phase !== "identity-read";

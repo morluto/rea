@@ -19,9 +19,11 @@ describe("executable header parsing", () => {
     });
   });
   it.each([
+    // x32 uses ELF32 with the x86-64 machine identity.
     [elf(1, 1, 62), "elf", "x86_64"],
     [elf(2, 2, 183), "elf", "arm64"],
     [elf(1, 1, 164), "elf", "hexagon"],
+    [elf(1, 1, 94), "elf", "xtensa"],
     [thinMach(0xfeedfacf, 0x0100000c), "mach-o", "arm64"],
     [thinMach(0xcefaedfe, 0x01000007), "mach-o", "x86_64"],
     [thinMach(0xcefaedfe, 0x0200000c), "mach-o", "arm64_32"],
@@ -30,13 +32,6 @@ describe("executable header parsing", () => {
   ] as const)("parses metadata for %s", (bytes, format, architecture) => {
     const result = parseExecutableHeader(bytes, "arm64");
     expect(result.ok && result.value).toMatchObject({ format, architecture });
-  });
-
-  it("retains ELF32 x86-64 identity for the x32 ABI", () => {
-    expect(parseExecutableHeader(elf(1, 1, 62), "x64")).toMatchObject({
-      ok: true,
-      value: { format: "elf", architecture: "x86_64" },
-    });
   });
 
   it("distinguishes native PE applications, DLLs, and managed assemblies", () => {
@@ -124,12 +119,63 @@ describe("executable header parsing", () => {
   it("rejects malformed PE optional-header commitments", () => {
     const wrongMagic = pe(0x8664);
     wrongMagic.writeUInt16LE(0x10b, 64 + 24);
-    const truncatedDirectories = pe(0x8664);
+    const truncatedDirectories = pe(0x8664).subarray(0, 64 + 24 + 112);
     truncatedDirectories.writeUInt16LE(112, 64 + 20);
     truncatedDirectories.writeUInt32LE(16, 64 + 24 + 108);
 
     expect(parseExecutableHeader(wrongMagic, "x64").ok).toBe(false);
     expect(parseExecutableHeader(truncatedDirectories, "x64").ok).toBe(false);
+  });
+
+  it("admits PE images with short, oversized, or DOS-overlapping headers when fixed fields fit", () => {
+    const shortOptional = pe(0x8664);
+    shortOptional.writeUInt16LE(112, 64 + 20);
+    expect(parseExecutableHeader(shortOptional, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86_64" },
+    });
+
+    const largeOptional = pe(0x8664);
+    largeOptional.writeUInt16LE(5000, 64 + 20);
+    expect(parseExecutableHeader(largeOptional, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86_64" },
+    });
+
+    const overlappingPe = pe(0x014c, 4);
+    expect(parseExecutableHeader(overlappingPe, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86" },
+    });
+  });
+
+  it("admits DOS MZ targets from fixed 28-byte declarations without load-module rejection", () => {
+    const truncatedModule = dosMz(128).subarray(0, 64);
+    expect(parseExecutableHeader(truncatedModule, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    const emptyModule = dosMz(128);
+    emptyModule.writeUInt16LE(20, 8); // headerBytes >= imageBytes
+    emptyModule.writeUInt32LE(0, 60); // no Windows new-header pointer
+    expect(parseExecutableHeader(emptyModule, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    const outOfModuleEntry = dosMz(128);
+    outOfModuleEntry.writeUInt16LE(0xffff, 20); // entryOffset >= moduleBytes
+    expect(parseExecutableHeader(outOfModuleEntry, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    const shortHeader = dosMz(128).subarray(0, 27);
+    expect(parseExecutableHeader(shortHeader, "x64")).toEqual({
+      ok: false,
+      error: "invalid or truncated DOS MZ header",
+    });
   });
 });
 
@@ -193,6 +239,124 @@ describe("FAT Mach-O slice selection", () => {
     expect(
       parseExecutableHeader(fat([0x0100000c, 0x0100000c, 0x01000007]), "arm"),
     ).toMatchObject({ value: { architecture: "x86_64" } });
+  });
+
+  const withSubtype = (bytes: Buffer, index: number, subtype: number) => {
+    const entry = 8 + index * 20;
+    bytes.writeUInt32BE(subtype, entry + 4);
+    bytes.writeUInt32BE(subtype, bytes.readUInt32BE(entry + 8) + 8);
+    return bytes;
+  };
+
+  const selectedIdentity = (bytes: Buffer) => {
+    const parsed = parseExecutableHeader(bytes, "arm64");
+    if (!parsed.ok || parsed.value.format !== "mach-o-universal")
+      throw new Error(parsed.ok ? parsed.value.format : parsed.error);
+    const header = parsed.value;
+    return header.universalSlices.find(
+      (slice) => slice.offset === header.universalSlice.offset,
+    );
+  };
+
+  it("selects generic arm64 when an earlier slice is arm64e", () => {
+    const bytes = withSubtype(fat([0x0100000c, 0x0100000c, 0x01000007]), 0, 2);
+    expect(selectedIdentity(bytes)).toMatchObject({
+      cpuType: 0x0100000c,
+      cpuSubtype: 0,
+    });
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      value: {
+        format: "mach-o-universal",
+        architecture: "arm64",
+        availableArchitectures: ["arm64", "x86_64"],
+      },
+    });
+  });
+
+  it("selects the earliest arm64e capability variant", () => {
+    const bytes = withSubtype(
+      withSubtype(fat([0x0100000c, 0x0100000c]), 0, 0x81000002),
+      1,
+      0x80000002,
+    );
+    expect(selectedIdentity(bytes)).toMatchObject({
+      cpuType: 0x0100000c,
+      cpuSubtype: 0x81000002,
+    });
+  });
+
+  it("refuses a capability-variant set that repeats a subtype", () => {
+    const bytes = fat([0x0100000c, 0x0100000c, 0x0100000c]);
+    withSubtype(bytes, 0, 0x81000002);
+    withSubtype(bytes, 1, 0x81000002);
+    withSubtype(bytes, 2, 0x80000002);
+    expect(parseExecutableHeader(bytes, "arm64")).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
+  it("refuses identical host subtypes instead of a foreign family", () => {
+    expect(
+      parseExecutableHeader(fat([0x0100000c, 0x0100000c, 0x01000007]), "arm64"),
+    ).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
+  it("refuses a tie between unlisted arm64 subtypes", () => {
+    const bytes = withSubtype(
+      withSubtype(fat([0x0100000c, 0x0100000c]), 0, 42),
+      1,
+      43,
+    );
+    expect(parseExecutableHeader(bytes, "arm64")).toEqual({
+      ok: false,
+      error: "FAT binary declares several arm64 slices; no slice was selected",
+    });
+  });
+
+  it("prefers generic x86_64 over an earlier x86_64h slice", () => {
+    const bytes = withSubtype(
+      withSubtype(fat([0x01000007, 0x01000007]), 0, 8),
+      1,
+      3,
+    );
+    const parsed = parseExecutableHeader(bytes, "x64");
+    if (!parsed.ok || parsed.value.format !== "mach-o-universal")
+      throw new Error(parsed.ok ? parsed.value.format : parsed.error);
+    const header = parsed.value;
+    expect(
+      header.universalSlices.find(
+        (slice) => slice.offset === header.universalSlice.offset,
+      ),
+    ).toMatchObject({ cpuType: 0x01000007, cpuSubtype: 3 });
+  });
+
+  it("rejects overlapping FAT slices at container admission", () => {
+    const bytes = fat([0x01000007, 0x0100000c]);
+    const firstOffset = bytes.readUInt32BE(8 + 8);
+    // Point slice 1 into slice 0's range.
+    bytes.writeUInt32BE(firstOffset, 8 + 20 + 8);
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: false,
+      error: "Mach-O slices 0 and 1 overlap.",
+    });
+  });
+
+  it("isolates unselected-slice alignment while rejecting invalid selected-slice alignment", () => {
+    const bytes = fat([0x01000007, 0x0100000c]);
+    // Slice 0 is at offset 48 (aligned to 2^4=16, not 2^12=4096).
+    bytes.writeUInt32BE(12, 8 + 16);
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: true,
+      value: { format: "mach-o-universal", architecture: "arm64" },
+    });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: false,
+      error: "FAT architecture 0 offset is not aligned to 2^12",
+    });
   });
 });
 

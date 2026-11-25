@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 
 import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
+import { obligationCategories } from "./reconstructionObligationCategories.js";
 import { evidenceAuthoritySchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
@@ -41,29 +43,11 @@ const sameProjection = <Value>(
   return counts.size === 0;
 };
 
-export const obligationStatusSchema = z.enum([
-  "unowned",
-  "characterized",
-  "implemented",
-  "verified",
-  "contradicted",
-  "blocked",
-  "out-of-scope",
-  "unknown",
-]);
+export const obligationStatusSchema = z.enum(obligationCategories.statuses);
 
-export const obligationLayerSchema = z.enum([
-  "cli",
-  "protocol",
-  "electron",
-  "persistence",
-  "process",
-  "runtime",
-  "packaging",
-  "native-abi",
-  "application",
-  "other",
-]);
+export const obligationLayerSchema = z.enum(
+  obligationCategories.applicationLayers,
+);
 
 export const obligationCaseKindSchema = z.enum([
   "positive",
@@ -91,12 +75,7 @@ export const obligationOriginalAuthoritySchema = z.enum([
   "external",
 ]);
 
-const obligationEvidenceStateSchema = z.enum([
-  "candidate",
-  "observed",
-  "reviewed",
-  "unknown",
-]);
+const obligationEvidenceStateSchema = z.enum(obligationCategories.sourceStates);
 
 const obligationTargetSchema = z.strictObject({
   artifact_sha256: digestSchema.nullable(),
@@ -310,7 +289,7 @@ export const reconstructionObligationLedgerSchema = z
     closure_digest: digestSchema,
     status: z.enum(["ready", "open", "failed", "unknown"]),
     coverage: z.strictObject({
-      status: z.enum(["complete", "partial"]),
+      status: knownCoverageStatusSchema,
     }),
     summary: z.strictObject({
       total: z.int().min(0),

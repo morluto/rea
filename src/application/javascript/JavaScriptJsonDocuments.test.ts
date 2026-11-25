@@ -26,7 +26,7 @@ it("retains only declared package metadata despite inherited host fields", () =>
   declaredFile.text = {
     included: true,
     value:
-      '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs"}',
+      '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs","dependencies":{"next":"source-next"}}',
   };
   const inherited = {
     name: "host-name",
@@ -35,6 +35,9 @@ it("retains only declared package metadata despite inherited host fields", () =>
     renderer: "host-renderer.cjs",
     browser: "host-browser.cjs",
     module: "host-module.mjs",
+    dependencies: { next: "host-next" },
+    devDependencies: { next: "host-next-dev" },
+    peerDependencies: { next: "host-next-peer" },
   };
   const previous = Object.fromEntries(
     Object.keys(inherited).map((key) => [
@@ -44,6 +47,8 @@ it("retains only declared package metadata despite inherited host fields", () =>
   );
   let absent: ReturnType<JavaScriptJsonDocuments["read"]>;
   let declared: ReturnType<JavaScriptJsonDocuments["read"]>;
+  let absentMain: unknown;
+  let undeclaredModule: unknown;
   try {
     for (const [key, value] of Object.entries(inherited))
       Object.defineProperty(Object.prototype, key, {
@@ -53,6 +58,8 @@ it("retains only declared package metadata despite inherited host fields", () =>
       });
     absent = documents.read(absentFile);
     declared = documents.read(declaredFile);
+    absentMain = absent.packageFields?.main;
+    undeclaredModule = declared.packageFields?.module;
   } finally {
     for (const key of Object.keys(inherited)) {
       const descriptor = previous[key];
@@ -61,14 +68,19 @@ it("retains only declared package metadata despite inherited host fields", () =>
       else Object.defineProperty(Object.prototype, key, descriptor);
     }
   }
-  expect(absent.status).toBe("included");
-  expect(declared.status).toBe("included");
+  expect(absentMain).toBeUndefined();
+  expect(undeclaredModule).toBeUndefined();
+  expect(absent).toMatchObject({
+    status: "included",
+    nextDependency: "unproven",
+  });
+  expect(declared).toMatchObject({
+    status: "included",
+    nextDependency: "declared",
+  });
   if (absent.packageFields === null || declared.packageFields === null)
     throw new Error("Expected package metadata fields");
-  expect(Object.getPrototypeOf(absent.packageFields)).toBeNull();
-  expect(Object.getPrototypeOf(declared.packageFields)).toBeNull();
-  for (const key of Object.keys(inherited))
-    expect(Object.hasOwn(absent.packageFields, key)).toBe(false);
+  expect(Object.keys(absent.packageFields)).toEqual([]);
   expect(declared.packageFields).toEqual({
     name: "source-name",
     version: "1.0.0",
@@ -79,13 +91,19 @@ it("retains only declared package metadata despite inherited host fields", () =>
   expect(Object.hasOwn(declared.packageFields, "module")).toBe(false);
 });
 
-it("reparses changed text and availability on a reused file object", () => {
+it("refreshes JSON facts when a reused file changes without rewriting prior evidence", () => {
   const documents = new JavaScriptJsonDocuments();
   const file = mutableFile();
   const original = documents.read(file);
-  expect(original).toMatchObject({
-    status: "included",
-    packageFields: { main: "a.cjs" },
+  file.path = "nested/package.json";
+  expect(documents.read(file).source.path).toBe("nested/package.json");
+  file.container_sha256 = "container-b";
+  expect(documents.read(file).source.container_sha256).toBe("container-b");
+  file.sha256 = "file-b";
+  expect(documents.read(file).source).toEqual({
+    path: "nested/package.json",
+    container_sha256: "container-b",
+    sha256: "file-b",
   });
 
   file.text = { included: true, value: "{" };
@@ -104,49 +122,23 @@ it("reparses changed text and availability on a reused file object", () => {
   expect(updated).toMatchObject({
     status: "included",
     packageFields: { main: "b.cjs" },
+    source: {
+      path: "nested/package.json",
+      container_sha256: "container-b",
+      sha256: "file-b",
+    },
   });
   expect(original).toMatchObject({
     status: "included",
-    source: { path: "package.json" },
+    source: {
+      path: "package.json",
+      container_sha256: "container-a",
+      sha256: "file-a",
+    },
     packageFields: { main: "a.cjs" },
   });
   expect(invalid.status).toBe("invalid");
   expect(unavailable.status).toBe("unavailable");
-});
-
-it("rebuilds source provenance when path and content digests change", () => {
-  const documents = new JavaScriptJsonDocuments();
-  const file = mutableFile();
-  const original = documents.read(file);
-
-  file.path = "nested/package.json";
-  const moved = documents.read(file);
-  expect(moved.source.path).toBe("nested/package.json");
-
-  file.container_sha256 = "container-b";
-  const recontained = documents.read(file);
-  expect(recontained.source).toMatchObject({
-    path: "nested/package.json",
-    container_sha256: "container-b",
-    sha256: "file-a",
-  });
-
-  file.sha256 = "file-b";
-  const rehashed = documents.read(file);
-  expect(rehashed.source).toMatchObject({
-    path: "nested/package.json",
-    container_sha256: "container-b",
-    sha256: "file-b",
-  });
-  expect(original.source).toEqual({
-    path: "package.json",
-    container_sha256: "container-a",
-    sha256: "file-a",
-  });
-  expect(original).toMatchObject({
-    status: "included",
-    packageFields: { main: "a.cjs" },
-  });
 });
 
 it("retains only syntax and keys for ordinary JSON, with package fields scoped to its format", () => {

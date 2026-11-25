@@ -5,7 +5,10 @@ import {
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
-  AnalysisUnsupportedTargetError,
+  isAborted,
+  cancelledBy,
+  AnalysisTargetFailureError,
+  targetFailureOfKind,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
@@ -14,9 +17,11 @@ import type {
   AnalysisProviderBoundClientFactory,
   AnalysisProfileResolutionOptions,
   AnalysisProviderCandidate,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
+import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { isDoctorProviderId } from "../../domain/doctorProviderIds.js";
 import {
   providerReleaseVerificationSchema,
   type ProviderReleaseVerification,
@@ -45,10 +50,7 @@ export const evaluateAnalysisProviderCandidate = async (
   Result<AnalysisProviderCandidateEvaluation, AnalysisCancelledError>
 > => {
   const { signal } = options;
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("open_binary", signal));
   let resolved: Awaited<ReturnType<typeof candidate.resolveAnalysisProfile>>;
   try {
     resolved = await candidate.resolveAnalysisProfile(target, options);
@@ -70,19 +72,24 @@ export const evaluateAnalysisProviderCandidate = async (
     return err(resolved.error);
   if (!resolved.ok) {
     const error = resolved.error;
+    const unsupported = targetFailureOfKind(
+      error,
+      "unsupported",
+      "unrecognized",
+    );
     const rejection =
-      error instanceof AnalysisUnsupportedTargetError
+      unsupported !== undefined && error instanceof AnalysisTargetFailureError
         ? {
             candidate,
-            status: {
+            status: withCandidateRejections({
               ...status,
               targetSupport: {
                 status: "unsupported" as const,
                 code: "target_format_unsupported" as const,
-                reason: error.reason,
+                reason: unsupported.detail,
                 diagnostics: { path: error.path, error_tag: error._tag },
               },
-            },
+            }),
           }
         : rejectedProfile(
             candidate,
@@ -95,16 +102,13 @@ export const evaluateAnalysisProviderCandidate = async (
           );
     return ok({ ...rejection, profileError: error });
   }
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("open_binary", signal));
   try {
     if (resolved.value.profile === null)
       return ok(
         rejectedProfile(candidate, status, {
           reason: "Provider version or analysis profile could not be resolved",
-          remediation: PROFILE_REMEDIATION,
+          remediation: profileRemediation(candidate),
         }),
       );
     const profile = analysisProfileSchema.parse(resolved.value.profile);
@@ -118,7 +122,7 @@ export const evaluateAnalysisProviderCandidate = async (
       return ok(
         rejectedProfile(candidate, status, {
           reason: "Resolved analysis profile has mismatched provider identity",
-          remediation: PROFILE_REMEDIATION,
+          remediation: profileRemediation(candidate),
         }),
       );
     const verification =
@@ -131,7 +135,7 @@ export const evaluateAnalysisProviderCandidate = async (
       return ok(
         rejectedProfile(candidate, status, {
           reason: "Provider returned invalid release verification",
-          remediation: PROFILE_REMEDIATION,
+          remediation: profileRemediation(candidate),
         }),
       );
     return ok({
@@ -156,17 +160,19 @@ export const evaluateAnalysisProviderCandidate = async (
     return ok(
       rejectedProfile(candidate, status, {
         reason: "Provider returned an invalid analysis profile",
-        remediation: PROFILE_REMEDIATION,
+        remediation: profileRemediation(candidate),
       }),
     );
   }
 };
 
-const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
-
-const PROFILE_REMEDIATION =
-  "Run rea doctor to check this provider's installation and version, then reopen the target, or select another analysis provider.";
+/** Name doctor only for a provider whose installation it can check. */
+const profileRemediation = (candidate: AnalysisProviderCandidate): string => {
+  const providerId = candidate.identity().id;
+  return isDoctorProviderId(providerId)
+    ? `Run rea doctor --provider ${providerId} to check this provider's installation and version, then reopen the target, or select another analysis provider.`
+    : `Check the ${providerId} provider's installation and version against its documented requirements, then reopen the target, or select another analysis provider.`;
+};
 
 const rejectedProfile = (
   candidate: AnalysisProviderCandidate,
@@ -175,7 +181,7 @@ const rejectedProfile = (
   diagnostics: Readonly<Record<string, JsonValue>> = {},
 ): AnalysisProviderCandidateEvaluation => ({
   candidate,
-  status: {
+  status: withCandidateRejections({
     ...status,
     availability: {
       status: "unavailable",
@@ -186,5 +192,5 @@ const rejectedProfile = (
         ...diagnostics,
       }),
     },
-  },
+  }),
 });

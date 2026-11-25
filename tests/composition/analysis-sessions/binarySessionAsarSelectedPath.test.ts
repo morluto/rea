@@ -70,9 +70,7 @@ it.skipIf(process.platform === "win32")(
         expect(retargeted.error).toMatchObject({
           _tag: "ArtifactOperationError",
           reason: "integrity",
-          detail: expect.stringContaining(
-            "no longer resolves to its admitted source",
-          ),
+          integrityCheck: "admitted-identity",
         });
     } finally {
       await session.close();

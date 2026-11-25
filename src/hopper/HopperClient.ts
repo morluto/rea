@@ -1,3 +1,8 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  JsonLineBridgeReader,
+  type JsonLineBridgeFailure,
+} from "../process/JsonLineBridgeReader.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
@@ -6,12 +11,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
+  withInheritedCleanupOwnership,
+} from "../domain/analysisErrorCleanup.js";
+import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply,
+  type HopperBridgeReplyContracts,
+  type ValueKeepingContracts,
+  type HopperContractReply,
+  type HopperReplyContracts,
+  parseHopperServerInfo,
+  type HopperServerInfo,
+} from "./HopperReplyContracts.js";
+import {
+  hopperAppleEventsAuthorizationRejection,
   hopperCancelledBySignal,
-  type HopperCancelledError,
+  HopperCancelledError,
   type HopperError,
   type HopperLauncherOutcome,
   HopperProcessError,
@@ -19,12 +43,13 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import {
   providerRetryAction,
   sharedProviderFailureStage,
@@ -35,7 +60,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -43,18 +68,21 @@ import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
 } from "../process/ProviderDeadline.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
-  SharedStartupAttempt,
-  STARTUP_OWNER_CLOSED,
-} from "../process/SharedStartupAttempt.js";
+  AbortedWait,
+  waitForAbortable,
+  waitForRetainedResult,
+} from "../process/AbortablePromise.js";
+import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   type ProviderProcessDiagnostic,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperDiagnostic } from "./HopperDiagnostics.js";
@@ -63,11 +91,7 @@ import {
   confirmExternalApplicationExit,
   type HopperOwnedResources,
 } from "./HopperCleanup.js";
-import {
-  parseHopperServerInfo,
-  HOPPER_SHUTDOWN_TIMEOUT_MS,
-  type HopperServerInfo,
-} from "./HopperSessionValues.js";
+import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 import {
   hopperLauncherFailureDiagnostic,
@@ -76,37 +100,67 @@ import {
 } from "./HopperProcessDiagnostic.js";
 import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import {
+  admitBridgeRequestLimit,
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
   DEFAULT_BRIDGE_MAX_REQUEST,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
 import {
+  admitBridgeReplyLimit,
+  bridgeReplyOversizeError,
+  DEFAULT_BRIDGE_MAX_REPLY,
+  type BridgeMaxReplyBytes,
+} from "../config/bridgeMaxReplyBytes.js";
+import {
   HopperRequestQueue,
   type HopperRequestActivity,
+  type HopperRequestFailure,
 } from "./HopperRequestQueue.js";
-import { HopperResponseStream } from "./HopperResponseStream.js";
 import {
   type HopperBridgeEvent,
   type HopperBridgeMessage,
+  hopperReplyEnvelope,
   responseResult,
 } from "./protocol.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
-export const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
+const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 
-const SESSION_ROOT = process.platform === "darwin" ? "/tmp" : tmpdir();
+const SESSION_ROOT = HOST_PLATFORM.platform === "darwin" ? "/tmp" : tmpdir();
 
 /** Dependencies, deadlines, and redacted diagnostics for one bridge client. */
-export interface HopperClientOptions {
+export interface HopperClientOptions<
+  Contracts extends HopperReplyContracts = HopperBridgeReplyContracts,
+> {
   readonly launcher: BridgeLauncher;
+  /**
+   * Reply contract for each callable method. Production uses the bridge's
+   * `hopperReplySchemas`; transport tests supply their own methods.
+   */
+  readonly replyContracts?: Contracts & ValueKeepingContracts<Contracts>;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
+  /** Selection owner for the startup deadline. Absent when the caller did not record it. */
+  readonly readStartupTimeoutSource?: () =>
+    | "default"
+    | "setting"
+    | "runtime"
+    | undefined;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
+  /** Effective reply line ceiling. Omitted uses the 256 MiB default. */
+  readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
   readonly logger?: Logger;
+}
+
+/** Bridge ceilings admitted when a session started, kept for its cleanup. */
+interface HopperSessionLimits {
+  readonly requestLimit: BridgeMaxRequestBytes;
+  readonly replyLimit: BridgeMaxReplyBytes;
 }
 
 type HopperStartupResult = Result<HopperServerInfo, AnalysisError>;
@@ -132,13 +186,19 @@ type HopperClientCloseOptions = {
  * only terminates launch processes explicitly marked as owned; the normal
  * Hopper launcher does not confer ownership of the GUI application.
  */
-export class HopperClient {
+export class HopperClient<
+  Contracts extends HopperReplyContracts = HopperBridgeReplyContracts,
+> {
   readonly #options: Required<
     Pick<HopperClientOptions, "startupTimeoutMs" | "bridgeMaxRequestBytes">
   > &
-    HopperClientOptions;
+    HopperClientOptions<Contracts>;
+  readonly #contracts: Contracts & ValueKeepingContracts<Contracts>;
   readonly #requests: HopperRequestQueue;
-  readonly #responses: HopperResponseStream;
+  readonly #responses: JsonLineBridgeReader<
+    HopperBridgeMessage,
+    HopperRemoteError
+  >;
   readonly #logger: Logger;
   #socket: Socket | undefined;
   readonly #resources: HopperOwnedResources = {
@@ -147,8 +207,12 @@ export class HopperClient {
     runtimeRoot: undefined,
     shutdownConfirmed: false,
     externalApplication: undefined,
+    inspections: new ArtifactResourceScope(),
   };
   #token: string | undefined;
+  /** Reply ceiling admitted with the request on the wire; the default before any. */
+  #replyLimit: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY;
+  #sessionLimits: HopperSessionLimits | undefined;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
   #closing = false;
@@ -161,8 +225,20 @@ export class HopperClient {
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
-  readonly #onSocketData = (chunk: string): void => {
+  /**
+   * Confirm the failures a close of this client reported, one release per
+   * part: the next close retries the same retained session and launcher, and
+   * each part's success releases only the failures that part reported.
+   */
+  readonly #closeRetries: {
+    session: AnalysisCleanupRelease | undefined;
+    launcher: AnalysisCleanupRelease | undefined;
+  } = { session: undefined, launcher: undefined };
+  readonly #onSocketData = (chunk: Buffer): void => {
     this.#responses.push(chunk);
+  };
+  readonly #onSocketEnd = (): void => {
+    this.#responses.finish();
   };
   readonly #onSocketError = (): void => {
     const error = new HopperProcessError(null, {
@@ -204,8 +280,16 @@ export class HopperClient {
     this.#rememberProcessFailure(error, []);
   };
 
-  constructor(options: HopperClientOptions) {
+  constructor(options: HopperClientOptions<Contracts>) {
     this.#logger = options.logger ?? silentLogger;
+    // The default type argument is the production table this default supplies.
+    // Without a table the type argument is its default, the production table.
+    // A caller that names another type argument but omits its table gets a
+    // typed refusal per method (see #typedReply), never a throw.
+    this.#contracts =
+      options.replyContracts ??
+      (hopperReplySchemas as unknown as Contracts &
+        ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,
       startupTimeoutMs:
@@ -214,7 +298,7 @@ export class HopperClient {
         options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
     };
     this.#requests = new HopperRequestQueue(
-      ({ id, method, params }, failed) => {
+      ({ id, method, params, requestLimit, replyLimit }, failed) => {
         const socket = this.#socket;
         const token = this.#token;
         if (socket === undefined || socket.destroyed || token === undefined) {
@@ -237,13 +321,14 @@ export class HopperClient {
           return;
         }
         const payloadBytes = Buffer.byteLength(payload);
-        if (payloadBytes > this.#options.bridgeMaxRequestBytes.maximumBytes) {
+        const admitted = requestLimit ?? DEFAULT_BRIDGE_MAX_REQUEST;
+        if (payloadBytes > admitted.maximumBytes) {
           this.#requests.accept(
             id,
             err(
               bridgeRequestOversizeError(
                 method,
-                this.#options.bridgeMaxRequestBytes,
+                admitted,
                 payloadBytes,
                 "Hopper",
               ),
@@ -251,16 +336,21 @@ export class HopperClient {
           );
           return;
         }
+        // This request now owns the wire, so its admitted ceiling bounds the
+        // next reply; a queued or refused request never changes it.
+        this.#replyLimit = replyLimit ?? DEFAULT_BRIDGE_MAX_REPLY;
         socket.write(`${payload}\n`, (cause) => {
           if (cause !== undefined && cause !== null) failed();
         });
       },
     );
-    this.#responses = new HopperResponseStream({
-      accept: (message) => this.#acceptBridgeMessage(message),
-      hasQueued: (id) => this.#requests.hasQueued(id),
-      nextRequestId: () => this.#nextId,
-      abort: (message, cause) => this.#abortProtocol(message, cause),
+    this.#responses = new JsonLineBridgeReader({
+      envelope: hopperReplyEnvelope,
+      maxReplyBytes: () => this.#replyLimit.maximumBytes,
+      deliver: (message) => this.#acceptBridgeMessage(message),
+      wasSent: (id) => id < this.#nextId && !this.#requests.hasQueued(id),
+      rejectInFlight: (cause) => this.#requests.failActive(cause),
+      fail: (failure) => this.#abortReplyStream(failure),
     });
   }
 
@@ -368,7 +458,7 @@ export class HopperClient {
       return Promise.resolve(err(hopperCancelledBySignal(signal)));
     if (this.#closePromise !== undefined)
       return waitForAbortable(this.#closePromise, signal).then((closed) =>
-        closed === ABORTED
+        closed instanceof AbortedWait
           ? err(hopperCancelledBySignal(signal))
           : closed.ok
             ? this.start(signal)
@@ -391,7 +481,7 @@ export class HopperClient {
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Hopper startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -415,9 +505,9 @@ export class HopperClient {
     attempt: HopperStartupAttempt,
     signal?: AbortSignal,
   ): Promise<HopperStartupResult> {
-    const waited = await waitForAbortable(attempt.promise, signal);
-    if (waited === ABORTED || (waited.ok && isAborted(signal)))
-      return err(hopperCancelledBySignal(signal));
+    const waited = await waitForRetainedResult(attempt.promise, signal);
+    if (waited instanceof AbortedWait)
+      return err(new HopperCancelledError(waited.carried));
     if (waited.ok || waited.error.cleanupIncomplete) return waited;
     return this.start(signal);
   }
@@ -437,14 +527,18 @@ export class HopperClient {
           new HopperProtocolError("Hopper client is already started"),
       );
     }
+    const startupTimeout = readRuntimeSetting(
+      () =>
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs,
+    );
+    if (!startupTimeout.ok) return startupTimeout;
+    const startupTimeoutMs = startupTimeout.value;
     this.#operationFailure = undefined;
     this.#startupFailureResult = undefined;
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-    );
+    const deadline = new ProviderStartupDeadline(startupTimeoutMs, signal);
     this.#startupOutcome = undefined;
     this.#startupSignal = deadline.signal;
     const onStartupAbort = (): void => {
@@ -453,10 +547,11 @@ export class HopperClient {
     };
     deadline.signal.addEventListener("abort", onStartupAbort, { once: true });
     try {
-      const result = await this.#startWithin(deadline);
-      return result.ok && deadline.signal.aborted
-        ? await this.#startupFailure(await this.#interruptionFailure(deadline))
-        : result;
+      return await deadline.finishStartup(
+        () => this.#startWithin(deadline),
+        async () =>
+          this.#startupFailure(await this.#interruptionFailure(deadline)),
+      );
     } finally {
       deadline.signal.removeEventListener("abort", onStartupAbort);
       if (this.#startupSignal === deadline.signal)
@@ -468,6 +563,22 @@ export class HopperClient {
   async #startWithin(
     deadline: ProviderStartupDeadline,
   ): Promise<Result<HopperServerInfo, AnalysisError>> {
+    // Admit both bridge ceilings before acquiring anything: an invalid launch
+    // seed is a configuration refusal, not a failure after Hopper started.
+    // Cleanup requests reuse these, so a setting reset after startup cannot
+    // refuse the shutdown that releases Hopper's document and files.
+    const requestLimit = admitBridgeRequestLimit(
+      this.#options.bridgeMaxRequestBytes,
+    );
+    if (!requestLimit.ok) return requestLimit;
+    const replyLimit = admitBridgeReplyLimit(
+      this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+    );
+    if (!replyLimit.ok) return replyLimit;
+    this.#sessionLimits = {
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
+    };
     try {
       this.#resources.runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,
@@ -602,6 +713,13 @@ export class HopperClient {
       try {
         identity = await observeProcessStartIdentity(parsed.value.processId);
       } catch (cause: unknown) {
+        // The identity stays unavailable; descriptors the read left open stay
+        // owned until session cleanup releases them.
+        retainArtifactCommandCleanup(
+          cause,
+          this.#resources.inspections,
+          "open_binary",
+        );
         identity = {
           state: "unavailable" as const,
           reason:
@@ -630,7 +748,7 @@ export class HopperClient {
     const closed = await this.#cleanup();
     const failure = closed.ok
       ? primary
-      : analysisErrorWithCleanupFailure(primary, closed.error, "open_binary");
+      : analysisErrorWithCloseRejection(primary, closed.error, "open_binary");
     this.#startupFailureResult = failure;
     return err(failure);
   }
@@ -648,34 +766,66 @@ export class HopperClient {
       };
   }
 
-  /** Invoke one declared operation, returning timeout and cancellation as values. */
-  async callTool(
-    name: string,
+  /**
+   * Invoke one bridge method and validate its reply against that method's
+   * contract. Timeout, cancellation and a reply outside the contract
+   * (`HopperReplyContractError`, which keeps the raw reply) return as values.
+   * `operation` attributes a failure to the analyst operation the method serves.
+   */
+  async callTool<M extends keyof Contracts & string>(
+    method: M,
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: {
       readonly signal?: AbortSignal;
       /** Deadline after startup, including waiting for Hopper's serial bridge. */
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
+      readonly operation?: string;
     } = {},
-  ): Promise<Result<JsonValue, AnalysisError>> {
+  ): Promise<Result<HopperContractReply<Contracts, M>, AnalysisError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    return this.#normalizeToolResult(
-      name,
-      await this.#request(name, arguments_, options),
+    return this.#typedReply(
+      method,
+      options.operation ?? method,
+      await this.#request(method, arguments_, options),
     );
   }
 
   /** Dispatch against the connected bridge without invoking startup or retry. */
-  callToolIfReady(
-    name: string,
+  callToolIfReady<M extends keyof Contracts & string>(
+    method: M,
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: { readonly signal?: AbortSignal } = {},
-  ): Promise<Result<JsonValue, AnalysisError> | undefined> {
+  ): Promise<
+    Result<HopperContractReply<Contracts, M>, AnalysisError> | undefined
+  > {
     if (!this.isReady()) return Promise.resolve(undefined);
-    return this.#request(name, arguments_, options).then((result) =>
-      this.#normalizeToolResult(name, result),
+    return this.#request(method, arguments_, options).then((result) =>
+      this.#typedReply(method, method, result),
+    );
+  }
+
+  #typedReply<M extends keyof Contracts & string>(
+    method: M,
+    operation: string,
+    result: Result<JsonValue, AnalysisError>,
+  ): Result<HopperContractReply<Contracts, M>, AnalysisError> {
+    const normalized = this.#normalizeToolResult(method, result);
+    if (!normalized.ok) return normalized;
+    if (this.#contracts[method] === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "hopper",
+          operation,
+          `No reply contract is installed for the Hopper bridge method ${method}; its reply was not read.`,
+        ),
+      );
+    return parseHopperReply<Contracts, M>(
+      this.#contracts,
+      method,
+      normalized.value,
+      operation,
     );
   }
 
@@ -696,11 +846,7 @@ export class HopperClient {
       source.safeMessage,
       analysisClientFailureContext(source, "hopper", name),
     );
-    return err(
-      source.cleanupIncomplete
-        ? failure.bindCleanupDependencies([source])
-        : failure,
-    );
+    return err(withInheritedCleanupOwnership(failure, source));
   }
 
   /** Stop the bridge and report whether every owned resource was verified clean. */
@@ -736,6 +882,17 @@ export class HopperClient {
     }
   }
 
+  /**
+   * The ceilings this session admitted at start, for its cleanup requests
+   * (reauthentication and shutdown): a setting refused after startup must not
+   * block the cleanup that releases Hopper's document and files.
+   */
+  #cleanupLimits(): { readonly limits?: HopperSessionLimits } {
+    return this.#sessionLimits === undefined
+      ? {}
+      : { limits: this.#sessionLimits };
+  }
+
   /** Reauthenticate this run after late readiness or a lost transport. */
   async #reconnectForCleanup(): Promise<void> {
     if (this.#socket?.destroyed === true) this.#releaseTransport();
@@ -752,7 +909,7 @@ export class HopperClient {
       return;
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(OwnerCancellation.deadlineElapsed),
       HOPPER_SHUTDOWN_TIMEOUT_MS,
     );
     this.#closing = true;
@@ -788,6 +945,7 @@ export class HopperClient {
         {
           signal: controller.signal,
           timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
+          ...this.#cleanupLimits(),
         },
       );
       if (
@@ -815,7 +973,14 @@ export class HopperClient {
         logger: this.#logger,
         onDiagnostic: this.#options.onDiagnostic,
         request: (method) =>
-          this.#request(method, {}, { timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS }),
+          this.#request(
+            method,
+            {},
+            {
+              timeoutMs: HOPPER_SHUTDOWN_TIMEOUT_MS,
+              ...this.#cleanupLimits(),
+            },
+          ),
         retainDocument: options.retainDocument === true,
         releaseTransport: () => this.#releaseTransport(),
       });
@@ -827,17 +992,39 @@ export class HopperClient {
               "hopper",
               ["hopper-launcher"],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             ),
           ),
         );
-      if (launcherClosed === undefined || launcherClosed.ok) return closed;
+      // Each part confirms its own earlier failures when it succeeds; an
+      // ownerless failed part binds to its part's retry before composing, so
+      // the composite reports only the parts still unreleased. A part that
+      // already follows its own owner keeps reading that owner.
+      const retries = this.#closeRetries;
+      if (closed.ok) {
+        retries.session?.confirm();
+        retries.session = undefined;
+      } else
+        (retries.session ??= new AnalysisCleanupRelease()).bindUnowned(
+          closed.error,
+        );
+      if (launcherClosed === undefined || launcherClosed.ok) {
+        retries.launcher?.confirm();
+        retries.launcher = undefined;
+        return closed;
+      }
+      (retries.launcher ??= new AnalysisCleanupRelease()).bindUnowned(
+        launcherClosed.error,
+      );
       return closed.ok
         ? launcherClosed
         : err(
-            analysisErrorWithCleanupFailure(closed.error, launcherClosed.error),
+            analysisErrorWithCloseRejections(
+              closed.error,
+              launcherClosed.error,
+            ),
           );
     } finally {
       if (this.#socket?.destroyed === true) this.#socket = undefined;
@@ -948,7 +1135,7 @@ export class HopperClient {
   async #startupInterruption(
     deadline: ProviderStartupDeadline,
   ): Promise<HopperCancelledError | HopperTimeoutError | HopperProtocolError> {
-    if (deadline.signal.reason === STARTUP_OWNER_CLOSED)
+    if (deadline.signal.reason === OwnerCancellation.startupOwnerClosed)
       return new HopperProtocolError("Hopper session closed during startup");
     if (deadline.interruption === "cancelled")
       return hopperCancelledBySignal(deadline.signal);
@@ -966,7 +1153,7 @@ export class HopperClient {
         limit: analysisSettingLimit(
           "hopper.startup_timeout_ms",
           deadline.timeoutMs,
-          undefined,
+          this.#options.readStartupTimeoutSource?.(),
         ),
       },
     );
@@ -980,18 +1167,18 @@ export class HopperClient {
       exit_code: snapshot.exitCode ?? null,
       signal: snapshot.signal ?? null,
       stdout: {
-        text: redactCapturedTransportCredential(
+        text: redactExplicitOutput(
           snapshot.stdout,
-          token,
+          token === undefined ? [] : [token],
           "[redacted transport credential]",
         ),
         bytes: snapshot.stdout.observedBytes,
         retained_bytes: snapshot.stdout.bytes,
       },
       stderr: {
-        text: redactCapturedTransportCredential(
+        text: redactExplicitOutput(
           snapshot.stderr,
-          token,
+          token === undefined ? [] : [token],
           "[redacted transport credential]",
         ),
         bytes: snapshot.stderr.observedBytes,
@@ -1028,8 +1215,7 @@ export class HopperClient {
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        userMessage:
-          "macOS denied permission to send Apple Events to Hopper. Allow the application that starts REA under System Settings > Privacy & Security > Automation, then retry opening the target.",
+        launchRejection: hopperAppleEventsAuthorizationRejection,
         launcherFailure,
       });
     }
@@ -1058,6 +1244,8 @@ export class HopperClient {
       readonly signal?: AbortSignal;
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
+      /** Ceilings already admitted, such as the session's for cleanup. */
+      readonly limits?: HopperSessionLimits;
     },
   ): Promise<Result<JsonValue, AnalysisError>> {
     const id = this.#nextId++;
@@ -1096,22 +1284,37 @@ export class HopperClient {
     const payloadValue = { id, token, method, params };
     // Count escaped JSON before the request can wait in the FIFO. A rejected
     // payload is not serialized, and an admitted one is serialized only when
-    // it reaches the wire.
+    // it reaches the wire. Both ceilings are admitted here, in the caller's
+    // context; a queued request is written later outside it.
+    const requestLimit =
+      options.limits === undefined
+        ? admitBridgeRequestLimit(this.#options.bridgeMaxRequestBytes)
+        : ok(options.limits.requestLimit);
+    if (!requestLimit.ok) return requestLimit;
+    const replyLimit =
+      options.limits === undefined
+        ? admitBridgeReplyLimit(
+            this.#options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
+          )
+        : ok(options.limits.replyLimit);
+    if (!replyLimit.ok) return replyLimit;
     const measured = jsonValueByteLength(
       payloadValue,
-      this.#options.bridgeMaxRequestBytes.maximumBytes,
+      requestLimit.value.maximumBytes,
     );
-    if (measured > this.#options.bridgeMaxRequestBytes.maximumBytes)
+    if (measured > requestLimit.value.maximumBytes)
       return err(
         bridgeRequestOversizeError(
           method,
-          this.#options.bridgeMaxRequestBytes,
-          measured,
+          requestLimit.value,
+          { bytesAtLeast: measured },
           "Hopper",
         ),
       );
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
+      requestLimit: requestLimit.value,
+      replyLimit: replyLimit.value,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeoutMs === undefined
         ? {}
@@ -1132,8 +1335,9 @@ export class HopperClient {
   }
 
   #attachSocket(socket: Socket): void {
-    socket.setEncoding("utf8");
+    this.#responses.reset();
     socket.on("data", this.#onSocketData);
+    socket.on("end", this.#onSocketEnd);
     socket.on("error", this.#onSocketError);
     socket.on("close", this.#onSocketClose);
   }
@@ -1168,6 +1372,7 @@ export class HopperClient {
 
   #detachSocket(socket: Socket): void {
     socket.off("data", this.#onSocketData);
+    socket.off("end", this.#onSocketEnd);
     socket.off("error", this.#onSocketError);
     socket.off("close", this.#onSocketClose);
   }
@@ -1238,12 +1443,44 @@ export class HopperClient {
     }
   }
 
+  #abortReplyStream(failure: JsonLineBridgeFailure): void {
+    switch (failure.kind) {
+      case "reply_oversize":
+        this.#failAll(
+          bridgeReplyOversizeError(
+            "Hopper",
+            this.#replyLimit,
+            failure.observedBytes,
+          ),
+        );
+        this.#socket?.destroy();
+        return;
+      case "utf8":
+        this.#abortProtocol(
+          "Hopper bridge response is not valid UTF-8",
+          failure.cause,
+        );
+        return;
+      case "envelope":
+        this.#abortProtocol(failure.cause.message, failure.cause);
+        return;
+      case "unknown_id":
+        this.#abortProtocol("Hopper returned an unknown response id");
+        return;
+      case "connection_rejected":
+        this.#abortProtocol(
+          `Hopper rejected the connection: ${failure.cause.message}`,
+          failure.cause,
+        );
+    }
+  }
+
   #abortProtocol(message: string, cause?: Error): void {
     this.#failAll(new HopperProtocolError(message, { cause }));
     this.#socket?.destroy();
   }
 
-  #failAll(error: HopperError): void {
+  #failAll(error: HopperRequestFailure): void {
     this.#requests.failAll(error);
   }
 
@@ -1260,7 +1497,7 @@ export class HopperClient {
   }
 
   #retainRequestHealth(
-    result: Result<JsonValue, HopperError>,
+    result: Result<JsonValue, AnalysisError>,
     requestId: number,
     operation: string,
   ): void {

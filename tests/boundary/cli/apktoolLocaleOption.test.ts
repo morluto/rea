@@ -21,13 +21,15 @@ const OWNER_ADMITTED_LOCALES = [
   "b+fil+Latn+419+ABCDEFGH",
 ] as const;
 
-it("forwards the table-only string choice through the CLI", async () => {
+it("forwards repeated locales with the table-only string choice", async () => {
   const result = await invokeApktoolCli([
     "decode-android-resources",
     "/targets/app.apk",
     "--string-tables-only",
     "--locales",
     "de",
+    "--locales",
+    "pt-BR",
     "--json",
   ]);
   expect(result.exitCode, result.stdout).toBe(0);
@@ -37,7 +39,7 @@ it("forwards the table-only string choice through the CLI", async () => {
       input: {
         path: "/targets/app.apk",
         include_strings: true,
-        locales: ["de"],
+        locales: ["de", "pt-BR"],
         string_tables_only: true,
       },
     },
@@ -62,30 +64,6 @@ it("forwards every locale the apktool input owner admits", async () => {
       },
     ]);
   }
-});
-
-it("forwards repeated --locales to project multiple localized tables", async () => {
-  const result = await invokeApktoolCli([
-    "decode-android-resources",
-    "/targets/app.apk",
-    "--locales",
-    "de",
-    "--locales",
-    "pt-BR",
-    "--json",
-  ]);
-
-  expect(result.exitCode).toBe(0);
-  expect(result.requests).toEqual([
-    {
-      operation: "decode_android_resources",
-      input: {
-        path: "/targets/app.apk",
-        include_strings: true,
-        locales: ["de", "pt-BR"],
-      },
-    },
-  ]);
 });
 
 it.each(["not a locale", "en-r419", "es-r419"])(

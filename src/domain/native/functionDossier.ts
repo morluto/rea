@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requirePresence } from "../schemaConstraints.js";
 import { err, ok, type Result } from "../result.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -46,67 +47,97 @@ export const functionFacetAvailabilitySchema = z
   })
   .strict();
 
-export const functionDossierSchema = z
-  .object({
-    procedure: procedureIdentitySchema.safeExtend({
-      signature: z.string().nullable(),
-      locals: z.array(localVariableSchema),
-    }),
-    pseudocode: z.string(),
-    assembly: z.array(z.string()),
-    comments: z.array(
-      z
-        .object({
-          address: z.string(),
-          kind: z.enum(["comment", "inline"]),
-          text: z.string(),
-        })
-        .strict(),
-    ),
-    callers: z.array(procedureIdentitySchema),
-    callees: z.array(procedureIdentitySchema),
-    incoming_references: z.array(referenceEdgeSchema),
-    outgoing_references: z.array(referenceEdgeSchema),
-    unresolved_calls: z.array(unresolvedCallSchema).exactOptional(),
-    referenced_strings: z.array(
-      analysisStringSchema.extend({ source_address: z.string() }),
-    ),
-    referenced_names: z.array(
-      z
-        .object({
-          address: z.string(),
-          value: z.string(),
-          source_address: z.string(),
-        })
-        .strict(),
-    ),
-    swift_string_literals: z
-      .array(swiftStringLiteralSchema)
-      .exactOptional()
-      .describe(
-        "Swift String literals decoded from constant register values. Absent when the provider does not decode them for this target.",
+export const FUNCTION_DOSSIER_LIMITATION_CODES = [
+  "unresolved_computed_or_indirect_flows",
+  "provider_specific_representations",
+] as const;
+
+export const functionDossierLimitationCodeSchema = z.enum(
+  FUNCTION_DOSSIER_LIMITATION_CODES,
+);
+
+const SWIFT_LITERALS_TOGETHER =
+  "Swift literals and their omissions must be recorded together";
+
+export const functionDossierSchema = requirePresence(
+  z
+    .object({
+      procedure: procedureIdentitySchema.safeExtend({
+        signature: z.string().nullable(),
+        locals: z.array(localVariableSchema),
+      }),
+      pseudocode: z.string(),
+      assembly: z.array(z.string()),
+      comments: z.array(
+        z
+          .object({
+            address: z.string(),
+            kind: z.enum(["comment", "inline"]),
+            text: z.string(),
+          })
+          .strict(),
       ),
-    swift_string_literal_omissions: z
-      .array(swiftStringLiteralOmissionSchema)
-      .exactOptional()
-      .describe(
-        "Literal candidates omitted for capacity or unresolved control flow. Present exactly when swift_string_literals is present; empty when all examined use sites were classified.",
+      callers: z.array(procedureIdentitySchema),
+      callees: z.array(procedureIdentitySchema),
+      incoming_references: z.array(referenceEdgeSchema),
+      outgoing_references: z.array(referenceEdgeSchema),
+      unresolved_calls: z.array(unresolvedCallSchema).exactOptional(),
+      referenced_strings: z.array(
+        analysisStringSchema.extend({ source_address: z.string() }),
       ),
-    basic_blocks: z.array(
-      z
-        .object({
-          start: z.string(),
-          end: z.string(),
-          successors: z.array(z.string()),
-        })
-        .strict(),
-    ),
-    native_api: nativeApiBoundarySchema.nullable(),
-    native_value_flow: nativeValueFlowSchema.nullable(),
-    facet_availability: functionFacetAvailabilitySchema.exactOptional(),
-    limitations: z.array(z.string()),
-  })
-  .strict();
+      referenced_names: z.array(
+        z
+          .object({
+            address: z.string(),
+            value: z.string(),
+            source_address: z.string(),
+          })
+          .strict(),
+      ),
+      swift_string_literals: z
+        .array(swiftStringLiteralSchema)
+        .exactOptional()
+        .describe(
+          "Swift String literals decoded from constant register values. Absent when the provider does not decode them for this target.",
+        ),
+      swift_string_literal_omissions: z
+        .array(swiftStringLiteralOmissionSchema)
+        .exactOptional()
+        .describe(
+          "Literal candidates omitted for capacity or unresolved control flow. Present exactly when swift_string_literals is present; empty when all examined use sites were classified.",
+        ),
+      basic_blocks: z.array(
+        z
+          .object({
+            start: z.string(),
+            end: z.string(),
+            successors: z.array(z.string()),
+          })
+          .strict(),
+      ),
+      native_api: nativeApiBoundarySchema.nullable(),
+      native_value_flow: nativeValueFlowSchema.nullable(),
+      facet_availability: functionFacetAvailabilitySchema.exactOptional(),
+      limitation_codes: z
+        .array(functionDossierLimitationCodeSchema)
+        .exactOptional(),
+      limitations: z.array(z.string()),
+    })
+    .strict(),
+  [
+    {
+      when: "swift_string_literals",
+      requires: "swift_string_literal_omissions",
+      message: SWIFT_LITERALS_TOGETHER,
+      path: "swift_string_literal_omissions",
+    },
+    {
+      when: "swift_string_literal_omissions",
+      requires: "swift_string_literals",
+      message: SWIFT_LITERALS_TOGETHER,
+    },
+  ],
+);
 
 /** Strict analyzed-function dossier shared by provider and comparison boundaries. */
 export type FunctionDossier = z.infer<typeof functionDossierSchema>;

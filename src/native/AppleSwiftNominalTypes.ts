@@ -1,15 +1,19 @@
+import { malformedInput } from "../domain/parseFailure.js";
 import type {
   NativeMetadataEvidence,
   NativeMetadataLocation,
   ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
-import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type FacetDecodeFacts,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 import {
   unresolvedSwiftRelativeReason,
   type SwiftRelativeField,
   type SwiftRelativeValue,
 } from "./AppleSwiftDispatchFacets.js";
-import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftNominalReaders {
@@ -22,7 +26,23 @@ export interface SwiftNominalReaders {
   admit(): boolean;
 }
 
-/** A `__swift5_types` descriptor whose kind and own name were read. */
+/**
+ * Sections holding nominal type records. Noncopyable types are recorded in
+ * `__swift5_types2`, which runtimes that predate them do not scan; both
+ * sections use the same record layout.
+ */
+export const SWIFT_TYPE_RECORD_SECTIONS: ReadonlySet<string> = new Set([
+  "__swift5_types",
+  "__swift5_types2",
+]);
+
+/** One type record and the section that declares it. */
+export interface SwiftTypeRecord {
+  readonly address: bigint;
+  readonly section: string;
+}
+
+/** A type-record descriptor whose kind and own name were read. */
 export interface SwiftNominalDescriptor {
   readonly record: bigint;
   readonly descriptor: bigint;
@@ -31,7 +51,7 @@ export interface SwiftNominalDescriptor {
   readonly context: SwiftContextFacts;
 }
 
-/** A `__swift5_types` record that may be a class whose name is unknown. */
+/** A type record that may be a class whose name is unknown. */
 export interface SwiftNominalRecordFailure {
   readonly record: bigint;
   readonly message: string;
@@ -111,10 +131,14 @@ export const createSwiftContextReader = (
     if (known !== undefined) return known;
     const value = read.relative(descriptor + 8n, field);
     if (value.kind !== "target")
-      throw new RangeError(unresolvedSwiftRelativeReason(value, field));
+      throw malformedInput(
+        "macho",
+        unresolvedSwiftRelativeReason(value, field),
+      );
     const name = read.string(value.target);
     if (name.length === 0)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         `Swift ${field === "protocolName" ? "protocol" : "type"} descriptor name is empty`,
       );
     names.set(descriptor, name);
@@ -221,7 +245,7 @@ export const createSwiftContextReader = (
     try {
       facts = readContext(context, walk);
     } catch (cause) {
-      const reason = expectedSwiftMetadataReadFailure(cause);
+      const reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
       facts = unresolved(reason);
     }
@@ -239,13 +263,13 @@ export const createSwiftContextReader = (
 export type SwiftContextReader = ReturnType<typeof createSwiftContextReader>;
 
 /**
- * Decode `__swift5_types` nominal type descriptors into `swift_decls`.
+ * Decode the nominal type descriptors of type records into `swift_decls`.
  * Each context is read once, so shared parents add one relative-pointer
  * record regardless of how many types they contain.
  */
 export const decodeSwiftNominalTypes = (input: {
   readers: SwiftNominalReaders;
-  entries: readonly bigint[];
+  entries: readonly SwiftTypeRecord[];
   result: ObjcSwiftMetadata;
   visitor: SwiftNominalVisitor;
   contextReader: SwiftContextReader;
@@ -274,13 +298,13 @@ export const decodeSwiftNominalTypes = (input: {
             reason: `Swift metadata accessor ${hex(value.target)} is not in executable mapped code`,
           };
     } catch (cause) {
-      const reason = expectedSwiftMetadataReadFailure(cause);
+      const reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
       return { address: null, reason };
     }
   };
 
-  for (const record of input.entries) {
+  for (const { address: record, section } of input.entries) {
     if (!read.admit()) {
       issues.push(
         issue(
@@ -301,7 +325,8 @@ export const decodeSwiftNominalTypes = (input: {
     try {
       const value = read.relative(record, "typeMetadataRecord");
       if (value.kind !== "target")
-        throw new RangeError(
+        throw malformedInput(
+          "macho",
           unresolvedSwiftRelativeReason(value, "typeMetadataRecord"),
         );
       descriptor = value.target;
@@ -320,7 +345,7 @@ export const decodeSwiftNominalTypes = (input: {
       }
       name = typeName(descriptor);
     } catch (cause) {
-      const message = expectedSwiftMetadataReadFailure(cause);
+      const message = expectedAppleMetadataReadFailure(cause);
       if (message === null) throw cause;
       if (kind === null || kind === CLASS) visitor.failure({ record, message });
       issues.push(issue(FACET, "type_decode_failed", message, hex(record)));
@@ -353,7 +378,7 @@ export const decodeSwiftNominalTypes = (input: {
           : { status: "partial", reason },
       evidence: read.evidence(
         record,
-        "Swift __swift5_types record of the nominal type descriptor at location",
+        `Swift ${section} record of the nominal type descriptor at location`,
       ),
     });
     if (reason === null) decoded++;

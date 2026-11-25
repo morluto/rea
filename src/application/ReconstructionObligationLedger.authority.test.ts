@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { reconstructionProofApplicabilityCases } from "../../tests/fixtures/reconstructionProofApplicability.js";
 
@@ -9,8 +10,10 @@ import {
   proofEvidence,
   request,
   reviewedObligation,
+  readyReviewedLedgerRequest,
+  packagedProcessManifest,
 } from "./ReconstructionObligationLedger.fixture.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createEvidence, evidenceSubjectInput } from "../domain/evidence.js";
 import type { ReviewedReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
 
 describe("selected reconstruction fixture outcomes", () => {
@@ -64,7 +67,7 @@ const registerOriginalProcessAuthorityCases = (): void => {
     ({ defect, state, qualifies }) => {
       const capture = processEvidence();
       const original = createEvidence(
-        undefined,
+        evidenceSubjectInput(capture.subject),
         defect === "provider"
           ? { id: "foreign", name: "Foreign observer", version: "1" }
           : capture.provider,
@@ -143,40 +146,12 @@ describe("reconstruction obligation ledger", () => {
       throw new Error("Expected process obligation");
     const result = build(
       request([capture, proof], {
-        manifest: {
-          bindings: [
-            {
-              obligation_id: obligation.obligation_id,
-              owner: {
-                module_path: "src/processOwner.ts",
-                symbol: "runProcess",
-                owner_sha256: "5".repeat(64),
-              },
-              parser_type: null,
-              original_cases: originalCases(obligation, capture.evidence_id),
-              fixtures: obligation.required_case_kinds.map((caseKind) => ({
-                fixture_id: `packaged.${caseKind}`,
-                case_kind: caseKind,
-                authority: "packaged-process",
-                evidence_ids: [proof.evidence_id],
-              })),
-              verifier: {
-                verifier_id: "verifier.packaged",
-                claim_id: "claim.process",
-                command: "npm run verify:package -- process",
-                authority: "packaged-process",
-                status: "pass",
-                result_evidence_id: proof.evidence_id,
-                enumerated_obligation_ids: [obligation.obligation_id],
-                nondeterminism: {
-                  mode: "partial-order",
-                  specification: "Fixture scheduling is partially ordered.",
-                },
-              },
-            },
-          ],
-          contradictions: [],
-        },
+        manifest: packagedProcessManifest(obligation, {
+          ownerSha256: "5".repeat(64),
+          originalCases: originalCases(obligation, capture.evidence_id),
+          proofEvidenceId: proof.evidence_id,
+          specification: "Fixture scheduling is partially ordered.",
+        }),
       }),
     );
 
@@ -282,9 +257,25 @@ describe("reconstruction obligation ledger", () => {
 });
 
 describe("reconstruction obligation ledger fail-closed behavior", () => {
-  it("fails closed on parser gaps, ambiguous ownership, and contradiction", () => {
+  it("requires a parser, schema and domain type for a reviewed parser boundary", () => {
+    const input = readyReviewedLedgerRequest();
+    input.reviewed_obligations[0]!.requires_parser_type = true;
+    const missing = build(input);
+    expect(missing.status).toBe("open");
+    expect(missing.obligations[0]?.diagnostics.map(({ code }) => code)).toEqual(
+      ["missing-parser-type"],
+    );
+    input.manifest.bindings[0]!.parser_type = {
+      parser: "parseRequest",
+      schema: "requestSchema",
+      domain_type: "Request",
+    };
+    expect(build(input).status).toBe("ready");
+  });
+
+  it("fails closed on ambiguous ownership and contradiction", () => {
     const original = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "external", name: "External protocol observer", version: "1" },
       {
         predicateType: "rea.protocol-observation",

@@ -3,13 +3,11 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import {
-  registrationEnvironmentDetail,
-  runDoctor,
-  systemDoctorHost,
-  type DoctorHost,
-} from "./Doctor.js";
+  createDoctorHostFixture as host,
+  scopeChecksOf,
+} from "./Doctor.fixture.js";
+import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 
 const inspection = (
   id: string,
@@ -34,6 +32,7 @@ const recordingHost = (overrides: Partial<DoctorHost>) => {
           {
             client: "cursor",
             config_path: "/home/user/.cursor/mcp.json",
+            command_identity: "owned",
             command: ["/current/rea", "mcp"],
             state: "aligned",
             remediation: null,
@@ -82,7 +81,7 @@ it.each([
     recordingHost(selectedProviders).host,
     scope,
   );
-  const inScope = report.scope_checks.some(({ name }) => name === CHECK);
+  const inScope = scopeChecksOf(report).some(({ name }) => name === CHECK);
   expect(inScope).toBe(selected);
   expect(report.informational_checks.some(({ name }) => name === CHECK)).toBe(
     !selected,
@@ -169,6 +168,7 @@ it("states each comparison result without a claim it did not establish", async (
           {
             client: "cursor",
             config_path: "/cursor.json",
+            command_identity: "owned",
             command: ["/current/rea", "mcp"],
             state: "aligned",
             remediation: null,
@@ -186,11 +186,12 @@ it("states each comparison result without a claim it did not establish", async (
     classification: "unknown",
     details: { effective_environment: "unknown" },
   });
-  expect(check?.detail).toBe(
-    registrationEnvironmentDetail("cursor", {
-      unrecorded: [],
-      differing: ["JAVA_HOME"],
-      unresolved: ["GHIDRA_INSTALL_DIR"],
-    }),
+  expect(check?.detail).toContain(
+    "what the server cursor starts receives is unknown",
   );
+  expect(check?.detail).toContain("It records other values for JAVA_HOME.");
+  expect(check?.detail).toContain(
+    "REA could not resolve its GHIDRA_INSTALL_DIR.",
+  );
+  expect(check?.detail).not.toContain("does not record");
 });

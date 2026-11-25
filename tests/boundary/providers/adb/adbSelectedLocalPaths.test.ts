@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { AdbDeviceAnalysisService } from "../../../../src/application/adb/AdbDeviceAnalysisService.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -36,6 +37,7 @@ it.each(["path", "explicit"] as const)(
 printf '%s|%s|%s|%s\\n' "$1" "$ADB_SERVER_SOCKET" "$CALLER_EMPTY" "\${CALLER_ABSENT-unset}" >> "$0.calls"
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 35.0.1-fixture\\nInstalled as %s\\n' "$0"
+elif [ "$1" = start-server ]; then :
 elif [ "$1" = devices ]; then
   printf 'List of devices attached\\n%s device model:fixture transport_id:1\\n' "$ANDROID_SERIAL"
 else exit 1; fi
@@ -79,7 +81,7 @@ else exit 1; fi
     });
     expect(JSON.stringify(result.value)).not.toContain("tcp:localhost:");
     expect(await readFile(join(selectedDirectory, "adb.calls"), "utf8")).toBe(
-      "version|tcp:localhost:5041||unset\ndevices|tcp:localhost:5041||unset\n",
+      "version|tcp:localhost:5041||unset\nstart-server|tcp:localhost:5041||unset\ndevices|tcp:localhost:5041||unset\n",
     );
     await expect(
       access(join(ambientDirectory, "adb.calls")),
@@ -102,6 +104,7 @@ const fixture = async () => {
   await writeFile(
     binary,
     `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"; exit 0; fi
 if [ "$3" = shell ] && [ "$4" = pm ] && [ "$5" = path ]; then printf 'package:/data/app/fixture/base.apk\\n'; exit 0; fi
 if [ "$3" = shell ]; then exit 1; fi
@@ -244,5 +247,93 @@ it.each([
         expect(dirname(path)).toBe(join(f.physical, "out"));
       await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
     }
+  },
+);
+
+it.each([true, false])(
+  "reports only observed output when adb pull fails (file created: %s)",
+  async (created) => {
+    const root = await createTestTempDirectory("rea-adb-partial-pull-");
+    const binary = join(root, "adb");
+    await writeFile(
+      binary,
+      `#!/bin/sh
+[ "$1" = start-server ] && exit 0
+if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"; exit 0; fi
+if [ "$3" = pull ]; then ${created ? `printf 'partial bytes' > "$5";` : ""} printf 'transfer interrupted\\n' >&2; exit 1; fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({
+      operation: "pull_adb_file",
+      input: {
+        serial: "fixture",
+        device_path: "/sdcard/payload.bin",
+        output_directory: root,
+      },
+    });
+    if (result.ok) throw new Error("expected failed pull");
+    if (created) {
+      expect(await readFile(join(root, "payload.bin"), "utf8")).toBe(
+        "partial bytes",
+      );
+      expect(
+        projectAnalysisError(result.error).details?.partial_observation,
+      ).toMatchObject({
+        operation: "pull_adb_file",
+        result: {
+          local_path: join(root, "payload.bin"),
+          digest_status: "unknown",
+          transfer_status: "unconfirmed",
+        },
+      });
+    } else {
+      await expect(access(join(root, "payload.bin"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(result.error.partialObservation).toBeUndefined();
+    }
+  },
+);
+
+it.each(["file", "symlink"] as const)(
+  "refuses a preexisting %s destination without invoking adb pull",
+  async (kind) => {
+    const root = await createTestTempDirectory("rea-adb-existing-pull-");
+    const binary = join(root, "adb");
+    const destination = join(root, "payload.bin");
+    const source = join(root, "original");
+    await writeFile(source, "original bytes");
+    if (kind === "file") await writeFile(destination, "original bytes");
+    else await symlink(source, destination);
+    await writeFile(
+      binary,
+      `#!/bin/sh
+[ "$1" = start-server ] && exit 0
+if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"; exit 0; fi
+if [ "$3" = pull ]; then printf 'invoked' > "$0.called"; exit 1; fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({
+      operation: "pull_adb_file",
+      input: {
+        serial: "fixture",
+        device_path: "/sdcard/payload.bin",
+        output_directory: root,
+      },
+    });
+    if (result.ok) throw new Error("expected destination refusal");
+    expect(result.error.partialObservation).toBeUndefined();
+    expect(await readFile(destination, "utf8")).toBe("original bytes");
+    await expect(access(`${binary}.called`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );

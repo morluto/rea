@@ -7,7 +7,7 @@ import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeJavaScriptSourceSelectionFixture } from "../../../fixtures/javascriptSourceSelection.js";
 
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -17,7 +17,7 @@ import {
   readJavaScriptArtifactFiles,
 } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
@@ -315,8 +315,9 @@ describe("Selected JavaScript source failure diagnostics", () => {
         "Unselected content changes must still fail integrity verification",
       );
     expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { reason: "integrity" },
+      code: "artifact_changed",
+      retry: "backoff",
+      details: { reason: "integrity", failure_kind: "changed" },
     });
   });
 

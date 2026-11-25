@@ -1,340 +1,204 @@
-import {
-  espFlashAddressSchema,
-  parseEspFlashAddress,
-} from "../domain/firmware/espFlashSelection.js";
-import type { ArtifactTargetSelection } from "../application/DirectAnalysis.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  cliEvidenceDeliveryInputError,
-  publishCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
-import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { z } from "incur";
-import { cliDecimalField } from "./options.js";
-
-import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type { CliSessionTarget } from "./contractCliDescriptionTypes.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { registerArtifactComparisonCommand } from "./artifactComparisonCommand.js";
-import { logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-
-const keyedArchiveInputBinding = {
-  operation: "inspect_keyed_archive",
-  fields: { path: "archive" },
-} as const;
 
 export const registerArtifactCommands = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  registerInspectionCommand(cli, logger, runProviderAnalysis);
-  registerExtractionCommand(cli, logger, runProviderAnalysis);
-  registerArtifactComparisonCommand(cli, logger);
-  registerInterfaceBuilderCommand(cli, logger, runProviderAnalysis);
-  registerAssetCatalogCommand(cli, logger, runProviderAnalysis);
-  registerDylibResolutionCommand(cli, logger, runProviderAnalysis);
-  cli.command(CLI_COMMANDS.inspectKeyedArchive, {
-    description:
-      "Inspect a Foundation keyed archive as an object-reference graph",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Foundation plist archive or Apple app bundle",
-      ),
-      archive: keyedArchiveInputSchema.shape.path.describe(
-        "Relative archive path when the target is a bundle",
-      ),
-    }),
-    options: z.object({
-      root: keyedArchiveInputSchema.shape.root.describe(
-        "Named $top archive root",
-      ),
-      // Decimal tokens only: numeric coercion would read "" as 0 and accept
-      // "0x10" or "1e2".
-      offset: cliDecimalField(keyedArchiveInputSchema.shape.offset).describe(
-        "First original object-table index",
-      ),
-      limit: cliDecimalField(keyedArchiveInputSchema.shape.limit).describe(
-        "Maximum object-table entries to return",
-      ),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectKeyedArchive, () =>
-        runProviderAnalysis(
-          args.path,
-          keyedArchiveInputBinding.operation,
-          {
-            path: args.archive,
-            offset: options.offset,
-            limit: options.limit,
-            ...(options.root === undefined ? {} : { root: options.root }),
-          },
-          logger,
-        ).then((result) =>
-          projectCliAnalysisResult(result, keyedArchiveInputBinding),
-        ),
-      ),
-  });
+  registerInventoryCommands(cli, logger, runProviderAnalysis);
+  registerArtifactComparisonCommand(cli, logger, environment);
+  registerAppleBundleCommands(cli, logger, runProviderAnalysis);
 };
 
-const registerDylibResolutionCommand = (
+/**
+ * The artifact as an MCP client opens it: an ESP flash dump is selected with
+ * `open_binary`'s format and flash fields.
+ */
+const artifactTarget = {
+  description: "Application or package path",
+  open: {
+    contract: OPEN_BINARY_TOOL_CONTRACT,
+    fields: {
+      format: {
+        name: "targetFormat",
+        values: ["esp-flash-image"],
+        description:
+          "Read the target as an ESP flash dump; required with --flash-offset or --partition-table-offset",
+      },
+      flash_offset: {
+        description: "Flash address (0xhex) of the dump's first byte",
+      },
+      partition_table_offset: {
+        description:
+          "Flash address (0xhex, a multiple of 0x1000) of the partition table; disables the table scan",
+      },
+    },
+  },
+} as const satisfies CliSessionTarget;
+
+const artifactFields = {
+  artifact_limits: {
+    description:
+      "JSON artifact producer admissions: bun, dotnet_bundle, node_sea, godot, and expanded_bytes. Omitted fields keep defaults; changes apply on the next call without restart. Independent of summary/paging and client delivery limits.",
+  },
+  integrity_policy: {
+    description: "Behavior when declared artifact integrity does not match",
+  },
+} as const;
+
+/** Inventory and extraction run on the artifact the CLI opens. */
+const registerInventoryCommands = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  cli.command(CLI_COMMANDS.traceDylibResolution, {
-    description:
-      "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Mach-O file or Apple .app bundle path",
-      ),
-    }),
-    options: z.object({
-      root: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Process root relative to the bundle or the Mach-O's directory (repeatable)",
-        ),
-      architecture: z
-        .enum(["arm64", "arm64e", "x86_64"])
-        .optional()
-        .describe("Trace only this slice of each root"),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.traceDylibResolution, () =>
-        runProviderAnalysis(
-          args.path,
-          "trace_dylib_resolution",
-          {
-            ...(options.root === undefined ? {} : { roots: options.root }),
-            ...(options.architecture === undefined
-              ? {}
-              : { architecture: options.architecture }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-};
-
-const registerAssetCatalogCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.inspectAssetCatalog, {
-    description: "Inspect compiled Apple asset catalog metadata",
-    args: z.object({
-      path: localPathStringSchema.describe("Apple .app bundle path"),
-    }),
-    options: z.object({
-      offset: cliDecimalField(z.number().int().min(0).default(0)).describe(
-        "First metadata record",
-      ),
-      limit: cliDecimalField(
-        z.number().int().min(1).max(10_000).default(1_000),
-      ).describe("Maximum records to return"),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectAssetCatalog, () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_asset_catalog",
-          { offset: options.offset, limit: options.limit },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-};
-
-const registerInterfaceBuilderCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.decodeInterfaceBuilder, {
-    description:
-      "Decode compiled storyboard and nib archives from an app bundle",
-    args: z.object({
-      path: localPathStringSchema.describe("Apple .app bundle path"),
-    }),
-    options: z.object({
-      maxDocuments: cliDecimalField(
-        z.number().int().min(1).max(64).default(64),
-      ).describe("Maximum archives to decode"),
-      maxObjects: cliDecimalField(
-        z.number().int().min(1).max(20_000).default(20_000),
-      ).describe("Maximum graph objects"),
-      maxConnections: cliDecimalField(
-        z.number().int().min(1).max(40_000).default(40_000),
-      ).describe("Maximum decoded connections"),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "decode-interface-builder", () =>
-        runProviderAnalysis(
-          args.path,
-          "decode_interface_builder",
-          {
-            max_documents: options.maxDocuments,
-            max_objects: options.maxObjects,
-            max_connections: options.maxConnections,
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
-};
-
-/** Options that read a dump as an ESP flash image with caller inputs. */
-const espFlashSelectionOptions = {
-  targetFormat: z
-    .enum(["esp-flash-image"])
-    .optional()
-    .describe(
-      "Read the target as an ESP flash dump; required with --flash-offset or --partition-table-offset",
-    ),
-  flashOffset: espFlashAddressSchema
-    .optional()
-    .describe("Flash address (0xhex) of the dump's first byte"),
-  partitionTableOffset: espFlashAddressSchema
-    .optional()
-    .describe(
-      "Flash address (0xhex, a multiple of 0x1000) of the partition table; disables the table scan",
-    ),
-};
-
-const espFlashTargetSelection = (options: {
-  readonly targetFormat?: "esp-flash-image" | undefined;
-  readonly flashOffset?: string | undefined;
-  readonly partitionTableOffset?: string | undefined;
-}): ArtifactTargetSelection => ({
-  ...(options.targetFormat === undefined
-    ? {}
-    : { formatHint: options.targetFormat }),
-  ...(options.flashOffset === undefined &&
-  options.partitionTableOffset === undefined
-    ? {}
-    : {
-        espFlash: {
-          ...(options.flashOffset === undefined
-            ? {}
-            : { flashOffset: parseEspFlashAddress(options.flashOffset) }),
-          ...(options.partitionTableOffset === undefined
-            ? {}
-            : {
-                partitionTableOffset: parseEspFlashAddress(
-                  options.partitionTableOffset,
-                ),
-              }),
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ARTIFACT_TOOL_CONTRACTS, "inspect_artifact"),
+    {
+      description:
+        "Inspect one artifact and return all available observations and next probes",
+      sessionTarget: artifactTarget,
+      jsonText: ["artifact_limits"],
+      fields: artifactFields,
+      omit: { path: "The positional target is the selected file or directory" },
+      evidenceDelivery: true,
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(ARTIFACT_TOOL_CONTRACTS, "extract_artifact"),
+    {
+      description:
+        "Extract all or selected regular artifact contents safely; DMG extraction is unavailable",
+      sessionTarget: artifactTarget,
+      jsonText: ["artifact_limits"],
+      fields: {
+        ...artifactFields,
+        occurrence_ids: {
+          name: "occurrenceId",
+          description:
+            "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
         },
-      }),
-});
-
-const registerExtractionCommand = (
-  cli: CliInstance,
-  logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
-): void => {
-  cli.command(CLI_COMMANDS.extractArtifact, {
-    description:
-      "Extract all or selected regular artifact contents safely; DMG extraction is unavailable",
-    args: z.object({
-      path: localPathStringSchema.describe("Application or package path"),
-    }),
-    options: z.object({
-      // Incur needs an ordinary optional; keep the owning contract's metadata.
-      outputRoot: artifactExtractionInputSchema.shape.output_root
-        .unwrap()
-        .optional()
-        .meta(artifactExtractionInputSchema.shape.output_root.meta() ?? {}),
-      occurrenceId: artifactExtractionInputSchema.shape.occurrence_ids
-        .unwrap()
-        .optional()
-        .describe(
-          "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
-        ),
-      integrityPolicy: z
-        .enum(["fail", "record-and-continue"])
-        .default("fail")
-        .describe("Behavior when declared artifact integrity does not match"),
-      ...espFlashSelectionOptions,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "extract-artifact", () =>
-        runProviderAnalysis(
-          args.path,
-          "extract_artifact",
-          {
-            integrity_policy: options.integrityPolicy,
-            output_root: createArtifactExtractionDestination(
-              options.outputRoot,
-            ),
-            ...(options.occurrenceId === undefined
-              ? {}
-              : { occurrence_ids: options.occurrenceId }),
-          },
-          logger,
-          undefined,
-          undefined,
-          espFlashTargetSelection(options),
-        ).then(projectCliAnalysisResult),
+      },
+    },
+    (input, context) =>
+      run(
+        {
+          ...input,
+          output_root: createArtifactExtractionDestination(input.output_root),
+        },
+        context,
       ),
-  });
+  );
 };
 
-const registerInspectionCommand = (
+/**
+ * Apple bundle resource commands. Each operation runs on the bundle or
+ * Mach-O an MCP session holds open, so the CLI opens it as the session
+ * target and passes the rest of the contract input.
+ */
+const registerAppleBundleCommands = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  cli.command(CLI_COMMANDS.inspectArtifact, {
-    description:
-      "Inspect one artifact and return all available observations and next probes",
-    args: z.object({
-      path: localPathStringSchema.describe("Application or package path"),
-    }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      integrityPolicy: z
-        .enum(["fail", "record-and-continue"])
-        .default("fail")
-        .describe("Behavior when declared artifact integrity does not match"),
-      ...espFlashSelectionOptions,
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-artifact", () =>
-        withCommandCancellation(async (signal) => {
-          const delivery = {
-            providerId: ARTIFACT_GRAPH_PROVIDER.id,
-            operation: "inspect_artifact",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          const inputError = cliEvidenceDeliveryInputError(delivery);
-          if (inputError !== undefined) return projectAnalysisError(inputError);
-          const complete = await runProviderAnalysis(
-            args.path,
-            "inspect_artifact",
-            { integrity_policy: options.integrityPolicy },
-            logger,
-            signal,
-            undefined,
-            espFlashTargetSelection(options),
-          );
-          return publishCliAnalysisEvidence(complete, delivery);
-        }),
-      ),
-  });
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
+  const contract = <
+    Name extends (typeof ARTIFACT_TOOL_CONTRACTS)[number]["name"],
+  >(
+    name: Name,
+  ) => contractNamed(ARTIFACT_TOOL_CONTRACTS, name);
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_keyed_archive"),
+    {
+      description:
+        "Inspect a Foundation keyed archive as an object-reference graph",
+      sessionTarget: {
+        description: "Foundation plist archive or Apple app bundle",
+      },
+      positionals: ["path"],
+      fields: {
+        path: {
+          name: "archive",
+          description: "Relative archive path when the target is a bundle",
+        },
+        root: { description: "Named $top archive root" },
+        offset: { description: "First original object-table index" },
+        limit: { description: "Maximum object-table entries to return" },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("trace_dylib_resolution"),
+    {
+      description:
+        "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
+      sessionTarget: { description: "Mach-O file or Apple .app bundle path" },
+      fields: {
+        roots: {
+          name: "root",
+          description:
+            "Process root relative to the bundle or the Mach-O's directory (repeatable)",
+        },
+        architecture: { description: "Trace only this slice of each root" },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_asset_catalog"),
+    {
+      description: "Inspect compiled Apple asset catalog metadata",
+      sessionTarget: { description: "Apple .app bundle path" },
+      fields: {
+        offset: { description: "First metadata record" },
+        limit: { description: "Maximum records to return" },
+      },
+    },
+    run,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("decode_interface_builder"),
+    {
+      description:
+        "Decode compiled storyboard and nib archives from an app bundle",
+      sessionTarget: { description: "Apple .app bundle path" },
+      fields: {
+        max_documents: { description: "Maximum archives to decode" },
+        max_objects: { description: "Maximum graph objects" },
+        max_connections: { description: "Maximum decoded connections" },
+      },
+      omit: {
+        detail:
+          "One-shot output is complete Evidence; this command has no summary delivery",
+      },
+    },
+    run,
+  );
 };

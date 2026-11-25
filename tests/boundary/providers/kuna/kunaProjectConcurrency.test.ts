@@ -10,6 +10,7 @@ import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 
 // Reproduce concurrent eviction's shared directory snapshot while retaining
 // real exports, publication, hashing and file removal underneath it.
@@ -117,7 +118,7 @@ it.each([true, false])(
     const releases: (() => void)[] = [];
     const inputs = await Promise.all([request("first"), request("second")]);
     const builds = inputs.map(async (input) => {
-      const result = await cache.build(input);
+      const result = await cache.build(withKunaProjectDeadline(input));
       if (!result.ok) throw result.error;
       if (pin) releases.push(cache.pin(result.value.key));
       return result.value;
@@ -130,9 +131,7 @@ it.each([true, false])(
       if (!closed.ok) throw closed.error;
     });
     await expect
-      .poll(() => actual.readdir(listing.directory).catch(() => []), {
-        timeout: 10_000,
-      })
+      .poll(() => actual.readdir(listing.directory).catch(() => []))
       .toHaveLength(2);
     listing.names = await actual.readdir(listing.directory);
     releaseListing();
@@ -158,13 +157,15 @@ it.each(["decompiling", "sealing"] as const)(
   async (phase) => {
     const { kuna, cache, request, cacheRoot } = await fixture();
     const input = await request("program");
-    const result = await cache.build({
-      ...input,
-      onStatus: (status) => {
-        if (status.phase === phase)
-          appendFileSync(kuna, "\n// installation replaced\n");
-      },
-    });
+    const result = await cache.build(
+      withKunaProjectDeadline({
+        ...input,
+        onStatus: (status) => {
+          if (status.phase === phase)
+            appendFileSync(kuna, "\n// installation replaced\n");
+        },
+      }),
+    );
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -186,7 +187,7 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
       "node:fs/promises",
     );
   const firstInput = await request("first");
-  const first = await cache.build(firstInput);
+  const first = await cache.build(withKunaProjectDeadline(firstInput));
   if (!first.ok) throw first.error;
   const snapshot = barrier();
   const touch = barrier();
@@ -201,7 +202,9 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
     releases.push(cache.pin(result.value.key));
     return result.value;
   };
-  const second = pinResult(cache.build(await request("second")));
+  const second = pinResult(
+    cache.build(withKunaProjectDeadline(await request("second"))),
+  );
   let warm: ReturnType<typeof pinResult> | undefined;
   onTestFinished(async () => {
     snapshot.release();
@@ -212,7 +215,7 @@ it("protects a cache request that arrives after an eviction snapshot starts", as
     if (!closed.ok) throw closed.error;
   });
   await expect.poll(() => listing.arrived).toBe(1);
-  warm = pinResult(cache.build(firstInput));
+  warm = pinResult(cache.build(withKunaProjectDeadline(firstInput)));
   await expect.poll(() => listing.touched).toBe(true);
   listing.names = await actual.readdir(listing.directory);
   snapshot.release();
@@ -236,8 +239,10 @@ it("keeps a shared progress callback registered for the remaining waiter", async
     statuses.push(status);
     if (status.phase === "decompiling") controller.abort();
   };
-  const first = cache.build({ ...input, signal: controller.signal, onStatus });
-  const second = cache.build({ ...input, onStatus });
+  const first = cache.build(
+    withKunaProjectDeadline({ ...input, signal: controller.signal, onStatus }),
+  );
+  const second = cache.build(withKunaProjectDeadline({ ...input, onStatus }));
   expect(await first).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
@@ -257,12 +262,14 @@ it("lets a joining request cancel from the status replayed to it", async () => {
   const { cache, request } = await fixture();
   const input = await request("program");
   const decompiling = barrier();
-  const first = cache.build({
-    ...input,
-    onStatus: (status) => {
-      if (status.phase === "decompiling") decompiling.release();
-    },
-  });
+  const first = cache.build(
+    withKunaProjectDeadline({
+      ...input,
+      onStatus: (status) => {
+        if (status.phase === "decompiling") decompiling.release();
+      },
+    }),
+  );
   let firstSettled = false;
   void first.then(() => {
     firstSettled = true;
@@ -271,14 +278,16 @@ it("lets a joining request cancel from the status replayed to it", async () => {
 
   const leaving = new AbortController();
   const replayed: KunaExportStatus[] = [];
-  const second = await cache.build({
-    ...input,
-    signal: leaving.signal,
-    onStatus: (status) => {
-      replayed.push(status);
-      leaving.abort();
-    },
-  });
+  const second = await cache.build(
+    withKunaProjectDeadline({
+      ...input,
+      signal: leaving.signal,
+      onStatus: (status) => {
+        replayed.push(status);
+        leaving.abort();
+      },
+    }),
+  );
   expect(replayed.map(({ phase }) => phase)).toEqual(["decompiling"]);
   expect(second).toMatchObject({
     ok: false,

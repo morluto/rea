@@ -1,5 +1,6 @@
 import {
   captureDecoderHeapRecovery,
+  captureDecoderHeapContinuingRecovery,
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../../src/config/captureDecoderHeap.js";
@@ -10,11 +11,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
-import { captureDecoderProcessMemoryLimitBytes } from "../../../src/browser/history/CaptureRelease.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../src/domain/webNetworkCapture.js";
+import { CAPTURE_RUNTIME_SUPPORTED } from "../../fixtures/captureDecoderLimits.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
@@ -52,10 +55,11 @@ const capture = (count: number) =>
 // the decoder's Job Object commit limit is the enforced bound instead, and
 // Bun elsewhere has no bound this capture can reach.
 const testHeap = { oldGenerationMiB: 64, source: "setting" } as const;
-const jobLimit = captureDecoderProcessMemoryLimitBytes(
-  testHeap.oldGenerationMiB,
-);
-it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
+const jobLimit = javaScriptWorkerMemoryLimitBytes(testHeap.oldGenerationMiB);
+it.skipIf(
+  !CAPTURE_RUNTIME_SUPPORTED ||
+    (process.versions.bun !== undefined && jobLimit === null),
+)(
   "reports real HAR memory exhaustion through CLI and MCP and preserves server usability",
   async () => {
     const root = await createTestTempDirectory("rea-har-capacity-");
@@ -71,6 +75,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       ),
     });
     const response = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: path,
       format: "har",
       sensitive_values: ["caller-marked"],
@@ -87,7 +92,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
             setting: "capture.decoder_old_generation_mib",
             effective_value: testHeap.oldGenerationMiB,
             source: testHeap.source,
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
           reported_limits:
             jobLimit === null
@@ -111,12 +117,15 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     expect(JSON.stringify(response)).not.toContain("caller-marked");
     expect(JSON.stringify(response)).not.toContain("rea doctor");
     const remediation = String(exhausted.error.remediation?.action ?? "");
-    expect(remediation).toContain(captureDecoderHeapRecovery(testHeap));
+    expect(remediation).toContain(
+      captureDecoderHeapContinuingRecovery(testHeap),
+    );
     const failed: unknown = await execute(
       process.execPath,
       [
         cli,
         "inspect-web-network-capture",
+        ...COMPLETE_DETAIL,
         path,
         "har",
         "--json",
@@ -147,7 +156,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
           setting: "capture.decoder_old_generation_mib",
           effective_value: testHeap.oldGenerationMiB,
           source: testHeap.source,
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
       remediation: {
@@ -158,6 +168,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     await writeFile(small, capture(2));
     await client.ping();
     const control = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: small,
       format: "har",
     });
@@ -170,7 +181,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     const defaultServer = await connectLocalToolsMcp();
     const defaultControl = await defaultServer.call(
       "inspect_web_network_capture",
-      { capture_path: small, format: "har" },
+      { detail: "complete", capture_path: small, format: "har" },
     );
     expect(defaultControl.isError, JSON.stringify(defaultControl)).not.toBe(
       true,
@@ -180,6 +191,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     );
     await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
     const oversized = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: path,
       format: "har",
     });
@@ -187,5 +199,4 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       error: { code: "invalid_request" },
     });
   },
-  60_000,
 );

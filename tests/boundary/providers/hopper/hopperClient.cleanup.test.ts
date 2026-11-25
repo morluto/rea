@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import {
   hopperFixturePath as fixturePath,
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
+import { stopProviderProcessFixture } from "../../../fixtures/providerProcess.js";
 
 class OwnedFixtureLauncher implements BridgeLauncher {
   ownership:
@@ -56,7 +57,7 @@ const clients: HopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
-}, 45_000);
+});
 
 describe("HopperClient cleanup", () => {
   it("waits for an operation reply without a fixed request deadline", async () => {
@@ -151,7 +152,7 @@ describe("HopperClient cleanup", () => {
       });
       expect(JSON.stringify(diagnostics)).not.toContain(runId);
     } finally {
-      await stopUnrelatedFixture(unrelated);
+      await stopProviderProcessFixture(unrelated);
     }
   });
 
@@ -173,11 +174,3 @@ describe("HopperClient cleanup", () => {
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
   });
 });
-const stopUnrelatedFixture = async (child: ChildProcess): Promise<void> => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) => {
-    child.once("exit", () => resolve());
-  });
-  child.kill("SIGKILL");
-  await exited;
-};

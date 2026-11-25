@@ -1,4 +1,8 @@
+import { boundedList } from "../boundedList.js";
 import { z } from "zod";
+
+import { runtimeFile } from "./runtimeFiles.js";
+import { namedInTitles } from "./stateRoles.js";
 
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const milliseconds = z.int().min(0);
@@ -8,7 +12,7 @@ export const desktopFileFactsSchema = z.strictObject({
   type: z.enum(["file", "directory", "symlink", "other"]),
   size: z.int().min(0),
   mode: z.int().min(0),
-  mtime_ns: z.string().regex(/^\d+$/u),
+  mtime_ns: z.string().regex(/^-?\d+$/u),
   sha256: sha256.nullable(),
 });
 export type DesktopFileFacts = z.infer<typeof desktopFileFactsSchema>;
@@ -48,10 +52,13 @@ export const desktopCheckpointSchema = z.strictObject({
 });
 export type DesktopCheckpoint = z.infer<typeof desktopCheckpointSchema>;
 
+/** The most changed files a checkpoint's acknowledgement names. */
+export const MAX_ACKNOWLEDGED_FILES = 10;
+
 /**
  * What a running capture reports beside its progress text, for a driver to
  * wait on: the window opening, a checkpoint once it has been taken, with its
- * counts, and a requested name it refused.
+ * counts and the files that changed, and a requested name it refused.
  */
 export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("window_open") }),
@@ -64,6 +71,19 @@ export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
     changes: z.int().min(0),
     retained_files: z.int().min(0),
     retained_bytes: z.int().min(0),
+    /**
+     * Files, not folders, changed since the checkpoint before: those under a
+     * selected path, those the app held open, those in its state
+     * directories, the rest, then caches and browser-engine storage, each by
+     * path; home-relative under the home. Absent from the acknowledgement of
+     * a REA that predates it, such as an older one in a build computer.
+     */
+    changed_files: z
+      .array(z.string().min(1))
+      .max(MAX_ACKNOWLEDGED_FILES)
+      .optional(),
+    /** How many more changed files there are than `changed_files` names; absent with it. */
+    more_changed_files: z.int().min(0).optional(),
   }),
   z.strictObject({
     kind: z.literal("checkpoint_refused"),
@@ -91,19 +111,58 @@ export const captureProgressEvent = (
 ): DesktopCaptureEvent | undefined =>
   desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
 
-/** The acknowledgement of a taken checkpoint, from what it recorded. */
+/**
+ * The acknowledgement of a taken checkpoint, from what it recorded, naming
+ * changed files relative to the home: first those an application window's
+ * `titles` so far name, as a document saved and no longer held open is, then
+ * those the caller selected themselves, then those the app held open, those
+ * under a selected folder and those in its state directories, then the rest,
+ * and caches and WebKit, Chromium or QtWebEngine storage last, since an app
+ * may rewrite many of them on any save.
+ */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
-): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => ({
-  kind: "checkpoint",
-  name: checkpoint.name,
-  trigger: checkpoint.trigger,
-  at_ms: checkpoint.at_ms,
-  entries: checkpoint.entries,
-  changes: checkpoint.changes.length,
-  retained_files: checkpoint.retained.length,
-  retained_bytes: checkpoint.retained.reduce((sum, file) => sum + file.size, 0),
-});
+  home: string,
+  selectedPaths: readonly string[] = [],
+  titles: readonly string[] = [],
+): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => {
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path;
+  const rank = (change: DesktopStateChange): number => {
+    if (namedInTitles(change.path, home, titles)) return 0;
+    if (selectedPaths.includes(change.path)) return 1;
+    if (runtimeFile(relative(change.path)) !== undefined) return 6;
+    if (change.opened_by_application) return 2;
+    if (selectedPaths.some((root) => change.path.startsWith(`${root}/`)))
+      return 3;
+    return change.in_state_directory ? 4 : 5;
+  };
+  const files = checkpoint.changes
+    .filter((change) => (change.after ?? change.before)?.type !== "directory")
+    .map((change) => ({ path: change.path, rank: rank(change) }))
+    .sort(
+      (left, right) =>
+        left.rank - right.rank ||
+        (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+    )
+    .map(({ path }) => relative(path));
+  const changedFiles = boundedList(files, MAX_ACKNOWLEDGED_FILES);
+  return {
+    kind: "checkpoint",
+    name: checkpoint.name,
+    trigger: checkpoint.trigger,
+    at_ms: checkpoint.at_ms,
+    entries: checkpoint.entries,
+    changes: checkpoint.changes.length,
+    retained_files: checkpoint.retained.length,
+    retained_bytes: checkpoint.retained.reduce(
+      (sum, file) => sum + file.size,
+      0,
+    ),
+    changed_files: [...changedFiles.items],
+    more_changed_files: changedFiles.omitted,
+  };
+};
 
 const desktopEntrySchema = z.strictObject({
   id: z.string().nullable(),
@@ -134,12 +193,18 @@ const aptRepositorySchema = z.strictObject({
   sources_file: z.string().nullable(),
   /** Without the user name and password the entry may hold. */
   uri: z.string().nullable(),
-  /** Whether the entry's URI held a user name or password, which REA does not record; absent from captures written before it was recorded. */
+  /** The index Repo-URI observed by apt, without credentials. Older captures omit it. */
+  repo_uri: z.string().min(1).optional(),
+  /** Whether the entry or index URI held credentials, which REA does not record. */
   uri_credentials_removed: z.boolean().optional(),
   suite: z.string().nullable(),
+  /** The index's selected source suite, recorded when it differs from the authored suite. */
+  repo_suite: z.string().min(1).optional(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
-  /** The entry's architecture restriction; empty when it names none, absent from captures written before it was recorded. */
+  /** Configured component words after one-line decoding, when their spelling differs. */
+  repo_components: z.array(z.string()).optional(),
+  /** The entry's architecture restriction. `all` allows architecture-independent packages. An empty list depends on the host's APT defaults. Older captures omit this field. */
   architectures: z.array(z.string()).optional(),
   /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown, absent from captures written before it was recorded. */
   release: z.string().nullable().optional(),
@@ -204,7 +269,10 @@ const packageSchema = z.strictObject({
 export const desktopApplicationInventorySchema = z.strictObject({
   desktop_entry: desktopEntrySchema.nullable(),
   argv: z.array(z.string()).min(1),
+  /** Directory in which the recorded argv is invoked. */
   working_directory: z.string().min(1),
+  /** Physical directory selected by an env chdir option, when present. */
+  application_working_directory: z.string().min(1).optional(),
   executable: z.strictObject({
     path: z.string().min(1),
     resolved_path: z.string().nullable(),
@@ -214,7 +282,10 @@ export const desktopApplicationInventorySchema = z.strictObject({
   state_directories: z.array(
     z.strictObject({
       path: z.string().min(1),
-      exists_at_start: z.boolean(),
+      /** Null when the filesystem probe could not establish presence or absence. */
+      exists_at_start: z.boolean().nullable(),
+      /** The failed existence probe's reason; absent for confirmed presence or absence. */
+      existence_error: z.string().optional(),
     }),
   ),
 });
@@ -270,8 +341,9 @@ export const desktopSessionSchema = z.strictObject({
   opened_files: z.array(
     z.strictObject({ path: z.string().min(1), first_seen_ms: milliseconds }),
   ),
-  /** The first bytes the launched process wrote to stderr. */
+  /** The last bytes the launched process wrote to stderr, up to 8 KiB. */
   stderr: z.string(),
+  /** Whether earlier stderr was dropped to keep the last bytes. */
   stderr_truncated: z.boolean(),
   /** Whether the run-token sweep confirmed every launched process is gone. */
   cleanup: z.strictObject({
@@ -309,6 +381,22 @@ export const desktopApplicationCaptureSchema = z.strictObject({
      * spelling; absent from captures written before it was recorded.
      */
     state_directories: z.array(z.string().min(1)).optional(),
+    /**
+     * Each `--state-path` and absolute `--argument` among the content roots,
+     * absolute as the caller named it, beside the physical spelling walked,
+     * so a link keeps what its name means; absent from captures written
+     * before it was recorded.
+     */
+    selected_paths: z
+      .array(
+        z.strictObject({
+          path: z.string().min(1),
+          physical: z.string().min(1),
+          /** Whether the walked path is a directory; absent from captures written before it was recorded. */
+          kind: z.enum(["file", "directory"]).optional(),
+        }),
+      )
+      .optional(),
     /** Paths every walk left out; absent from captures written before it was recorded. */
     excluded: z.array(z.string().min(1)).optional(),
     /** At least the baseline; a cancelled capture can stop there. */

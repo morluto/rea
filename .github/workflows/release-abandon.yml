@@ -1,0 +1,36 @@
+name: Abandon unpublished release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_source:
+        description: Exact merge SHA of the unpublished main release PR
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  abandon:
+    name: Record release abandonment
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci
+        env:
+          HUSKY: "0"
+      - name: Verify no publication and close the candidate
+        env:
+          RELEASE_SOURCE: ${{ inputs.release_source }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/release-attempt.mjs abandon

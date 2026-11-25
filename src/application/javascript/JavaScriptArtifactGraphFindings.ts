@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
@@ -14,11 +13,10 @@ import {
   applicationContainerIdentity,
   addApplicationRootCandidate,
   artifactLocalIdentity,
-  chunkLookupKey,
+  bundlerLookupKey,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
-  moduleLookupKey,
   selfReferenceOmissions,
   sourceNodeFor,
   type JavaScriptArtifactGraphContext,
@@ -38,6 +36,7 @@ import {
   isJsonModuleTarget,
   isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
@@ -205,9 +204,22 @@ const addReference = (
       input.value.module_runtime,
     ) ?? input.asset;
   const resolved =
-    input.value.specifier === null
+    input.value.specifier === null ||
+    input.value.loader_authority === "candidate"
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
+  const candidateLoader = input.value.loader_authority === "candidate";
+  const loaderEvidence = {
+    confidence: candidateLoader ? ("low" as const) : ("high" as const),
+    limitations: [
+      ...(resolved?.limitations ??
+        (candidateLoader
+          ? [
+              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+            ]
+          : [])),
+    ],
+  };
   if (
     input.value.operation === "load" &&
     (input.value.kind === "static-import" ||
@@ -260,7 +272,7 @@ const addReference = (
             range: input.value.location,
             operation: "discover-worker",
             coverage: input.coverage,
-            limitations: resolved?.limitations ?? [],
+            ...loaderEvidence,
           }),
         },
       ],
@@ -277,7 +289,7 @@ const addReference = (
         resolution_status: resolved?.resolution?.resolution_status ?? null,
         ...artifactPathResolutionProperties(resolved?.resolution),
       },
-      limitations: resolved?.limitations ?? [],
+      ...loaderEvidence,
     });
     if (resolved !== null && resolved.path !== null && resolved.node !== null)
       addStaticInferenceEdge(context, {
@@ -288,7 +300,7 @@ const addReference = (
         coverage: input.coverage,
         relation: "maps_to",
         properties: { resolved_path: resolved.path },
-        limitations: resolved.limitations,
+        ...loaderEvidence,
       });
     return;
   }
@@ -319,11 +331,15 @@ const addReference = (
       operation: input.value.operation,
       specifier: input.value.specifier,
       expression: input.value.expression,
+      ...(input.value.loader_authority === "candidate"
+        ? { loader_authority: "candidate" }
+        : {}),
       resolution_base_path: input.value.resolution_base_path ?? null,
       resolution_mode:
         input.value.kind === "static-import" ||
         input.value.kind === "dynamic-import" ||
-        input.value.kind === "require"
+        (input.value.kind === "require" &&
+          input.value.loader_authority !== "candidate")
           ? moduleResolutionModeForJavaScriptReference(
               input.file.path,
               input.value.kind,
@@ -333,7 +349,7 @@ const addReference = (
       resolution_status: resolved?.resolution?.resolution_status ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
-    ...(resolved === null ? {} : { limitations: resolved.limitations }),
+    ...loaderEvidence,
   });
 };
 
@@ -354,7 +370,7 @@ const addEndpoint = (
   const candidateLimitation =
     input.value.kind === "route"
       ? "Only the property name suggests a route; the enclosing object has no router fields."
-      : "The unbound method-like argument is only a candidate; its receiver does not establish a network call.";
+      : "The receiver or loader identity is unproven; this network endpoint is only a candidate.";
   const partialLimitation =
     "The request target is not an exact literal; the endpoint value retains the unresolved source expression.";
   const label = `${input.value.kind} ${candidate ? "endpoint candidate" : "endpoint"}`;
@@ -388,7 +404,10 @@ const addEndpoint = (
               operation: "classify-static-endpoint-candidate",
               coverage: input.coverage,
               confidence: "low",
-              limitations: [candidateLimitation],
+              limitations: [
+                candidateLimitation,
+                ...(partial ? [partialLimitation] : []),
+              ],
             })
           : astObservationEvidence({
               sha256: input.file.sha256,
@@ -416,7 +435,10 @@ const addEndpoint = (
     ...(candidate
       ? {
           confidence: "low" as const,
-          limitations: [candidateLimitation],
+          limitations: [
+            candidateLimitation,
+            ...(partial ? [partialLimitation] : []),
+          ],
         }
       : partial
         ? { limitations: [partialLimitation] }
@@ -496,6 +518,10 @@ const addDiscoveredRole = (
   input: FindingInput<StaticRolePath>,
   changedRoots: ReadonlySet<string> | null,
 ): void => {
+  if (input.value.loader_authority === "candidate") {
+    addCandidateRole(context, input);
+    return;
+  }
   const root = applicationRootPath(context, input.file);
   const resolved = resolveArtifactPathByContext({
     declaredPath: input.value.path,
@@ -575,13 +601,72 @@ const addDiscoveredRole = (
   });
 };
 
+/** Retain the requested path without asserting that an unknown loader creates an Electron role. */
+const addCandidateRole = (
+  context: JavaScriptArtifactGraphContext,
+  input: FindingInput<StaticRolePath>,
+): void => {
+  const limitation =
+    "The Electron loader is unknown, so the renderer role and target ownership remain unproven.";
+  const source =
+    sourceNodeFor(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    ) ?? input.asset;
+  const properties = {
+    candidate_role: input.value.role,
+    loader_authority: "candidate",
+    declared_path: input.value.path,
+    resolution_status: "unavailable",
+    resolved_path: null,
+    mechanism: input.value.mechanism,
+    ...(input.value.path_base === undefined
+      ? {}
+      : { path_base: input.value.path_base }),
+  };
+  const role = context.accumulator.addNode({
+    kind: "unknown",
+    identity: artifactLocalIdentity(
+      input.file.sha256,
+      "candidate-electron-role",
+      JSON.stringify([input.file.path, input.value.path, input.value.location]),
+    ),
+    observations: [
+      {
+        label: input.value.path,
+        properties,
+        evidence: staticInferenceEvidence({
+          sha256: input.file.sha256,
+          path: input.file.path,
+          range: input.value.location,
+          operation: "retain-candidate-electron-role",
+          coverage: input.coverage,
+          confidence: "low",
+          limitations: [limitation],
+        }),
+      },
+    ],
+  });
+  addStaticInferenceEdge(context, {
+    source,
+    target: role,
+    file: input.file,
+    range: input.value.location,
+    coverage: input.coverage,
+    relation: "loads",
+    properties,
+    confidence: "low",
+    limitations: [limitation],
+  });
+};
+
 const addSourceMapEdge = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticSourceMap>,
 ): void => {
-  const declaredUrlSha256 = createHash("sha256")
-    .update(input.value.declared_url)
-    .digest("hex");
+  const declaredUrlSha256 = sha256Hex(input.value.declared_url);
   const resolution = resolveArtifactPathByContext({
     declaredPath: input.value.declared_url,
     sourcePath: input.file.path,
@@ -688,7 +773,7 @@ const resolveReference = (
     reference.loader === "commonjs-loader"
       ? undefined
       : context.moduleNodes.get(
-          moduleLookupKey(sourcePath, reference.module_runtime, specifier),
+          bundlerLookupKey(sourcePath, reference.module_runtime, specifier),
         );
   if (module !== undefined) {
     const file = context.filesByPath.get(sourcePath);
@@ -877,20 +962,23 @@ const resolveBundlerChunkReference = (
   if (key === null) return null;
   const file = context.filesByPath.get(sourcePath);
   if (file === undefined) return null;
-  const registrations = context.analysis.files
-    .find(({ file: analyzedFile }) => analyzedFile.path === sourcePath)
-    ?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
-      reference.module_runtime === undefined
-        ? reference.module_key === null
-        : runtime === reference.module_runtime &&
-          modules.some(
-            ({ module_key: moduleKey }) => moduleKey === reference.module_key,
-          ),
-    );
+  const registrations = (
+    context.analyzedFilesByPath?.get(sourcePath) ??
+    context.analysis.files.find(
+      ({ file: analyzedFile }) => analyzedFile.path === sourcePath,
+    )
+  )?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
+    reference.module_runtime === undefined
+      ? reference.module_key === null
+      : runtime === reference.module_runtime &&
+        modules.some(
+          ({ module_key: moduleKey }) => moduleKey === reference.module_key,
+        ),
+  );
   if (registrations === undefined) return null;
   const candidates = registrations.flatMap(({ runtime }) => {
     const node = context.chunkNodes.get(
-      chunkLookupKey(sourcePath, runtime, key),
+      bundlerLookupKey(sourcePath, runtime, key),
     );
     return node === undefined ? [] : [node];
   });
@@ -925,6 +1013,9 @@ const unresolvedReferenceNode = (
           reference_kind: reference.kind,
           specifier: reference.specifier,
           expression: reference.expression,
+          ...(reference.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           resolution: "unresolved",
           ...(resolution === undefined
             ? {}
@@ -940,6 +1031,9 @@ const unresolvedReferenceNode = (
           confidence: "low",
           limitations: [
             "The static reference could not be resolved within the inventoried artifact.",
+            ...(reference.loader_authority === "candidate"
+              ? ["The module loader is unknown."]
+              : []),
             ...(resolution?.limitations ?? []),
           ],
         }),

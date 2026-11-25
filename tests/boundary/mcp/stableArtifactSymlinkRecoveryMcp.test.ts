@@ -26,6 +26,10 @@ mcpTest.skipIf(process.platform === "win32")(
       for (const name of [
         "inspect_rust_binary",
         "inspect_elf_notes",
+        "inspect_native_initializers",
+        "inspect_binary_hardening",
+        "inspect_native_exports",
+        "inspect_apk_signature",
         "inspect_devicetree",
         "inspect_sqlite_database",
       ]) {
@@ -40,6 +44,7 @@ mcpTest.skipIf(process.platform === "win32")(
       const captureResponse = await client.callTool({
         name: "inspect_web_network_capture",
         arguments: {
+          detail: "complete",
           capture_path: selected,
           format: "har",
           sensitive_values: ["unrelated marked value"],

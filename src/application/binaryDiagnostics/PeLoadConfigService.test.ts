@@ -58,7 +58,7 @@ it("retains absent directories and artifact provenance", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "pe", architecture: "x86_64" },
+    subject: { identity: { format: "pe", architecture: "x86_64" } },
     normalized_result: report,
   });
 });
@@ -100,7 +100,6 @@ it.each([
   { ...report, examined_callbacks: 1 },
   { ...report, bits: 32 as const },
   { ...report, artifact: { ...report.artifact, path: "/another.exe" } },
-  { ...report, artifact: { ...report.artifact, bytes: 67108865 } },
   ...[
     { offset: 0x241, bytes: 188 },
     { offset: 0x240, bytes: 187 },

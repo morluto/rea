@@ -35,11 +35,13 @@ different recovery: reinstall REA for the active platform, architecture, and
 Node.js version with optional dependencies enabled. Capability diagnostics
 distinguish this from the Windows capture-adapter limitation.
 
-macOS also requires Apple's Swift compiler through `xcrun` for process
-ownership inspection. REA compiles its packaged, narrow process-inspection
-helper into a private temporary directory before a capture or owned provider
-process starts; the same prerequisite applies to owned provider-process
-supervision on macOS. REA removes that directory when it exits. REA does not
+macOS also requires REA's process-inspection helper for ownership inspection.
+REA reuses a verified cached helper or compiles one with the selected Swift
+toolchain before a capture or owned provider process starts; the same
+prerequisite applies to owned provider-process supervision on macOS.
+Per-process temporary helper directories are removed on exit; the verified
+cache persists. See [helper and toolchain configuration](#scenario-and-result-details)
+for cache validation and compiler overrides. REA does not
 install Xcode, Command Line Tools, or other software. Capability checks prepare
 this helper before reporting macOS capture as available.
 
@@ -97,6 +99,33 @@ process observations under a shared comparison contract. It reports observed
 differences with their locations, while residual unknowns or truncated
 observations prevent a complete-equivalence claim. Matching scenario
 commitments do not reveal whether redacted sensitive inputs were equal.
+The MCP tool accepts each complete capture inline or as an exact
+`{"kind":"retained-evidence","evidence_id":"ev_..."}` reference to capture
+Evidence already retained by the current session.
+
+Capture-local observer timing remains in Evidence for provenance, but scheduler
+and observation latency alone do not make behavior changed: terminal,
+interaction-dispatch, settlement/finalization, process-sample, and filesystem
+checkpoint times are excluded from the default semantic equality projection.
+To make a timing value part of the question, supply a `trace_spec` whose exact
+event includes that field. Semantic fields such as output, interaction outcome,
+exit status, finalization delivery, process identity/command, and filesystem
+contents still participate in the default comparison.
+
+A located divergence names the compared fields that differed, so a report does
+not have to be diffed by hand: `first_divergence.fields` lists sorted leaf names
+such as `files[0].path`, `pid`, or `finalization.signals[0].delivery`, with array
+positions as bracketed indices, `$` for a whole observation, and at most eight
+names for a wide difference. The names describe only the projection the
+comparison actually judged, so capture-local timing is never named unless a
+`trace_spec` made it part of the question. `left` and `right` still retain the
+complete observations. `fields` is optional in the contract because records
+authenticated before it existed remain readable; new reports always populate it.
+Naming a volatile value is not a claim of equivalence: when a per-run temporary
+path or PID is not behavior, exclude it at capture time with
+`normalization.paths`, `normalization.pids`, or an explicit
+`normalization.patterns` replacement, and recapture both sides under the same
+rules. Comparison refuses captures whose normalization rules differ.
 
 For scenarios where independent scheduling can change event order, the CLI
 also accepts an optional trace-specification JSON file as the third argument.
@@ -115,6 +144,20 @@ scenarios from the same absolute working directory and observation paths.
 Captures are local Evidence files; keep
 their source artifacts and invocation context available when interpreting a
 difference.
+
+The capture's Evidence subject names the launched root process:
+`{ "kind": "process", "pid", "start_time", "executable_sha256" }`, where
+`start_time` is the platform start identity REA read for that PID at launch,
+bound to the capture's run token, and `executable_sha256` is `null` unless the
+executable's path metadata stayed stable across spawn. `manifest.root_process`
+records the same observation. A PID alone does not identify a process, so when
+the start identity could not be read the subject is
+`{ "kind": "unknown", "reason": "not-observed" }` and `root_process` keeps the
+reason. When PID normalization is selected (the default), REA honours it: the
+raw PID and start identity are not recorded, `root_process` is
+`{ "state": "withheld-by-caller" }`, and the subject is
+`{ "kind": "unknown", "reason": "withheld-by-caller" }`. A planned scenario
+(`dry_run`) launches nothing and stays `not-observed`.
 
 ## Hash a report independently of terminal output
 
@@ -228,6 +271,14 @@ child output. Child output remains in the capture Evidence on stdout.
   "settle_ms": 100
 }
 ```
+
+`executable` is resolved through the scenario's `PATH` with the lookup that
+`execute_rizin_command` uses (see
+[reverse-engineering-tools.md](../../reverse-engineering-tools.md)). Capture
+verifies the file it launches, so it needs the resolved path. Where the lookup
+stops because a native search can stop there, as at a stale network file
+handle or a symbolic link loop in an earlier `PATH` entry, the scenario is
+rejected with the candidates checked instead of launched by name.
 
 `executable` is required. `arguments`, `working_directory`, `environment`,
 `filesystem_observation_paths`, terminal settings, timed `events`, timeouts,
@@ -359,8 +410,8 @@ The terminal finalizer then freezes PTY input, retains normalized and rendered
 facts, and releases the renderer. Cleanup retry reuses those completed facts.
 All new captures commit
 `terminal_observation_version: "deferred-rendered-journal-v1"`, including when
-PID and port normalization are disabled. Historical Evidence remains readable;
-recapture both sides with the same observation version before comparison.
+PID and port normalization are disabled. An Evidence bundle or record from an
+earlier Evidence format revision is refused; recreate the observation.
 
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
@@ -412,6 +463,8 @@ than treating missing data as proof of equivalence. Cancellation and timeout
 run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
+
+The target is the session leader of the capture PTY. When that leader exits, the terminal delivers SIGHUP to processes that are still in its foreground process group, as `script -c` and `ssh -t` do. A child that should outlive the target has to leave the group, for example with `setsid`, or ignore SIGHUP. This hangup comes from the terminal, not from REA's owned-process cleanup, and the capture result does not record it.
 
 ### Finalization interval
 
@@ -478,7 +531,9 @@ absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  not settle within the fixed bound (1000 ms). That bound is implementation
+  policy with no runtime override, and a larger `finalization_ms` does not
+  extend it. An attempt recorded `unverified` after
   that bound can still complete later; it stays identity-checked, and its late
   result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of
@@ -508,8 +563,9 @@ a representability limit, not a timer limit. The nominal lifecycle budget is tha
 sum; polling, snapshotting and cleanup lie outside it. Scenario `events` keep
 being dispatched during finalization and are recorded as usual. `finalization_ms`
 of `0`, the default, keeps today's behaviour and the committed identity of every
-existing scenario. `elapsed_ms` and `sent_at_ms` are timing data and take part in
-exit comparison like `settlement.elapsed_ms`.
+existing scenario. `elapsed_ms` and `sent_at_ms` are retained timing provenance
+like `settlement.elapsed_ms`. The default semantic comparison excludes these
+capture-local times; an exact trace event can assert them explicitly.
 
 Every capture requires `truncation_details`, with separate accounting for:
 
@@ -572,8 +628,10 @@ Every capture requires `truncation_details`, with separate accounting for:
   remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
-results for unaffected dimensions and mark affected dimensions unknown; an
-incomplete capture cannot locate the first divergence across all dimensions.
+results for unaffected dimensions. If the hash budget omits a file's digest,
+different retained digests for another path still mark the filesystem dimension
+`changed`. Incomplete captures leave the first divergence across all dimensions
+unknown.
 Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. A trace difference applies to the dimensions identified by its
@@ -623,6 +681,30 @@ An absent or changed token leaves a previously related generation unresolved;
 current token proof is still required before signaling. Swept cleanup verifies the
 remaining family after its group signals. Coverage is bounded by the native
 snapshots and generations inspected; sampled group IDs select candidates.
+
+Settlement records the observation before final owned-process cleanup. Even a
+quiesced sampled group can have token-owned descendants discovered during that
+cleanup. If the ownership layer reports that cleanup sent termination signals,
+`settlement.cleanup_outcome` is `cleaned` on success, and process residual
+unknowns explain that the intervention may have ended further terminal or
+filesystem work. Failed resource cleanup remains `failed` and retains the same
+intervention fact in partial observations. This does not establish how an
+uncaptured run would have continued or change which processes REA may signal.
+
+An observed signal is retained even if a later group signal or final ownership
+verification fails. It does not establish complete cleanup: the failed resource,
+original diagnostic, and retry authority remain visible. A successful retry can
+clear the live cleanup status without rewriting the earlier partial observations.
+
+If capture completion fails before a capture exists, the intervention is retained
+in `partial_observation.observations.residual_unknowns`, alongside the available
+observations and explicit unavailable fields. Older records may omit this optional
+array. No intervention entry is added without an observed signaling fact; absence
+does not prove that cleanup sent no signals.
+
+A quiesced settlement can report `cleaned` as well as `not_required`. Saved
+captures keep their recorded outcome; missing historical signal facts are not
+reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`
@@ -742,7 +824,8 @@ and cache settings.
 Symlink observations preserve their stored target bytes in `symlink_target_hex`
 (lowercase hexadecimal). `symlink_target` retains valid UTF-8 text and is `null`
 when the target bytes cannot be decoded as UTF-8. Filesystem effects compare
-these exact bytes without resolving the link. Older captures without the hex
-field still parse; a legacy target containing U+FFFD has ambiguous byte identity,
-so matching target text alone produces an `unknown` effect. Symlink descendants
-remain outside filesystem observation regardless of target encoding.
+these exact bytes without resolving the link. Every retained symlink requires
+the hex field; captures without it must be captured again before comparison.
+Saved Evidence remains unchanged, and target bytes are never inferred from
+display text. Unreadable targets remain explicit enumeration omissions. Symlink
+descendants remain outside filesystem observation regardless of target encoding.

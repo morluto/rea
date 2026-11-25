@@ -14,7 +14,9 @@ const environment = {
 } as const;
 
 const resultSchema = z.object({
-  subject: z.object({ format: z.string(), architecture: z.string() }),
+  subject: z.object({
+    identity: z.object({ format: z.string(), architecture: z.string() }),
+  }),
   normalized_result: z.record(z.string(), z.unknown()),
 });
 
@@ -31,11 +33,15 @@ describe.skipIf(process.platform !== "darwin")(
         const source = join(directory, "watch.c");
         await writeFile(source, "int rea_watch_value(void) { return 42; }\n");
         const object = join(directory, "watch.o");
-        const compiled = await processes.run(
-          "/usr/bin/xcrun",
-          ["clang", "-arch", "arm64_32", "-c", source, "-o", object],
-          { timeoutMs: 30_000 },
-        );
+        const compiled = await processes.run("/usr/bin/xcrun", [
+          "clang",
+          "-arch",
+          "arm64_32",
+          "-c",
+          source,
+          "-o",
+          object,
+        ]);
         expect(compiled.exitCode, compiled.stderr).toBe(0);
         for (const command of [
           "list-architectures",
@@ -49,8 +55,7 @@ describe.skipIf(process.platform !== "darwin")(
           expect(result.exitCode, `${command}: ${result.stdout}`).toBe(0);
           const parsed = resultSchema.parse(result.json);
           expect(parsed.subject).toMatchObject({
-            format: "mach-o",
-            architecture: "arm64_32",
+            identity: { format: "mach-o", architecture: "arm64_32" },
           });
           if (command === "list-architectures")
             expect(
@@ -71,7 +76,6 @@ describe.skipIf(process.platform !== "darwin")(
           details: { selection_reason: "target_unsupported" },
         });
       },
-      60_000,
     );
   },
 );

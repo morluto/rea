@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
+import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -19,6 +20,7 @@ import {
   createEvidence,
   parseEvidence,
   type Evidence,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { correlateStaticAndRuntime } from "../../../src/domain/staticRuntimeCorrelation.js";
@@ -27,6 +29,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { verifyReconstruction } from "../../../src/domain/reconstructionVerification.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const providerNames = [
   "REA process capture",
   "REA deterministic process harness",
@@ -36,7 +39,7 @@ const captureEvidence = (
   side: "left" | "right",
   result: Evidence["normalized_result"] = EMPTY_PROCESS_CAPTURE_EXAMPLE,
 ) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
@@ -59,10 +62,13 @@ const connectedComparison = async () => {
     throw new Error("Process comparison must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "process-evidence-identity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "process-evidence-identity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   });
@@ -164,10 +170,24 @@ it("feeds the exact public CLI/MCP process comparison into all three MCP consume
     writeFile(rightPath, JSON.stringify(right)),
   ]);
   const cliComparison = parseEvidence(
-    await compareProcessEvidenceFiles(leftPath, rightPath),
+    await compareProcessCaptureFiles(leftPath, rightPath),
   );
   expect(cliComparison).toEqual(comparison);
   await expectConsumerResults(client, comparison);
+});
+
+it("compares exact retained capture Evidence without resending its payloads", async () => {
+  const { client, left, right, comparison } = await connectedComparison();
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+  });
+
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(inlineEvidence(response)).toEqual(comparison);
 });
 
 it("advertises the same process comparison Evidence that its example inputs produce", async () => {
@@ -198,33 +218,19 @@ const rehashedComparison = (
   change: IdentityChange,
 ): Evidence => {
   const next = { ...base, ...change };
-  const subject = next.subject;
-  return createEvidence(
-    subject === null
-      ? undefined
-      : {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
-          ...(subject.architecture === null
-            ? {}
-            : { architecture: subject.architecture }),
-        },
-    next.provider,
-    {
-      predicateType: next.predicate_type,
-      operation: next.operation,
-      parameters: next.parameters,
-      result: next.normalized_result,
-      rawResult: next.raw_result,
-      confidence: next.confidence,
-      authority: next.authority,
-      environment: next.environment,
-      limitations: next.limitations,
-      locations: next.locations,
-      evidenceLinks: next.evidence_links,
-    },
-  );
+  return createEvidence(evidenceSubjectInput(next.subject), next.provider, {
+    predicateType: next.predicate_type,
+    operation: next.operation,
+    parameters: next.parameters,
+    result: next.normalized_result,
+    rawResult: next.raw_result,
+    confidence: next.confidence,
+    authority: next.authority,
+    environment: next.environment,
+    limitations: next.limitations,
+    locations: next.locations,
+    evidenceLinks: next.evidence_links,
+  });
 };
 
 it.each(providerNames)(
@@ -494,6 +500,6 @@ it("keeps withheld ownership unknown through CLI and MCP comparison", async () =
   await writeFile(leftPath, JSON.stringify(left));
   await writeFile(rightPath, JSON.stringify(right));
   expect(
-    parseEvidence(await compareProcessEvidenceFiles(leftPath, rightPath)),
+    parseEvidence(await compareProcessCaptureFiles(leftPath, rightPath)),
   ).toEqual(comparison);
 });
