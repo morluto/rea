@@ -1,4 +1,4 @@
-import { chmod, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -7,6 +7,7 @@ import {
   observePosixProcess,
   processGroupHasStopped,
   processHasStopped,
+  waitForPosixProcessStopped,
 } from "../../support/process/observePosixProcess.js";
 
 it.skipIf(process.platform === "win32")(
@@ -125,3 +126,32 @@ it.skipIf(process.platform === "win32")(
 it("observes the current process as live", async () => {
   await expect(processHasStopped(process.pid)).resolves.toBe(false);
 });
+
+it.skipIf(process.platform === "win32")(
+  "fails fast on terminal checker errors instead of retry-storming",
+  async () => {
+    const directory = await createTestTempDirectory("rea-posix-poll-failfast-");
+    const checker = join(directory, "ps");
+    const callsLog = join(directory, "calls.log");
+    const previousPath = process.env.PATH;
+    try {
+      await writeFile(
+        checker,
+        `#!/bin/sh\nprintf 'x\\n' >> ${JSON.stringify(callsLog)}\nprintf 'permission denied\\n' >&2\nexit 1\n`,
+      );
+      await chmod(checker, 0o700);
+      process.env.PATH = directory;
+      await expect(
+        waitForPosixProcessStopped(123, { interval: 10 }),
+      ).rejects.toMatchObject({ code: 1 });
+      const calls = (await readFile(callsLog, "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      expect(calls).toHaveLength(1);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  },
+);

@@ -151,11 +151,12 @@ cliTest(
               {
                 path: ["protobuf", "schema", "descriptor_set_path"],
                 reason: "invalid_format",
+                message: expect.stringContaining("Conflicting file identity"),
               },
             ],
           },
         };
-        if (change === "declarations") {
+        if (change === "declarations" && !reverse) {
           const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",

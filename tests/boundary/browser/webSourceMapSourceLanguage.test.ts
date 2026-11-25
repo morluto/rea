@@ -10,7 +10,40 @@ import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 const typescriptContent = 'import "./dep.ts"; const value = <number>1;';
 const annotatedContent = 'import "./dep.ts"; const value: number = 1;';
 const javascriptContent = 'import "./dep.ts"; const value = 1;';
+const commonJsContent = [
+  '// import "./comment.js";',
+  String.raw`const quoted = "require(\"./string.js\")";`,
+  "const template = `import './template-comment.js'`;",
+  `export { value } from "./it's-real.js";`,
+  'import "package-name";',
+  'import("./dynamic.js");',
+  "import(`./dep.js`);",
+  "import(`./dep.${name}.js`);",
+  'require("./normal.cjs");',
+  "require(`./templated.cjs`);",
+  "require(`./${name}.cjs`);",
+  'require?.("./optional.cjs");',
+  'function local(require) { require?.("./shadowed.cjs"); }',
+  "require?.(selectedModule);",
+].join("\n");
+
+const commonJsEdges = [
+  ["static_import", "./it's-real.js"],
+  ["static_import", "package-name"],
+  ["dynamic_import", "./dynamic.js"],
+  ["dynamic_import", "./dep.js"],
+  ["require", "./normal.cjs"],
+  ["require", "./templated.cjs"],
+  ["require", "./optional.cjs"],
+] as const;
+
 const declarations = [
+  {
+    path: "main.cjs",
+    mediaType: "text/javascript",
+    content: commonJsContent,
+    edges: commonJsEdges,
+  },
   {
     path: "plain.ts?revision=2#view.tsx",
     mediaType: "text/typescript",
@@ -117,7 +150,11 @@ it("selects the language of HTTP map originals and retains exact URLs and depend
     expect(result.items[0]).toMatchObject({
       status: "included",
       limitation: null,
-      artifact: { text },
+      artifact: {
+        text,
+        bytes: Buffer.byteLength(text),
+        sha256: createHash("sha256").update(text).digest("hex"),
+      },
       original_sources: sources.map(({ source, content, mediaType }) => ({
         source,
         artifact: {
@@ -132,22 +169,22 @@ it("selects the language of HTTP map originals and retains exact URLs and depend
         source,
       })),
       original_module_edges: sources.flatMap(
-        ({ source, requires = [] }, declaration_index) => [
-          {
+        ({ source, edges, requires = [] }, declaration_index) => {
+          const imports = edges ?? [
+            ["static_import", "./dep.ts"] as const,
+            ...requires.map((specifier) => ["require", specifier] as const),
+          ];
+          return imports.map(([kind, specifier]) => ({
             declaration_index,
             from_source: source,
-            kind: "static_import",
-            specifier: "./dep.ts",
-            resolved_source: `${origin}/maps/dep.ts`,
-          },
-          ...requires.map((specifier) => ({
-            declaration_index,
-            from_source: source,
-            kind: "require",
+            kind,
             specifier,
-            resolved_source: new URL(specifier, source).href,
-          })),
-        ],
+            resolved_source:
+              specifier === "package-name"
+                ? null
+                : new URL(specifier, source).href,
+          }));
+        },
       ),
     });
   } finally {

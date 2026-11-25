@@ -47,6 +47,15 @@ export const functionFacetAvailabilitySchema = z
   })
   .strict();
 
+export const FUNCTION_DOSSIER_LIMITATION_CODES = [
+  "unresolved_computed_or_indirect_flows",
+  "provider_specific_representations",
+] as const;
+
+export const functionDossierLimitationCodeSchema = z.enum(
+  FUNCTION_DOSSIER_LIMITATION_CODES,
+);
+
 const SWIFT_LITERALS_TOGETHER =
   "Swift literals and their omissions must be recorded together";
 
@@ -109,6 +118,9 @@ export const functionDossierSchema = requirePresence(
       native_api: nativeApiBoundarySchema.nullable(),
       native_value_flow: nativeValueFlowSchema.nullable(),
       facet_availability: functionFacetAvailabilitySchema.exactOptional(),
+      limitation_codes: z
+        .array(functionDossierLimitationCodeSchema)
+        .exactOptional(),
       limitations: z.array(z.string()),
     })
     .strict(),

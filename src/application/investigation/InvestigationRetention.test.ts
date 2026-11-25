@@ -1,7 +1,11 @@
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it, vi } from "vitest";
 
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  isImmutableEvidence,
+  type Evidence,
+} from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
@@ -118,43 +122,55 @@ it("applies authentication admission to a fresh caller-selected alias", () => {
     upstreamProfile: undefined,
     upstreamLimitations: [],
   });
-  const primitive = completedOperationEvidence(
-    "address_name",
-    {},
-    {
-      result: { value: 1 },
-      rawResult: null,
-      provider,
-      locations: [],
-      limitations: [],
-    },
-    {
-      target,
-      admitRecovery: (input) => {
-        expect(input).toMatchObject({
-          caller_input_path: target.callerInputPath,
-        });
-        return ok(undefined);
-      },
-    },
-  );
-  if (!primitive.ok) throw primitive.error;
+  const execution = {
+    result: { value: 1 },
+    rawResult: null,
+    provider,
+    locations: [],
+    limitations: [],
+  };
   const constrained = new InvestigationRecords({
     availableAuthenticationBytes: () => 0,
   });
+  const admitRecovery = vi.fn(
+    constrained.admitRecoveryObservation.bind(constrained),
+  );
+  const refusedPrimitive = completedOperationEvidence(
+    "address_name",
+    {},
+    execution,
+    { target, admitRecovery },
+  );
+  expect(admitRecovery).toHaveBeenCalledWith(
+    expect.objectContaining({ caller_input_path: target.callerInputPath }),
+    "address_name",
+    expect.anything(),
+  );
+  if (refusedPrimitive.ok)
+    throw new Error(
+      "Expected authentication refusal before Evidence construction",
+    );
+  expect(refusedPrimitive.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(refusedPrimitive.error.partialObservation).toBeUndefined();
+  expect(constrained.statistics().retainedRepresentationBytes).toBe(0);
+
+  const refusedWorkflow = constrained.recordEvidence(workflow);
+  if (refusedWorkflow.ok)
+    throw new Error("Expected mutable Evidence authentication refusal");
+  expect(refusedWorkflow.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(refusedWorkflow.error.partialObservation).toBeUndefined();
+  expect(constrained.hasEvidence(workflow.evidence_id)).toBe(false);
+
+  const control = new InvestigationRecords();
+  const primitive = completedOperationEvidence("address_name", {}, execution, {
+    target,
+    admitRecovery: control.admitRecoveryObservation.bind(control),
+  });
+  if (!primitive.ok) throw primitive.error;
+  expect(isImmutableEvidence(primitive.value)).toBe(true);
   for (const evidence of [workflow, primitive.value]) {
     expect(evidence.caller_input_path).toBe(target.callerInputPath);
-    const refused = constrained.recordEvidence(evidence);
-    if (refused.ok)
-      throw new Error(
-        `Bypassed authentication admission: ${evidence.operation}`,
-      );
-    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(refused.error.partialObservation).toBeUndefined();
-    expect(constrained.hasEvidence(evidence.evidence_id)).toBe(false);
-    expect(new InvestigationRecords().recordEvidence(evidence)).toEqual(
-      ok("added"),
-    );
+    expect(control.recordEvidence(evidence)).toEqual(ok("added"));
   }
 });
 

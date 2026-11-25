@@ -88,7 +88,7 @@ const inferredMatchSchema = z.strictObject({
   candidate_left_node_ids: emptyArraySchema,
   candidate_right_node_ids: emptyArraySchema,
 });
-const matchedItemMatchSchema = z.union([
+const matchedItemMatchSchema = z.discriminatedUnion("basis", [
   exactMatchSchema,
   sourceMapMatchSchema,
   inferredMatchSchema,

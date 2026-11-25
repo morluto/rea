@@ -30,16 +30,23 @@ it("keeps the retained text beside the bytes the process wrote", () => {
   });
 });
 
-it("narrows to the three fields a successful result declares", () => {
-  expect(
-    providerResultDiagnostics(
-      capturedProviderOutput(snapshot({ exitCode: 0, signal: null })),
-    ),
-  ).toStrictEqual({ stdout: "head", stderr: "", truncated: false });
-});
-
-it("reports exit facts and an untruncated capture as observed", () => {
-  expect(
-    capturedProviderOutput(snapshot({ exitCode: 2, signal: null })),
-  ).toMatchObject({ exit_code: 2, signal: null, truncated: false });
+it("narrows a complete process capture to the fields a result declares", () => {
+  const complete = capturedProviderOutput(
+    snapshot({
+      stdout: { text: "head", bytes: 4, observedBytes: 4 },
+      exitCode: 2,
+      signal: null,
+    }),
+  );
+  expect(complete).toMatchObject({
+    stdout_bytes: 4,
+    exit_code: 2,
+    signal: null,
+    truncated: false,
+  });
+  expect(providerResultDiagnostics(complete)).toStrictEqual({
+    stdout: "head",
+    stderr: "",
+    truncated: false,
+  });
 });

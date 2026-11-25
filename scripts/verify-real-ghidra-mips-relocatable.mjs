@@ -60,11 +60,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -355,7 +350,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS relocatable command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -375,7 +370,7 @@ try {
   lineageFailure = cause;
 }
 if (lineageFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -388,13 +383,13 @@ if (lineageFailure !== undefined)
     },
   );
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS relocatable verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 const interrupted = commandInterruption.reason();
 if (interrupted !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS relocatable verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );

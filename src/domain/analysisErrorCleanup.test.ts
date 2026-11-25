@@ -531,16 +531,16 @@ it.each(["primary", "cleanup", "default", "cleanup-continuing"] as const)(
   },
 );
 
-it("composes cleanup failures that complete only after every part releases", () => {
+it("tracks a shared resource until both cleanup owners release", () => {
   const first = new ProviderCleanupError(
     "fixture",
-    ["first-handle"],
+    ["shared-handle", "first-handle"],
     { reason: "first" },
     { operation: "fixture_close" },
   );
   const second = new ProviderCleanupError(
     "fixture",
-    ["second-handle"],
+    ["shared-handle", "second-handle"],
     { reason: "second" },
     { operation: "fixture_close" },
   );
@@ -562,7 +562,7 @@ it("composes cleanup failures that complete only after every part releases", () 
     providerId: "fixture-provider",
     operation: "fixture_close",
     cleanupIncomplete: true,
-    cleanupResources: ["first-handle", "second-handle"],
+    cleanupResources: ["shared-handle", "first-handle", "second-handle"],
     diagnostics: { reason: "Fixture cleanup remains incomplete" },
   });
   expect(composite.cause).toBeInstanceOf(AggregateError);
@@ -576,37 +576,15 @@ it("composes cleanup failures that complete only after every part releases", () 
   );
 
   releaseOwnedCleanup(first);
-  expect(composite.cleanupIncomplete).toBe(true);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: true,
+    cleanupResources: ["shared-handle", "second-handle"],
+  });
   releaseOwnedCleanup(second);
-  expect(composite.cleanupIncomplete).toBe(false);
-});
-
-it("lists a resource shared by several parts once", () => {
-  const parts = ["first", "second"].map(
-    (reason) =>
-      new ProviderCleanupError(
-        "fixture",
-        ["shared-handle", `${reason}-handle`],
-        { reason },
-        { operation: "fixture_close" },
-      ),
-  );
-  const composite = providerCleanupErrorFromFailures(
-    "fixture-provider",
-    parts,
-    "Fixture cleanup remains incomplete",
-    { operation: "fixture_close" },
-  );
-  expect(composite.cleanupResources).toEqual([
-    "shared-handle",
-    "first-handle",
-    "second-handle",
-  ]);
-  releaseOwnedCleanup(parts[0]!);
-  expect(composite.cleanupResources).toEqual([
-    "shared-handle",
-    "second-handle",
-  ]);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
 });
 
 it("defaults the aggregate cause to the owned failures", () => {

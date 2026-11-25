@@ -14,7 +14,7 @@ import {
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
-import { analysisViewResultInputError } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
@@ -318,6 +318,10 @@ const derivedTextBytes = (value: unknown): number => {
   return 64 + largestBody * 2 + requestText + responseBodyEntries * ENTRY_BYTES;
 };
 
+const readScenarioCapture = createAnalysisViewResultReader(
+  retainedBrowserScenarioCaptureSchema,
+);
+
 /** Admit a capture_browser_scenario parent whose network content identifies response media types; state also needs bodies. */
 export const admitScenarioCaptureParent = (
   parent: AnalysisViewParent,
@@ -332,14 +336,9 @@ export const admitScenarioCaptureParent = (
     derivedTextBytes(parent.normalizedResult),
   );
   if (!derived.ok) return derived;
-  const parsed = retainedBrowserScenarioCaptureSchema.safeParse(
-    parent.normalizedResult,
-  );
-  if (!parsed.success)
-    return err(
-      analysisViewResultInputError(parent.normalizedResult, parsed.error),
-    );
-  const content = parsed.data.scenario.network_content;
+  const parsed = readScenarioCapture(parent);
+  if (!parsed.ok) return parsed;
+  const content = parsed.value.scenario.network_content;
   // Tools are chosen by response media type, which only bodies or header values carry; state is read from bodies.
   if (
     viewKind === "environment-state"
@@ -355,5 +354,5 @@ export const admitScenarioCaptureParent = (
           : "environment-manifest needs a capture_browser_scenario capture with capture.network.response_body or header_values selected.",
       ),
     );
-  return ok(scenarioCaptureRecords(parsed.data, "manifest"));
+  return ok(scenarioCaptureRecords(parsed.value, "manifest"));
 };

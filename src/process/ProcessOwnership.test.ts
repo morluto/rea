@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupFailureFollowedSignal,
@@ -6,6 +7,7 @@ import {
   type ProcessOwnershipHost,
   type ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { PROCESS_CLEANUP_VERIFICATION_GRACE_MS } from "./ProcessLifecycle.js";
 import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { parseProcessEnvironment } from "./ProcessOwnershipObservation.js";
 import { selectCapturedProcessGroupIds } from "./ProcessOwnershipProcessTree.js";
@@ -336,9 +338,14 @@ describe("related sweep candidates during cleanup", () => {
       },
     ];
     const signalGroup = vi.fn();
+    let elapsed = 0;
     let childReads = 0;
     const adapter: ProcessOwnershipHost = {
-      listProcesses: async () => processes,
+      listProcesses: async () => {
+        if (signalGroup.mock.calls.length > 0)
+          elapsed = PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
+        return processes;
+      },
       processIdentities: async (members) =>
         identitiesWithRelations(
           processes.filter(({ pid }) =>
@@ -362,10 +369,18 @@ describe("related sweep candidates during cleanup", () => {
         ),
       signalGroup,
     };
-    const result = await cleanupOwnedProcessGroup(
-      { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
-      adapter,
-    );
+    const clock = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => elapsed);
+    let result;
+    try {
+      result = await cleanupOwnedProcessGroup(
+        { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
+        adapter,
+      );
+    } finally {
+      clock.mockRestore();
+    }
     expect(result).toMatchObject({
       cleaned: false,
       reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
@@ -518,63 +533,90 @@ describe("withheld process evidence during cleanup", () => {
 });
 
 describe("sampled detached process groups during cleanup", () => {
-  it("signals only token-authenticated sampled groups and reports an unowned sample", async () => {
-    const processes = [
-      {
+  it.each(["still live", "omitted by ps", "native exit"] as const)(
+    "signals only the owned group while a nested generation is %s",
+    async (outcome) => {
+      const launcher = {
         pid: 100,
         parentPid: 1,
         processGroupId: 100,
         state: "S",
         command: "capture",
-      },
-      {
+      };
+      const worker = {
+        ...launcher,
         pid: 200,
-        parentPid: 1,
         processGroupId: 200,
-        state: "S",
-        command: "sanitized-detached-child",
-      },
-    ];
-    const signalGroup = vi.fn();
-    const identities = identitiesWithRelations(processes);
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () => Promise.resolve(processes),
-      environment: (pid) =>
-        Promise.resolve(pid === 100 ? { REA_PROCESS_RUN_ID: "run-token" } : {}),
-      processIdentities: () => Promise.resolve(identities),
-      runTokens: (members) =>
-        Promise.resolve(
+        command: "nested-worker",
+      };
+      let signaled = false;
+      let verificationSnapshots = 0;
+      let elapsed = 0;
+      const signalGroup = vi.fn(() => {
+        signaled = true;
+      });
+      const identities = identitiesWithRelations([launcher, worker]);
+      const adapter: ProcessOwnershipHost = {
+        listProcesses: async () => {
+          if (!signaled) return [launcher, worker];
+          verificationSnapshots += 1;
+          if (verificationSnapshots > 1)
+            elapsed = PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
+          return verificationSnapshots === 1 || outcome === "still live"
+            ? [worker]
+            : [];
+        },
+        environment: async (pid) => ({
+          REA_PROCESS_RUN_ID:
+            pid === launcher.pid ? ownership.runId : "nested-token",
+        }),
+        processIdentities: async (members) =>
           new Map(
             members.map(({ pid }) => [
               pid,
-              {
-                state: "readable" as const,
-                runId: pid === 100 ? "run-token" : undefined,
-              },
+              (signaled && pid === launcher.pid) ||
+              (verificationSnapshots > 1 && outcome === "native exit")
+                ? {
+                    state: "absent" as const,
+                    reason: "not-in-snapshot" as const,
+                  }
+                : identities.get(pid)!,
             ]),
           ),
-        ),
-      signalGroup,
-    };
+        signalGroup,
+      };
 
-    const result = await cleanupOwnedProcessGroup(
-      {
-        ...ownership,
-        sweepTokenOwnedProcesses: true,
-        sampledProcessGroupIds: [200],
-      },
-      adapter,
-    );
+      const clock = vi
+        .spyOn(performance, "now")
+        .mockImplementation(() => elapsed);
+      try {
+        const result = await cleanupOwnedProcessGroup(
+          {
+            ...ownership,
+            sweepTokenOwnedProcesses: true,
+            sampledProcessGroupIds: [worker.processGroupId],
+          },
+          adapter,
+        );
 
-    expect(result).toMatchObject({
-      cleaned: false,
-      reason: expect.stringMatching(/ownership token mismatch.*\b200\b/i),
-      failures: [{ pid: 200, reason: "run-token-mismatch" }],
-    });
-    expect(signalGroup).toHaveBeenCalledTimes(1);
-    expect(signalGroup).toHaveBeenCalledWith(100, "SIGKILL");
-    expect(signalGroup).not.toHaveBeenCalledWith(200, "SIGKILL");
-  });
+        expect(signalGroup.mock.calls).toEqual([
+          [launcher.processGroupId, "SIGKILL"],
+        ]);
+        if (outcome === "native exit") {
+          expect(result).toEqual({ cleaned: true, signaled: true });
+          expect(verificationSnapshots).toBeGreaterThan(1);
+        } else {
+          expect(result).toMatchObject({
+            cleaned: false,
+            signaled: true,
+            failures: [{ pid: worker.pid, reason: "run-token-mismatch" }],
+          });
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
 
   it("reports a live sampled group after the launcher has exited without signaling it", async () => {
     const process = {

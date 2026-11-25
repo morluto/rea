@@ -1,3 +1,4 @@
+import { emptyCutterDiscovery } from "../../fixtures/cutterDiscovery.js";
 import {
   authenticatedServer,
   writeDescriptor,
@@ -14,7 +15,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1261,7 +1262,7 @@ describe("CutterBridgeClient: scenario group 7", () => {
           execution_state: "complete",
           document_generation: 2,
         },
-        raw_result: output,
+        raw_result: null,
         limitations: expect.arrayContaining([
           expect.stringContaining("decimal strings"),
         ]),
@@ -1419,10 +1420,17 @@ describe("CutterBridgeClient: conservative platform checks", () => {
         "CutterBridge",
       ),
     });
+    // Neither client receives a home override, so the account home applies.
+    const accountBridgeDirectory = join(
+      userInfo().homedir,
+      ".cache",
+      "rea",
+      "cutter-bridge",
+    );
     await expect(
       new CutterBridgeClient({}, { platform: "darwin" }).listSessions(),
     ).resolves.toMatchObject({
-      bridge_directory: join(homedir(), ".cache", "rea", "cutter-bridge"),
+      bridge_directory: accountBridgeDirectory,
     });
     await expect(
       new CutterBridgeClient(
@@ -1430,7 +1438,7 @@ describe("CutterBridgeClient: conservative platform checks", () => {
         { platform: "darwin" },
       ).listSessions(),
     ).resolves.toMatchObject({
-      bridge_directory: join(homedir(), ".cache", "rea", "cutter-bridge"),
+      bridge_directory: accountBridgeDirectory,
     });
   });
 });
@@ -1669,13 +1677,7 @@ describe("CutterBridgeClient: scenario group 9", () => {
 
   it("records known completion and truncated command output", async () => {
     const service = new CutterBridgeService({
-      listSessions: async () => ({
-        sessions: [],
-        bridge_directory: "/private/bridge",
-        discovery_status: "no_live_bridge_found",
-        bridge_directory_security: "private_verified",
-        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
-      }),
+      listSessions: async () => emptyCutterDiscovery(),
       execute: async () => ({
         requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
         output: "partial",

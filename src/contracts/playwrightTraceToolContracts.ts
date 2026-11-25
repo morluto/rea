@@ -2,9 +2,9 @@ import { z } from "zod";
 import { playwrightTraceSchema } from "../domain/playwrightTrace/playwrightTrace.js";
 import { inspectPlaywrightTraceInputSchema } from "../domain/playwrightTrace/playwrightTraceQuery.js";
 import {
-  playwrightTraceSummaryViewResultSchema,
   playwrightTracePageViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
+  playwrightTraceSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/playwrightTraceSummarySchemas.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, evidenceEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";

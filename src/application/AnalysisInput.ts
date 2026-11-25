@@ -35,5 +35,5 @@ export const parseAnalysisInput = <T>(
         cause: input.error,
       }),
     );
-  return ok(input.data);
+  return signal?.aborted ? err(cancelledBy(operation, signal)) : ok(input.data);
 };

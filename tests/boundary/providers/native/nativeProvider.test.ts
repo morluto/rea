@@ -13,6 +13,7 @@ import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mj
 
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { phaseArrival, phaseGate } from "../../../support/lifecycleHarness.js";
+import { stopTestChild } from "../../../support/process/stopTestChild.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -447,11 +448,13 @@ describe("native command failure capture and limits", () => {
       outputReady = resolve;
       handshakeFailed = reject;
     });
+    let launchedProcess: ProviderProcessHandle | undefined;
     const launcher: NativeCommandLauncher = async (options) => {
       const launched = await spawnOwnedProviderProcess({
         ...options,
         stdin: "pipe",
       });
+      launchedProcess = launched.process;
       // The awaiting runner installs its supervisor in a microtask before this
       // callback. Hold child output until its capture listeners are in place.
       setImmediate(() => {
@@ -494,29 +497,40 @@ describe("native command failure capture and limits", () => {
       ],
       { signal: controller.signal },
     );
-    const result = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(ready, pending, "command output");
-      controller.abort();
-      return await pending;
-    }, [
-      () => controller.abort(),
-      async () => {
-        await pending;
-      },
-    ]);
+    try {
+      const result = await withVerifierCleanup(async () => {
+        await awaitAcknowledgement(ready, pending, "command output");
+        controller.abort();
+        return await pending;
+      }, [
+        () => controller.abort(),
+        async () => {
+          await pending;
+        },
+      ]);
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      reason: "cancelled",
-      capture: {
-        stdout: "started",
-        stderr: "warning",
-        stdoutBytes: 7,
-        stderrBytes: 7,
-        truncated: false,
-      },
-    });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        reason: "cancelled",
+        capture: {
+          stdout: "started",
+          stderr: "warning",
+          stdoutBytes: 7,
+          stderrBytes: 7,
+          truncated: false,
+        },
+      });
+      expect(result.error.cleanupFailure).toBeNull();
+      expect(
+        launchedProcess !== undefined &&
+          (launchedProcess.exitCode !== null ||
+            launchedProcess.signalCode !== null),
+      ).toBe(true);
+    } finally {
+      if (launchedProcess !== undefined) await stopTestChild(launchedProcess);
+      await runner.retryCleanup();
+    }
   });
 });
 
@@ -541,8 +555,15 @@ describe("native owned cancellation boundary", () => {
       const executableSha256 = createHash("sha256")
         .update(await readFile(executable))
         .digest("hex");
-      const launcher: NativeCommandLauncher = (options) =>
-        spawnOwnedProviderProcess({ ...options, expectedCommand: null });
+      let ownedProcess: ProviderProcessHandle | undefined;
+      const launcher: NativeCommandLauncher = async (options) => {
+        const launched = await spawnOwnedProviderProcess({
+          ...options,
+          expectedCommand: null,
+        });
+        ownedProcess = launched.process;
+        return launched;
+      };
       const runner = new XcrunCommandRunner(
         {},
         async () => ok(nativeResolvedToolFixture(executable, executableSha256)),
@@ -598,6 +619,7 @@ describe("native owned cancellation boundary", () => {
         expect(result.error.cleanupIncomplete).toBe(false);
         await expect(client.close()).resolves.toMatchObject({ ok: true });
       } finally {
+        if (ownedProcess !== undefined) await stopTestChild(ownedProcess);
         await client.close();
       }
     },
@@ -748,7 +770,7 @@ describe("native cancellation cleanup provenance", () => {
         ).toBe(true);
       } finally {
         for (const { process: child } of owners)
-          if (child?.exitCode === null) child.kill("SIGKILL");
+          if (child !== undefined) await stopTestChild(child);
         await client.close();
       }
     },
@@ -869,8 +891,7 @@ describe("native returned cleanup ownership", () => {
         expect(closed.error.cleanupResources).toEqual([]);
         await expect(client.close()).resolves.toMatchObject({ ok: true });
       } finally {
-        if (ownedProcess !== undefined && ownedProcess.exitCode === null)
-          ownedProcess.kill("SIGKILL");
+        if (ownedProcess !== undefined) await stopTestChild(ownedProcess);
         await client.close();
       }
     },

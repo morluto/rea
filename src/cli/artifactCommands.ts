@@ -1,13 +1,9 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
-import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
-import {
-  contractNamed,
-  type CliSessionTarget,
-} from "./contractCliDescription.js";
-import {
-  registerContractCommand,
-  runOnSessionTarget,
-} from "./contractCommand.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type { CliSessionTarget } from "./contractCliDescriptionTypes.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
@@ -19,9 +15,10 @@ export const registerArtifactCommands = (
   cli: CliInstance,
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   registerInventoryCommands(cli, logger, runProviderAnalysis);
-  registerArtifactComparisonCommand(cli, logger);
+  registerArtifactComparisonCommand(cli, logger, environment);
   registerAppleBundleCommands(cli, logger, runProviderAnalysis);
 };
 
@@ -78,6 +75,7 @@ const registerInventoryCommands = (
       sessionTarget: artifactTarget,
       jsonText: ["artifact_limits"],
       fields: artifactFields,
+      omit: { path: "The positional target is the selected file or directory" },
       evidenceDelivery: true,
     },
     run,

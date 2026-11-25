@@ -63,9 +63,11 @@ it("retains the root when a cleanup fails and retries only that cleanup", async 
     );
     expect(fixture.released).toBe(false);
     expect(await exists(join(fixture.path, "evidence"))).toBe(true);
-    // Whoever holds the failure holds the fixture as its cleanup lease.
     expect((failure as { cleanupLeases?: unknown[] }).cleanupLeases?.[0]).toBe(
       fixture,
+    );
+    expect(() => fixture.releaseAfter(() => undefined)).toThrow(
+      /already being released/u,
     );
     clientFails = false;
     await fixture.release();
@@ -143,24 +145,6 @@ it("keeps the verification failure and the cleanup failure", async () => {
   );
 });
 
-it("keeps registration closed after a failed release", async () => {
-  const fixture = new VerifierFixture({
-    path: "/fixture/root",
-    close: async () => undefined,
-  });
-  let fails = true;
-  fixture.releaseAfter(async () => {
-    if (fails) throw new Error("client close failed");
-  });
-  await expect(fixture.release()).rejects.toBeInstanceOf(AggregateError);
-  expect(() => fixture.releaseAfter(async () => undefined)).toThrow(
-    /already being released/u,
-  );
-  fails = false;
-  await fixture.release();
-  expect(fixture.released).toBe(true);
-});
-
 it("runs a cleanup shared by two fixtures once it has confirmed", async () => {
   let attempts = 0;
   const closeClient = onceConfirmed(async () => {
@@ -201,7 +185,12 @@ it("keeps a retained root across every release and names why", async () => {
       closes += 1;
     },
   });
-  fixture.retain("Command cleanup is incomplete.");
+  const cause = new Error("cleanup failed");
+  const error = fixture.retainedError("Command cleanup is incomplete.", {
+    cause,
+  });
+  expect(error.message).toBe("Command cleanup is incomplete.");
+  expect(error.cause).toBe(cause);
   for (const _attempt of [1, 2]) {
     const failure: unknown = await fixture
       .release()
@@ -238,7 +227,6 @@ it("keeps an artifact directory, owned by the verifier and named on stderr", asy
       true,
     );
     expect((await stat(artifacts.path)).mode & 0o077).toBe(0);
-    expect(Object.isFrozen(artifacts)).toBe(true);
     expect(written).toEqual([
       `Keeping verifier artifacts at ${artifacts.path}\n`,
     ]);

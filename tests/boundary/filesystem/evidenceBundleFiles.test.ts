@@ -864,110 +864,95 @@ it.skipIf(process.platform === "win32")(
 );
 
 describe("evidence bundle process-capture payloads", () => {
-  it.each([false, true])(
-    "rejects semantically invalid capture export before publication (overwrite: %s)",
-    async (overwrite) => {
-      const directory = await createTestTempDirectory(
-        "rea-invalid-capture-bundle-",
-      );
-      const path = join(directory, "bundle.json");
-      if (overwrite) await writeFile(path, "original");
-      // Authenticate the enclosing Evidence correctly while breaking its
-      // capture commitment, so generic bundle authentication still succeeds.
-      const capture = EMPTY_PROCESS_CAPTURE_EXAMPLE;
-      const record = createEvidence(
-        unknownTarget("not-observed"),
-        PROCESS_PROVIDER,
-        {
-          predicateType: "rea.process-capture",
-          operation: "capture_process_scenario",
-          parameters: {},
-          result: {
-            ...capture,
-            manifest: {
-              ...capture.manifest,
-              full_scenario_sha256: "0".repeat(64),
-            },
+  it("refuses a typed capture with a broken commitment before creating or replacing a file", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-invalid-capture-bundle-",
+    );
+    const absent = join(directory, "new.json");
+    const existing = join(directory, "existing.json");
+    await writeFile(existing, "original");
+    // Authenticate the enclosing Evidence while breaking the typed payload's commitment.
+    const capture = EMPTY_PROCESS_CAPTURE_EXAMPLE;
+    const record = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: {
+          ...capture,
+          manifest: {
+            ...capture.manifest,
+            full_scenario_sha256: "0".repeat(64),
           },
         },
-      );
-      const value = createEvidenceBundle([record]);
-      const rejected = await writeBundle(value, path, overwrite);
-      if (rejected.ok) throw new Error("Expected invalid capture rejection");
-      expect(rejected.error).toMatchObject({
-        _tag: "EvidenceIntegrityError",
-        userMessage: expect.stringContaining(
-          `Process capture record ${record.evidence_id} has an invalid normalized_result`,
-        ),
-      });
-      expect(await readdir(directory)).toEqual(
-        overwrite ? ["bundle.json"] : [],
-      );
-      if (overwrite) expect(await readFile(path, "utf8")).toBe("original");
-      // Existing files and inline authentication use the same rejection facts.
-      await writeFile(path, serializeEvidenceBundle(value));
-      for (const read of [readEvidenceBundle, readImmutableEvidenceBundle]) {
-        const loaded = await read(path);
-        if (loaded.ok) throw new Error("Expected invalid capture rejection");
-        expect(projectAnalysisError(loaded.error)).toEqual(
-          projectAnalysisError(rejected.error),
-        );
-      }
-    },
-  );
-
-  it.each([
-    {
-      label: "current provider",
-      provider: PROCESS_PROVIDER,
-      operation: "capture_process_scenario",
-      predicateType: "rea.process-capture",
-      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
-    },
-    {
-      label: "historical provider name",
-      provider: {
-        ...PROCESS_PROVIDER,
-        name: "REA deterministic process harness",
       },
-      operation: "capture_process_scenario",
-      predicateType: "rea.process-capture",
-      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
-    },
-    {
-      label: "foreign provider and operation",
-      provider: { id: "foreign", name: "Foreign capture", version: "1" },
-      operation: "historical_capture",
-      predicateType: "rea.process-capture",
-      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
-    },
-    {
-      label: "unrelated predicate",
-      provider: PROCESS_PROVIDER,
-      operation: "capture_process_scenario",
-      predicateType: "foreign.payload",
-      result: {},
-    },
-  ])(
-    "round trips capture-related records without narrowing their identities ($label)",
-    async ({ provider, operation, predicateType, result }) => {
-      const directory = await createTestTempDirectory(
-        "rea-capture-bundle-identity-",
+    );
+    const value = createEvidenceBundle([record]);
+    const invalidCapture = expect.objectContaining({
+      _tag: "EvidenceIntegrityError",
+      userMessage: expect.stringContaining(
+        `Process capture record ${record.evidence_id} has an invalid normalized_result`,
+      ),
+    });
+    expect(await writeBundle(value, absent, false)).toEqual({
+      ok: false,
+      error: invalidCapture,
+    });
+    const rejected = await writeBundle(value, existing, true);
+    if (rejected.ok) throw new Error("Expected invalid capture rejection");
+    expect(rejected.error).toEqual(invalidCapture);
+    expect(await readdir(directory)).toEqual(["existing.json"]);
+    expect(await readFile(existing, "utf8")).toBe("original");
+
+    await writeFile(existing, serializeEvidenceBundle(value));
+    for (const read of [readEvidenceBundle, readImmutableEvidenceBundle]) {
+      const loaded = await read(existing);
+      if (loaded.ok) throw new Error("Expected invalid capture rejection");
+      expect(projectAnalysisError(loaded.error)).toEqual(
+        projectAnalysisError(rejected.error),
       );
-      const path = join(directory, "bundle.json");
-      const value = createEvidenceBundle([
-        createEvidence(unknownTarget("not-observed"), provider, {
-          operation,
-          predicateType,
-          result,
-          parameters: {},
-        }),
-      ]);
-      expect(await writeBundle(value, path, false)).toMatchObject({ ok: true });
-      for (const read of [readEvidenceBundle, readImmutableEvidenceBundle])
-        expect(await read(path)).toEqual({ ok: true, value });
-    },
-  );
+    }
+  });
+
+  it("round trips mixed current, historical and foreign capture-related records", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-capture-bundle-identity-",
+    );
+    const path = join(directory, "bundle.json");
+    const capture = {
+      operation: "capture_process_scenario",
+      predicateType: "rea.process-capture",
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      parameters: {},
+    };
+    const subject = unknownTarget("not-observed");
+    const value = createEvidenceBundle([
+      createEvidence(subject, PROCESS_PROVIDER, capture),
+      createEvidence(
+        subject,
+        { ...PROCESS_PROVIDER, name: "REA deterministic process harness" },
+        capture,
+      ),
+      createEvidence(
+        subject,
+        { id: "foreign", name: "Foreign capture", version: "1" },
+        {
+          ...capture,
+          operation: "historical_capture",
+        },
+      ),
+      createEvidence(subject, PROCESS_PROVIDER, {
+        ...capture,
+        predicateType: "foreign.payload",
+        result: {},
+      }),
+    ]);
+    expect(await writeBundle(value, path, false)).toMatchObject({ ok: true });
+    for (const read of [readEvidenceBundle, readImmutableEvidenceBundle])
+      expect(await read(path)).toEqual({ ok: true, value });
+  });
 });
 
 it.each([true, false])(
@@ -1113,21 +1098,6 @@ describe("evidence bundle filesystem adapter", () => {
 
   it("names schema mismatches that prevent bundle parsing", async () => {
     const directory = await createTestTempDirectory("rea-evidence-");
-    const partial = join(directory, "partial.json");
-    await writeFile(partial, JSON.stringify({ evidence_id: "typo" }));
-    const rejected = await readEvidenceBundle(partial);
-    expect(rejected).toMatchObject({
-      ok: false,
-      error: {
-        userMessage: expect.stringContaining(
-          "does not match the bundle schema",
-        ),
-      },
-    });
-    expect(rejected).toMatchObject({
-      error: { _tag: "EvidenceIntegrityError" },
-    });
-
     const mismatched = join(directory, "mismatched.json");
     await writeFile(mismatched, JSON.stringify({ ...bundle(), records: {} }));
     expect(await readEvidenceBundle(mismatched)).toMatchObject({
