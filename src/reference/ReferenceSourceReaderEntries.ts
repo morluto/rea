@@ -11,7 +11,10 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  appendCleanupObservation,
+  type AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
 import { err, ok } from "../domain/result.js";
 
 import {
@@ -63,19 +66,6 @@ const recordDirectoryFailure = (
         localDiagnostic,
       ),
     );
-};
-
-/** Keep every unresolved owner when a later failure becomes primary. */
-const mergeCleanupObservation = (
-  first: AnalysisCleanupObservation | undefined,
-  second: AnalysisCleanupObservation | undefined,
-): AnalysisCleanupObservation | undefined => {
-  if (first === undefined) return second;
-  if (second === undefined) return first;
-  return {
-    reason: `${first.reason}; ${second.reason}`,
-    resources: [...new Set([...first.resources, ...second.resources])],
-  };
 };
 
 /**
@@ -281,10 +271,7 @@ export const traverseDirectory = async (
         cleanup.cause,
         current.path,
       );
-      const previous = mergeCleanupObservation(
-        result.ok ? undefined : result.error.cleanup,
-        retainedCleanup,
-      );
+      const previous = result.ok ? retainedCleanup : result.error.cleanup;
       const primary = result.ok
         ? readFailure !== undefined
           ? {
@@ -305,7 +292,7 @@ export const traverseDirectory = async (
         : result.error;
       return err({
         ...primary,
-        cleanup: mergeCleanupObservation(previous, observation) ?? observation,
+        cleanup: appendCleanupObservation(previous, observation),
         cause: Object.hasOwn(primary, "cause") ? primary.cause : cleanup.cause,
       });
     }

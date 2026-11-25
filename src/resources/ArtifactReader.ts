@@ -12,7 +12,6 @@ import type {
   ArtifactIntegrityDetails,
 } from "../domain/artifactIntegrity.js";
 import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import type { Readable } from "node:stream";
 import type {
@@ -22,9 +21,11 @@ import type {
   ArtifactTraversalOmissionKind,
 } from "../domain/artifactGraph.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
-import type {
-  AnalysisCleanupObservation,
-  AnalysisPartialObservation,
+import {
+  AnalysisError,
+  appendCleanupObservation,
+  type AnalysisCleanupObservation,
+  type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
@@ -459,6 +460,8 @@ export class ArtifactReaderFailure extends Error {
                 }
               : {}),
           });
+    const previousCleanup = primary.cleanup;
+    const sameCleanup = previousCleanup === cleanup;
     const mergedObservation = partialObservation ?? primary.partialObservation;
     return new ArtifactReaderFailure(
       primary.reason,
@@ -469,10 +472,11 @@ export class ArtifactReaderFailure extends Error {
         // refusal would be reported as a memory constraint once a close fails.
         ...primary.primaryFacts(),
         cancellation: primary.cancellation,
-        cleanup: combineCleanup(primary.cleanup, cleanup),
+        cleanup: sameCleanup
+          ? cleanup
+          : appendCleanupObservation(previousCleanup, cleanup),
         cleanupLeases:
-          cleanupLeases ??
-          (cleanup === primary.cleanup ? primary.cleanupLeases : undefined),
+          cleanupLeases ?? (sameCleanup ? primary.cleanupLeases : undefined),
         ...(mergedObservation === undefined
           ? {}
           : { partialObservation: mergedObservation }),
@@ -621,17 +625,6 @@ export const truncatedArtifact = (
     },
     options,
   );
-
-const combineCleanup = (
-  primary: AnalysisCleanupObservation | undefined,
-  cleanup: AnalysisCleanupObservation,
-): AnalysisCleanupObservation =>
-  primary === undefined || primary === cleanup
-    ? cleanup
-    : {
-        reason: `${primary.reason}; ${cleanup.reason}`,
-        resources: [...new Set([...primary.resources, ...cleanup.resources])],
-      };
 
 /** Read explicit source authority; unrelated domain cleanup remains unresolved. */
 export const artifactPrimaryCleanupLeases = (
