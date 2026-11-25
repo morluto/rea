@@ -8,7 +8,6 @@ import {
   readFile,
   readdir,
   rename,
-  rm,
   stat,
   symlink,
   writeFile,
