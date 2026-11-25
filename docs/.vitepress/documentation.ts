@@ -609,6 +609,11 @@ export const documentationSections = [
         route: "/ghidra-nativeaot",
       },
       {
+        text: "LoongArch ELF analysis through Ghidra",
+        source: "providers/ghidra-loongarch.md",
+        route: "/ghidra-loongarch",
+      },
+      {
         text: "MIPS ELF analysis through Ghidra",
         source: "providers/ghidra-mips.md",
         route: "/ghidra-mips",

@@ -58,7 +58,7 @@ whether an image may be imported.
 A caller-selected `REA_GHIDRA_LANGUAGE_ID`/`REA_GHIDRA_COMPILER_SPEC_ID` that
 differs from the pinned LP64D language is a configuration error naming the
 conflicting settings; the requested override is not applied. An identical
-override is recorded as `language_selection: "configured-v1"`. The pin is an
+override is recorded as `language_selection: "configured"`. The pin is an
 analysis convention, not evidence of the producing compiler or of verified
 instruction semantics.
 
@@ -89,7 +89,7 @@ no independent load-image verification).
 
 ## Use
 
-With a caller-installed Ghidra and compatible JDK on a supported Ghidra host:
+With a caller-installed Ghidra and compatible JDK on a Linux/macOS Ghidra host:
 
 ```bash
 rea analyze /absolute/path/to/gsgpu_dri.so --provider ghidra --json

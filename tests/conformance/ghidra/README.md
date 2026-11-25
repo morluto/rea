@@ -48,7 +48,7 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   resolver, the effective Ghidra language, applied relocations, fixed probe
   bytes and listing text, relocated global bytes, folded pseudocode, CLI/MCP
   and snapshot identity, and owned cleanup. It requires BYO Ghidra 12.2/JDK
-  21+, a LoongArch GNU cross toolchain and GNU readelf; `REA_LOONGARCH_GCC` and
+  25+, a LoongArch GNU cross toolchain and GNU readelf; `REA_LOONGARCH_GCC` and
   `REA_LOONGARCH_READELF` select existing commands.
 - `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
   language's default context and checks each mnemonic, length and optional

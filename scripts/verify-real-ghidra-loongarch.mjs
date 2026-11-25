@@ -5,7 +5,6 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
@@ -24,6 +23,10 @@ import {
   requireLoongArchRelocation,
 } from "../tests/conformance/ghidra/loongarch-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  createVerifierMcpOwner,
+  VerifierStdioTransport,
+} from "./lib/verifier-mcp-owner.mjs";
 import {
   assertVerifierCleanupComplete,
   createVerifierRun,
@@ -130,7 +133,9 @@ try {
   assert.equal(oldWorld.loongarch.objectAbiVersion, 0);
   assert.equal(shared.loongarch.objectAbiVersion, 1);
 
-  const transport = new StdioClientTransport({
+  const owner = createVerifierMcpOwner();
+  commands.adopt(owner, "LoongArch MCP connection");
+  const transport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env,
@@ -148,7 +153,7 @@ try {
     return requireMcpOperationResult(reply, name);
   };
   try {
-    await client.connect(transport);
+    await owner.open(client, transport);
     const target = await call("open_binary", {
       path: fixture.shared.path,
       provider_id: "ghidra",
@@ -392,12 +397,6 @@ try {
     throw new Error(`LoongArch verification failed; MCP stderr: ${stderr}`, {
       cause,
     });
-  } finally {
-    try {
-      await client.close();
-    } finally {
-      await transport.close();
-    }
   }
 } catch (cause) {
   primaryFailure = cause;
