@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -129,16 +130,6 @@ interface MainHandlerIndex {
   readonly wildcardDynamic: readonly ElectronIpcRecord[];
 }
 
-const pushRecordBucket = (
-  map: Map<string, ElectronIpcRecord[]>,
-  key: string,
-  record: ElectronIpcRecord,
-): void => {
-  const bucket = map.get(key);
-  if (bucket === undefined) map.set(key, [record]);
-  else bucket.push(record);
-};
-
 /**
  * Index main handlers by literal channel, guarded literal invocation channels,
  * or wildcard dynamic receivers. An unresolved channel may receive any literal
@@ -156,7 +147,7 @@ const indexMainHandlers = (
     if (!isMainHandler(record)) continue;
     const { finding } = record;
     if (finding.channel !== null) {
-      pushRecordBucket(exactByChannel, finding.channel, record);
+      appendToMapList(exactByChannel, finding.channel, record);
       continue;
     }
     if (
@@ -164,7 +155,7 @@ const indexMainHandlers = (
       finding.invocation_channels === "literal"
     ) {
       for (const channel of new Set(finding.guarded_invocation_channels ?? []))
-        pushRecordBucket(guardedByChannel, channel, record);
+        appendToMapList(guardedByChannel, channel, record);
       continue;
     }
     wildcardDynamic.push(record);

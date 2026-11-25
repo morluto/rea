@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -626,22 +627,17 @@ const indexRelationships = (
   graph: JavaScriptApplicationGraph,
 ): RelationshipIndex => {
   const adjacency = new Map<string, IndexedRelationship[]>();
-  const add = (nodeId: string, relationship: IndexedRelationship): void => {
-    const existing = adjacency.get(nodeId);
-    if (existing === undefined) adjacency.set(nodeId, [relationship]);
-    else existing.push(relationship);
-  };
   for (const edge of graph.edges) {
     const coverageLimited =
       edge.properties.pairing_basis === IPC_COVERAGE_LIMITED_PAIRING_BASIS;
-    add(edge.source_node_id, {
+    appendToMapList(adjacency, edge.source_node_id, {
       direction: "out",
       relation: edge.relation,
       neighborId: edge.target_node_id,
       coverageLimited,
     });
     if (edge.target_node_id !== edge.source_node_id)
-      add(edge.target_node_id, {
+      appendToMapList(adjacency, edge.target_node_id, {
         direction: "in",
         relation: edge.relation,
         neighborId: edge.source_node_id,
@@ -793,9 +789,7 @@ const indexNativeEvidence = (
     const id = record.evidence_id;
     const digest = evidenceFileTarget(record)?.sha256;
     if (digest === undefined) continue;
-    const ids = evidenceByDigest.get(digest);
-    if (ids === undefined) evidenceByDigest.set(digest, [id]);
-    else ids.push(id);
+    appendToMapList(evidenceByDigest, digest, id);
   }
   return evidenceByDigest;
 };
