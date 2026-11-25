@@ -33,7 +33,6 @@ import {
   type NativeInitializers,
   type NativeInitializerSlice,
 } from "../../domain/native/nativeInitializers.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -44,7 +43,6 @@ import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
 
@@ -232,14 +230,6 @@ const nativeInitializersFailure = (
           );
         return undefined;
       },
-      unclassified: (failure) =>
-        new ProviderAdapterError(NATIVE_INITIALIZERS_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   return projectStableArtifactFailure(

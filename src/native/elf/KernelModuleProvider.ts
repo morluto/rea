@@ -66,11 +66,7 @@ export class KernelModuleProvider implements KernelModulePort {
           },
           (handle) =>
             parseKernelModuleFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,

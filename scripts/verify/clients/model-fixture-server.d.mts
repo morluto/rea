@@ -6,6 +6,11 @@ export interface ModelFixtureServer {
   close(): Promise<void>;
 }
 
+export function readModelFixtureBody(
+  request: IncomingMessage,
+  budgetMessage?: string,
+): Promise<unknown>;
+
 /** Own the HTTP transport and every admitted protocol handler through finalization. */
 export function createModelFixtureServer(
   handleRequest: (

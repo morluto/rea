@@ -167,12 +167,11 @@ export const stableArtifactInputFailure = (
   );
 
 const artifactCleanupFailure = (
-  cause: unknown,
+  cause: ArtifactReaderFailure,
   providerId: string,
   operation: string,
 ): ProviderCleanupError | undefined => {
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return undefined;
+  if (cause.cleanup === undefined) return undefined;
   return new ProviderCleanupError(
     providerId,
     cause.cleanup.resources,
@@ -187,6 +186,7 @@ export const projectArtifactCloseFailure = (
   providerId: string,
   operation: string,
 ): unknown => {
+  if (!(cause instanceof ArtifactReaderFailure)) return cause;
   const error = artifactCleanupFailure(cause, providerId, operation);
   if (error === undefined) return cause;
   bindArtifactFileCleanup(cause, error);
@@ -206,6 +206,20 @@ export const closeArtifactResources = async (
   }
 };
 
+/** Keep the primary failure and bind any descriptor cleanup to its returned error. */
+export const withArtifactCleanupFailure = (
+  cause: ArtifactReaderFailure,
+  primary: AnalysisError,
+  providerId: string,
+  operation: string,
+): AnalysisError => {
+  const cleanup = artifactCleanupFailure(cause, providerId, operation);
+  if (cleanup === undefined) return primary;
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
 /** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */
 export const projectStableArtifactFailure = (
   cause: unknown,
@@ -217,9 +231,6 @@ export const projectStableArtifactFailure = (
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);
-  const cleanup = artifactCleanupFailure(cause, providerId, operation);
-  if (cleanup === undefined) return primary;
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
-  bindArtifactFileCleanup(cause, error);
-  return error;
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
+  return withArtifactCleanupFailure(cause, primary, providerId, operation);
 };

@@ -33,7 +33,7 @@ import {
 } from "./pyinstaller/CArchive.fixture.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
-import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
+import { binaryPlistFromObjects } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
@@ -2494,24 +2494,12 @@ const bundled = async (
 };
 
 /** One dictionary whose value objects are the given encoded objects. */
-const binaryPlist = (key: string, value: Buffer): Buffer => {
-  const objects = [
+const binaryPlist = (key: string, value: Buffer): Buffer =>
+  binaryPlistFromObjects([
     Buffer.from([0xd1, 1, 2]),
     Buffer.concat([Buffer.from([0x50 | key.length]), Buffer.from(key)]),
     value,
-  ];
-  const table =
-    8 + objects.reduce((length, object) => length + object.length, 0);
-  const bytes = Buffer.alloc(table + objects.length + 32);
-  let cursor = 8;
-  const offsets = objects.map((object) => {
-    const offset = cursor;
-    object.copy(bytes, cursor);
-    cursor += object.length;
-    return offset;
-  });
-  return binaryPlistObjectTable(bytes, offsets, table);
-};
+  ]);
 /** Length-prefixed object body; every test value here exceeds the short form. */
 const plistObject = (type: number, length: number, body: Buffer): Buffer =>
   Buffer.concat([Buffer.from([(type << 4) | 0x0f, 0x10, length]), body]);

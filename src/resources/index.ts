@@ -99,6 +99,7 @@ export {
   imageFileSizeRemediation,
   closeArtifactResources,
   projectArtifactCloseFailure,
+  withArtifactCleanupFailure,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,

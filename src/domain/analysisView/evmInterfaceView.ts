@@ -1,11 +1,11 @@
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { evmInterfaceSchema } from "../evm/evmInterface.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -73,15 +73,8 @@ export const projectEvmInterfaceView = (
     subject.format !== "file" ||
     subject.sha256 !== report.artifact.sha256
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "EVM parent subject must identify the report's carrier format and SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "EVM parent subject must identify the report's carrier format and SHA-256.",
     );
   const shared = {
     parent_evidence_id: parent.evidenceId,
