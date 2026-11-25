@@ -161,6 +161,8 @@ const PATH_SCOPES = {
     "bridge/native/**",
     "bridge/process/**",
     "scripts/verify/apple/**",
+    "scripts/ci/darwin-gated-tests.mjs",
+    "tests/boundary/filesystem/ciDarwinGatedTests.test.ts",
     "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
     "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
     "tests/process-global/dmgCancellationReason.test.ts",

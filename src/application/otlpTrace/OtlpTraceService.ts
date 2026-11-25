@@ -11,6 +11,7 @@ import {
   ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
+  artifactReaderTargetFailure,
   projectStableArtifactFailure,
   readStableArtifact,
   stableArtifactInputRecovery,
@@ -203,8 +204,13 @@ const readFailure = (
           }),
         },
       );
-    if (cause.reason === "path" || cause.reason === "format")
-      return inputFailure(cause.message, cause);
+    if (cause.reason === "path") return inputFailure(cause.message, cause);
+    const targetFailure = artifactReaderTargetFailure(
+      operation,
+      input.path,
+      cause,
+    );
+    if (targetFailure !== undefined) return targetFailure;
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

@@ -116,7 +116,7 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
 
   const inspected = await client.callTool({
     name: "inspect_pcap_capture",
-    arguments: { path: "/captures/session.pcap" },
+    arguments: { detail: "complete", path: "/captures/session.pcap" },
   });
   expect(inspected.isError).not.toBe(true);
   const text = (inspected.content as { readonly text?: string }[])

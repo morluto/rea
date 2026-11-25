@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { StateRecordChronology } from "./StateRecordChronology.js";
 import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -859,9 +860,7 @@ export class EnvironmentStateExtraction {
       for (const entity of this.#merged.values()) {
         if (markedDeleted(entity.fields)) continue;
         const key = environmentCollectionKey(entity.type, entity.collection);
-        const members = this.#collections.get(key);
-        if (members === undefined) this.#collections.set(key, [entity]);
-        else members.push(entity);
+        appendToMapList(this.#collections, key, entity);
       }
     }
     return (

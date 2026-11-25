@@ -32,6 +32,7 @@ import { cycloneDxViewRequestSchema } from "./cyclonedxView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
 import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
+import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 
 import {
   evidenceFileReferenceSchema,
@@ -90,6 +91,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
   recordedArrayViewSchema,
+  evidenceJsonViewRequestSchema,
   devicetreeViewRequestSchema,
   uefiFirmwareViewRequestSchema,
   uefiExtractionViewRequestSchema,

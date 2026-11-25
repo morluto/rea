@@ -30,16 +30,13 @@ function write(base, reason) {
   console.log(JSON.stringify(output));
 }
 
-if (
-  !repository ||
-  !branch ||
-  !head ||
-  !shaPattern.test(head) ||
-  !["push", "schedule"].includes(baselineEvent)
-) {
-  write("", "Repository, default branch, or checked-out head is invalid");
-} else {
-  try {
+function findBaseline() {
+  const deadline = Date.now() + 15_000;
+  // Most baselines are recent. Widen once to the original 100-run window
+  // when the short list contains only ineligible runs.
+  for (const pageSize of [5, 100]) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Baseline lookup budget exhausted");
     const response = execFileSync(
       "gh",
       [
@@ -54,9 +51,9 @@ if (
         "-f",
         "status=success",
         "-F",
-        "per_page=100",
+        `per_page=${pageSize}`,
       ],
-      { encoding: "utf8", timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
+      { encoding: "utf8", timeout: remaining, maxBuffer: 4 * 1024 * 1024 },
     );
     const runs = JSON.parse(response).workflow_runs;
     if (!Array.isArray(runs))
@@ -75,6 +72,21 @@ if (
         run.head_sha.toLowerCase() !== head.toLowerCase() &&
         ancestor(run.head_sha),
     )?.head_sha;
+    if (base || runs.length < pageSize) return base;
+  }
+}
+
+if (
+  !repository ||
+  !branch ||
+  !head ||
+  !shaPattern.test(head) ||
+  !["push", "schedule"].includes(baselineEvent)
+) {
+  write("", "Repository, default branch, or checked-out head is invalid");
+} else {
+  try {
+    const base = findBaseline();
     if (base) write(base, "");
     else
       write(
@@ -82,6 +94,9 @@ if (
         `No trusted successful CI ${baselineEvent} baseline is an ancestor of this head`,
       );
   } catch {
-    write("", "Could not read a successful CI push baseline from GitHub");
+    write(
+      "",
+      `Could not read a successful CI ${baselineEvent} baseline from GitHub`,
+    );
   }
 }

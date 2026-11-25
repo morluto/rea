@@ -23,6 +23,7 @@ import {
   requireMcpToolError,
   mcpTextValue,
 } from "./mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Exercise file coordinates through public CLI/MCP using the source-owned PE fixture. */
 export async function verifyGhidraFileOffsets(
@@ -47,7 +48,9 @@ export async function verifyGhidraFileOffsets(
     TMP: runtime,
     TMPDIR: runtime,
   };
-  const client = new Client({ name: "rea-file-offsets", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-file-offsets", version: "1" }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -76,15 +79,19 @@ export async function verifyGhidraFileOffsets(
     const offset = mapping.normalized_result.file_offset;
     const coordinate = `0x${offset.toString(16)}`;
     const expected = parseEvidence(
-      await call("procedure_pseudo_code", { procedure }),
+      await call("procedure_pseudo_code", { detail: "complete", procedure }),
     );
     const explicit = parseEvidence(
       await call("procedure_pseudo_code", {
+        detail: "complete",
         procedure: `file-offset:${coordinate}`,
       }),
     );
     const automatic = parseEvidence(
-      await call("procedure_pseudo_code", { procedure: coordinate }),
+      await call("procedure_pseudo_code", {
+        detail: "complete",
+        procedure: coordinate,
+      }),
     );
     for (const actual of [explicit, automatic]) {
       assert.equal(actual.normalized_result, expected.normalized_result);
@@ -99,12 +106,15 @@ export async function verifyGhidraFileOffsets(
     }
     const invalid = await mcp.callTool({
       name: "procedure_pseudo_code",
-      arguments: { procedure: "file-offset:0x20000000000000" },
+      arguments: {
+        detail: "complete",
+        procedure: "file-offset:0x20000000000000",
+      },
     });
     assert.equal(requireMcpToolError(invalid).code, "invalid_request");
     const unmapped = await mcp.callTool({
       name: "procedure_pseudo_code",
-      arguments: { procedure: "file-offset:0x100000" },
+      arguments: { detail: "complete", procedure: "file-offset:0x100000" },
     });
     assert.ok(
       JSON.stringify(requireMcpToolError(unmapped)).includes(
@@ -131,7 +141,7 @@ export async function verifyGhidraFileOffsets(
       const missing = requireMcpToolError(
         await mcp.callTool({
           name: "procedure_pseudo_code",
-          arguments: { procedure: selector },
+          arguments: { detail: "complete", procedure: selector },
         }),
       );
       assertMissingMappedProcedure(missing, headerMapping.start);
@@ -148,6 +158,8 @@ export async function verifyGhidraFileOffsets(
           [
             entrypoint,
             "decompile",
+            "--detail",
+            "complete",
             targetPath,
             `--file-offset=${coordinate}`,
             "--provider",
@@ -165,6 +177,8 @@ export async function verifyGhidraFileOffsets(
       [
         entrypoint,
         "decompile",
+        "--detail",
+        "complete",
         targetPath,
         "--file-offset=0x0",
         "--provider",
@@ -192,7 +206,10 @@ export async function verifyGhidraFileOffsets(
       await call("open_binary", { path: ambiguousPath, provider_id: "ghidra" });
       const ambiguous = await mcp.callTool({
         name: "procedure_pseudo_code",
-        arguments: { procedure: `file-offset:${coordinate}` },
+        arguments: {
+          detail: "complete",
+          procedure: `file-offset:${coordinate}`,
+        },
       });
       assert.ok(
         JSON.stringify(requireMcpToolError(ambiguous)).includes(

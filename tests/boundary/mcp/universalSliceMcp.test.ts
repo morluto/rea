@@ -1,5 +1,5 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -54,9 +54,6 @@ const sliceTest = mcpTest.extend<{
     }
   },
 });
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const goSlices = () => {
   const intel = createGoBinaryFixture({
@@ -113,7 +110,7 @@ sliceTest(
 
     const response = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path, architecture: "arm64" },
+      arguments: { detail: "complete", path, architecture: "arm64" },
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     expect(
@@ -228,7 +225,7 @@ sliceTest(
       issues(
         await client.callTool({
           name: "inspect_go_binary",
-          arguments: { path: thin, architecture: "arm64" },
+          arguments: { detail: "complete", path: thin, architecture: "arm64" },
         }),
       ),
     ).toMatchObject({
@@ -270,7 +267,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path: damaged,
-          format_failure: "malformed",
+          failure_kind: "truncated",
           format: "macho",
           reason: "FAT architecture 0 slice range extends beyond the file",
         },
@@ -290,7 +287,7 @@ sliceTest(
       code: "unsupported_target",
       details: {
         path: cutOff,
-        format_failure: "truncated",
+        failure_kind: "truncated",
         format: "macho",
         available_bytes: 20,
         required_bytes: 28,
@@ -313,14 +310,18 @@ sliceTest(
       containerRefusal(
         await client.callTool({
           name: "inspect_go_binary",
-          arguments: { path: disagreeing, architecture: "arm64" },
+          arguments: {
+            detail: "complete",
+            path: disagreeing,
+            architecture: "arm64",
+          },
         }),
       ),
     ).toMatchObject({
       code: "unsupported_target",
       details: {
         path: disagreeing,
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "macho",
         reason:
           "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
@@ -359,7 +360,7 @@ sliceTest(
     const read = async (architecture: string) => {
       const response = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { path, architecture },
+        arguments: { detail: "complete", path, architecture },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       return goBinarySchema.parse(
@@ -404,6 +405,7 @@ sliceTest(
         await client.callTool({
           name: "inspect_go_binary",
           arguments: {
+            detail: "complete",
             path: await write(name, universalMacho(subtypes.map(slice)).bytes),
             architecture,
           },
@@ -444,14 +446,14 @@ sliceTest(
         containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
-            arguments: { path, architecture },
+            arguments: { detail: "complete", path, architecture },
           }),
         ),
       ).toMatchObject({
         code: "unsupported_target",
         details: {
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "macho",
           reason: "Mach-O slices 0 and 1 overlap.",
         },
@@ -471,11 +473,11 @@ sliceTest(
     const path = await write("universal-rust", universal.bytes);
     const thinResponse = await client.callTool({
       name: "inspect_rust_binary",
-      arguments: { path: thinPath },
+      arguments: { detail: "complete", path: thinPath },
     });
     const response = await client.callTool({
       name: "inspect_rust_binary",
-      arguments: { path, architecture: "arm64" },
+      arguments: { detail: "complete", path, architecture: "arm64" },
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const contract = toolContract("inspect_rust_binary");
@@ -506,7 +508,7 @@ sliceTest(
       issues(
         await client.callTool({
           name: "inspect_rust_binary",
-          arguments: { path },
+          arguments: { detail: "complete", path },
         }),
       ).details.issues[0]?.path,
     ).toEqual(["architecture"]);

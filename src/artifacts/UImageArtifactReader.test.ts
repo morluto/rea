@@ -1,6 +1,4 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 
 import { expect, it } from "vitest";
 
@@ -13,21 +11,11 @@ import {
   UIMAGE_MAGIC,
 } from "../domain/uimageFormat.js";
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-uimage-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-uimage-", name, bytes);
 
 it("parses header facts with raw and named fields", () => {
   const bytes = buildUImage({
@@ -201,9 +189,9 @@ it("inventories a kernel image with its stored payload", async () => {
     const entries = [];
     for await (const item of reader.entries()) entries.push(item);
     expect(entries).toHaveLength(1);
-    expect(
-      (await collect(await reader.open(entries[0]!))).equals(payload),
-    ).toBe(true);
+    expect((await buffer(await reader.open(entries[0]!))).equals(payload)).toBe(
+      true,
+    );
   } finally {
     await reader.close();
   }
@@ -239,17 +227,17 @@ it("splits multi images and keeps compressed payloads as stored", async () => {
     ]);
     const byPath = new Map(entries.map((item) => [item.path, item]));
     expect(
-      (await collect(await reader.open(byPath.get("image-0.bin")!))).equals(
+      (await buffer(await reader.open(byPath.get("image-0.bin")!))).equals(
         partA,
       ),
     ).toBe(true);
     expect(
-      (await collect(await reader.open(byPath.get("image-1.bin")!))).equals(
+      (await buffer(await reader.open(byPath.get("image-1.bin")!))).equals(
         partB,
       ),
     ).toBe(true);
     expect(
-      (await collect(await reader.open(byPath.get("payload.bin")!))).equals(
+      (await buffer(await reader.open(byPath.get("payload.bin")!))).equals(
         buildMultiPayload([partA, partB]),
       ),
     ).toBe(true);
@@ -272,7 +260,7 @@ it("splits multi images and keeps compressed payloads as stored", async () => {
     const entries = [];
     for await (const item of gzipReader.entries()) entries.push(item);
     expect(
-      (await collect(await gzipReader.open(entries[0]!))).equals(gzipPayload),
+      (await buffer(await gzipReader.open(entries[0]!))).equals(gzipPayload),
     ).toBe(true);
   } finally {
     await gzipReader.close();
@@ -302,12 +290,12 @@ it("splits a script image's size table like a multi image", async () => {
     const byPath = new Map(entries.map((item) => [item.path, item]));
     expect([...byPath.keys()].sort()).toEqual(["image-0.bin", "payload.bin"]);
     expect(
-      (await collect(await reader.open(byPath.get("image-0.bin")!))).equals(
+      (await buffer(await reader.open(byPath.get("image-0.bin")!))).equals(
         script,
       ),
     ).toBe(true);
     expect(
-      (await collect(await reader.open(byPath.get("payload.bin")!))).equals(
+      (await buffer(await reader.open(byPath.get("payload.bin")!))).equals(
         payload,
       ),
     ).toBe(true);

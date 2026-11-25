@@ -23,6 +23,7 @@ import {
 import { createServer } from "../../../src/server/createServer.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -30,11 +31,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
   "preserves direct observation identity across the %s session boundary",
   async (mode) => {
-    const provider = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const provider = createFixtureProviderIdentity();
     const path = join(
       await createTestTempDirectory("rea-session-reuse-"),
       "fixture.com",
@@ -175,11 +172,7 @@ it("preserves the selected path when reusing an identical observation for a diff
   const bytes = Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]);
   await writeFile(first, bytes);
   await writeFile(second, bytes);
-  const provider = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
+  const provider = createFixtureProviderIdentity();
   const router = createTestProviderRouter(
     () => ({
       execute: async () => ok(createAnalysisExecution(["0x200"], provider)),
@@ -206,9 +199,15 @@ it("preserves the selected path when reusing an identical observation for a diff
       return r.structuredContent;
     };
     await call("open_binary", { path: first, format: "dos-com" });
-    const before = await call("procedure_callees", { procedure: "0x100" });
+    const before = await call("procedure_callees", {
+      detail: "complete",
+      procedure: "0x100",
+    });
     await call("open_binary", { path: second, format: "dos-com" });
-    const after = await call("procedure_callees", { procedure: "0x100" });
+    const after = await call("procedure_callees", {
+      detail: "complete",
+      procedure: "0x100",
+    });
     expect(before).toMatchObject({
       subject: { name: "first.com", local_path: first },
     });
@@ -225,7 +224,10 @@ it("preserves the selected path when reusing an identical observation for a diff
         ]),
       ).ok,
     ).toBe(true);
-    const sameTarget = await call("procedure_callees", { procedure: "0x100" });
+    const sameTarget = await call("procedure_callees", {
+      detail: "complete",
+      procedure: "0x100",
+    });
     expect(sameTarget).not.toHaveProperty("caller_input_path");
   } finally {
     await client.close();

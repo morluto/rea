@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import {
   RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
   releaseExposureFailure,
@@ -30,7 +31,7 @@ import {
   readStableArtifact,
   withStableArtifactHandle,
   type StableArtifactHandle,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
   createAsarHeaderSignatureProbe,
@@ -240,16 +241,12 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     private readonly asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
   ) {}
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        RELEASE_EXPOSURE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      RELEASE_EXPOSURE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -2949,9 +2946,7 @@ const listContainer = async (
     }
     listed.push(entry);
     const key = logicalPathNfc(entry.path).replace(/\/+$/u, "");
-    const sameName = byPath.get(key);
-    if (sameName === undefined) byPath.set(key, [entry]);
-    else sameName.push(entry);
+    appendToMapList(byPath, key, entry);
   }
   const coverage = traversal.snapshot();
   if (coverage.status === "unknown") state.coverageUnknown = true;

@@ -38,17 +38,9 @@ const limitation = (
 ): Limitation =>
   side === undefined ? { code, message } : { code, side, message };
 
-type OneSided<Item> =
-  | { readonly left: Item; readonly right?: never }
-  | { readonly left?: never; readonly right: Item };
-
 interface ComparisonItemContext {
   readonly leftEvidenceId: string;
   readonly rightEvidenceId: string;
-  readonly leftComplete: boolean;
-  readonly rightComplete: boolean;
-  readonly leftMethodsComplete: boolean;
-  readonly rightMethodsComplete: boolean;
   readonly scope: ManagedComparisonScope;
   readonly sameArtifact: boolean;
   readonly leftAssembly: ManagedMemberInspection["assembly"];
@@ -58,13 +50,6 @@ interface ComparisonItemContext {
   readonly leftFieldAccessesByCaller: FieldAccessesByCaller;
   readonly rightFieldAccessesByCaller: FieldAccessesByCaller;
 }
-
-/** Whether an inventory observed every member of this member's declaring type. */
-const inventoryCovers = (
-  complete: boolean,
-  observes: (member: Method | Field) => boolean,
-  member: Method | Field,
-): boolean => complete && observes(member);
 
 /**
  * Declared type and name of each unpaired member, per side, whose signature
@@ -420,57 +405,49 @@ const unmatchedComparison = (): UnmatchedComparison => ({
   candidate_right_tokens: [],
 });
 
-const methodOnlyItem = (
-  member: OneSided<Method>,
-  identity: string,
-  identityUnavailable: boolean,
+const oneSidedItem = <
+  Member extends Method | Field,
+  Identity,
+  Columns extends object,
+>(
+  { item, identity, identityUnavailable }: Unpaired<Member>,
+  side: "left" | "right",
+  inventory: "method" | "field",
+  identify: (member: Member) => Identity,
+  columns: Columns,
   context: ComparisonItemContext,
   undecoded: UndecodedOneSidedNames,
-): MethodItem => {
-  if (member.left !== undefined) {
-    const limitations = absenceLimitations(member.left, identity, {
-      oppositeComplete: inventoryCovers(
-        context.rightMethodsComplete,
-        context.scope.inRight,
-        member.left,
-      ),
-      unpaired: undecoded,
-      ownIdentityUnavailable: identityUnavailable,
-      ownNameUnavailable: context.scope.left.emptyMemberNames.has(member.left),
-      opposite: "right",
-      inventory: "method",
-    });
-    return {
-      item_id: `mmc_method_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
-      status: limitations.length === 0 ? "removed" : "unknown",
-      left: methodIdentity(member.left),
-      right: null,
-      match: unmatchedComparison(),
-      dimensions: ["availability"],
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations,
-    };
-  }
-
-  const limitations = absenceLimitations(member.right, identity, {
-    oppositeComplete: inventoryCovers(
-      context.leftMethodsComplete,
-      context.scope.inLeft,
-      member.right,
-    ),
+) => {
+  const opposite = side === "left" ? "right" : "left";
+  const observes =
+    opposite === "left" ? context.scope.inLeft : context.scope.inRight;
+  const limitations = absenceLimitations(item, identity, {
+    oppositeComplete:
+      context.scope[opposite].inventoryComplete[inventory] && observes(item),
     unpaired: undecoded,
     ownIdentityUnavailable: identityUnavailable,
-    ownNameUnavailable: context.scope.right.emptyMemberNames.has(member.right),
-    opposite: "left",
-    inventory: "method",
+    ownNameUnavailable: context.scope[side].emptyMemberNames.has(item),
+    opposite,
+    inventory,
   });
+  const itemId = `mmc_${inventory}_${digestCanonicalValue({ token: item.token, side }, "Managed comparison")}`;
+  const sides =
+    side === "left"
+      ? ({
+          status: limitations.length === 0 ? "removed" : "unknown",
+          left: identify(item),
+          right: null,
+        } as const)
+      : ({
+          status: limitations.length === 0 ? "added" : "unknown",
+          left: null,
+          right: identify(item),
+        } as const);
   return {
-    item_id: `mmc_method_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
-    status: limitations.length === 0 ? "added" : "unknown",
-    left: null,
-    right: methodIdentity(member.right),
+    item_id: itemId,
+    ...sides,
     match: unmatchedComparison(),
-    dimensions: ["availability"],
+    ...columns,
     evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
     limitations,
   };
@@ -605,8 +582,8 @@ const pairedSignatureLimitations = (
  * Declared names of unpaired members whose signature was not decoded: one-sided
  * members and candidates of ambiguous groups, which also remain unpaired.
  */
-interface Unpaired {
-  readonly item: Method | Field;
+interface Unpaired<Member extends Method | Field = Method | Field> {
+  readonly item: Member;
   readonly identity: string;
   readonly identityUnavailable: boolean;
 }
@@ -657,60 +634,6 @@ const undecodedOneSidedNames = (members: {
       left: names(sides.left, unresolved),
       right: names(sides.right, unresolved),
     },
-  };
-};
-
-const fieldOnlyItem = (
-  member: OneSided<Field>,
-  identity: string,
-  identityUnavailable: boolean,
-  context: ComparisonItemContext,
-  undecoded: UndecodedOneSidedNames,
-): FieldItem => {
-  if (member.left !== undefined) {
-    const limitations = absenceLimitations(member.left, identity, {
-      oppositeComplete: inventoryCovers(
-        context.rightComplete,
-        context.scope.inRight,
-        member.left,
-      ),
-      unpaired: undecoded,
-      ownIdentityUnavailable: identityUnavailable,
-      ownNameUnavailable: context.scope.left.emptyMemberNames.has(member.left),
-      opposite: "right",
-      inventory: "field",
-    });
-    return {
-      item_id: `mmc_field_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
-      status: limitations.length === 0 ? "removed" : "unknown",
-      left: fieldIdentity(member.left),
-      right: null,
-      match: unmatchedComparison(),
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations,
-    };
-  }
-
-  const limitations = absenceLimitations(member.right, identity, {
-    oppositeComplete: inventoryCovers(
-      context.leftComplete,
-      context.scope.inLeft,
-      member.right,
-    ),
-    unpaired: undecoded,
-    ownIdentityUnavailable: identityUnavailable,
-    ownNameUnavailable: context.scope.right.emptyMemberNames.has(member.right),
-    opposite: "left",
-    inventory: "field",
-  });
-  return {
-    item_id: `mmc_field_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
-    status: limitations.length === 0 ? "added" : "unknown",
-    left: null,
-    right: fieldIdentity(member.right),
-    match: unmatchedComparison(),
-    evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-    limitations,
   };
 };
 
@@ -933,26 +856,21 @@ export const buildMethodItems = (
     });
   }
   const undecoded = undecodedOneSidedNames(matches);
-  for (const item of matches.leftOnly)
-    items.push(
-      methodOnlyItem(
-        { left: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
-  for (const item of matches.rightOnly)
-    items.push(
-      methodOnlyItem(
-        { right: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
+  for (const side of ["left", "right"] as const) {
+    const members = side === "left" ? matches.leftOnly : matches.rightOnly;
+    for (const member of members)
+      items.push(
+        oneSidedItem(
+          member,
+          side,
+          "method",
+          methodIdentity,
+          { dimensions: ["availability"] satisfies MethodItem["dimensions"] },
+          context,
+          undecoded,
+        ),
+      );
+  }
   return items;
 };
 
@@ -1026,25 +944,20 @@ export const buildFieldItems = (
       ],
     });
   const undecoded = undecodedOneSidedNames(matches);
-  for (const item of matches.leftOnly)
-    items.push(
-      fieldOnlyItem(
-        { left: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
-  for (const item of matches.rightOnly)
-    items.push(
-      fieldOnlyItem(
-        { right: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
+  for (const side of ["left", "right"] as const) {
+    const members = side === "left" ? matches.leftOnly : matches.rightOnly;
+    for (const member of members)
+      items.push(
+        oneSidedItem(
+          member,
+          side,
+          "field",
+          fieldIdentity,
+          {},
+          context,
+          undecoded,
+        ),
+      );
+  }
   return items;
 };

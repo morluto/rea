@@ -5,8 +5,8 @@ import {
 import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { evidenceFileTarget } from "../evidence.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { ok, type Result } from "../result.js";
+import { invalidAnalysisViewSubject } from "./analysisViewErrors.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 /**
@@ -31,14 +31,6 @@ export const requireMetadataReportSubject = (
     subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message,
-        },
-      ]),
-    );
+    return invalidAnalysisViewSubject(message);
   return ok(undefined);
 };

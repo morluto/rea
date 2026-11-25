@@ -10,6 +10,7 @@ import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -109,14 +110,9 @@ await withVerifierCleanup(async () => {
       },
     );
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
     const runRea = async (args, artifact) => {
       const result = await commands.exec(
         process.execPath,

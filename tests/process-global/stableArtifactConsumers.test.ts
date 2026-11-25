@@ -873,7 +873,7 @@ mcpTest(
       for (let attempt = 0; attempt < 2; attempt++) {
         const response = await client.callTool({
           name: "inspect_rust_binary",
-          arguments: { path },
+          arguments: { detail: "complete", path },
         });
         expect(response.isError).toBe(true);
         const { error } = parseMcpToolError(response);
@@ -916,7 +916,7 @@ mcpTest(
       fault.blocked.clear();
       const recovered = await client.callTool({
         name: "inspect_rust_binary",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(recovered.isError).not.toBe(true);
       expect(failures.map((error) => error.cleanupIncomplete)).toEqual([
@@ -1005,7 +1005,7 @@ mcpTest(
     try {
       const response = await client.callTool({
         name: "inspect_rust_binary",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(parseMcpToolError(response).error.code).toBe("cleanup_incomplete");
       expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
@@ -1287,7 +1287,11 @@ it.each([
       expect(marker.operationCause).toBe(raw);
       expect(projected.cleanupLease).toBe(failure.cleanupLease);
       expect(projected.cleanupLeases).toEqual([failure.cleanupLease]);
-      const error = translateArtifactFailure("inspect_artifact", projected);
+      const error = translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        projected,
+      );
       expect(error.cleanupResources).toEqual([path]);
       expect(error.cleanupIncomplete).toBe(true);
       expect(error.partialObservation).toBeUndefined();

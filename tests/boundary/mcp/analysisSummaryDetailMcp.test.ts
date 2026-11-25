@@ -12,6 +12,7 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -79,7 +80,7 @@ it("returns the summary of complete Evidence retained for later views", async ()
   const input = await application();
   const complete = await client.callTool({
     name: contract.name,
-    arguments: input,
+    arguments: { ...input, detail: "complete" },
   });
   expect(complete.isError).not.toBe(true);
   const completeEvidence = contract.outputSchema.parse(
@@ -147,13 +148,11 @@ it("returns the summary of retained binary layout Evidence", async () => {
   const layout = analysisViewLayoutFixture();
   const client = await connect(
     true,
-    new BinaryLayoutService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: BINARY_LAYOUT_TEST_PROVIDER,
-      inspect: () => Promise.resolve(ok(layout)),
-    }),
+    new BinaryLayoutService(
+      inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+        Promise.resolve(ok(layout)),
+      ),
+    ),
   );
   const layoutContract = toolContract("inspect_binary_layout");
   const summary = await client.callTool({

@@ -414,26 +414,6 @@ export const centralDeclaresEncryption = (entry: ApkV1Entry): boolean =>
 /** Why an entry's stored bytes could not be located. */
 export type ApkLocalEntryError = { readonly detail: string };
 
-/** An entry's stored bytes and whether either header sets the encryption flag. */
-export interface ApkLocalEntryData {
-  readonly data: Uint8Array;
-  readonly declaresEncryption: boolean;
-}
-
-/**
- * Locate an entry's stored (possibly compressed) bytes through its local file
- * header. The data must lie within the archive's entry region (before the
- * signing block or central directory) and its declared sizes must be read
- * directly, so Zip64-sized entries are reported, not guessed. As apksig's
- * LocalFileRecord does, the local header must agree with the central
- * directory on the name (no longer in bytes, then equal once decoded, as
- * apksig compares them), the
- * data-descriptor flag and (without a data
- * descriptor) the CRC-32 and both sizes: a disagreement leaves the entry's
- * bytes unknown, never read from one side. Like LocalFileRecord, the
- * encryption flag (bit 0) does not stop the read; it is returned so the caller
- * can say so, and bytes that really are encrypted fail to decode.
- */
 /** Validated local header extent for one v1 signature entry. */
 export interface ApkLocalEntryHeader {
   readonly dataStart: number;
@@ -444,7 +424,9 @@ export interface ApkLocalEntryHeader {
 /**
  * Validate a local file header (starting at byte 0 of `localHeaderAndName`)
  * against the central-directory entry and return the file-relative byte span
- * of its stored data.
+ * of its stored data. As in apksig's LocalFileRecord, names and descriptor
+ * flags must agree. Without a data descriptor the CRC and sizes must also
+ * agree. Either header can declare encryption.
  */
 export const parseLocalEntryHeader = (
   localHeaderAndName: Uint8Array,
@@ -523,26 +505,5 @@ export const parseLocalEntryHeader = (
     dataStart,
     dataEnd,
     declaresEncryption: ((entry.flags | flags) & FLAG_ENCRYPTED) !== 0,
-  });
-};
-
-export const localEntryData = (
-  bytes: Uint8Array,
-  entry: ApkV1Entry,
-  entriesEnd: number,
-): Result<ApkLocalEntryData, ApkLocalEntryError> => {
-  const at = entry.localHeaderOffset;
-  const headerSlice =
-    at >= 0 && at <= bytes.length ? bytes.subarray(at) : new Uint8Array(0);
-  const header = parseLocalEntryHeader(
-    headerSlice,
-    entry,
-    entriesEnd,
-    bytes.length,
-  );
-  if (!header.ok) return header;
-  return ok({
-    data: bytes.subarray(header.value.dataStart, header.value.dataEnd),
-    declaresEncryption: header.value.declaresEncryption,
   });
 };

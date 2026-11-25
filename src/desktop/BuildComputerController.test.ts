@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../tests/support/sha256.js";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
@@ -17,9 +17,6 @@ import {
 
 const MIB = 1024 * 1024;
 const EXPECTED_LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
-
 /** A computer whose controller lists `files` into a file beside the folder and whose data/get answers them, noting each fetch of a file. */
 const computer = (
   files: ReadonlyMap<string, Buffer>,

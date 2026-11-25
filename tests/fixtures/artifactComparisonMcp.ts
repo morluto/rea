@@ -22,7 +22,7 @@ export async function connectArtifactComparisonMcp() {
   const inspect = async (path: string): Promise<Evidence> => {
     const opened = await call("open_binary", { path });
     expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const response = await call("inspect_artifact", {});
+    const response = await call("inspect_artifact", { detail: "complete" });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     return inventoryEvidence(response.structuredContent);
   };

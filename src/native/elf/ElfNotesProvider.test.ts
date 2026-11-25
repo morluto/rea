@@ -139,7 +139,7 @@ describe("ELF note provider failures", () => {
     if (result.ok) throw new Error("Expected a malformed target");
     // The image's bytes, not the request, are at fault.
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_elf_notes",
       path,
       failure: { kind: "malformed", format: "elf" },

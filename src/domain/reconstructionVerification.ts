@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { isDeepStrictEqual } from "node:util";
 
 import { evidenceFileTarget, evidenceLocalTarget } from "./evidence.js";
@@ -17,7 +18,8 @@ import { readEvidenceBundle } from "./evidenceBundle.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  targetFailureOfKind,
+  AnalysisTargetFailureError,
 } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
@@ -328,9 +330,7 @@ const indexScreenshotCaptures = (records: Iterable<Evidence>) => {
       evidenceId: source.evidence_id,
       screenshot: parsed.value,
     };
-    const existing = captures.get(sha256);
-    if (existing === undefined) captures.set(sha256, [capture]);
-    else existing.push(capture);
+    appendToMapList(captures, sha256, capture);
   }
   return captures;
 };
@@ -409,7 +409,11 @@ const assessScreenshotComparison = (
       if (
         !(cause instanceof TypeError) &&
         !(cause instanceof AnalysisResourceConstraintError) &&
-        !(cause instanceof AnalysisUnsupportedTargetError)
+        !(
+          cause instanceof AnalysisTargetFailureError &&
+          targetFailureOfKind(cause, "unsupported", "unrecognized") !==
+            undefined
+        )
       )
         throw cause;
       replayBlocker = `Retained screenshot comparison could not be replayed: ${cause.message}`;

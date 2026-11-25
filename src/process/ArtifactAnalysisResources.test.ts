@@ -32,7 +32,11 @@ import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailu
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
-import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import {
+  type LinuxResourceLimits,
+  readLinuxResourceLimits,
+} from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
 import type {
   AnalysisError,
@@ -491,6 +495,22 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
   await resources.close();
 });
 
+const classifyFixtureCommand = (
+  resources: ArtifactAnalysisResources,
+  failure: OwnedCommandFailure,
+  limits: Parameters<ArtifactAnalysisResources["commandContext"]>[0],
+  effectiveLimits?: LinuxResourceLimits,
+) =>
+  classifyProviderFailure(failure, {
+    providerId: resources.providerId,
+    operation: resources.operation,
+    command: () =>
+      resources.commandContext(limits, effectiveLimits, resources.operation),
+    unclassified: (cause) => {
+      throw cause;
+    },
+  });
+
 it.each([
   null,
   "opaque reason",
@@ -525,11 +545,10 @@ it.each([
           cancellation: { reason },
         },
       );
-      const command = resources.commandFailure(
-        failure,
-        { command_timeout_ms: 100, output_bytes: 1024 },
-        undefined,
-      );
+      const command = classifyFixtureCommand(resources, failure, {
+        command_timeout_ms: 100,
+        output_bytes: 1024,
+      });
       for (const error of [result.error, command]) {
         expect(error).toMatchObject({ _tag: "AnalysisCancelledError" });
         expect(error.cause).toBe(reason);
@@ -604,66 +623,35 @@ it.each([false, true])(
   },
 );
 
-it("reports the fixed producer deadline and output cap with their own recovery", async () => {
-  const resources = createArtifactAnalysisResources(
-    "fixture",
-    "inspect_packet_fields",
-    readStableArtifact,
-    readLinuxResourceLimits,
-    { message: "busy", details: {} },
-  );
-  const limits = { command_timeout_ms: 30_000, output_bytes: 1024 };
-  try {
-    const timeout = resources.commandFailure(
-      new OwnedCommandFailure("timeout", "command timed out"),
-      limits,
-      undefined,
+it.each([
+  [30_000, "Increase producer_limits.command_timeout_ms above 30000"],
+  [MAX_NODE_TIMER_DELAY_MS, "no higher deadline is supported"],
+] as const)(
+  "reports the per-call producer deadline at %i ms",
+  async (deadline, recovery) => {
+    const resources = createArtifactAnalysisResources(
+      "fixture",
+      "inspect_packet_fields",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
     );
-    const projectedTimeout = projectAnalysisError(timeout);
-    expect(projectedTimeout).toMatchObject({
-      code: "provider_timeout",
-      message: expect.stringContaining("30000 ms"),
-      remediation: {
-        action: expect.stringContaining("this release has no runtime override"),
-      },
-    });
-    expect(projectedTimeout.remediation.action).not.toContain(
-      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
-    );
-    const capture = resources.commandFailure(
-      new OwnedCommandFailure(
-        "output-limit",
-        "command output exceeded the retained limit",
-      ),
-      limits,
-      undefined,
-    );
-    expect(capture).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "memory",
-      reportedLimits: { output_bytes: 1024 },
-      retryable: false,
-      fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
-    });
-    const projected = projectAnalysisError(capture);
-    expect(projected).toMatchObject({
-      retryable: false,
-      details: {
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "capture",
-          limit: 1024,
-          unit: "bytes",
-        },
-      },
-    });
-    expect(projected.remediation.action).not.toMatch(
-      /Review the reported worker memory limits|available host memory\. Retry/iu,
-    );
-  } finally {
-    await resources.close();
-  }
-});
+    try {
+      const timeout = classifyFixtureCommand(
+        resources,
+        new OwnedCommandFailure("timeout", "command timed out"),
+        { command_timeout_ms: deadline, output_bytes: 1024 },
+      );
+      expect(projectAnalysisError(timeout)).toMatchObject({
+        code: "provider_timeout",
+        message: expect.stringContaining(`${String(deadline)} ms`),
+        remediation: { action: expect.stringContaining(recovery) },
+      });
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it.each([
   {
@@ -699,7 +687,8 @@ it.each([
     });
     try {
       const projected = projectAnalysisError(
-        resources.commandFailure(
+        classifyFixtureCommand(
+          resources,
           failure,
           { command_timeout_ms: 30_000, output_bytes: 4_194_304 },
           effective,
@@ -724,7 +713,12 @@ it.each([
         );
       }
       expect(action).toContain("tighter inherited limit");
-      expect(action).toContain("no runtime override");
+      expect(action).toContain(
+        `producer_limits.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"}`,
+      );
+      expect(action).toContain(
+        "cannot raise a tighter inherited soft or hard limit",
+      );
       expect(action).toMatch(/unchanged retry.*may succeed.*may fail/iu);
       expect(action).not.toMatch(/unchanged request.*fails/iu);
     } finally {
@@ -750,11 +744,10 @@ it("retains a physical command failure when the owner also observed late cancell
     { cancellation: { reason } },
   );
   try {
-    const error = resources.commandFailure(
-      failure,
-      { command_timeout_ms: 100, output_bytes: 1024 },
-      undefined,
-    );
+    const error = classifyFixtureCommand(resources, failure, {
+      command_timeout_ms: 100,
+      output_bytes: 1024,
+    });
     expect(error).toBeInstanceOf(UnclassifiedProviderFailure);
     expect(error).toMatchObject({
       providerId: "fixture",

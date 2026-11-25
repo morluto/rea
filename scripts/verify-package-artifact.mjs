@@ -38,14 +38,14 @@ const verifyPackagedArtifact = async ({
   const artifactInspection = JSON.parse(
     await commands.run(
       cli,
-      ["inspect-artifact", artifactArchive, "--json"],
+      ["inspect-artifact", "--detail", "complete", artifactArchive, "--json"],
       environment,
     ),
   );
   const repeatedArtifactInspection = JSON.parse(
     await commands.run(
       cli,
-      ["inspect-artifact", artifactArchive, "--json"],
+      ["inspect-artifact", "--detail", "complete", artifactArchive, "--json"],
       environment,
     ),
   );
@@ -96,7 +96,13 @@ const verifyPackagedElectronApplication = async ({
   const applicationAnalysis = JSON.parse(
     await commands.run(
       cli,
-      ["analyze-javascript-application", applicationRoot, "--json"],
+      [
+        "analyze-javascript-application",
+        applicationRoot,
+        "--detail",
+        "complete",
+        "--json",
+      ],
       environment,
     ),
   );
@@ -111,7 +117,7 @@ const verifyPackagedElectronApplication = async ({
   const routedApplicationAnalysis = JSON.parse(
     await commands.run(
       cli,
-      ["analyze", applicationRoot, "--json"],
+      ["analyze", applicationRoot, "--detail", "complete", "--json"],
       environment,
     ),
   );
