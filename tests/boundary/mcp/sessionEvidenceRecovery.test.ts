@@ -1,3 +1,4 @@
+import { successfulTool } from "../../support/mcp/mcpFixture.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -20,18 +21,6 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 const bundleResult = (reply: CallToolResult) =>
   z.object({ result: evidenceBundleSchema }).parse(reply.structuredContent)
     .result;
-
-const successfulTool = async (
-  client: Client,
-  name: string,
-  arguments_: Record<string, unknown> = {},
-): Promise<CallToolResult> => {
-  const reply = await client.callTool({ name, arguments: arguments_ });
-  expect(reply.isError, `${name}: ${JSON.stringify(reply.content)}`).not.toBe(
-    true,
-  );
-  return reply;
-};
 
 const recordUnknownHistory = async (client: Client): Promise<void> => {
   const fields = {
