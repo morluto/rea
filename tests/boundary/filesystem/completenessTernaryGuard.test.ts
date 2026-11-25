@@ -24,6 +24,8 @@ it.each([
   ],
   // Non-ternary uses of "complete" are ignored.
   ['type Status<T> = T extends true ? "complete" : "partial";', 0],
+  ['function f(status?: "complete") { return status; }', 0],
+  ['const obj = x ? { status: "complete" } : {};', 0],
   ['const obj = { status: "complete" };', 0],
   ['const ok = status === "complete";', 0],
   ['// const s = truncated ? "partial" : "complete";', 0],
