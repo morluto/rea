@@ -14,11 +14,19 @@ import {
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
 
-type CatalogListing = { registered: RegisteredTool; description: string };
-const catalogListing = (registered: RegisteredTool): CatalogListing => ({
-  registered,
-  description: (registered.description ?? "").slice(0, 240),
-});
+type CatalogListing = {
+  registered: RegisteredTool;
+  description: string;
+  fullDescription: string;
+};
+const catalogListing = (registered: RegisteredTool): CatalogListing => {
+  const fullDescription = registered.description ?? "";
+  return {
+    registered,
+    description: fullDescription.slice(0, 240),
+    fullDescription,
+  };
+};
 
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
@@ -157,11 +165,13 @@ export class ProgressiveToolCatalog {
         names === undefined && input.offset + page.length < matches.length
           ? input.offset + page.length
           : null,
-      tools: selected.map(({ name, description, registered }) => ({
-        name,
-        description,
-        input_schema: this.inputSchemaFor(registered),
-      })),
+      tools: selected.map(
+        ({ name, description, fullDescription, registered }) => ({
+          name,
+          description: names !== undefined ? fullDescription : description,
+          input_schema: this.inputSchemaFor(registered),
+        }),
+      ),
       next_step:
         selected.length === 0
           ? matches.length === 0

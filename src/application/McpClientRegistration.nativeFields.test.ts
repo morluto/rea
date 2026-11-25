@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeEach, afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
 import {
   mcpClientRegistrationProfile,

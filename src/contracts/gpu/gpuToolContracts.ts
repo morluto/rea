@@ -4,9 +4,9 @@ import {
   gpuCodeObjectsSchema,
 } from "../../domain/gpu/gpuCodeObjects.js";
 import {
-  gpuCodeObjectsSummaryViewResultSchema,
   gpuCodeObjectsPageViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  gpuCodeObjectsSummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/gpuCodeObjectsSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";

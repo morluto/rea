@@ -48,7 +48,7 @@ it.each([
     }).catch((cause: unknown) => cause);
     expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
     expect(rejected).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       cause: {
         name: "OpenStepPropertyListError",
         code,

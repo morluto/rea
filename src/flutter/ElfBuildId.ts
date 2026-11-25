@@ -36,11 +36,15 @@ export const readElfBuildIds = async (
   signal: AbortSignal | undefined,
 ): Promise<ElfBuildIds> => {
   const candidates = new Set<string>();
-  const failures: ElfParseFailure[] = [];
-  const failure = (reason: string): ElfBuildIds => ({
+  const failures = new Set<string>();
+  const result = (): ElfBuildIds => ({
     candidates: [...candidates],
-    failures: [...failures, { reason }],
+    failures: [...failures].map((reason) => ({ reason })),
   });
+  const failure = (reason: string): ElfBuildIds => {
+    failures.add(reason);
+    return result();
+  };
   let examined = 0;
   const read = async (offset: number, size: number): Promise<Buffer | null> => {
     assertArtifactReadActive(signal);
@@ -78,7 +82,6 @@ export const readElfBuildIds = async (
     string,
     { offset: number; size: number; alignment: ElfNoteAlignment }
   >();
-  let compressedNotes = false;
   tables: for (const table of [
     {
       offset: h.e_phoff,
@@ -130,15 +133,12 @@ export const readElfBuildIds = async (
         !Number.isSafeInteger(offset) ||
         !Number.isSafeInteger(size) ||
         size > totalBytes - offset
-      )
-        return failure("ELF note range is not file-backed");
+      ) {
+        failures.add("ELF note range is not file-backed");
+        continue;
+      }
       if (storage === "compressed") {
-        if (!compressedNotes) {
-          failures.push({
-            reason: "Compressed ELF note sections are unsupported",
-          });
-          compressedNotes = true;
-        }
+        failures.add("Compressed ELF note sections are unsupported");
         continue;
       }
       if (size === 0) continue;
@@ -146,10 +146,9 @@ export const readElfBuildIds = async (
       const key = `${offset}:${size}:${alignment}`;
       if (ranges.has(key)) continue;
       if (ranges.size === MAX_NOTE_RANGES) {
-        failures.push({
-          reason:
-            "ELF notes exceed the 1024-range note-range inventory/read budget",
-        });
+        failures.add(
+          "ELF notes exceed the 1024-range note-range inventory/read budget",
+        );
         break tables;
       }
       ranges.set(key, { offset, size, alignment });
@@ -207,5 +206,5 @@ export const readElfBuildIds = async (
     }
   }
   assertArtifactReadActive(signal);
-  return { candidates: [...candidates], failures };
+  return result();
 };

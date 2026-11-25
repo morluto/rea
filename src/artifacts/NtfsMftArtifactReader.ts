@@ -1,10 +1,7 @@
-import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import type { Readable } from "node:stream";
 
-import {
-  ntfsMftMetadataSchema,
-  type ArtifactFormatMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import { ntfsMftMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createMftDecoder,
@@ -12,15 +9,16 @@ import {
 } from "../domain/windows/ntfsMft.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   type ArtifactEntry,
-  type ArtifactReader,
   type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-  ArtifactResourceScope,
-  assertArtifactReadActive,
-  ArtifactFileSource,
 } from "../resources/index.js";
+import {
+  PositionalArtifactReader,
+  type PositionalArtifactEntries,
+} from "./PositionalArtifactReader.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 /**
@@ -28,93 +26,41 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
  * volume, not members inside the stream, so header facts are attached to
  * the root occurrence.
  */
-export class NtfsMftArtifactReader implements ArtifactReader {
-  readonly format = "ntfs-mft" as const;
-  readonly #scope = new ArtifactResourceScope();
-  readonly #source: ArtifactFileSource;
-  readonly #preparation = new ArtifactPreparation();
-  #metadata: ArtifactFormatMetadata | undefined;
-  #limitations: readonly string[] = [];
-  #closing = false;
+export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactFormatMetadata> {
+  override readonly format = "ntfs-mft" as const;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "$MFT stream", admitted);
+    super(path, "$MFT stream", admitted);
   }
 
   formatMetadata(): ArtifactFormatMetadata | undefined {
-    return this.#metadata === undefined
-      ? undefined
-      : structuredClone(this.#metadata);
+    const metadata = this.preparedFormatMetadata;
+    return metadata === undefined ? undefined : structuredClone(metadata);
   }
 
-  async prepareContainer(
-    expectedSha256: string,
+  override async open(
+    entry: ArtifactEntry,
+    _signal?: AbortSignal,
+  ): Promise<Readable> {
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `$MFT stream declares no member to open for ${entry.path}`,
+    );
+  }
+
+  protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<void> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
-    });
-  }
-
-  async *entries(
-    signal?: AbortSignal,
-    options?: ArtifactTraversalOptions,
-  ): AsyncIterable<ArtifactEntry> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#preparation.run(
-        signal,
-        () => this.#prepare(signal),
-        () => this.#assertOpen(signal),
-      );
-      this.#assertOpen(signal);
-      await this.#source.read(signal);
-    });
-    // An MFT declares no members, so the root occurrence is the whole
-    // inventory; the coverage callback reports what its parse did not establish.
-    options?.onCoverage?.(coverageOf(this.#limitations));
-    this.#assertOpen(signal);
-  }
-
-  async open(entry: ArtifactEntry, _signal?: AbortSignal): Promise<Readable> {
-    return this.#scope.run(async () => {
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        `$MFT stream declares no member to open for ${entry.path}`,
-      );
-    });
-  }
-
-  async close(): Promise<void> {
-    this.#closing = true;
-    await this.#scope.close();
-    await this.#source.close();
-    this.#metadata = undefined;
-  }
-
-  provenance(): readonly [] {
-    return [];
-  }
-
-  #assertOpen(signal?: AbortSignal): void {
-    assertArtifactReadActive(signal);
-    if (this.#closing)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "$MFT stream reader is closed",
-      );
-  }
-
-  async #prepare(signal?: AbortSignal): Promise<void> {
+  ): Promise<PositionalArtifactEntries<ArtifactFormatMetadata>> {
     const image = await this.#decode(signal);
-    await this.#source.read(signal);
-    this.#metadata = ntfsMftMetadataSchema.parse(image.metadata);
-    this.#limitations = image.limitations;
+    return {
+      entries: [],
+      coverage: coverageOf(image.limitations),
+      formatMetadata: ntfsMftMetadataSchema.parse(image.metadata),
+    };
   }
 
   async #decode(signal?: AbortSignal): Promise<MftInventory> {
-    const { handle, initial } = await this.#source.read(signal);
+    const { handle, initial } = await this.verifyCarrier(signal);
     const decoder = createMftDecoder(initial.size);
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
@@ -126,19 +72,35 @@ export class NtfsMftArtifactReader implements ArtifactReader {
             cause: reason,
           }),
       }) as AsyncIterable<Buffer>) {
-        this.#assertOpen(signal);
+        this.assertOpen(signal);
         const written = decoder.value.write(chunk);
-        if (!written.ok) throw this.#failure(written.error);
+        if (!written.ok) throw await this.#stableFailure(written.error, signal);
       }
-    const image = decoder.value.finish();
-    if (!image.ok) throw this.#failure(image.error);
+    const image = await decoder.value.finish((offset, length) =>
+      readFileHandleRange(handle, offset, length, () =>
+        this.assertOpen(signal),
+      ),
+    );
+    if (!image.ok) throw await this.#stableFailure(image.error, signal);
     return image.value;
   }
 
+  /**
+   * A decoder failure blames the bytes only once the carrier is shown to be
+   * unchanged; a carrier that shrank or changed reports that instead.
+   */
+  async #stableFailure(
+    failure: RegionDecodeFailure,
+    signal: AbortSignal | undefined,
+  ): Promise<ArtifactReaderFailure> {
+    await this.verifyCarrier(signal);
+    return this.#failure(failure);
+  }
+
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
+    return failure.kind === "malformed"
+      ? malformedArtifact(
+          "ntfs-mft",
           `$MFT stream is malformed: ${failure.message}`,
         )
       : new ArtifactReaderFailure(

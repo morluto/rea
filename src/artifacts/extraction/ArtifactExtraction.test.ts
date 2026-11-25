@@ -5,7 +5,10 @@ import { createHash } from "node:crypto";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { openRegularFile } from "../../filesystem/RegularFile.js";
@@ -379,7 +382,7 @@ it.each([false, true] as const)(
 vi.mock("../pyinstaller/CArchiveLayout.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   observePyInstallerCookie: () =>
-    Promise.reject(new ArtifactReaderFailure("format", "detection failed")),
+    Promise.reject(malformedArtifact("pyinstaller", "detection failed")),
 }));
 
 vi.mock("../../filesystem/RegularFile.js", async (importOriginal) => {
@@ -414,7 +417,7 @@ it("keeps the detection error primary and reports a failed detection close", asy
         resourceScope,
       }),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: "detection failed",
       cleanup: { reason: closeFailure.message },
     });

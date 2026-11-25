@@ -1,8 +1,8 @@
-import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
-import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
+import type { FitMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
+import type { ArtifactIntegrityClaim } from "../domain/artifactIntegrity.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import {
   FDT_MAX_HEADER_BYTES,
@@ -11,21 +11,14 @@ import {
 import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
 import {
   ArtifactReaderFailure,
-  copyArtifactEntry,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactReaderTraversal,
-  type ArtifactTraversalOptions,
-  ArtifactResourceScope,
-  assertArtifactReadActive,
-  ArtifactFileSource,
+  malformedArtifact,
+  truncatedArtifact,
 } from "../resources/index.js";
 import {
-  ArtifactStreamLifecycle,
-  checkedArtifactMemberStream,
-  ownArtifactStream,
-} from "./OwnedArtifactStream.js";
+  PositionalArtifactReader,
+  type PositionalArtifactEntries,
+  type PositionalArtifactEntry,
+} from "./PositionalArtifactReader.js";
 import {
   createFitDigest,
   readFitStructure,
@@ -36,133 +29,37 @@ import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 /** Inventory U-Boot FIT /images nodes as stored byte ranges without loading them. */
-export class FitArtifactReader implements ArtifactReader {
-  readonly format = "fit" as const;
-  readonly #scope = new ArtifactResourceScope();
-  #entries = new Map<string, ArtifactEntry>();
-  readonly #lifecycle = new ArtifactStreamLifecycle("FIT");
+export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
+  override readonly format = "fit" as const;
   readonly #path: string;
-  readonly #source: ArtifactFileSource;
-  readonly #preparation = new ArtifactPreparation();
-  #metadata: FitMetadata | undefined;
-  #coverage: ArtifactReaderTraversal | undefined;
+  readonly #integrity: ArtifactIntegrityPolicyName;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    integrity: ArtifactIntegrityPolicyName = "fail",
+  ) {
+    super(path, "FIT", admitted);
     this.#path = path;
-    this.#source = new ArtifactFileSource(path, "FIT", admitted);
+    this.#integrity = integrity;
   }
 
   formatMetadata(): FitMetadata | undefined {
-    return this.#metadata === undefined
-      ? undefined
-      : structuredClone(this.#metadata);
+    const metadata = this.preparedFormatMetadata;
+    return metadata === undefined ? undefined : structuredClone(metadata);
   }
 
-  async prepareContainer(
-    expectedSha256: string,
+  protected override entryEndedEarly(
+    entry: PositionalArtifactEntry,
+  ): ArtifactReaderFailure {
+    return malformedArtifact("fit", `FIT image ended early: ${entry.path}`);
+  }
+
+  protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<void> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
-    });
-  }
-
-  async *entries(
-    signal?: AbortSignal,
-    options?: ArtifactTraversalOptions,
-  ): AsyncIterable<ArtifactEntry> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#preparation.run(
-        signal,
-        () => this.#prepare(signal),
-        () => this.#assertOpen(signal),
-      );
-      await this.#source.read(signal);
-    });
-    if (this.#coverage !== undefined)
-      options?.onCoverage?.({
-        ...this.#coverage,
-        limitations: [...this.#coverage.limitations],
-      });
-    let index = 0;
-    for (const entry of this.#entries.values()) {
-      if (index % 256 === 0) await setImmediate();
-      index += 1;
-      this.#assertOpen(signal);
-      yield copyArtifactEntry(entry);
-    }
-    this.#assertOpen(signal);
-  }
-
-  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    return this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      assertProducedEntry(
-        entry,
-        stored,
-        "FIT entry does not match its owning inventory",
-      );
-      const { handle } = await this.#source.read(signal);
-      this.#assertOpen(signal);
-      if (stored.byteOffset === null || stored.declaredSize === null)
-        throw new ArtifactReaderFailure(
-          "format",
-          `FIT image has no byte range: ${stored.path}`,
-        );
-      const lifecycle = this.#lifecycle.member(signal);
-      const { signal: streamSignal, cancellationFailure } = lifecycle;
-      const source =
-        stored.declaredSize === 0
-          ? Readable.from([])
-          : readFileHandleChunks(handle, {
-              start: stored.byteOffset,
-              end: stored.byteOffset + stored.declaredSize - 1,
-              signal: streamSignal,
-              cancellationFailure,
-            });
-      const output = checkedArtifactMemberStream(
-        stored,
-        "FIT",
-        () =>
-          new ArtifactReaderFailure(
-            "format",
-            `FIT image ended early: ${stored.path}`,
-          ),
-        () => lifecycle.verify((signal) => this.#source.read(signal)),
-      );
-      ownArtifactStream(source, output, {
-        scope: this.#scope,
-        signal: streamSignal,
-        cancellationFailure,
-        label: "FIT",
-      });
-      return output;
-    });
-  }
-
-  async close(): Promise<void> {
-    this.#lifecycle.close();
-    await this.#scope.close();
-    await this.#source.close();
-    this.#entries.clear();
-  }
-
-  provenance(): readonly [] {
-    return [];
-  }
-
-  #assertOpen(signal?: AbortSignal): void {
-    assertArtifactReadActive(signal);
-    if (this.#lifecycle.closed)
-      throw new ArtifactReaderFailure("unavailable", "FIT reader is closed");
-  }
-
-  async #prepare(signal?: AbortSignal): Promise<void> {
-    const { handle, initial } = await this.#source.read(signal);
-    const assertActive = (): void => this.#assertOpen(signal);
+  ): Promise<PositionalArtifactEntries<FitMetadata>> {
+    const { handle, initial } = await this.verifyCarrier(signal);
+    const assertActive = (): void => this.assertOpen(signal);
     const prefix = await readFileHandleRange(
       handle,
       0,
@@ -174,16 +71,27 @@ export class FitArtifactReader implements ArtifactReader {
       ({ totalsize } = readDevicetreeHeader(prefix).header);
     } catch (cause) {
       if (cause instanceof BinaryFormatFailure)
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "fit",
           `FIT devicetree header: ${cause.message}`,
+          {
+            cause,
+            offset: 0,
+            field: "devicetree-header",
+          },
         );
       throw cause;
     }
     if (totalsize > initial.size)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw truncatedArtifact(
+        "fit",
         `FIT devicetree is truncated: totalsize ${String(totalsize)} exceeds the ${String(initial.size)}-byte file`,
+        {
+          offset: 0,
+          field: "totalsize",
+          availableBytes: initial.size,
+          requiredBytes: totalsize,
+        },
       );
     if (totalsize > MAX_DEVICETREE_FILE_BYTES)
       throw new ArtifactReaderFailure(
@@ -197,14 +105,16 @@ export class FitArtifactReader implements ArtifactReader {
       this.#path,
       initial.size,
     );
-    const entries = new Map<string, ArtifactEntry>();
+    const entries: PositionalArtifactEntry[] = [];
+    const limitations = [...structure.limitations];
     let index = 0;
     for (const image of structure.images) {
       if (index % 256 === 0) await setImmediate();
       index += 1;
-      this.#assertOpen(signal);
-      await this.#verifyHashes(image, signal);
-      const entry = {
+      this.assertOpen(signal);
+      const hashResult = await this.#verifyHashes(image, signal);
+      limitations.push(...hashResult.limitations);
+      entries.push({
         path: `images/${image.name}.bin`,
         sourcePath: `/images/${image.name}`,
         kind: "file" as const,
@@ -213,21 +123,29 @@ export class FitArtifactReader implements ArtifactReader {
         executable: false,
         encrypted: false,
         byteOffset: image.start,
-        declaredIntegrity: null,
+        declaredIntegrity: hashResult.declaredIntegrity,
         unpacked: false,
-        limitations: image.limitations,
+        limitations: [...image.limitations, ...hashResult.limitations],
         adapterKey: `fit:${String(image.index)}`,
-        formatMetadata: image.metadata,
-      } satisfies ArtifactEntry;
-      entries.set(entry.adapterKey, entry);
+        formatMetadata:
+          hashResult.mismatches === 0
+            ? image.metadata
+            : {
+                ...image.metadata,
+                hashes_verified: Math.max(
+                  0,
+                  image.metadata.hashes_verified - hashResult.mismatches,
+                ),
+              },
+      });
     }
-    await this.#source.read(signal);
-    this.#assertOpen(signal);
-    this.#entries = entries;
-    this.#metadata = structure.metadata;
-    this.#coverage = {
-      status: "complete",
-      limitations: structure.limitations,
+    return {
+      entries,
+      coverage: {
+        status: "complete",
+        limitations,
+      },
+      formatMetadata: structure.metadata,
     };
   }
 
@@ -235,13 +153,18 @@ export class FitArtifactReader implements ArtifactReader {
   async #verifyHashes(
     image: FitImageDeclaration,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<{
+    readonly mismatches: number;
+    readonly limitations: readonly string[];
+    readonly declaredIntegrity: ArtifactIntegrityClaim | null;
+  }> {
     const digests = image.hashes.flatMap((hash) => {
       const digest = createFitDigest(hash.algo);
       return digest === undefined ? [] : [{ hash, digest }];
     });
-    if (digests.length === 0) return;
-    const { handle } = await this.#source.read(signal);
+    if (digests.length === 0)
+      return { mismatches: 0, limitations: [], declaredIntegrity: null };
+    const { handle } = await this.verifyCarrier(signal);
     if (image.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {
         start: image.start,
@@ -249,18 +172,34 @@ export class FitArtifactReader implements ArtifactReader {
         signal,
         cancellationFailure: hashReadCancelled,
       }) as AsyncIterable<Buffer>) {
-        this.#assertOpen(signal);
+        this.assertOpen(signal);
         for (const { digest } of digests) digest.update(chunk);
       }
+    const limitations: string[] = [];
+    let mismatches = 0;
+    let declaredIntegrity: ArtifactIntegrityClaim | null = null;
     for (const { hash, digest } of digests) {
       const computed = digest.digest();
-      if (!computed.equals(hash.value))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`,
-          { integrityCheck: "declared-digest" },
-        );
+      if (!computed.equals(hash.value)) {
+        const message = `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`;
+        if (this.#integrity === "fail")
+          throw new ArtifactReaderFailure("integrity", message, {
+            integrityCheck: "declared-digest",
+          });
+        mismatches += 1;
+        limitations.push(message);
+        if (
+          declaredIntegrity === null &&
+          (hash.algo === "sha256" || hash.algo === "md5")
+        ) {
+          declaredIntegrity = {
+            algorithm: hash.algo,
+            digest: hash.value.toString("hex"),
+          };
+        }
+      }
     }
+    return { mismatches, limitations, declaredIntegrity };
   }
 }
 

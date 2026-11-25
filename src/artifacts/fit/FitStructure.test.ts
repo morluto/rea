@@ -248,7 +248,7 @@ describe("FIT image data ranges", () => {
         fitFixture({ images: [kernel(), shared(properties)], mode: "offset" }),
       ),
     ).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(message),
     });
   });
@@ -271,7 +271,7 @@ describe("FIT image data ranges", () => {
         }),
       ),
     ).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(
         /\/images\/chained.*image-data.*\/images\/shared/iu,
       ),
@@ -290,7 +290,7 @@ describe("FIT image data ranges", () => {
         }),
       ),
     ).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(
         /overlaps.*\/images\/shared.*devicetree/iu,
       ),
@@ -323,7 +323,7 @@ describe("FIT image data ranges", () => {
     ],
   ])("fails %s", (_name, file, message) => {
     expect(failureOf(file)).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(message),
     });
   });
@@ -568,7 +568,7 @@ describe("FIT fixed limits", () => {
 
   it("fails a structure without /images", () => {
     expect(failureOf(devicetreeFixture())).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/\/images.*missing/iu),
     });
   });
@@ -664,7 +664,7 @@ it("fails an image node that repeats a property name", () => {
     ],
   });
   expect(failureOf(file)).toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/duplicate.*property/iu),
   });
 });

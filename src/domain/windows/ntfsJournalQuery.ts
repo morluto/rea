@@ -1,5 +1,5 @@
 import { MFT_INLINE_HEADER_LIMIT } from "./ntfsMft.js";
-import { ntfsMftMetadataSchema } from "../artifactFormatMetadata.js";
+import { ntfsMftMetadataSchema } from "../formatMetadata/androidAndSystemMetadata.js";
 import { USN_INLINE_EXTENT_LIMIT } from "./ntfsUsnJournal.js";
 import { z } from "zod";
 

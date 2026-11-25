@@ -483,7 +483,7 @@ it.runIf(!unsupportedHost)(
         cleanupIncomplete: true,
         cleanupResources: [root],
         diagnostics: {
-          primary_error: { category: "invalid_input" },
+          primary_error: { category: "unsupported_target" },
           cleanup_error: {
             code: "cleanup_incomplete",
             details: { diagnostics: { reason: "root cleanup failed" } },
@@ -620,7 +620,7 @@ it
     if (scenario === "literal-replacement")
       expect(result).toMatchObject({
         ok: false,
-        error: { issues: [{ message: "valid �" }] },
+        error: { failure: { kind: "malformed", detail: "valid �" } },
       });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
@@ -636,7 +636,7 @@ it
         error: {
           _tag:
             scenario === "format" || scenario === "literal-replacement"
-              ? "AnalysisInputError"
+              ? "AnalysisTargetFailureError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"
                 : scenario === "unsupported"

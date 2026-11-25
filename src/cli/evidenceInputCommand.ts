@@ -8,7 +8,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-import type { ContractDocumentContext } from "./contractCommand.js";
+import type { ContractDocumentContext } from "./contractDocumentCommand.js";
 
 /** Explicit portable lookup context for CLI workflows accepting retained IDs. */
 export const evidenceBundleOption = localPathStringSchema

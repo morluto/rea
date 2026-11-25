@@ -701,39 +701,39 @@ definitions outside the entry keep sharing the original value, including when
 another definition later reuses the same anchor name.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
-Setup, doctor and uninstall share REA's sticky-profile resolver.
+Setup, doctor and uninstall share REA's override-root resolver.
 If the selected profile's deletion marker cannot be checked, REA reports the
 profile as unresolved. Restore access to the reported path and retry.
-A custom `HERMES_HOME` outside the platform default home
-reads its own `active_profile`. An override physically inside the default home
-uses that default home's sticky selection and profile root together, including
-when the final override directory does not yet exist.
+The configured override root owns its sticky selection: an override inside
+the platform default home reads its own `active_profile` and resolves the
+named profile beneath itself, including when the final override directory
+does not yet exist. The default home's selection never determines an
+override's destinations.
 
-For example, with `HERMES_HOME=~/.hermes/sub` and `~/.hermes/active_profile` set
-to `coder`, setup selects `~/.hermes/profiles/coder/config.yaml` and that
-profile's skills directory. It does not read `~/.hermes/sub/active_profile`.
-Without an outer named selection, this override uses `~/.hermes/sub/config.yaml`.
-Use a home outside the platform default tree for an independent sticky selection.
+For example, with `HERMES_HOME=~/.hermes/sub` and
+`~/.hermes/sub/active_profile` set to `other`, setup selects
+`~/.hermes/sub/profiles/other/config.yaml` and that profile's skills
+directory. Without a selection in the override root, this override uses
+`~/.hermes/sub/config.yaml`. A `~/.hermes/active_profile` naming `coder`
+does not change either outcome.
 
-This describes REA's current routing, not full Hermes CLI equivalence.
-At Hermes commit `748c79a1`, the
+This is a contract change from the earlier native-root rule, which read the
+default home's selection for overrides inside it. It follows the documented
+override-root contract in
+[#3939](https://github.com/morluto/rea/issues/3939), which the maintainer
+has not ruled on. It also matches Hermes's own
+[`resolve_profile_env`](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/profiles.py#L2431-L2461),
+which resolves the selection beneath the configured `HERMES_HOME`; only the
 [sticky lookup](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/main.py#L612-L632)
-also reads the outer selection, but
-[`resolve_profile_env`](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/profiles.py#L2431-L2461)
-resolves it beneath the configured `HERMES_HOME`. For nested overrides, confirm
-the profile Hermes actually uses and point `HERMES_HOME` directly at that
-`profiles/<name>` directory before setup. Compatibility is tracked in
-[#3939](https://github.com/morluto/rea/issues/3939).
+reads the outer selection. To use a profile from the default home, point
+`HERMES_HOME` directly at that `profiles/<name>` directory before setup.
 
-REA resolves existing ancestor directories before checking physical containment,
-including symlinks and junctions, even when the override directory does not exist.
-An override beneath a symlinked default home therefore uses the default home's
-sticky selection. If `~/.hermes/link` points outside the default home,
-`HERMES_HOME=~/.hermes/link/new` instead uses that override root, whether or not
-`new` exists. Previewed destinations retain the configured path spelling.
-An unreadable path or dangling alias leaves the home unresolved; repair that path
-before configuring Hermes. Inspect setup's previewed destinations before applying
-changes.
+REA validates the override root before reading its selection, resolving
+existing ancestor directories, including symlinks and junctions, even when
+the override directory does not exist. An unreadable path or dangling alias
+leaves the home unresolved; repair that path before configuring Hermes.
+Previewed destinations retain the configured path spelling. Inspect setup's
+previewed destinations before applying changes.
 
 An explicit `HERMES_HOME` pointing to `profiles/<name>` selects that named
 profile directly, bypassing sticky selection. An invalid, missing or deleted
@@ -934,6 +934,29 @@ reads them, even when another user, such as an administrator, owns them. A
 relative additional entry depends on
 Goose's working directory, so REA refuses it. Goose reads its configuration at
 startup; restart it after setup.
+
+## Kilo Code
+
+For [Kilo Code](https://kilo.ai/docs/automate/mcp/using-in-kilo-code), setup
+and `rea mcp add` write `mcp.rea` into the last user-scope file Kilo loads.
+Kilo's config root is `$XDG_CONFIG_HOME/kilo` when `XDG_CONFIG_HOME` is set,
+otherwise `~/.config/kilo`, on every OS including Windows. Kilo reads that
+root's `config.json`, `kilo.json`, `kilo.jsonc`, `opencode.json` and
+`opencode.jsonc`, then the `KILO_CONFIG` file, then `~/.kilocode`, `~/.kilo` and
+`KILO_CONFIG_DIR`, each for `kilo.jsonc`, `kilo.json`, `opencode.jsonc` and
+`opencode.json`. When none of those files exists, setup creates `kilo.json` in
+the root (or in an empty `KILO_CONFIG_DIR`). A relative Kilo path depends on
+Kilo's working directory, so REA refuses it. The entry is
+`{ "type": "local", "command": [exe, ...args], "enabled": true }`, plus
+`environment` only when it is non-empty. `rea mcp add` preserves an existing
+`enabled: false`; `rea setup` sets `enabled: true`.
+`KILO_CONFIG_CONTENT` is Kilo's highest layer and is never edited (see
+[installation](installation.md)); project registration with `rea mcp add` is in
+the [CLI guide](cli.md). Kilo also reads its legacy extension MCP files
+(`mcpServers` in the VS Code extension's `mcp_settings.json`, and the project
+`.kilocode/mcp.json` and `.kilo/mcp.json`) at the lowest precedence, below any
+`kilo.json` layer. REA neither inspects nor removes them, so a `rea` entry added
+there by hand stays in effect after uninstall.
 
 ## WorkBuddy
 

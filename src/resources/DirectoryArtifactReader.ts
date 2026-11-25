@@ -3,9 +3,12 @@ import {
   lstat,
   open,
   opendir,
+  readlink,
   realpath,
   type FileHandle,
 } from "node:fs/promises";
+import type { ArtifactLinkTarget } from "../domain/artifactGraph.js";
+import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable } from "node:stream";
 
@@ -51,6 +54,8 @@ interface DirectoryTraversalOptions extends ArtifactTraversalOptions {
   readonly descendInto?: (path: string) => boolean;
   /** Bound examined children, including omitted special entries. */
   readonly maximumEntries?: number;
+  /** Charge an examined child to a caller's shared allowance before inspection. */
+  readonly admitExaminedEntry?: () => void;
 }
 
 /** Exhausted an examined-entry budget; unrelated I/O and cleanup failures stay distinct. */
@@ -125,6 +130,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     const examine = () => {
       if (maximum !== undefined && examined >= maximum)
         throw new DirectoryArtifactTraversalLimit(examined, maximum);
+      options?.admitExaminedEntry?.();
       examined += 1;
     };
     const pending = [root];
@@ -281,7 +287,19 @@ export class DirectoryArtifactReader implements ArtifactReader {
           },
         );
         const path = relative(root, absolute).split(sep).join("/");
-        const entry = artifactEntry(path, absolute, metadata);
+        const entry = artifactEntry(
+          path,
+          absolute,
+          metadata,
+          metadata.isSymbolicLink()
+            ? await readlink(absolute, { encoding: "buffer" }).then(
+                observedSymlinkTarget,
+                // A link replaced after lstat keeps its target unknown;
+                // consumers that need it treat the member as unexamined.
+                () => undefined,
+              )
+            : undefined,
+        );
         if (entry === undefined) {
           options?.onOmission?.({ path, kind: unsupportedEntryKind(metadata) });
           continue;
@@ -341,7 +359,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     await this.#validateRoot();
     if (entry.kind !== "file")
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         "Only regular files can be opened",
       );
     const identity = entry.sourceIdentity;
@@ -583,6 +601,7 @@ const artifactEntry = (
   path: string,
   absolute: string,
   metadata: BigIntStats,
+  linkTarget: ArtifactLinkTarget | undefined,
 ): DirectoryArtifactEntry | undefined => {
   const kind = metadata.isSymbolicLink()
     ? "symlink"
@@ -603,10 +622,13 @@ const artifactEntry = (
     declaredIntegrity: null,
     unpacked: false,
     limitations:
-      kind === "symlink"
-        ? ["Symlink target was not followed or disclosed."]
-        : [],
+      kind !== "symlink"
+        ? []
+        : linkTarget === undefined
+          ? ["Symlink target could not be read; it was not followed."]
+          : ["Symlink target was recorded, not followed."],
     adapterKey: absolute,
+    ...(kind === "symlink" && linkTarget !== undefined ? { linkTarget } : {}),
     ...(kind === "file"
       ? {
           sourceIdentity: {
@@ -694,6 +716,12 @@ const mapStableFileRead = async function* (
     })) {
       abortIfNeeded(signal);
       bytes += BigInt(chunk.length);
+      if (bytes > expectedBytes) {
+        // Count the probe for validation without delivering bytes beyond the admitted range.
+        const admitted = chunk.length - Number(bytes - expectedBytes);
+        if (admitted > 0) yield chunk.subarray(0, admitted);
+        break;
+      }
       yield chunk;
     }
     abortIfNeeded(signal);

@@ -10,6 +10,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
+  malformedArtifact,
   assertProducedEntry,
   copyArtifactEntry,
   type ArtifactEntry,
@@ -18,6 +19,7 @@ import {
   readArtifactFileChunks,
   abortIfNeeded,
   ArtifactFileSource,
+  unsupportedArtifact,
 } from "../resources/index.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import {
@@ -83,8 +85,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
             signal,
           ));
         if (header === undefined)
-          throw new ArtifactReaderFailure(
-            "format",
+          throw unsupportedArtifact(
+            "dotnet-bundle",
             "Selected file has no .NET bundle header",
           );
         this.#bundle = await readDotnetBundle(
@@ -291,16 +293,18 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       // Final source validation owns its in-flight I/O before late cancellation.
       lifecycle.finalizing();
       await pumping;
+      // Re-verify the source first: a file that changed during the read is a
+      // changed file, not a member that disagrees with its declaration.
+      await this.#source.readSelectedPath(signal);
+      abortIfNeeded(signal);
       if (
         bytes !== file.size ||
         (inflater !== undefined && inflater.bytesWritten !== storedBytes)
       )
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "dotnet-bundle",
           `.NET bundle member length or compressed extent does not match its declaration: ${file.path}`,
         );
-      await this.#source.readSelectedPath(signal);
-      abortIfNeeded(signal);
     } catch (cause) {
       const failure = this.#memberFailure(file, cause);
       lifecycle.failure(failure);
@@ -322,10 +326,9 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       cause instanceof Error &&
       "code" in cause &&
       ["Z_DATA_ERROR", "Z_BUF_ERROR"].includes(String(cause.code));
-    return new ArtifactReaderFailure(
-      malformedCompression ? "format" : "io",
-      `Could not read .NET bundle member: ${file.path}`,
-      { cause },
-    );
+    const message = `Could not read .NET bundle member: ${file.path}`;
+    return malformedCompression
+      ? malformedArtifact("dotnet-bundle", message, { cause })
+      : new ArtifactReaderFailure("io", message, { cause });
   }
 }
