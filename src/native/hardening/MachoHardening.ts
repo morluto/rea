@@ -1,5 +1,8 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
-import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
+import {
+  validateFatSliceIdentity,
+  type FatSliceRangeFailure,
+} from "../../domain/apple/machoContainer.js";
 import {
   machoArchitectureName,
   machoKnownArm64Subtype,
@@ -178,6 +181,17 @@ const readMachoHardeningFromReader = async (
   return images;
 };
 
+/** Hardening status for a FAT row whose own range cannot be read. */
+const sliceRangeIssue = (
+  issue: FatSliceRangeFailure | null,
+): SliceRef["rangeIssue"] =>
+  issue === null
+    ? null
+    : {
+        status: issue.kind === "unsupported" ? "unknown" : "malformed",
+        reason: issue.detail,
+      };
+
 const sliceRefs = (
   container: Exclude<
     Awaited<ReturnType<typeof readMachoContainer>>,
@@ -206,13 +220,7 @@ const sliceRefs = (
       size: declaration.size,
       cpuType: declaration.cpuType,
       cpuSubtype: declaration.cpuSubtype,
-      rangeIssue:
-        issue === null
-          ? null
-          : {
-              status: issue.kind === "unsupported" ? "unknown" : "malformed",
-              reason: issue.detail,
-            },
+      rangeIssue: sliceRangeIssue(issue),
     };
   });
   const hidden = container.hidden;
@@ -224,10 +232,7 @@ const sliceRefs = (
       size: hidden.declaration.size,
       cpuType: hidden.declaration.cpuType,
       cpuSubtype: hidden.declaration.cpuSubtype,
-      rangeIssue:
-        hidden.rangeIssue === null
-          ? null
-          : { status: "malformed", reason: hidden.rangeIssue },
+      rangeIssue: sliceRangeIssue(hidden.rangeIssue),
     });
   return refs;
 };

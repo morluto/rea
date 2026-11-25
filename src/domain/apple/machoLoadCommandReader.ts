@@ -38,7 +38,7 @@ import {
   readFatJvmIdentityLimitIssue,
   readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
-  validateFatSlice,
+  inspectFatSliceRange,
   validateFatSliceIdentity,
   machoFailure,
   type FatContainerHeader,
@@ -119,7 +119,7 @@ export type HiddenFatRow =
   | {
       readonly status: "declared";
       readonly declaration: FatSliceDeclaration;
-      readonly rangeIssue: string | null;
+      readonly rangeIssue: FatSliceRangeFailure | null;
     }
   | MachoReadFailed;
 
@@ -324,8 +324,8 @@ const readAppleHiddenArm64Row = async (
     declaration,
     rangeIssue:
       overlap === null
-        ? validateFatSlice(declaration, fileSize, end)
-        : fatSliceOverlapReason(overlap),
+        ? inspectFatSliceRange(declaration, fileSize, end)
+        : machoFailure.malformed(fatSliceOverlapReason(overlap)),
   };
 };
 
@@ -336,8 +336,7 @@ const readHiddenSlice = async (
   if (row === null) return null;
   if (row.status !== "declared") throw new MachoReadError(row.failure);
   const { declaration, rangeIssue } = row;
-  if (rangeIssue !== null)
-    throw new MachoReadError(machoFailure.malformed(rangeIssue));
+  if (rangeIssue !== null) throw new MachoReadError(rangeIssue);
   const slice = await readSlice(readAt, declaration.offset, declaration.size, {
     fatCpuType: declaration.cpuType,
     fatCpuSubtype: declaration.cpuSubtype,
@@ -1218,8 +1217,17 @@ const readExact = async (
   label: string,
 ): Promise<Uint8Array> => {
   const bytes = await readAt(offset, length);
+  // Every caller has already placed this range inside the measured slice, so
+  // missing bytes mean the file changed after it was measured.
   if (bytes.byteLength < length)
-    throw new MachoReadError(machoFailure.malformed(`${label} is truncated`));
+    throw new MachoReadError(
+      machoFailure.changed(
+        `${label} read came up short of the measured slice`,
+        {
+          offset,
+        },
+      ),
+    );
   return bytes;
 };
 
