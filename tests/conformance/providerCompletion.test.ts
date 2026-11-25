@@ -13,6 +13,7 @@ import {
   binaryLayoutFixture,
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { PeResourcesService } from "../../src/application/binaryDiagnostics/PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../src/domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
@@ -142,11 +143,9 @@ it("retains valid binary-layout Evidence while preserving malformed output prece
     controller.abort();
     return Promise.resolve(ok(binaryLayoutFixture()));
   };
-  const valid = await new BinaryLayoutService({
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: layoutInspect,
-    inspectAndClose: layoutInspect,
-  }).inspect(
+  const valid = await new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, layoutInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: controller.signal },
   );
@@ -164,11 +163,9 @@ it("retains valid binary-layout Evidence while preserving malformed output prece
     invalidController.abort();
     return Promise.resolve(ok(malformed));
   };
-  const invalid = await new BinaryLayoutService({
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: malformedLayoutInspect,
-    inspectAndClose: malformedLayoutInspect,
-  }).inspect(
+  const invalid = await new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, malformedLayoutInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: invalidController.signal },
   );
@@ -231,11 +228,9 @@ it("retains valid recorded-crash Evidence and preserves malformed output precede
     controller.abort();
     return Promise.resolve(ok(recordedCrashFixture()));
   };
-  const valid = await new RecordedCrashService({
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: crashInspect,
-    inspectAndClose: crashInspect,
-  }).inspect(
+  const valid = await new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, crashInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.core", include_debugger_context: false },
     { signal: controller.signal },
   );
@@ -253,11 +248,9 @@ it("retains valid recorded-crash Evidence and preserves malformed output precede
     invalidController.abort();
     return Promise.resolve(ok(malformed));
   };
-  const invalid = await new RecordedCrashService({
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: malformedCrashInspect,
-    inspectAndClose: malformedCrashInspect,
-  }).inspect(
+  const invalid = await new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, malformedCrashInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.core", include_debugger_context: false },
     { signal: invalidController.signal },
   );
