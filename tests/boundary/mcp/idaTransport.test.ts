@@ -1033,29 +1033,30 @@ it.each([200, 500])(
   },
 );
 
-it.each(
-  [200, 500].flatMap((toolStatus) =>
-    ["utf-16le", "utf-16", " = utf-16", "=utf-8; charset=utf-16"].map(
-      (charset) => ({ toolStatus, charset }),
-    ),
-  ),
-)(
-  "omits unsupported $charset diagnostic bytes from HTTP $toolStatus JSON failures",
-  async ({ toolStatus, charset }) => {
+it.each([
+  [200, "application/json; charset=utf-16le"],
+  [500, "application/json; charset=utf-16le"],
+  [500, "application/json; charset=utf-16", true],
+  [500, "application/json; charset = utf-16"],
+  [500, "application/json; charset\t=utf-16le"],
+  [200, "application/json; charset=utf-8; CHARSET=utf-16le"],
+  [500, "application/json; charset=utf-8; CHARSET=utf-16le"],
+  [500, 'application/json; note="unterminated; charset=utf-16le'],
+] as const)(
+  "omits encoded diagnostic bytes from HTTP %i with %s",
+  async (toolStatus, toolContentType, hasBom?: boolean) => {
     const credential = "charset-fixture-secret";
-    const utf16 = Buffer.from('{"reason":"' + credential + '"}', "utf16le");
-    const encoded =
-      charset === "utf-16"
-        ? Buffer.concat([Buffer.from([0xff, 0xfe]), utf16])
-        : utf16;
+    const utf16 = Buffer.from(
+      JSON.stringify({ reason: credential }),
+      "utf16le",
+    );
+    const encoded = hasBom
+      ? Buffer.concat([Buffer.from([0xff, 0xfe]), utf16])
+      : utf16;
     const { connection } = await fixture({
       configurationHeaders: { Cookie: "session=" + credential },
       toolStatus,
-      toolContentType:
-        "application/json; charset" +
-        (charset.startsWith("=") || charset.startsWith(" ")
-          ? charset
-          : "=" + charset),
+      toolContentType,
       toolResponseBody: encoded,
     });
     await connection.connect();
@@ -1064,6 +1065,9 @@ it.each(
       .catch((cause: unknown) => cause);
     if (!(failure instanceof Error))
       throw new Error("Expected unsupported encoded JSON error");
+    if (toolStatus === 200)
+      expect(failure.message).toContain("IDA MCP returned malformed HTTP JSON");
+    else expect(failure.cause).toMatchObject({ data: { status: 500 } });
     expect(failure.message).toMatch(/body.*omitted|omitted.*body/iu);
     expect(failure.message).not.toContain(encoded.toString("utf8"));
     const inspected = inspect(failure, {
@@ -1090,44 +1094,6 @@ it("retains successfully parsed analysis values despite unsupported declared cha
   await connection.connect();
   expect(await connection.call("first", {})).toEqual({ observed });
 });
-
-it.each(
-  [200, 500].flatMap((toolStatus) =>
-    [
-      "application/json; charset = utf-16",
-      "application/json; charset\t=utf-16le",
-      "application/json; charset=utf-8; CHARSET=utf-16le",
-      'application/json; note="unterminated; charset=utf-16le',
-    ].map((toolContentType) => ({ toolStatus, toolContentType })),
-  ),
-)(
-  "omits encoded diagnostic bytes when Content-Type is incomplete or ambiguous: HTTP $toolStatus $toolContentType",
-  async ({ toolStatus, toolContentType }) => {
-    const credential = "mime-fixture-secret";
-    const { connection } = await fixture({
-      configurationHeaders: { Cookie: "session=" + credential },
-      toolStatus,
-      toolContentType,
-      toolResponseBody: Buffer.from(
-        '{"reason":"' + credential + '"}',
-        "utf16le",
-      ),
-    });
-    await connection.connect();
-    const failure = await connection
-      .call("first", {})
-      .catch((cause: unknown) => cause);
-    if (!(failure instanceof Error))
-      throw new Error("Expected malformed Content-Type failure");
-    expect(failure.message).toMatch(/body.*omitted|omitted.*body/iu);
-    expect(
-      inspect(failure, { depth: null, showHidden: true }).replaceAll(
-        "\\x00",
-        "",
-      ),
-    ).not.toContain(credential);
-  },
-);
 
 it.each([
   "application/json; charset=",

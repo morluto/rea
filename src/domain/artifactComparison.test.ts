@@ -893,3 +893,104 @@ it("names the constraint an unchanged comparison with changes violates", () => {
     details: { constraint: "unchanged-has-no-changes" },
   });
 });
+
+it("reports stored directory filename spelling changes on symlinks and unavailable entries", () => {
+  const nfc = "\u00e9.link";
+  const nfd = "e\u0301.link";
+  const directoryWithLink = (options: {
+    readonly sourcePath?: string;
+    readonly hashStatus: ArtifactOccurrence["hash_status"];
+    readonly linkTarget?: { readonly text: string; readonly hex: string };
+  }) => {
+    const inventory = artifactInventoryResultSchema.parse(
+      ARTIFACT_COMPARISON_EXAMPLE.left.normalized_result,
+    );
+    const root = inventory.occurrences[0]!;
+    const rootNode = inventory.nodes[0]!;
+    const rootId = inventory.manifest.root_artifact_id;
+    inventory.manifest.root_format = "directory";
+    inventory.nodes = [{ ...rootNode, format: "directory", size: 0 }];
+    inventory.occurrences = [
+      {
+        ...root,
+        entry_kind: "directory",
+        artifact_kind: "container",
+        artifact_format: "directory",
+        declared_size: 0,
+      },
+      {
+        occurrence_id: occurrenceIdForLocation({
+          rootArtifactId: rootId,
+          logicalPath: nfc,
+          entryKind: "symlink",
+        }),
+        artifact_id: null,
+        parent_occurrence_id: root.occurrence_id,
+        relationship_coverage: "complete",
+        logical_path: nfc,
+        entry_kind: "symlink",
+        artifact_kind: "resource",
+        artifact_format: "file",
+        declared_size: null,
+        compressed_size: null,
+        executable: false,
+        encrypted: false,
+        hash_status: options.hashStatus,
+        source_location: null,
+        ...(options.sourcePath === undefined
+          ? {}
+          : { source_path: options.sourcePath }),
+        ...(options.linkTarget === undefined
+          ? {}
+          : { link_target: options.linkTarget }),
+        limitations: [],
+      },
+    ];
+    inventory.edges = [];
+    inventory.coverage = { scope: "container-entries", status: "complete" };
+    inventory.manifest.node_count = inventory.nodes.length;
+    inventory.manifest.occurrence_count = inventory.occurrences.length;
+    inventory.manifest.edge_count = 0;
+    return commit(inventory);
+  };
+
+  const linkTarget = {
+    text: "target.txt",
+    hex: Buffer.from("target.txt", "utf8").toString("hex"),
+  };
+  expect(
+    compareArtifacts(
+      directoryWithLink({ hashStatus: "not-hashed", linkTarget }),
+      directoryWithLink({
+        sourcePath: nfd,
+        hashStatus: "not-hashed",
+        linkTarget,
+      }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [
+      expect.objectContaining({
+        logical_path: nfc,
+        classification: "changed",
+        dimensions: ["metadata"],
+      }),
+    ],
+  });
+
+  expect(
+    compareArtifacts(
+      directoryWithLink({ hashStatus: "unavailable" }),
+      directoryWithLink({ sourcePath: nfd, hashStatus: "unavailable" }),
+    ),
+  ).toMatchObject({
+    status: "changed",
+    changes: [
+      expect.objectContaining({
+        logical_path: nfc,
+        classification: "changed",
+        dimensions: ["metadata", "availability"],
+      }),
+    ],
+  });
+});

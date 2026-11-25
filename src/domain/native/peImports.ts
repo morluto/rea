@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema, peVaSchema } from "./peAddressSpace.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
@@ -28,7 +30,9 @@ export const inspectPeImportsInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_IMPORT_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   max_dlls: z
     .number()
     .int()
@@ -56,6 +60,12 @@ const peImportFunctionSchema = z.strictObject({
   ordinal: z.number().int().min(0).max(0xffff).nullable(),
   ilt_rva: uint.nullable(),
   iat_rva: uint,
+  /**
+   * Import address table slot VA (`image_base` plus `iat_rva`), the address
+   * `xrefs` and other provider tools accept. Evidence saved before this field
+   * existed omits it.
+   */
+  iat_va: peVaSchema.optional(),
   thunk_hex: z.string().regex(/^[0-9a-f]+$/u),
 });
 
@@ -138,6 +148,7 @@ export const peImportsSchema = z.strictObject({
   machine: uint,
   bits: z.union([z.literal(32), z.literal(64)]),
   architecture: z.string().min(1),
+  image_base: peImageBaseSchema,
   import_directory: directorySchema,
   delay_import_directory: directorySchema,
   imports: z.array(peImportDllSchema),
@@ -145,6 +156,8 @@ export const peImportsSchema = z.strictObject({
   imphash: imphashSchema,
   coverage: coverageSchema,
   issues: z.array(peImportIssueSchema),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeImports = z.infer<typeof peImportsSchema>;

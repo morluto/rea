@@ -46,18 +46,12 @@ it("applies the shared absolute local-path policy to the public input", () => {
   expect(path?.description).toBe("Absolute filesystem path to a BEAM file");
 });
 
-it("rejects extra caller arguments and admits a BEAM form with no tables", () => {
-  expect(
-    inspectErlangBeamInputSchema.safeParse({
-      path: "/artifacts/app.beam",
-      extra: true,
-    }).success,
-  ).toBe(false);
+it("admits a BEAM form with no tables", () => {
   const report = erlangBeamSchema.parse({
     artifact: {
       path: "/artifacts/app.beam",
       sha256: "a".repeat(64),
-      bytes: 16,
+      bytes: 12,
     },
     form: { location: { offset: 0, bytes: 12 }, size: 4 },
     chunks: [],

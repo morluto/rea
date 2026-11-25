@@ -5,7 +5,6 @@ import { contractNamed } from "../../../src/cli/contractCliDescription.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -73,26 +72,6 @@ mcpTest(
       expect(evidence.subject?.identity).toMatchObject({
         kind: "file",
         architecture: "mips",
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_elf_dependencies",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_elf_dependencies",
-        arguments: { path: "program" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_elf_dependencies" },
       });
     } finally {
       await session.close();

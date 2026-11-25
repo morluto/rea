@@ -21,6 +21,8 @@ import {
 } from "../../../fixtures/nativeCommands.js";
 
 const missingUuidDiagnostic = "missing LC_UUID load command";
+const unbackedTextDiagnostic =
+  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
 const dyldDiagnosticOutput = (path: string, diagnostic: string): string =>
   `${path} [arm64]:\n   ${diagnostic}\n`;
@@ -98,8 +100,7 @@ it.each([
   { fileType: 3, diagnostic: "unknown filetype 3" },
   {
     fileType: 10,
-    diagnostic:
-      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
+    diagnostic: unbackedTextDiagnostic,
   },
 ])(
   "classifies $diagnostic for Mach-O type $fileType before nm fallback",
@@ -135,7 +136,7 @@ it.each([
 );
 
 it.each([
-  { fileType: 2, signal: null },
+  { fileType: 3, signal: null },
   { fileType: 99, signal: null },
   { fileType: 4, signal: "SIGTERM" },
 ])(
@@ -199,6 +200,7 @@ it.each([
   { stdout: "malformed load command table", stderr: "" },
   { stdout: "unknown mh.filetype 4\nmalformed load command", stderr: "" },
   { stdout: "unknown mh.filetype 4", stderr: "read failed\n" },
+  { stdout: `${missingUuidDiagnostic}\n${unbackedTextDiagnostic}`, stderr: "" },
 ])(
   "preserves a dyld_info command failure with stdout $stdout and stderr $stderr",
   async ({ stdout, stderr }) => {

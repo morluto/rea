@@ -134,9 +134,9 @@ mcpTest(
       "inspect-ntfs-journal",
       mftPath,
       journalPath,
-      "--mftRecordStart=32",
-      "--mftRecordLimit=1",
-      "--startFileOffset=224",
+      "--mft-record-start=32",
+      "--mft-record-limit=1",
+      "--start-file-offset=224",
       "--json",
     ]);
     expect(pageCli.exitCode, pageCli.stdout).toBe(0);
@@ -240,7 +240,7 @@ mcpTest(
       "inspect-ntfs-journal",
       mftPath,
       journalPath,
-      "--mftRecordLimit=1",
+      "--mft-record-limit=1",
       "--json",
     ]);
     expect(cli.exitCode, cli.stdout).toBe(0);

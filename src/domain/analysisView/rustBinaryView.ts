@@ -8,7 +8,7 @@ import {
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -25,8 +25,8 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
 
@@ -145,14 +145,8 @@ export const projectRustBinaryView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "rust")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Rust Evidence supports summary, rust and cyclonedx views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Rust Evidence supports summary, rust and cyclonedx views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof rustBinaryViewRequestSchema>
@@ -217,28 +211,39 @@ export const projectRustBinaryView = (
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
-    const selected = selectViewRows(
-      metadata.packages,
-      view,
-      (row, index) =>
-        (indices?.has(index) ?? true) &&
-        (names?.has(row.name) ?? true) &&
-        (versions?.has(row.version) ?? true),
-      (row, index) => ({
-        index,
-        ...((fields?.has("name") ?? true) && { name: row.name }),
-        ...((fields?.has("version") ?? true) && { version: row.version }),
-        ...((fields?.has("source") ?? true) && { source: row.source }),
-        ...((fields?.has("kind") ?? true) && { kind: row.kind }),
-        ...((fields?.has("root") ?? true) && { root: row.root }),
-        ...(fields?.has("dependencies") === true && {
-          dependencies: row.dependencies,
-        }),
-        ...(fields?.has("features") === true && {
-          features: row.features,
-        }),
+    const matchPackage =
+      names === undefined && versions === undefined
+        ? undefined
+        : (row: (typeof metadata.packages)[number]) =>
+            (names?.has(row.name) ?? true) &&
+            (versions?.has(row.version) ?? true);
+    const projectPackage = (
+      row: (typeof metadata.packages)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("name") ?? true) && { name: row.name }),
+      ...((fields?.has("version") ?? true) && { version: row.version }),
+      ...((fields?.has("source") ?? true) && { source: row.source }),
+      ...((fields?.has("kind") ?? true) && { kind: row.kind }),
+      ...((fields?.has("root") ?? true) && { root: row.root }),
+      ...(fields?.has("dependencies") === true && {
+        dependencies: row.dependencies,
       }),
-    );
+      ...(fields?.has("features") === true && {
+        features: row.features,
+      }),
+    });
+    const selected =
+      indices !== undefined
+        ? selectIndexedViewRows(
+            metadata.packages,
+            indices,
+            view,
+            matchPackage,
+            projectPackage,
+          )
+        : selectViewRows(metadata.packages, view, matchPackage, projectPackage);
     return ok({
       kind: "rust" as const,
       view,
@@ -256,21 +261,32 @@ export const projectRustBinaryView = (
     view.from_indices === undefined ? undefined : new Set(view.from_indices);
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
-  const selected = selectViewRows(
-    metadata.dependency_edges,
-    view,
-    (row, index) =>
-      (indices?.has(index) ?? true) &&
-      (from?.has(row.from_index) ?? true) &&
-      (to?.has(row.to_index) ?? true),
-    (row, index) => ({
-      index,
-      ...((fields?.has("from_index") ?? true) && {
-        from_index: row.from_index,
-      }),
-      ...((fields?.has("to_index") ?? true) && { to_index: row.to_index }),
+  const matchEdge =
+    from === undefined && to === undefined
+      ? undefined
+      : (row: (typeof metadata.dependency_edges)[number]) =>
+          (from?.has(row.from_index) ?? true) &&
+          (to?.has(row.to_index) ?? true);
+  const projectEdge = (
+    row: (typeof metadata.dependency_edges)[number],
+    index: number,
+  ) => ({
+    index,
+    ...((fields?.has("from_index") ?? true) && {
+      from_index: row.from_index,
     }),
-  );
+    ...((fields?.has("to_index") ?? true) && { to_index: row.to_index }),
+  });
+  const selected =
+    indices !== undefined
+      ? selectIndexedViewRows(
+          metadata.dependency_edges,
+          indices,
+          view,
+          matchEdge,
+          projectEdge,
+        )
+      : selectViewRows(metadata.dependency_edges, view, matchEdge, projectEdge);
   return ok({
     kind: "rust" as const,
     view,

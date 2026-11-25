@@ -67,9 +67,11 @@ describe("decompile-all CLI", () => {
       expect(await readdir(join(root, "out", "functions"))).toEqual([
         "0x1000.c",
       ]);
-      expect(JSON.stringify(result.json)).not.toContain(
+      const pseudocode = "// single-function";
+      expect(
         await readFile(join(root, "out", "functions", "0x1000.c"), "utf8"),
-      );
+      ).toContain(pseudocode);
+      expect(JSON.stringify(result.json)).not.toContain(pseudocode);
       const resumed = await cli.run({
         arguments: [
           "decompile-all",
