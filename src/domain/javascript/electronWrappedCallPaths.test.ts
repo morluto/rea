@@ -949,6 +949,50 @@ it("resolves an enum member channel in a bundle module factory", () => {
     expect.objectContaining({ entry: "desktop.ping", channel: "app:ping" }),
   );
 });
+// tsc and Babel output for `export enum Channel` inside a bundle factory,
+// published through the factory's exports and module parameters.
+it.each([
+  [
+    "tsc through exports",
+    `var Channel;(function(e){e.Ping="app:ping"})(Channel||(exports.Channel=Channel={}));`,
+  ],
+  [
+    "tsc through module.exports",
+    `var Channel;(function(e){e.Ping="app:ping"})(Channel||(module.exports.Channel=Channel={}));`,
+  ],
+  [
+    "Babel through exports",
+    `let Channel=exports.Channel=function(e){return e.Ping="app:ping",e}({});`,
+  ],
+])(
+  "resolves an exported %s enum channel in a bundle module factory",
+  (_emitter, enumeration) => {
+    const result = analyzeJavaScriptStaticSource(
+      bundle(
+        `${enumeration}
+         electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+      ),
+    );
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({ entry: "desktop.ping", channel: "app:ping" }),
+    );
+  },
+);
+it("keeps an enum stored through a parameter of an unknown function unresolved", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    (function (module, exports) {
+      var Channel;(function(e){e.Ping="app:ping"})(Channel||(exports.Channel=Channel={}));
+      contextBridge.exposeInMainWorld("desktop",{ping:()=>ipcRenderer.send(Channel.Ping)});
+    })({}, { set Channel(value) { value.Ping = runtimeChannel; } });
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      channel: null,
+      channel_expression: "Channel.Ping",
+    }),
+  ]);
+});
 it("keeps an enum member channel unresolved after another member write", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");

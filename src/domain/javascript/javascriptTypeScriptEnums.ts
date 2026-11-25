@@ -1,4 +1,3 @@
-import { commonJsExportName } from "./javascriptCommonJsExportReceivers.js";
 import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
@@ -6,6 +5,9 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
+import { commonJsExportName } from "./javascriptCommonJsExportReceivers.js";
+import { moduleFactory } from "./javascriptStaticAnalysisHelpers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -61,7 +63,79 @@ export const typeScriptEnumInitializer = (
 const isExportStore = (
   target: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => commonJsExportName(target, state) !== undefined;
+): boolean =>
+  commonJsExportName(target, state) !== undefined ||
+  isFactoryExportStore(target, state);
+
+/**
+ * `exports.E` or `module.exports.E` through the module and exports
+ * parameters of a factory in a recognized bundle module table. Its loader
+ * supplies the exports object, as the host does for a global receiver.
+ */
+const isFactoryExportStore = (
+  target: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!t.isMemberExpression(target)) return false;
+  let receiver = unwrapJavaScriptExpression(target.object).node;
+  let position = 1;
+  if (
+    t.isMemberExpression(receiver) &&
+    semanticStaticPropertyKey(receiver.property, receiver.computed) ===
+      "exports"
+  ) {
+    receiver = unwrapJavaScriptExpression(receiver.object).node;
+    position = 0;
+  }
+  if (!t.isIdentifier(receiver)) return false;
+  const binding = resolveSemanticBindingState(state, receiver, receiver.name);
+  // A reassigned role parameter no longer holds the loader's object.
+  if (
+    binding === undefined ||
+    binding.definitions.some(({ kind }) => kind !== "parameter")
+  )
+    return false;
+  for (
+    let node = state.parentsByNode.get(target);
+    node !== undefined;
+    node = state.parentsByNode.get(node)
+  ) {
+    if (!t.isFunction(node)) continue;
+    const parameter = runtimeFunctionParameters(node)[position];
+    if (
+      t.isIdentifier(parameter) &&
+      resolveSemanticBindingState(state, parameter, parameter.name)
+        ?.bindingId === binding.bindingId
+    )
+      return isBootstrapFactory(node, state);
+  }
+  return false;
+};
+
+/** A factory of the module table that a recognized bootstrap dispatches. */
+const isBootstrapFactory = (
+  factory: t.Function,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const property = t.isObjectMethod(factory)
+    ? factory
+    : state.parentsByNode.get(factory);
+  const table = property && state.parentsByNode.get(property);
+  if (
+    !t.isObjectExpression(table) ||
+    !(t.isObjectMethod(property) || t.isObjectProperty(property)) ||
+    moduleFactory(property) !== factory
+  )
+    return false;
+  for (
+    let node = state.parentsByNode.get(table);
+    node !== undefined;
+    node = state.parentsByNode.get(node)
+  )
+    if (t.isCallExpression(node))
+      return javascriptBootstrapAt(node, state)?.table === table;
+  return false;
+};
 
 /** `var E = function (E) {...}(E || {})`, or `let E = exports.E = ...({})`. */
 const initializedEnum = (
