@@ -15,10 +15,7 @@ import { ok, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../filesystem/callerPath.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
   posixPathCandidates,
   windowsPathCandidates,

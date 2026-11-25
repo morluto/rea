@@ -25,11 +25,7 @@ import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
-import {
-  artifactSchema,
-  summaryViewResultBase,
-  viewResultBaseFields,
-} from "./analysisViewBase.js";
+import { artifactSchema, viewResultBaseFields } from "./analysisViewBase.js";
 import { recordedArrayViewSchema } from "./analysisViewRequest.js";
 import { evidenceJsonViewRequestSchema } from "./evidenceJsonView.js";
 import {
@@ -44,7 +40,6 @@ import {
   artifactInventoryViewRequestSchema,
 } from "./artifactInventoryView.js";
 import {
-  batchDecompileSummarySchema,
   batchDecompileViewCollections,
   batchDecompileViewContextSchema,
 } from "./batchDecompileView.js";

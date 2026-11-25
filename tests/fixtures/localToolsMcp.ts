@@ -1,7 +1,4 @@
-import {
-  canonicalOutputSchema,
-  withCanonicalOutputSchema,
-} from "./canonicalOutputSchema.js";
+import { withCanonicalOutputSchema } from "./canonicalOutputSchema.js";
 import {
   Client,
   type CallToolRequestOptions,

@@ -62,7 +62,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

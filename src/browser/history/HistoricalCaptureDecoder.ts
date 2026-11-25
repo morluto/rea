@@ -44,7 +44,6 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
