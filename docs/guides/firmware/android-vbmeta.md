@@ -129,7 +129,7 @@ rea inspect-artifact ./vbmeta.img --json \
 Block sizes must be multiples of 64. A descriptor's `num_bytes_following` must
 be a multiple of 8, and every range must fit its block before those bytes are
 read. A declared image that ends past the file is `truncated`. A structural
-mismatch is `invalid_request`. These refusals do not produce an empty
+mismatch is `unsupported_target`. These refusals do not produce an empty
 successful inventory. The limitation that names unknown descriptor tags lists
 at most eight; this is a presentation bound, and every descriptor stays in the
 Evidence.
