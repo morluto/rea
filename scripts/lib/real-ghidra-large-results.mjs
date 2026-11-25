@@ -81,7 +81,10 @@ export async function verifyGhidraLargeResults({
       "invalid_request",
     );
     assert.equal(
-      await call("procedure_address", { procedure: entry.address }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: entry.address,
+      }),
       entry.address,
     );
 
@@ -107,7 +110,10 @@ export async function verifyGhidraLargeResults({
       "annotate_native_function",
     );
     assert.equal(
-      await call("procedure_address", { procedure: "rea_frame_probe" }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: "rea_frame_probe",
+      }),
       entry.address,
       "A delivery constraint must preserve the successfully committed edit",
     );
@@ -142,7 +148,7 @@ export async function verifyGhidraLargeResults({
       );
       assert.ok(record, `Missing exported retained record ${id}`);
       assert.equal(record.provider.id, "ghidra");
-      assert.equal(record.subject.digest.sha256, sha256);
+      assert.equal(record.subject.identity.sha256, sha256);
       return record;
     };
     const originalError = bundle.records.find(
@@ -151,7 +157,7 @@ export async function verifyGhidraLargeResults({
     assert.ok(originalError);
     assert.equal(originalError.operation, "mcp_tool_error");
     assert.equal(originalError.provider.id, "rea-mcp");
-    assert.equal(originalError.subject, null);
+    assert.equal(originalError.subject.identity.kind, "unknown");
     assert.equal(originalError.parameters.tool_name, "procedure_address");
     assert.equal(originalError.normalized_result.error.code, "invalid_request");
     assert.equal(originalError.raw_result.isError, true);

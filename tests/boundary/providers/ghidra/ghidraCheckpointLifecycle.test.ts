@@ -1,29 +1,23 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createHash } from "node:crypto";
-import {
-  access,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../../../../src/domain/analysisProfile.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
+import type { BridgeMaxReplyBytes } from "../../../../src/config/bridgeMaxReplyBytes.js";
+import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import { resolveGhidraCheckpoint } from "../../../../src/ghidra/GhidraCheckpoint.js";
 import { GhidraFixtureLauncher } from "./ghidraClient.fixture.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, rm: vi.fn(actual.rm) };
 });
 
-const roots: string[] = [],
-  clients: GhidraClient[] = [],
+const clients: GhidraClient[] = [],
   launchers: GhidraFixtureLauncher[] = [];
 afterEach(async () => {
   const actual =
@@ -35,8 +29,6 @@ afterEach(async () => {
     for (const child of launcher.processes)
       if (child.connected) child.send("release_checkpoint");
   for (const client of clients.splice(0)) await client.close();
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -73,9 +65,9 @@ const profile = createAnalysisProfile(
 );
 async function fixture(
   mode: ConstructorParameters<typeof GhidraFixtureLauncher>[0] = "checkpoint",
+  bridgeMaxReplyBytes?: BridgeMaxReplyBytes,
 ) {
-  const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-lifecycle-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-checkpoint-lifecycle-");
   const targetPath = join(root, "target");
   await writeFile(targetPath, "source target bytes");
   const sha256 = createHash("sha256")
@@ -97,6 +89,7 @@ async function fixture(
     profileDigest: profile.digest,
     checkpoint: selection,
     startupTimeoutMs: 10_000,
+    ...(bridgeMaxReplyBytes === undefined ? {} : { bridgeMaxReplyBytes }),
   });
   clients.push(client);
   return { root, selection, launcher, client, targetPath, sha256 };
@@ -109,18 +102,42 @@ it.skipIf(process.platform === "win32")(
     expect(f.client.checkpointRestore()).toBeUndefined();
     expect((await f.client.start()).ok).toBe(true);
     expect(f.client.checkpointRestore()).toBeNull();
-    const path = join(f.selection.directory, "current.json"),
-      before = await readFile(path, "utf8");
+    const path = join(f.selection.directory, "current.json");
+    const before = await readFile(path, "utf8");
+    const manifest = JSON.parse(before);
+    const sha256 = createHash("sha256")
+      .update("fixture checkpoint initial")
+      .digest("hex");
+    expect(manifest).toMatchObject({
+      version: 2,
+      source: { kind: "initial-analysis", sha256 },
+    });
     expect((await f.client.close()).ok).toBe(true);
     expect(f.client.checkpointRestore()).toBeUndefined();
-    expect(await readFile(path, "utf8")).toEqual(before);
-    expect(f.launcher.requests).toContain("checkpoint_program");
+    expect(await readFile(path, "utf8")).toBe(before);
+    const resources = new ArtifactResourceScope();
     const selection = await resolveGhidraCheckpoint(
       f.root,
       f.sha256,
       profile,
-      new ArtifactResourceScope(),
+      resources,
     );
+    expect(selection).toEqual(f.selection);
+    const otherProfile = createAnalysisProfile(profile.provider, {
+      checkpoint_test: false,
+    });
+    for (const [target, baseProfile] of [
+      ["2".repeat(64), profile],
+      [f.sha256, otherProfile],
+    ] as const) {
+      const other = await resolveGhidraCheckpoint(
+        f.root,
+        target,
+        baseProfile,
+        resources,
+      );
+      expect(other.directory).not.toBe(selection.directory);
+    }
     const resumed = new GhidraClient({
       launcher: f.launcher,
       targetPath: f.targetPath,
@@ -132,12 +149,35 @@ it.skipIf(process.platform === "win32")(
     });
     clients.push(resumed);
     expect((await resumed.start()).ok).toBe(true);
-    expect(resumed.checkpointRestore()).toMatchObject({
-      sha256: JSON.parse(await readFile(path, "utf8")).source.sha256,
+    const packed = {
+      path: join(selection.directory, manifest.source.file),
+      sha256,
+    };
+    expect(resumed.checkpointRestore()).toEqual(packed);
+    expect(f.launcher.packedPrograms.at(-1)).toEqual(packed);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "saves the closing checkpoint under the session's ceilings after its seed is refused",
+  async () => {
+    // A seed refused after startup (its override reset) must not refuse the
+    // closing checkpoint and leave the JVM running.
+    let seedRefused = false;
+    const f = await fixture("checkpoint", {
+      get maximumBytes(): number {
+        if (seedRefused)
+          throw new ConfigurationError("invalid bridge.max_reply_bytes seed");
+        return 1024 * 1024;
+      },
+      source: "runtime",
     });
-    expect(f.launcher.packedPrograms.at(-1)?.sha256).toBe(
-      JSON.parse(await readFile(path, "utf8")).source.sha256,
-    );
+    expect((await f.client.start()).ok).toBe(true);
+    seedRefused = true;
+
+    expect((await f.client.close()).ok).toBe(true);
+    expect(f.launcher.requests).toContain("checkpoint_program");
+    expect(f.launcher.requests).toContain("shutdown");
   },
 );
 
@@ -180,11 +220,7 @@ it.skipIf(process.platform === "win32")(
       name: "changed",
     });
     const closing = f.client.close();
-    await awaitAcknowledgement(
-      f.launcher.checkpointHeld,
-      closing,
-      "final checkpoint",
-    );
+    await f.launcher.checkpointHold.reached(closing, "final checkpoint");
     expect(f.launcher.processes[0]!.exitCode).toBeNull();
     const selection = await resolveGhidraCheckpoint(
       f.root,
@@ -253,11 +289,7 @@ it.skipIf(process.platform === "win32")(
     const first = f.client.start(abort.signal),
       peer = f.client.start();
     const child = await f.launcher.started;
-    await awaitAcknowledgement(
-      f.launcher.checkpointHeld,
-      peer,
-      "initial checkpoint",
-    );
+    await f.launcher.checkpointHold.reached(peer, "initial checkpoint");
     abort.abort("only this waiter");
     expect((await first).ok).toBe(false);
     child.send("release_checkpoint");
@@ -273,11 +305,7 @@ it.skipIf(process.platform === "win32")(
       abort = new AbortController();
     const starting = f.client.start(abort.signal),
       child = await f.launcher.started;
-    await awaitAcknowledgement(
-      f.launcher.checkpointHeld,
-      starting,
-      "initial checkpoint",
-    );
+    await f.launcher.checkpointHold.reached(starting, "initial checkpoint");
     abort.abort("last waiter");
     expect((await starting).ok).toBe(false);
     expect((await f.client.close()).ok).toBe(true);

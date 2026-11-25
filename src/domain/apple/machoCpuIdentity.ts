@@ -38,6 +38,32 @@ export const machoHostSubtypeRank = (
 export const machoCpuSubtypeBase = (cpuSubtype: number): number =>
   cpuSubtype & ~CPU_SUBTYPE_CAPABILITY_MASK;
 
+// XNU osfmk/mach/machine.h CPU_SUBTYPE_ARM_* identities. Keep the generic
+// display fallback separate: an unlisted subtype does not establish agreement.
+const ARM32_SUBTYPES: ReadonlyMap<number, string> = new Map([
+  [0, "arm"],
+  [5, "armv4t"],
+  [6, "armv6"],
+  [7, "armv5tej"],
+  [8, "xscale"],
+  [9, "armv7"],
+  [10, "armv7f"],
+  [11, "armv7s"],
+  [12, "armv7k"],
+  [13, "armv8"],
+  [14, "armv6m"],
+  [15, "armv7m"],
+  [16, "armv7em"],
+  [17, "armv8m.main"],
+  [18, "armv8m.base"],
+  [19, "armv8.1m.main"],
+]);
+
+/** Known ARM32 identity without changing the family name used for display. */
+export const machoKnownArm32Subtype = (
+  cpuSubtype: number,
+): string | undefined => ARM32_SUBTYPES.get(machoCpuSubtypeBase(cpuSubtype));
+
 /** Known ARM64 subtype identity, distinct from the family display fallback. */
 export const machoKnownArm64Subtype = (
   cpuSubtype: number,

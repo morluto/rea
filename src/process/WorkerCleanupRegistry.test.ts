@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   OwnedWorkerRuntime,
@@ -26,57 +26,46 @@ it("retries one host's retained runtime without failing another host", async () 
   }
 });
 
-it("retries every independent retained owner and keeps only exact failures pending", async () => {
+it("retries all retained owners, preserves exact causes, and skips only the selected owner", async () => {
   const registry = new WorkerCleanupRegistry();
-  const physical = new Error("first owner still owns its worker");
-  let failing = true;
-  const calls: string[] = [];
+  const firstCause = new Error("first owner still owns its worker");
+  const secondCause = new Error("second owner still owns its worker");
   const first = {
-    retryRetainedCleanup: async () => {
-      calls.push("first");
-      if (failing) throw physical;
-      registry.delete(first);
-    },
+    retryRetainedCleanup: vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValue(firstCause),
   };
   const second = {
-    retryRetainedCleanup: async () => {
-      calls.push("second");
-      registry.delete(second);
-    },
+    retryRetainedCleanup: vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValue(secondCause),
   };
-  registry.add(first);
-  registry.add(second);
-  await expect(registry.retry()).rejects.toBe(physical);
-  expect(calls).toEqual(["first", "second"]);
+  const skipped = { retryRetainedCleanup: vi.fn(async () => {}) };
+  for (const owner of [first, skipped, second]) registry.add(owner);
+
+  const failure: unknown = await registry
+    .retry(skipped)
+    .catch((cause: unknown) => cause);
+  if (!(failure instanceof AggregateError))
+    throw new Error("Expected both failed cleanup causes");
+  expect(failure.errors).toHaveLength(2);
+  expect(failure.errors[0]).toBe(firstCause);
+  expect(failure.errors[1]).toBe(secondCause);
+
+  second.retryRetainedCleanup.mockImplementation(async () => {
+    registry.delete(second);
+  });
+  await expect(registry.retry(skipped)).rejects.toBe(firstCause);
   expect(registry.has(first)).toBe(true);
   expect(registry.has(second)).toBe(false);
-  failing = false;
-  await registry.retry();
-  expect(calls).toEqual(["first", "second", "first"]);
-  expect(registry.has(first)).toBe(false);
-});
 
-it("retains every failed cleanup cause and skips only the caller-selected owner", async () => {
-  const registry = new WorkerCleanupRegistry();
-  const causes = [
-    new Error("first exact cleanup"),
-    new Error("second exact cleanup"),
-  ];
-  const skipped = {
-    retryRetainedCleanup: async () => {
-      throw new Error("must not retry selected owner");
-    },
-  };
-  const owners = causes.map((cause) => ({
-    retryRetainedCleanup: async () => {
-      throw cause;
-    },
-  }));
-  registry.add(skipped);
-  for (const owner of owners) registry.add(owner);
-  const failure = await registry.retry(skipped).catch((cause) => cause);
-  expect(failure).toBeInstanceOf(AggregateError);
-  expect(failure.errors).toEqual(causes);
+  first.retryRetainedCleanup.mockImplementation(async () => {
+    registry.delete(first);
+  });
+  await registry.retry(skipped);
+  expect(first.retryRetainedCleanup).toHaveBeenCalledTimes(3);
+  expect(second.retryRetainedCleanup).toHaveBeenCalledTimes(2);
+  expect(skipped.retryRetainedCleanup).not.toHaveBeenCalled();
+  expect(registry.has(first)).toBe(false);
   expect(registry.has(skipped)).toBe(true);
-  for (const owner of owners) expect(registry.has(owner)).toBe(true);
 });

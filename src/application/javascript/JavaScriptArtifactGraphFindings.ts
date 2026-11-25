@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
@@ -14,11 +13,10 @@ import {
   applicationContainerIdentity,
   addApplicationRootCandidate,
   artifactLocalIdentity,
-  chunkLookupKey,
+  bundlerLookupKey,
   createElectronRoleNode,
   javascriptAnalysisCoverage,
   linkElectronRoleToAsset,
-  moduleLookupKey,
   selfReferenceOmissions,
   sourceNodeFor,
   type JavaScriptArtifactGraphContext,
@@ -38,6 +36,7 @@ import {
   isJsonModuleTarget,
   isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
@@ -209,6 +208,18 @@ const addReference = (
     input.value.loader_authority === "candidate"
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
+  const candidateLoader = input.value.loader_authority === "candidate";
+  const loaderEvidence = {
+    confidence: candidateLoader ? ("low" as const) : ("high" as const),
+    limitations: [
+      ...(resolved?.limitations ??
+        (candidateLoader
+          ? [
+              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+            ]
+          : [])),
+    ],
+  };
   if (
     input.value.operation === "load" &&
     (input.value.kind === "static-import" ||
@@ -261,7 +272,7 @@ const addReference = (
             range: input.value.location,
             operation: "discover-worker",
             coverage: input.coverage,
-            limitations: resolved?.limitations ?? [],
+            ...loaderEvidence,
           }),
         },
       ],
@@ -278,7 +289,7 @@ const addReference = (
         resolution_status: resolved?.resolution?.resolution_status ?? null,
         ...artifactPathResolutionProperties(resolved?.resolution),
       },
-      limitations: resolved?.limitations ?? [],
+      ...loaderEvidence,
     });
     if (resolved !== null && resolved.path !== null && resolved.node !== null)
       addStaticInferenceEdge(context, {
@@ -289,7 +300,7 @@ const addReference = (
         coverage: input.coverage,
         relation: "maps_to",
         properties: { resolved_path: resolved.path },
-        limitations: resolved.limitations,
+        ...loaderEvidence,
       });
     return;
   }
@@ -338,18 +349,7 @@ const addReference = (
       resolution_status: resolved?.resolution?.resolution_status ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
-    ...(input.value.loader_authority === "candidate"
-      ? { confidence: "low" as const }
-      : {}),
-    ...(resolved === null
-      ? input.value.loader_authority === "candidate"
-        ? {
-            limitations: [
-              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-            ],
-          }
-        : {}
-      : { limitations: resolved.limitations }),
+    ...loaderEvidence,
   });
 };
 
@@ -666,9 +666,7 @@ const addSourceMapEdge = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticSourceMap>,
 ): void => {
-  const declaredUrlSha256 = createHash("sha256")
-    .update(input.value.declared_url)
-    .digest("hex");
+  const declaredUrlSha256 = sha256Hex(input.value.declared_url);
   const resolution = resolveArtifactPathByContext({
     declaredPath: input.value.declared_url,
     sourcePath: input.file.path,
@@ -775,7 +773,7 @@ const resolveReference = (
     reference.loader === "commonjs-loader"
       ? undefined
       : context.moduleNodes.get(
-          moduleLookupKey(sourcePath, reference.module_runtime, specifier),
+          bundlerLookupKey(sourcePath, reference.module_runtime, specifier),
         );
   if (module !== undefined) {
     const file = context.filesByPath.get(sourcePath);
@@ -964,20 +962,23 @@ const resolveBundlerChunkReference = (
   if (key === null) return null;
   const file = context.filesByPath.get(sourcePath);
   if (file === undefined) return null;
-  const registrations = context.analysis.files
-    .find(({ file: analyzedFile }) => analyzedFile.path === sourcePath)
-    ?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
-      reference.module_runtime === undefined
-        ? reference.module_key === null
-        : runtime === reference.module_runtime &&
-          modules.some(
-            ({ module_key: moduleKey }) => moduleKey === reference.module_key,
-          ),
-    );
+  const registrations = (
+    context.analyzedFilesByPath?.get(sourcePath) ??
+    context.analysis.files.find(
+      ({ file: analyzedFile }) => analyzedFile.path === sourcePath,
+    )
+  )?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
+    reference.module_runtime === undefined
+      ? reference.module_key === null
+      : runtime === reference.module_runtime &&
+        modules.some(
+          ({ module_key: moduleKey }) => moduleKey === reference.module_key,
+        ),
+  );
   if (registrations === undefined) return null;
   const candidates = registrations.flatMap(({ runtime }) => {
     const node = context.chunkNodes.get(
-      chunkLookupKey(sourcePath, runtime, key),
+      bundlerLookupKey(sourcePath, runtime, key),
     );
     return node === undefined ? [] : [node];
   });

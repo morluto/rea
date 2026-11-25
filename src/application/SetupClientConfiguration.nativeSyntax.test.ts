@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { registrationChildEnvironment } from "../../tests/support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../../tests/support/process/processFixture.js";
 
 const CONFIGURATION_PROGRAM = `
@@ -24,7 +25,7 @@ const CONFIGURATION_PROGRAM = `
     await import(${JSON.stringify(new URL("./SetupClientConfiguration.ts", import.meta.url).href)});
   const { currentClientRegistrationCommand } =
     await import(${JSON.stringify(new URL("./ClientRegistrationIdentity.ts", import.meta.url).href)});
-  const { supportedClientRegistrationProfile } =
+  const { supportedClientDefinition } =
     await import(${JSON.stringify(new URL("./SupportedClients.ts", import.meta.url).href)});
   const command = currentClientRegistrationCommand();
   if (command.length === 0) throw Error('Fixture process has no owned current entrypoint.');
@@ -32,7 +33,7 @@ const CONFIGURATION_PROGRAM = `
     const directory = insideHome(join(home, 'config', name));
     const configPath = insideHome(join(directory, 'mcp.json'));
     await mkdir(directory, { recursive: true });
-    const client = { name, format, configPath, registrationProfile: supportedClientRegistrationProfile(name) };
+    const client = { name, format, configPath, registrationProfile: supportedClientDefinition(name).registrationProfile };
     await writeFile(configPath, '{}');
     const initial = await configureClientConfiguration(client, {}, command);
     if (initial.status !== 'configured') throw Error('Initial fixture configuration failed: ' + JSON.stringify(initial));
@@ -102,23 +103,7 @@ it("repairs equal-launcher Copilot JSONC syntax while strict JSON and standard J
       process.execPath,
       ["--import", "tsx", entrypoint],
       {
-        timeoutMs: 20_000,
-        env: {
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
-        },
+        env: registrationChildEnvironment(home),
       },
     );
     expect(child.exitCode, child.stderr).toBe(0);

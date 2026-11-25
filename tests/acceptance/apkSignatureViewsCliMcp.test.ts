@@ -6,7 +6,7 @@ import { parseEvidence } from "../../src/domain/evidence.js";
 import {
   apkSignaturePageViewResultSchema,
   apkSignatureSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import {
   apkDigestRowSchema,
   type apkSignatureViewRequestSchema,

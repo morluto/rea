@@ -1,95 +1,83 @@
-import {
-  readUniversalMachoImage,
-  readUniversalMachoSlice,
-} from "../domain/apple/machoImageSelection.js";
+import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
+import {
+  IL2CPP_SLICE_SELECTORS,
+  type Il2cppBinaryArchitecture,
+} from "../domain/il2cpp/il2cppMetadata.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
-  mappedFileOffset,
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
-} from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+} from "../domain/binaryContainer.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
+import {
+  requireSelectedNativeImage,
+  type SelectedNativeImage,
+  type SliceSelectionInput,
+  selectMachoSlice,
+} from "../domain/apple/machoSliceSelection.js";
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
-} from "../native/AppleMachoFixups.js";
-import {
-  parseMachoLayout,
-  UnsupportedMachoMetadataFormatError,
-} from "../native/AppleMachoSelection.js";
+} from "../domain/apple/appleMachoFixups.js";
+import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   readElfPointerValuesSteps,
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
-} from "../native/metadata/ElfPointerRelocations.js";
-import {
-  Il2cppBinaryFormatFailure,
-  IL2CPP_BINARY_BYTES,
-} from "./Il2cppBinaryFormat.js";
-const MACHO_CPU = new Map([
-  [0x01000007, "amd64"],
-  [0x0100000c, "arm64"],
-]);
+} from "../domain/native/elfPointerRelocations.js";
+import { DEFAULT_IL2CPP_NATIVE_INDEX_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
+import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
-/** Select one thin image; a universal Mach-O needs the caller's architecture. */
-const selectImage = (
-  bytes: Buffer,
-  architecture: string | undefined,
-): Buffer => {
-  const container = readUniversalMachoImage(bytes);
-  if (!container.ok)
-    throw new Il2cppBinaryFormatFailure(
-      "malformed-container",
-      container.error.message,
-    );
-  const fat = container.value;
-  if (fat === null) {
-    if (architecture !== undefined)
-      throw new Il2cppBinaryFormatFailure(
-        "slice-not-found",
-        `architecture ${architecture} was requested but the binary is not a universal Mach-O`,
-      );
-    return bytes;
-  }
-  const available = fat.slices.map(
-    (slice) => MACHO_CPU.get(slice.cpuType) ?? `macho-cpu-${slice.cpuType}`,
-  );
-  if (architecture === undefined)
-    throw new Il2cppBinaryFormatFailure(
-      "slice-selection-required",
-      `universal Mach-O holds ${available.join(", ")}; select one architecture`,
-    );
-  if (available.filter((value) => value === architecture).length > 1)
-    throw new Il2cppBinaryFormatFailure(
-      "ambiguous-slice-selection",
-      `multiple universal slices declare ${architecture}; no slice was selected`,
-    );
-  const index = available.indexOf(architecture);
-  const slice = fat.slices[index];
-  if (slice === undefined)
-    throw new Il2cppBinaryFormatFailure(
-      "slice-not-found",
-      `universal Mach-O holds ${available.join(", ")}, not ${architecture}`,
-    );
-  const selected = readUniversalMachoSlice(bytes, fat, slice);
-  if (!selected.ok)
-    throw new Il2cppBinaryFormatFailure(
-      "malformed-container",
-      selected.error.message,
-    );
-  return selected.value;
+/** Selection failures name the binary's architecture input and IL2CPP's public spellings. */
+const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
+  architectureField: "binary_architecture",
+  spelling: Object.fromEntries(
+    Object.entries(IL2CPP_SLICE_SELECTORS).map(([publicName, selector]) => [
+      selector,
+      publicName,
+    ]),
+  ),
 };
 
+/**
+ * Select the thin image of the caller's binary: IL2CPP's `binary_architecture`
+ * maps onto the shared slice selector here, once. A refused selection names
+ * `binary_architecture`; a universal container format failure is a target
+ * refusal at the binary's own path.
+ */
+export const requireIl2cppBinaryImage = (
+  operation: string,
+  path: string,
+  bytes: Buffer,
+  architecture: Il2cppBinaryArchitecture | undefined,
+): SelectedNativeImage =>
+  requireSelectedNativeImage(
+    operation,
+    path,
+    bytes,
+    architecture === undefined
+      ? undefined
+      : IL2CPP_SLICE_SELECTORS[architecture],
+    IL2CPP_SLICE_SELECTION_INPUT,
+  );
+
 export interface NativeImage {
-  readonly bytes: Buffer;
+  /** Stored file coordinates only; virtual translation and fixups stay separate. */
+  readonly stored: BinaryReader;
   readonly container: BinaryContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
+  /** Indexed executable load mappings for constant/log-time code ownership checks. */
+  readonly executableMappings: FileMappingIndex;
   readonly imageBase: bigint;
   /** ELF loader writes retain virtual identity; source bytes stay unchanged. */
   readonly elfPointerOverlay?: ElfVirtualPointerWrites;
@@ -97,29 +85,55 @@ export interface NativeImage {
   readonly machoPointerFixups?: PointerFixups;
 }
 
-export function* openImageSteps(
-  bytes: Buffer,
-  architecture: string | undefined,
-): Generator<void, NativeImage> {
-  const image = selectImage(bytes, architecture);
-  let container: BinaryContainer;
+const OPERATION = "inspect_il2cpp_metadata";
+
+const rejectContainer = (cause: unknown): never => {
+  if (cause instanceof BinaryResourceFailure)
+    throw new Il2cppBinaryFormatFailure(
+      "native-index-capacity",
+      cause.message,
+      cause.failure.limit.maximum,
+      "bytes",
+    );
+  if (cause instanceof BinaryFormatFailure)
+    throw new Il2cppBinaryFormatFailure(
+      cause.kind === "unsupported"
+        ? "unsupported-container"
+        : "malformed-container",
+      cause.message,
+    );
+  throw cause;
+};
+
+const readContainer = (image: Buffer): BinaryContainer => {
   try {
-    container = readBinaryContainer(image);
+    return readBinaryContainer(image, OPERATION);
   } catch (cause) {
-    if (cause instanceof BinaryResourceFailure)
-      throw new Il2cppBinaryFormatFailure(
-        "native-index-capacity",
-        cause.message,
-      );
-    if (cause instanceof BinaryFormatFailure)
-      throw new Il2cppBinaryFormatFailure(
-        cause.kind === "unsupported"
-          ? "unsupported-container"
-          : "malformed-container",
-        cause.message,
-      );
-    throw cause;
+    return rejectContainer(cause);
   }
+};
+
+export const readIl2cppBinaryContainerCooperative = async (
+  image: Buffer,
+  pause: () => Promise<void>,
+): Promise<BinaryContainer> => {
+  try {
+    return await readBinaryContainerCooperative(image, OPERATION, pause);
+  } catch (cause) {
+    return rejectContainer(cause);
+  }
+};
+
+/**
+ * Open one thin image; a universal Mach-O slice is selected before this.
+ * `maximumIndexBytes` is the caller's ELF pointer index allowance.
+ */
+export function* openImageSteps(
+  image: Buffer,
+  preparedContainer?: BinaryContainer,
+  maximumIndexBytes: number = DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
+): Generator<void, NativeImage> {
+  const container = preparedContainer ?? readContainer(image);
   if (container.bits !== 64 || container.byte_order !== "little")
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
@@ -138,11 +152,22 @@ export function* openImageSteps(
           mappings: container.mappings,
           zeroFills: container.zero_fills,
         },
-        IL2CPP_BINARY_BYTES,
+        maximumIndexBytes,
+        { symbolResolution: "image-definitions" },
       );
   } catch (cause) {
-    if (cause instanceof ElfPointerRelocationFailure)
-      throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
+    if (cause instanceof ElfPointerRelocationFailure) {
+      if (cause.failure.kind === "limit" && cause.unit !== undefined)
+        throw new Il2cppBinaryFormatFailure(
+          "native-index-capacity",
+          cause.message,
+          cause.failure.limit.maximum,
+          cause.unit,
+          cause.failure.limit.name,
+        );
+      if (cause.reason !== "native-index-capacity")
+        throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
+    }
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure("malformed-container", cause.message);
     throw cause;
@@ -154,12 +179,25 @@ export function* openImageSteps(
     );
   let machoPointerFixups: PointerFixups | undefined;
   if (container.format === "macho") {
-    try {
-      const layout = parseMachoLayout(
-        image,
+    const selected = selectMachoSlice(image, {
+      mode: "admitted",
+      architecture:
         binaryMetadataArchitecture(container.architecture) ??
-          container.architecture,
+        container.architecture,
+      slice: undefined,
+    });
+    // The image is the thin slice already selected; a refusal means the
+    // container's architecture names no CPU family this reader decodes.
+    if (!selected.ok)
+      throw new Il2cppBinaryFormatFailure(
+        selected.error.kind === "target" &&
+          selected.error.failure.kind !== "unsupported"
+          ? "malformed-container"
+          : "unsupported-container",
+        selected.error.message,
       );
+    try {
+      const layout = parseMachoLayout(image, selected.value);
       machoPointerFixups = yield* parsePointerFixupsSteps(
         image,
         layout.fixups,
@@ -167,15 +205,13 @@ export function* openImageSteps(
         layout.baseAddress,
       );
     } catch (cause) {
-      if (cause instanceof UnsupportedMachoMetadataFormatError)
+      const failure = parseFailureFromCause(cause);
+      if (failure !== undefined)
         throw new Il2cppBinaryFormatFailure(
-          "unsupported-container",
-          cause.message,
-        );
-      if (cause instanceof RangeError || cause instanceof TypeError)
-        throw new Il2cppBinaryFormatFailure(
-          "malformed-container",
-          cause.message,
+          failure.kind === "unsupported"
+            ? "unsupported-container"
+            : "malformed-container",
+          failure.message,
         );
       throw cause;
     }
@@ -197,11 +233,15 @@ export function* openImageSteps(
     ) ??
     0n;
   return {
-    bytes: image,
+    stored: new BinaryReader(image, true, container.format),
     container,
     fileMappings: createFileMappingIndex(
       container.mappings,
       container.zero_fills,
+    ),
+    executableMappings: createFileMappingIndex(
+      container.executable_mappings ?? [],
+      [],
     ),
     imageBase,
     ...(elfPointerOverlay === undefined ? {} : { elfPointerOverlay }),
@@ -213,7 +253,7 @@ export function* openImageSteps(
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
     const offset = image.fileMappings.offset(address, 8);
-    return image.bytes.readBigUInt64LE(offset);
+    return image.stored.word(offset, 64);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -232,7 +272,7 @@ export const readUInt32 = (
       const value = image.elfPointerOverlay.unsignedAt(address, 4);
       return value === undefined ? "unknown" : Number(value);
     }
-    return image.bytes.readUInt32LE(image.fileMappings.offset(address, 4));
+    return image.stored.u32(image.fileMappings.offset(address, 4));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -311,10 +351,7 @@ export const hasPointerArrayCoverage = (
 export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   try {
     const offset = image.fileMappings.offset(address, 1);
-    return (
-      offset ===
-      mappedFileOffset(image.container.executable_mappings ?? [], address, 1)
-    );
+    return offset === image.executableMappings.offset(address, 1);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return false;
     throw cause;

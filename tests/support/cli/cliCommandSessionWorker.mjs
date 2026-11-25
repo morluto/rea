@@ -1,8 +1,11 @@
-import { Writable } from "node:stream";
-import { access } from "node:fs/promises";
+import { Readable, Writable } from "node:stream";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  compiledRuntimeExists,
+  missingCompiledRuntimeMessage,
+} from "../../../scripts/lib/cli-compiled-runtime.mjs";
 import { prepareCliProcessEnvironment } from "../../../scripts/lib/cli-process-environment.mjs";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
@@ -10,8 +13,8 @@ import {
   encodeCliSessionFrame,
 } from "./cliCommandSessionFrames.mjs";
 
-// One-shot command sequence matches scripts/rea.mjs. Output is captured per
-// command so this process can serve the next invocation without restarting.
+// Commands run through the same one-shot owner as scripts/rea.mjs. Output is
+// captured per command so this process can serve the next invocation.
 const packageRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../..",
@@ -21,11 +24,13 @@ const { default: packageJson } = await import(
   { with: { type: "json" } }
 );
 
+// Present the launcher's entrypoint, as a fresh `rea` process does. The
+// runtime derives the current registration command from it at load time.
+process.argv[1] = resolve(packageRoot, "scripts/rea.mjs");
+
 const runtimeFiles = [
   "dist/cli-runtime/cli.js",
-  "dist/cli-runtime/cliOutput.js",
-  "dist/cli-runtime/cliBuiltinArguments.js",
-  "dist/cli-runtime/cliResultOutput.js",
+  "dist/cli-runtime/cliOneShot.js",
 ];
 
 prepareCliProcessEnvironment(
@@ -33,28 +38,14 @@ prepareCliProcessEnvironment(
   process.platform,
   packageJson.version,
 );
-if (!(await compiledRuntimeExists(runtimeFiles))) {
-  process.stderr.write(
-    `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
-  );
+if (!(await compiledRuntimeExists(packageRoot, runtimeFiles))) {
+  process.stderr.write(missingCompiledRuntimeMessage(packageRoot));
   process.exit(1);
 }
 
-const { closeCliResources, createCli } =
-  await import("../../../dist/cli-runtime/cli.js");
-const { createCliResultOutput } =
-  await import("../../../dist/cli-runtime/cliResultOutput.js");
-const {
-  cliCompletionShell,
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
-} = await import("../../../dist/cli-runtime/cliBuiltinArguments.js");
-const {
-  cliConfigurationError,
-  renderCliOutputArgumentError,
-  renderEmptyFilteredCliOutput,
-  parseCliOutputArguments,
-} = await import("../../../dist/cli-runtime/cliOutput.js");
+const { closeCliResources } = await import("../../../dist/cli-runtime/cli.js");
+const { runOneShotCli } =
+  await import("../../../dist/cli-runtime/cliOneShot.js");
 
 const writeFrame = (value) =>
   new Promise((resolveWrite, rejectWrite) => {
@@ -81,10 +72,6 @@ const failInput = (cause) => {
   process.stdin.pause();
   resolveInput?.();
 };
-process.stdin.once("end", () => {
-  if (completion.kind === "open") completion = { kind: "ended" };
-  resolveInput?.();
-});
 const reader = createCliSessionFrameReader((value) => {
   if (completion.kind !== "open") return;
   chain = chain
@@ -92,6 +79,16 @@ const reader = createCliSessionFrameReader((value) => {
       if (completion.kind !== "failed") await handle(value);
     })
     .catch(failInput);
+});
+process.stdin.once("end", () => {
+  if (completion.kind !== "open") return;
+  try {
+    reader.finish();
+    completion = { kind: "ended" };
+    resolveInput?.();
+  } catch (cause) {
+    failInput(cause);
+  }
 });
 process.stdin.on("data", (chunk) => {
   if (completion.kind !== "open") return;
@@ -172,6 +169,15 @@ async function runOneShot(args) {
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
   process.stdout.write = captureWrite(stdoutChunks);
   process.stderr.write = captureWrite(stderrChunks);
+  // This process's stdin carries session frames. Give each command the empty,
+  // ended stdin a fresh process receives when the caller supplies no input.
+  const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+  const commandStdin = Readable.from([]);
+  Object.defineProperty(process, "stdin", {
+    configurable: true,
+    enumerable: stdinDescriptor?.enumerable ?? true,
+    get: () => commandStdin,
+  });
   const destination = new Writable({
     write(chunk, encoding, callback) {
       process.stdout.write(chunk, encoding, callback);
@@ -181,60 +187,50 @@ async function runOneShot(args) {
   const previousExitCode = process.exitCode;
   process.exitCode = undefined;
   let explicitExit;
+  let exitOutput;
   try {
-    const isShellCompletion = cliCompletionShell(process.env) !== undefined;
-    const cliArgs = isShellCompletion ? args : normalizeCliArguments(args);
-    const outputOptions = parseCliOutputArguments(
-      isShellCompletion ? [] : cliArgs,
-    );
-    const outputArguments = outputOptions.validation;
-    const configurationError = cliConfigurationError(process.env);
-    if (
-      configurationError !== undefined &&
-      (isShellCompletion ||
-        splitIncurBuiltinArguments(cliArgs).command[0] !== "doctor")
-    ) {
-      process.stderr.write(`${configurationError}\n`);
-      process.exitCode = 1;
-    } else if (!outputArguments.ok) {
-      process.stdout.write(renderCliOutputArgumentError(outputArguments));
-      process.exitCode = 1;
-    } else {
-      let wroteOutput = false;
-      const resultOutput = createCliResultOutput(outputOptions, destination);
-      try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
-          stdout: (output) => {
-            if (resultOutput?.handled) {
-              if (resultOutput.failed) process.stderr.write(output);
-              return;
-            }
-            if (output.length > 0) wroteOutput = true;
-            if (resultOutput?.captureSdkOutput(output)) return;
-            process.stdout.write(output);
-          },
-          exit: (code) => {
-            explicitExit = code;
-          },
-        });
-      } catch (cause) {
-        if (wroteOutput) throw cause;
-        const recovered = await resultOutput?.recoverFormattingFailure(cause);
-        if (!recovered) throw cause;
-        process.exitCode = 1;
-      }
-      if (!wroteOutput && !resultOutput?.handled) {
-        const empty = renderEmptyFilteredCliOutput(outputOptions);
-        if (empty) process.stdout.write(empty);
-      }
-      await resultOutput?.finishSdkOutput(
-        explicitExit ??
-          (typeof process.exitCode === "number" ? process.exitCode : 0),
-      );
-    }
+    await runOneShotCli(args, {
+      environment: process.env,
+      runtime: {
+        packageName: packageJson.name,
+        packageVersion: packageJson.version,
+        versions: process.versions,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      stdoutIsTerminal: destination.isTTY,
+      resultDestination: destination,
+      // The session frames own this process's stdout; a command's reader
+      // cannot close it.
+      closedStdoutStatus: 1,
+      writeStdout: (text) => {
+        process.stdout.write(text);
+      },
+      writeStderr: (text) => {
+        process.stderr.write(text);
+      },
+      stdoutClosed: () => false,
+      exitCode: () =>
+        typeof process.exitCode === "number" ? process.exitCode : 0,
+      setExitCode: (code) => {
+        process.exitCode = code;
+      },
+      // The session closes CLI resources once, after its last command.
+      ownCliResources: () => {},
+      exitRequested: () => exitOutput !== undefined,
+      // This process serves the next command; record the status and finish
+      // the pending result in place of exiting.
+      exit: (code, finishOutput) => {
+        explicitExit = code;
+        exitOutput = finishOutput(code);
+      },
+    });
+    await exitOutput;
   } finally {
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
+    if (stdinDescriptor !== undefined)
+      Object.defineProperty(process, "stdin", stdinDescriptor);
   }
   const exitCode =
     explicitExit ??
@@ -257,25 +253,4 @@ function captureWrite(chunks) {
     if (typeof done === "function") done();
     return true;
   };
-}
-
-async function compiledRuntimeExists(paths) {
-  for (const path of paths) {
-    try {
-      await access(resolve(packageRoot, path));
-    } catch (cause) {
-      if (isMissing(cause)) return false;
-      throw cause;
-    }
-  }
-  return true;
-}
-
-function isMissing(cause) {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    cause.code === "ENOENT"
-  );
 }

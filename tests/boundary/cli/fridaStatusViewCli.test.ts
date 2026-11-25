@@ -1,8 +1,9 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -11,7 +12,7 @@ cliTest(
   async ({ cli }) => {
     const id = "00000000-0000-4000-8000-000000000001";
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "frida", name: "Frida", version: null },
       {
         operation: "frida_session_status",

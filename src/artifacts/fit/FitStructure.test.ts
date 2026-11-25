@@ -5,7 +5,7 @@ import {
   devicetreeFixture,
   dtString,
   type FixtureNode,
-} from "../../firmware/devicetree/Devicetree.fixture.js";
+} from "../../domain/firmware/devicetree.fixture.js";
 import {
   FIT_EMBEDDED,
   FIT_KERNEL,
@@ -248,7 +248,7 @@ describe("FIT image data ranges", () => {
         fitFixture({ images: [kernel(), shared(properties)], mode: "offset" }),
       ),
     ).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(message),
     });
   });
@@ -271,7 +271,7 @@ describe("FIT image data ranges", () => {
         }),
       ),
     ).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(
         /\/images\/chained.*image-data.*\/images\/shared/iu,
       ),
@@ -290,7 +290,7 @@ describe("FIT image data ranges", () => {
         }),
       ),
     ).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(
         /overlaps.*\/images\/shared.*devicetree/iu,
       ),
@@ -323,7 +323,7 @@ describe("FIT image data ranges", () => {
     ],
   ])("fails %s", (_name, file, message) => {
     expect(failureOf(file)).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(message),
     });
   });
@@ -568,7 +568,7 @@ describe("FIT fixed limits", () => {
 
   it("fails a structure without /images", () => {
     expect(failureOf(devicetreeFixture())).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/\/images.*missing/iu),
     });
   });
@@ -646,3 +646,25 @@ it.each(["data-offset", "data-position"] as const)(
     expect(imageBytes(file, 1).equals(data)).toBe(true);
   },
 );
+
+it("fails an image node that repeats a property name", () => {
+  const file = devicetreeFixture({
+    name: "",
+    children: [
+      {
+        name: "images",
+        children: [
+          {
+            name: "kernel",
+            properties: { data: FIT_KERNEL, type: dtString("kernel") },
+            repeatedProperties: [["type", dtString("ramdisk")]],
+          },
+        ],
+      },
+    ],
+  });
+  expect(failureOf(file)).toMatchObject({
+    reason: "malformed",
+    message: expect.stringMatching(/duplicate.*property/iu),
+  });
+});

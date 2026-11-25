@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { registrationChildEnvironment } from "../../support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 
 const PROGRAM = `
@@ -27,7 +28,7 @@ const PROGRAM = `
   const { supportedClients } = await import(${JSON.stringify(new URL("../../../src/application/SupportedClients.ts", import.meta.url).href)});
   const { registerMcpClient } = await import(${JSON.stringify(new URL("../../../src/application/McpClientRegistration.ts", import.meta.url).href)});
   const { mcpClientRegistrationProfile } = await import(${JSON.stringify(new URL("../../../src/application/McpRegistrationCatalog.ts", import.meta.url).href)});
-  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../../../src/artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../../../src/resources/ArtifactResourceScope.ts", import.meta.url).href)});
   const { ConfigurationError } = await import(${JSON.stringify(new URL("../../../src/domain/configurationErrors.ts", import.meta.url).href)});
   const [command, ...args] = currentClientRegistrationCommand();
   if (!command || !CURRENT_ENTRYPOINT_PATH) throw Error('Missing owned fixture entrypoint.');
@@ -69,13 +70,13 @@ const PROGRAM = `
   };
   const resources = new ArtifactResourceScope();
   try {
-    const conflict = await registerMcpClient(client, { command, args }, undefined, resources);
+    const conflict = await registerMcpClient(client, { command, args }, undefined, resources, process.platform);
     const refused = { ok: conflict.ok, typed: !conflict.ok && conflict.error instanceof ConfigurationError,
       targetExists: await exists(target), backupExists: await exists(target + '.rea.backup'),
       higherUnchanged: await readFile(higher, 'utf8') === source };
     const harmless = JSON.stringify({ mcpServers: { rea: { ...row, operator: { preserve: true } } } });
     await writeFile(higher, harmless);
-    const control = await registerMcpClient(client, { command, args }, undefined, resources);
+    const control = await registerMcpClient(client, { command, args }, undefined, resources, process.platform);
     console.log(JSON.stringify({ statuses, refused, control: { ok: control.ok,
       status: control.ok ? control.value.status : control.error.message,
       targetExists: await exists(target), higherUnchanged: await readFile(higher, 'utf8') === harmless } }));
@@ -116,22 +117,8 @@ it("keeps owned Gemini launcher facts separate from native connection admission 
       process.execPath,
       ["--import", "tsx", entrypoint],
       {
-        timeoutMs: 20_000,
         env: {
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
+          ...registrationChildEnvironment(home),
           GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(home, "system-settings.json"),
           GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(home, "system-defaults.json"),
           GEMINI_CLI_TRUSTED_FOLDERS_PATH: join(home, "trusted-folders.json"),

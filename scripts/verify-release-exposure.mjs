@@ -1,12 +1,14 @@
 /** Audit a local Electron .app before and after fuse and source-map remediation. */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const { ELECTRON_FUSE_SENTINEL } = await importVerifierSource(
   new URL("../src/domain/electron/electronFuses.ts", import.meta.url).href,
@@ -193,8 +195,14 @@ const installFuses = async (root) => {
 };
 
 const commands = await createVerifierCommands();
-const root = await mkdtemp(join(tmpdir(), "rea-release-exposure-"));
-await withVerifierCleanup(async () => {
+const fixture = await VerifierFixture.open({
+  prefix: "rea-release-exposure-",
+  private: false,
+});
+const root = fixture.path;
+// The root is removed only after the owned commands confirm.
+fixture.releaseAfter(() => commands.close());
+await withVerifierFixture(fixture, async () => {
   const beforeApp = join(root, "before", "MyApp.app");
   const afterApp = join(root, "after", "MyApp.app");
   const enabled = [0x31, 0x31, 0x31, 0x31, 0x30, 0x30];
@@ -278,7 +286,7 @@ await withVerifierCleanup(async () => {
 
 Ran \`node scripts/verify-release-exposure.mjs\` with Node ${process.version}. The package script is \`npm run verify:release-exposure\`, which runs \`npm run build:cached\` first because \`scripts/rea.mjs\` loads the compiled CLI. \`@electron/fuses\` ${version} was installed into a temporary prefix and \`flipFuses\` was called on the after framework binary.
 
-The fixture is \`MyApp.app\`. \`Contents/Resources/app.asar\` holds \`app.js\`. Before, it also holds \`app.js.map\` with \`sourcesContent\`. \`Contents/Frameworks/Electron Framework.framework/Electron Framework\` is an ELF larger than 256 KiB with the Electron fuse sentinel and a version-1 fuse wire. After, the archive is rebuilt without the map and \`flipFuses\` disables \`RunAsNode\` and \`EnableNodeCliInspectArguments\` and enables \`OnlyLoadAppFromAsar\` and \`EnableEmbeddedAsarIntegrityValidation\`. \`app.js\` remains, so \`packaging.extractable_payload\` stays exposed. Embedded ASAR integrity stays \`unknown\` on ELF. Go and Rust stay \`unknown\` because the framework binary is registered and has no build metadata; that is not \`not_applicable\`.
+The fixture is \`MyApp.app\`. \`Contents/Resources/app.asar\` holds \`app.js\`. Before, it also holds \`app.js.map\` with \`sourcesContent\`. \`Contents/Frameworks/Electron Framework.framework/Electron Framework\` is an ELF larger than 256 KiB with the Electron fuse sentinel and a version-1 fuse wire. After, the archive is rebuilt without the map and \`flipFuses\` disables \`RunAsNode\` and \`EnableNodeCliInspectArguments\` and enables \`OnlyLoadAppFromAsar\` and \`EnableEmbeddedAsarIntegrityValidation\`. \`app.js\` remains, so \`packaging.extractable_payload\` stays exposed. Embedded ASAR integrity stays \`unknown\` on ELF. Go and Rust stay \`unknown\` because the framework binary is registered and has no build metadata; they are not omitted as inapplicable.
 
 \`--fail_on high\` on the before app exited ${String(gated.status)}.
 
@@ -297,4 +305,4 @@ ${table(afterChecks)}
   console.log(`node ${process.version}`);
   console.log(`@electron/fuses ${version}`);
   console.log(`fail_on high exit ${String(gated.status)}`);
-}, [() => commands.close(), () => rm(root, { recursive: true, force: true })]);
+});

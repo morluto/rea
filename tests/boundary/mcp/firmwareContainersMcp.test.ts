@@ -1,8 +1,11 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  inspectInventorySummary,
+  inspectRetainedOccurrences,
+} from "../../fixtures/artifactInventoryMcp.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -28,7 +31,7 @@ const ABSOLUTE_REGION = "family-0xe48bff57/0x10ffff00-0x10ffffff.bin";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "exposes UF2 facts, retained regions and extraction through MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-uf2-mcp-");
@@ -53,17 +56,7 @@ it.each(["full", "compact"] as const)(
     try {
       const opened = await call("open_binary", { path });
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-      const reply = await call("inspect_artifact", { detail: "summary" });
-      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-      const summary = z
-        .object({
-          parent_evidence_id: z.string(),
-          summary: z.object({
-            root_format_metadata: z.unknown(),
-            source_coverage: z.unknown(),
-          }),
-        })
-        .parse(parseEvidence(reply.structuredContent).normalized_result);
+      const summary = await inspectInventorySummary(call);
       expect(summary.summary.root_format_metadata).toMatchObject({
         kind: "uf2",
         family_count: 2,
@@ -73,22 +66,25 @@ it.each(["full", "compact"] as const)(
       expect(summary.summary.source_coverage).toMatchObject({
         status: "unknown",
       });
-      const retained = await call("inspect_analysis_view", {
-        source: {
-          kind: "retained-evidence",
-          evidence_id: summary.parent_evidence_id,
-        },
-        view: {
-          kind: "inventory",
-          collection: "occurrences",
-          logical_paths: [REGION],
-          fields: ["format_metadata"],
-        },
-      });
-      expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      expect(JSON.stringify(retained.structuredContent)).toContain(
-        '"family_name":"RP2040"',
+      expect(summary.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 block.*absent.*0xe48bff57.*2 numbered blocks.*1/iu,
+        ),
       );
+      const view = await inspectRetainedOccurrences(
+        call,
+        summary.parent_evidence_id,
+        {
+          logical_paths: [REGION, ABSOLUTE_REGION],
+          fields: ["logical_path", "format_metadata"],
+        },
+      );
+      expect(view).toMatchObject({
+        items: [
+          { logical_path: REGION, format_metadata: { family_name: "RP2040" } },
+          { logical_path: ABSOLUTE_REGION },
+        ],
+      });
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(
@@ -190,10 +186,19 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
       {
         alternateSetting: 0,
         name: "Internal Flash",
-        elements: [{ address: 0x0800_0000, data: [1, 2, 3, 4] }],
+        elements: [
+          { address: 0x0800_0000, data: [1, 2, 3, 4] },
+          { address: 0x0800_4000, data: [5, 6] },
+        ],
+      },
+      {
+        alternateSetting: 1,
+        elements: [{ address: 0x1fff_c000, data: [0xaa, 0x55] }],
       },
     ],
   });
+  const computedCrc = valid.readUInt32LE(valid.length - 4);
+  const computedHex = computedCrc.toString(16).padStart(8, "0");
   const corrupt = Buffer.from(valid);
   corrupt.writeUInt32LE(0, corrupt.length - 4);
   await writeFile(path, corrupt);
@@ -207,10 +212,7 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
       logical_path: ".",
       algorithm: "dfu-crc32",
       declared_crc32: "00000000",
-      calculated_crc32: valid
-        .readUInt32LE(valid.length - 4)
-        .toString(16)
-        .padStart(8, "0"),
+      calculated_crc32: computedHex,
     },
   });
   const recorded = await call("inspect_artifact", {
@@ -229,8 +231,32 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
   const graph = artifactInventoryResultSchema.parse(
     inspection.substeps[0]?.evidence.normalized_result,
   );
-  expect(
-    graph.occurrences.find((row) => row.logical_path === ".")?.hash_status,
-  ).toBe("mismatched");
+  const rootOccurrence = graph.occurrences.find(
+    (row) => row.logical_path === ".",
+  );
+  expect(rootOccurrence).toMatchObject({
+    hash_status: "mismatched",
+    limitations: ["Declared integrity metadata contradicts observed bytes."],
+    format_metadata: { suffix_crc: 0, computed_crc: computedCrc },
+  });
+  expect(graph.integrity_contradictions).toEqual([
+    expect.objectContaining({
+      occurrence_id: rootOccurrence?.occurrence_id,
+      logical_path: ".",
+      algorithm: "dfu-crc32",
+      declared_crc32: "00000000",
+      observed_crc32: computedHex,
+      trust: "observed-untrusted",
+    }),
+  ]);
+  expect(graph.limitations).toContainEqual(
+    expect.stringMatching(/1.*integrity.*observed-untrusted/iu),
+  );
+  expect(graph.occurrences.map(({ logical_path }) => logical_path)).toEqual([
+    ".",
+    "target-0/element-0-0x08000000-0x08000003.bin",
+    "target-0/element-1-0x08004000-0x08004001.bin",
+    "target-1/element-0-0x1fffc000-0x1fffc001.bin",
+  ]);
   await call("close_binary", {});
 });

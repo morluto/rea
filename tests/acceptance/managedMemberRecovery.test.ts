@@ -1,3 +1,5 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
@@ -13,10 +15,15 @@ import { managedMemberInspectionSchema } from "../../src/domain/managed/managedA
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import {
+  COMPLETE_DETAIL,
+  completeArguments,
+} from "../support/completeDetail.js";
 
 const createTransport = () =>
   new StdioClientTransport({
@@ -37,6 +44,26 @@ const createTransport = () =>
     stderr: "pipe",
   });
 
+const expectDefaultMemberRecovery = (value: unknown) => {
+  const report = managedMemberInspectionSchema.parse(value);
+  expect(report.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      {
+        code: "resource-limit",
+        scope: "metadata.representation",
+        limit: {
+          parameter: "max_metadata_representation_bytes",
+          effective_value: 64 * 1024 * 1024,
+        },
+      },
+    ],
+  });
+  expect(report.types).toHaveLength(3);
+  expect(report.methods).toEqual([]);
+  return report;
+};
+
 cliTest(
   "CLI and stdio MCP recover type discovery and preserve partial retained pages",
   async ({ cli }) => {
@@ -47,26 +74,31 @@ cliTest(
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const transport = createTransport();
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "managed-type-recovery", version: "1" });
+    const client = new Client(
+      { name: "managed-type-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_managed_members",
       );
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      if (definition?.outputSchema === undefined)
+      if (definition === undefined)
         throw new Error("Managed member schema is absent");
-      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const output = await cli.run({
-        arguments: ["inspect-managed-members", path, "--json"],
+        arguments: completeArguments("inspect-managed-members", path),
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const cliEvidence = parseEvidence(output.json);
       const response = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(
@@ -77,19 +109,15 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
-      const report = managedMemberInspectionSchema.parse(
-        mcpEvidence.normalized_result,
-      );
-      expect(report.coverage.state).toBe("partial");
-      expect(report.types).toHaveLength(3);
-      expect(report.methods).toEqual([]);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
+      const report = expectDefaultMemberRecovery(mcpEvidence.normalized_result);
       const empty = report.types.find((type) => type.method_list.count === 0);
       if (empty === undefined) throw new Error("Missing empty fixture type");
       const selectedCli = await cli.run({
         arguments: [
           "inspect-managed-members",
+          ...COMPLETE_DETAIL,
           path,
           "--type",
           empty.full_name,
@@ -99,7 +127,7 @@ cliTest(
       expect(selectedCli.exitCode, selectedCli.stderr).toBe(0);
       const selected = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path, type_names: [empty.full_name] },
+        arguments: { detail: "complete", path, type_names: [empty.full_name] },
       });
       expect(selected.isError).not.toBe(true);
       const selectedEvidence = parseEvidence(selected.structuredContent);

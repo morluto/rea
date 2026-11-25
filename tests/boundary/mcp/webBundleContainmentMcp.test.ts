@@ -11,6 +11,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const capturedSource = `
   fetch("/api/orders");
@@ -54,10 +55,13 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
       }),
     },
   );
-  const client = new Client({
-    name: "web-bundle-containment-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "web-bundle-containment-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -67,6 +71,7 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   const interrupted = await client.callTool({
     name: "analyze_web_bundle",
     arguments: {
+      detail: "complete",
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
@@ -135,6 +140,7 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   const recovered = await client.callTool({
     name: "analyze_web_bundle",
     arguments: {
+      detail: "complete",
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
@@ -157,4 +163,4 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   });
   await client.ping();
   expect(browser.activeConnectionCount()).toBe(0);
-}, 60_000);
+});

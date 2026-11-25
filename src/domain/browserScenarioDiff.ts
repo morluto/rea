@@ -52,7 +52,6 @@ type ComparableArtifact = {
 interface ScenarioAlignment {
   readonly before: ReadonlyMap<string, BrowserScenarioStep>;
   readonly after: ReadonlyMap<string, BrowserScenarioStep>;
-  readonly orderedStepIds: readonly string[];
   readonly beforeOnly: readonly string[];
   readonly afterOnly: readonly string[];
   readonly failures: readonly BrowserScenarioAlignmentFailure[];
@@ -151,11 +150,14 @@ const alignScenarioSteps = (
   const afterDuplicates = duplicateStepIds(afterCapture.steps);
   const before = uniqueSteps(beforeCapture.steps, beforeDuplicates);
   const after = uniqueSteps(afterCapture.steps, afterDuplicates);
+  // A duplicated step_id keeps its ambiguous presence on that side: it stays
+  // ineligible for alignment, but its counterpart capture must not classify
+  // the id as absent when the duplicate side still retains it.
   const beforeOnly = [...before.keys()]
-    .filter((stepId) => !after.has(stepId))
+    .filter((stepId) => !after.has(stepId) && !afterDuplicates.has(stepId))
     .sort();
   const afterOnly = [...after.keys()]
-    .filter((stepId) => !before.has(stepId))
+    .filter((stepId) => !before.has(stepId) && !beforeDuplicates.has(stepId))
     .sort();
   const failures: BrowserScenarioAlignmentFailure[] = [
     ...duplicateFailures("before", beforeDuplicates),
@@ -176,14 +178,6 @@ const alignScenarioSteps = (
     beforeOnly,
     afterOnly,
     failures,
-    orderedStepIds: beforeCapture.steps
-      .map(({ step_id }) => step_id)
-      .filter(
-        (stepId, index, values) =>
-          values.indexOf(stepId) === index &&
-          before.has(stepId) &&
-          after.has(stepId),
-      ),
   };
 };
 
@@ -204,10 +198,9 @@ const compareAlignedSteps = (
   let totalArtifactDiffs = 0;
   const steps: BrowserScenarioDiff["steps"] = [];
   const failures: BrowserScenarioAlignmentFailure[] = [];
-  for (const stepId of input.alignment.orderedStepIds) {
-    const beforeStep = input.alignment.before.get(stepId);
+  for (const [stepId, beforeStep] of input.alignment.before) {
     const afterStep = input.alignment.after.get(stepId);
-    if (beforeStep === undefined || afterStep === undefined) continue;
+    if (afterStep === undefined) continue;
     if (beforeStep.action !== afterStep.action)
       failures.push({
         code: "action_mismatch",

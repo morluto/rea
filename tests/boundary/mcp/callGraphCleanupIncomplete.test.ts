@@ -1,14 +1,15 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
@@ -18,6 +19,7 @@ import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { cleanupStoppedTraversal } from "../../../src/application/CallRelationshipTraversal.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -30,11 +32,7 @@ import {
 
 afterEach(closeEnhancedToolResources);
 
-const provider = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const provider = createFixtureProviderIdentity();
 const directions = [
   ["forward", "procedure_callees"],
   ["backward", "procedure_callers"],
@@ -319,12 +317,11 @@ const openSession = async (port: AnalysisOperationPort) => {
     },
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "call-graph-cleanup", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    { name: "call-graph-cleanup", version: "1" },
+    resources,
+  );
   const opened = await client.callTool({
     name: "open_binary",
     arguments: { path: target, format: "dos-com" },
@@ -385,7 +382,7 @@ it.each(tools)(
     const retained = await retainedPartial(client, session, error);
     expect(retained).toMatchObject({
       operation: tool,
-      subject: { format: "dos-com" },
+      subject: { identity: { format: "dos-com" } },
       normalized_result:
         tool === "get_call_graph"
           ? { graph: { "0": [{ address: "0x1", status: "ok" }] } }

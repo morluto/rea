@@ -20,7 +20,6 @@ cliTest.for([
   { format: "asar", command: "analyze-javascript-application" },
 ])(
   "analyzes selected $format sources through $command with complete artifact identity",
-  { timeout: 60_000 },
   async ({ format, command }, { cli }) => {
     const directory = await createTestTempDirectory("rea-js-source-selection-");
     const files = await writeJavaScriptSourceSelectionFixture(directory);
@@ -187,7 +186,7 @@ cliTest(
     expect(response.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["source_paths"], reason: "invalid_value" }],
+        issues: [{ path: ["sourcePath"], reason: "invalid_value" }],
       },
     });
   },
@@ -202,7 +201,6 @@ cliTest.for([
   },
 ])(
   "appends $source --source-paths-json selections for $format through $command",
-  { timeout: 60_000 },
   async ({ command, source, format }, { cli }) => {
     const directory = await createTestTempDirectory(
       "rea-js-source-paths-json-",
@@ -252,7 +250,7 @@ cliTest.for([
     if (format === "asar") {
       expect(evidence.subject).toMatchObject({
         local_path: target,
-        digest: {
+        identity: {
           sha256: createHash("sha256")
             .update(await readFile(target))
             .digest("hex"),
@@ -316,7 +314,7 @@ cliTest(
     expect(response.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [{ path: ["source_paths"], reason: "invalid_value" }],
+        issues: [{ path: ["sourcePathsJson"], reason: "invalid_value" }],
       },
     });
   },
@@ -324,7 +322,6 @@ cliTest(
 
 cliTest(
   "accepts legal ASAR JSON whitespace while preserving selected-source identity",
-  { timeout: 60_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-js-asar-whitespace-");
     await writeJavaScriptSourceSelectionFixture(root);
@@ -391,8 +388,8 @@ cliTest(
     });
     expect(response.exitCode).toBe(1);
     expect(response.json).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { reason: "format" },
+      code: "unsupported_target",
+      details: { path: archive, failure_kind: "unsupported" },
     });
   },
 );

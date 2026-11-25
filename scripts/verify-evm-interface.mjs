@@ -1,22 +1,34 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { isOwnershipPsExecution } from "./lib/ownership-ps-trace.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
+const manifest = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
+const expectedEngine = `evmole@${manifest.dependencies.evmole}`;
 const solcModule = process.env.REA_VERIFY_SOLC_MODULE;
 const strace = process.env.REA_VERIFY_STRACE_COMMAND;
 if (
@@ -49,13 +61,15 @@ const source = await readFile(
 );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const execute = promisify(execFile);
+const run = createVerifierRun();
+const commands = await createVerifierCommands();
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-evm-verifier-" });
-const client = new Client({ name: "evm-interface-verifier", version: "1" });
+const root = await VerifierFixture.open({ prefix: "rea-evm-verifier-" });
+const client = completeEvidenceClient(
+  new Client({ name: "evm-interface-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -63,6 +77,8 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 const failures = [];
+/** @type {Awaited<ReturnType<typeof completeVerifierRun>> | undefined} */
+let verifier;
 let cases = 0;
 try {
   await client.connect(transport);
@@ -79,15 +95,17 @@ try {
     if (mode === "cli") {
       let stdout;
       try {
-        ({ stdout } = await execute(
+        ({ stdout } = await commands.exec(
           scope.command,
           [
             ...scope.prefix,
             entrypoint,
-            "inspect-evm-interface",
-            path,
-            encoding,
-            "--json",
+            ...(await completeEvidenceCliArguments([
+              "inspect-evm-interface",
+              path,
+              encoding,
+              "--json",
+            ])),
           ],
           {
             env: scope.environment ?? environment,
@@ -96,15 +114,14 @@ try {
           },
         ));
       } catch (cause) {
-        if (typeof cause.code !== "number" || typeof cause.stdout !== "string")
-          throw cause;
-        stdout = cause.stdout;
+        if (cause?.name !== "VerifierCommandExitError") throw cause;
+        stdout = cause.snapshot.stdout.text;
       }
       value = JSON.parse(stdout);
     } else {
       const reply = await scope.client.callTool({
         name: "inspect_evm_interface",
-        arguments: { path, encoding },
+        arguments: { detail: "complete", path, encoding },
       });
       value =
         expectedCategory !== undefined
@@ -123,7 +140,7 @@ try {
     const evidence = parseEvidence(value);
     const report = evidence.normalized_result;
     assert.equal(report.diagnostics.truncated, false);
-    assert.equal(evidence.provider.version, "evmole@0.9.3");
+    assert.equal(evidence.provider.version, expectedEngine);
     assert.equal(evidence.confidence, "inferred");
     assert.equal(report.artifact.path, path);
     assert.equal(report.artifact.encoding, encoding);
@@ -132,7 +149,7 @@ try {
       report.artifact.sha256,
       createHash("sha256").update(carrier).digest("hex"),
     );
-    assert.equal(evidence.subject.digest.sha256, report.artifact.sha256);
+    assert.equal(evidence.subject.identity.sha256, report.artifact.sha256);
     assert.equal(report.artifact.bytes, carrier.length);
     assert.equal(
       report.bytecode.sha256,
@@ -162,23 +179,17 @@ try {
     if (mode === "mcp") assert.deepEqual(value.normalized_result, report);
     return report;
   };
+  // Ownership inventory runs ps from fixed system locations, so a caller PATH
+  // without ps neither hides nor replaces it and inspection still completes.
   const ownershipProbe = join(root.path, "ownership-prerequisite.hex");
   await writeFile(ownershipProbe, "0x00");
-  const missingInspection = await inspect(
-    "cli",
-    ownershipProbe,
-    "hex",
-    "unsupported_provider",
-    {
-      command: process.execPath,
-      prefix: [],
-      client,
-      environment: { ...environment, PATH: root.path },
-    },
-  );
-  assert.equal(missingInspection.code, "capability_unavailable");
-  assert.match(missingInspection.message, /procps-compatible ps/u);
-  assert.equal(missingInspection.details.operation, "prepare_owned_process");
+  const pathWithoutPs = await inspect("cli", ownershipProbe, "hex", undefined, {
+    command: process.execPath,
+    prefix: [],
+    client,
+    environment: { ...environment, PATH: root.path },
+  });
+  assert.equal(pathWithoutPs.bytecode.hex, "00");
   cases++;
   for (const [name, optimizer, viaIR] of [
     ["plain", false, false],
@@ -310,7 +321,8 @@ try {
       assert.equal(failure.code, "unsupported_target");
       assert.equal(failure.details.path, path);
       assert.match(failure.details.reason, /EF00/);
-      assert.match(failure.remediation.action, /target format/);
+      assert.equal(failure.details.failure_kind, "unsupported");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }
@@ -324,7 +336,10 @@ try {
     const path = join(root.path, name);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, "hex", "invalid_input");
+      // An undecodable hex carrier is the target's bytes, not the request.
+      const failure = await inspect(mode, path, "hex", "unsupported_target");
+      assert.equal(failure.details.failure_kind, "malformed");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }
@@ -344,10 +359,12 @@ try {
       process.execPath,
       "--disable-wasm-trap-handler",
     ];
-    const limitedClient = new Client({
-      name: "limited-evm-verifier",
-      version: "1",
-    });
+    const limitedClient = completeEvidenceClient(
+      new Client({
+        name: "limited-evm-verifier",
+        version: "1",
+      }),
+    );
     const limitedTransport = new StdioClientTransport({
       command: limiter,
       args: [...prefix, entrypoint, "mcp"],
@@ -369,11 +386,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const brokenLimiter = join(root.path, "broken-limiter");
@@ -409,10 +426,12 @@ try {
       ...environment,
       REA_EVM_PRLIMIT_COMMAND: limiter,
     };
-    const selectedClient = new Client({
-      name: "unavailable-evm-limiter-verifier",
-      version: "1",
-    });
+    const selectedClient = completeEvidenceClient(
+      new Client({
+        name: "unavailable-evm-limiter-verifier",
+        version: "1",
+      }),
+    );
     const selectedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -463,18 +482,18 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const [name, encoding] of [
     ["plain.hex", "hex"],
     ["via-ir.raw", "raw"],
   ]) {
-    await execute(
+    await commands.exec(
       strace,
       [
         "-ff",
@@ -486,10 +505,12 @@ try {
         join(root.path, `offline.trace.${name}`),
         process.execPath,
         entrypoint,
-        "inspect-evm-interface",
-        join(root.path, name),
-        encoding,
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-evm-interface",
+          join(root.path, name),
+          encoding,
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
@@ -512,11 +533,7 @@ try {
           line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
           `Incomplete exec observation: ${line}`,
         );
-        const ownershipInspection =
-          ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-          line.includes(
-            '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]',
-          );
+        const ownershipInspection = isOwnershipPsExecution(line);
         assert.ok(
           [
             process.execPath,
@@ -543,36 +560,26 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  root.releaseAfter(() => commands.close());
+  root.releaseAfter(() => client.close());
+  root.releaseAfter(() => transport.close());
+  root.releaseAfter(async () => {
+    verifier = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(verifier.process_lineage);
+  });
+  try {
+    await root.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
-const verifier = await completeVerifierRun(run);
-if (
-  verifier.process_lineage.status !== "verified" ||
-  verifier.process_lineage.descendants.length !== 0
-)
-  failures.push(
-    new Error(
-      "Verifier process lineage was not fully released: " +
-        JSON.stringify(verifier),
-    ),
-  );
 console.log(
   JSON.stringify(
     {
       status: failures.length === 0 ? "passed" : "failed",
       public_cases: cases,
       compiler: solc.version(),
-      engine: "evmole@0.9.3",
+      engine: expectedEngine,
       ...(failures.length === 0
         ? {
             target_execution: "exec-syscalls-verified-absent",
@@ -586,9 +593,13 @@ console.log(
   ),
 );
 if (failures.length !== 0)
-  throw new AggregateError(
-    failures,
-    "Offline EVM interface verification failed; cleanup failures retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline EVM interface verification failed; cleanup failures retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 
 function permitsStdioSocketObservation(line, localDescriptors) {

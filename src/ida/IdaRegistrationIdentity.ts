@@ -1,14 +1,9 @@
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { isTransportCredentialHeader } from "../domain/explicitSensitiveValues.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 
-/** HTTP authentication fields have protocol-defined credential meaning. */
-export const isIdaAuthenticationHeader = (name: string): boolean =>
-  ["authorization", "proxy-authorization", "cookie"].includes(
-    name.toLowerCase(),
-  );
-
 const isSensitiveHeader = (config: IdaConfiguration, name: string): boolean =>
-  isIdaAuthenticationHeader(name) ||
+  isTransportCredentialHeader(name) ||
   (config.sensitive?.headers.some(
     (selected) => selected.toLowerCase() === name.toLowerCase(),
   ) ??

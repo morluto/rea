@@ -46,14 +46,21 @@ describe("Qoder configuration paths", () => {
 
   it("resolves the personal skills directory beside the config root", () => {
     expect(
-      skillDestinations("/home/a", ["qoder"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["qoder"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".qoder", "skills", "reverse-engineer-anything"),
     ]);
     expect(
-      skillDestinations("/home/a", ["qoder"], {
-        QODER_CONFIG_DIR: "/opt/qoder",
-      }).map(({ path }) => path),
+      skillDestinations(
+        "/home/a",
+        ["qoder"],
+        {
+          QODER_CONFIG_DIR: "/opt/qoder",
+        },
+        process.platform,
+      ).map(({ path }) => path),
     ).toEqual([join("/opt/qoder", "skills", "reverse-engineer-anything")]);
   });
 });

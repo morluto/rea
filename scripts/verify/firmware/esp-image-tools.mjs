@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createVerifierCommands } from "../../lib/verify-commands.mjs";
+import {
+  FIXTURE_TOOLS,
+  fixtureCommand,
+} from "../../../tests/conformance/ghidra/fixture-toolchain.mjs";
 
-// Optional verification tools only; the runtime reader starts no tool.
-const compiler = process.env.REA_RISCV_CLANG ?? "clang";
-const linker = process.env.REA_RISCV_LLD ?? "ld.lld";
+// Optional verification tools only; the runtime reader starts no tool. The
+// lanes check the RISC-V commands with requireLaneToolchain("esp") before
+// they create a workspace.
+const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
+const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
 const python = process.env.REA_ESPTOOL_PYTHON ?? "python3";
 // Optional: an Xtensa ESP32 build when Espressif's GCC is supplied.
 export const xtensa = process.env.REA_XTENSA_ESP32_GCC;
@@ -72,20 +78,14 @@ export const spell = (v4, later) => {
   return v5 ? later : v4;
 };
 
-/** Check every tool before any work and report their versions. */
+/**
+ * Check esptool, espsecure and the optional Xtensa compiler, and report the
+ * versions; the lane has already checked the RISC-V toolchain.
+ */
 export const checkTools = async (script = "verify:esp-images") => {
   lane = script;
-  const compilerVersion = await prerequisite(
-    `a Clang with the RISC-V target (tried ${compiler})`,
-    "REA_RISCV_CLANG",
-    async () => {
-      const targets = await execute(compiler, ["--print-targets"], options);
-      assert.match(targets.stdout, /^\s*riscv32\b/mu, "No riscv32 target.");
-      return firstLine(await execute(compiler, ["--version"], options));
-    },
-  );
-  await prerequisite(`ld.lld (tried ${linker})`, "REA_RISCV_LLD", () =>
-    execute(linker, ["--version"], options),
+  const compilerVersion = firstLine(
+    await execute(compiler, ["--version"], options),
   );
   const versionText = await prerequisite(
     `a Python that runs esptool (tried ${python} -m esptool)`,
@@ -215,7 +215,15 @@ export const imageInfo = async (file, chip) => {
 const inspectArtifact = (file, flags) =>
   execute(
     process.execPath,
-    [entrypoint, "inspect-artifact", file, ...flags, "--json"],
+    [
+      entrypoint,
+      "inspect-artifact",
+      "--detail",
+      "complete",
+      file,
+      ...flags,
+      "--json",
+    ],
     { ...options, env: { ...process.env, REA_LOG_LEVEL: "silent" } },
   );
 

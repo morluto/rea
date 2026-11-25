@@ -120,6 +120,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           httpBatchLink({ url: "/trpc/spread-old", ...options }),
           httpBatchLink({ url: "/trpc/computed-old", [key]: options.url }),
           httpBatchLink({ ...options, url: "/trpc/final", headers: {} }),
+          httpBatchLink({ url: \`/trpc/template\` }),
         ];
         const doc = {
           kind: "OperationDefinition", operation: "query", operation: "mutation",
@@ -131,7 +132,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     });
     // This control checks JavaScript object semantics, not a live tRPC client.
     expect(await runNodeJsonControl(root, "entry.mjs")).toEqual([
-      ["/trpc/live", "/trpc/runtime", "/trpc/runtime", "/trpc/final"],
+      [
+        "/trpc/live",
+        "/trpc/runtime",
+        "/trpc/runtime",
+        "/trpc/final",
+        "/trpc/template",
+      ],
       "mutation",
       "Current",
     ]);
@@ -147,9 +154,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expect.arrayContaining([
         ["/trpc/live", "trpc:link:httpBatchLink"],
         ["/trpc/final", "trpc:link:httpBatchLink"],
+        ["/trpc/template", "trpc:link:httpBatchLink"],
         ["Current", "graphql:mutation"],
       ]),
     );
-    expect(endpoints).toHaveLength(3);
+    expect(endpoints).toHaveLength(4);
   },
 );

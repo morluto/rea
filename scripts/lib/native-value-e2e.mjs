@@ -7,8 +7,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./verify-commands.mjs";
 
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 import { parseEvidence } from "../../dist/domain/evidence.js";
@@ -23,6 +23,10 @@ import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
 import { verifyLegacyValueScopeSnapshot } from "./ghidra-value-scope-snapshot-e2e.mjs";
 import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
 import { verifyGhidraSocketBoundary } from "./real-ghidra-socket-boundary.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -199,18 +203,20 @@ async function verifyNativeValueAdapters(
     process.execPath,
     [
       entrypoint,
-      "trace-native-values",
-      target.path,
-      procedure,
-      "--provider",
-      "ghidra",
-      "--max-depth",
-      "2",
-      "--max-functions",
-      "8",
-      "--limit",
-      "5000",
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "trace-native-values",
+        target.path,
+        procedure,
+        "--provider",
+        "ghidra",
+        "--max-depth",
+        "2",
+        "--max-functions",
+        "8",
+        "--limit",
+        "5000",
+        "--json",
+      ])),
     ],
     { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
   );
@@ -241,7 +247,9 @@ async function verifyNativeValueAdapters(
     expectedCommand: null,
     sweepTokenOwnedProcesses: true,
   });
-  const client = new Client({ name: "native-values-real-e2e", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "native-values-real-e2e", version: "1" }),
+  );
   for (const [resource, owner] of [
     ["native value MCP client", client],
     ["native value MCP transport", transport],
@@ -473,7 +481,7 @@ async function verifyNativeValueAdapters(
 async function verifyUnresolvedCallEvidence(client) {
   const inventory = await client.callTool({
     name: "list_procedures",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   assert.notEqual(inventory.isError, true, JSON.stringify(inventory));
   assert.notEqual(inventory.structuredContent, undefined);

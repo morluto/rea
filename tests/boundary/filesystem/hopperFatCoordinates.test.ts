@@ -11,11 +11,15 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { mapHopperFileOffset } from "../../../src/hopper/HopperFileOffset.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply,
+} from "../../../src/hopper/HopperReplyContracts.js";
 import { resolveHopperMachOImage } from "../../../src/hopper/HopperMachOImage.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -49,7 +53,14 @@ const mapOffset = (target: BinaryTarget, observation: JsonValue) => {
   const scope = new ArtifactResourceScope();
   const leases = new WeakMap<OwnedFileHandle, AnalysisCleanupLease>();
   onTestFinished(() => scope.close());
-  return mapHopperFileOffset(target, observation, {
+  const reply = parseHopperReply(
+    hopperReplySchemas,
+    "address_to_file_offset",
+    observation,
+    "address_to_file_offset",
+  );
+  if (!reply.ok) return Promise.resolve(reply);
+  return mapHopperFileOffset(target, reply.value, {
     retainFailedClose: (owner) => {
       const lease = AnalysisCleanupLease.forCloseOwner(owner, target.path);
       leases.set(owner, lease);
@@ -243,3 +254,118 @@ it("checks all 12 loaded-header bytes after matching its CPU identity", async ()
     },
   });
 });
+
+it.each([false, true])(
+  "isolates unselected FAT64 slice alignment, CPU identity, and reserved word defects in both consumers (littleEndian=%s)",
+  async (littleEndian) => {
+    const x86_64 = machoImage({ cpu: CPU.x86_64 });
+    const arm64 = machoImage({ cpu: CPU.arm64 });
+    const bytes = fatImage(
+      [
+        { cpu: CPU.x86_64, bytes: x86_64 },
+        { cpu: CPU.arm64, bytes: arm64 },
+      ],
+      true,
+      littleEndian,
+    );
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // Corrupt unselected slice 0: bad alignment exponent (2^14 does not divide 4096),
+    // nonzero FAT64 reserved word, and mismatched embedded CPU type.
+    view.setUint32(8 + 24, 14, littleEndian);
+    view.setUint32(8 + 28, 0xdeadbeef, littleEndian);
+    view.setUint32(4096 + 4, 0x00000012, true);
+    const directory = await createTestTempDirectory(
+      "rea-hopper-fat-coordinates-isolated-",
+    );
+    const path = join(directory, "isolated.fat64");
+    await writeFile(path, bytes);
+    const target = {
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      kind: "executable",
+      format: "mach-o-universal",
+      architecture: "arm64",
+      availableArchitectures: ["x86_64", "arm64"],
+      universalSlice: { offset: 8192, size: arm64.byteLength },
+    } satisfies BinaryTarget;
+
+    expect(await resolveImage(target)).toMatchObject({
+      ok: true,
+      value: {
+        method: "fat64_thin_slice",
+        source_offset: 8192,
+        byte_length: arm64.byteLength,
+        cpu_type: CPU.arm64.type,
+        cpu_subtype: CPU.arm64.subtype,
+      },
+    });
+    expect(await mapOffset(target, loadedObservation(arm64))).toEqual({
+      ok: true,
+      value: {
+        address: "0x1000",
+        file_offset: 8192 + 8,
+        provider_file_offset: 8,
+        image_base_file_offset: 8192,
+        source_path: target.path,
+      },
+    });
+
+    // Selected-slice alignment failure must still fail closed in both consumers.
+    const badSelectedAlignment = Buffer.from(bytes);
+    new DataView(
+      badSelectedAlignment.buffer,
+      badSelectedAlignment.byteOffset,
+      badSelectedAlignment.byteLength,
+    ).setUint32(8 + 32 + 24, 14, littleEndian);
+    await writeFile(path, badSelectedAlignment);
+    const badAlignmentTarget = {
+      ...target,
+      sha256: createHash("sha256").update(badSelectedAlignment).digest("hex"),
+    } satisfies BinaryTarget;
+    expect(await resolveImage(badAlignmentTarget)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BinaryTargetError",
+        reason: "FAT architecture 1 offset is not aligned to 2^14",
+      },
+    });
+    expect(
+      await mapOffset(badAlignmentTarget, loadedObservation(arm64)),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: "FAT architecture 1 offset is not aligned to 2^14",
+      },
+    });
+
+    // Whole-container bounds failure on an unselected slice must still fail closed.
+    const outOfBoundsUnselected = Buffer.from(bytes);
+    new DataView(
+      outOfBoundsUnselected.buffer,
+      outOfBoundsUnselected.byteOffset,
+      outOfBoundsUnselected.byteLength,
+    ).setBigUint64(8 + 16, BigInt(bytes.byteLength), littleEndian);
+    await writeFile(path, outOfBoundsUnselected);
+    const outOfBoundsTarget = {
+      ...target,
+      sha256: createHash("sha256").update(outOfBoundsUnselected).digest("hex"),
+    } satisfies BinaryTarget;
+    expect(await resolveImage(outOfBoundsTarget)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BinaryTargetError",
+        reason: "FAT architecture 0 slice range extends beyond the file",
+      },
+    });
+    expect(
+      await mapOffset(outOfBoundsTarget, loadedObservation(arm64)),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: "FAT architecture 0 slice range extends beyond the file",
+      },
+    });
+  },
+);

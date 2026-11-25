@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "../canonicalDigest.js";
 
 import {
   digestProcessCommitment,
@@ -23,8 +23,8 @@ type RequireInvariant = (
 ) => void;
 
 const sameJsonValue = (left: unknown, right: unknown): boolean => {
-  const encoded = canonicalize(left);
-  return encoded !== undefined && encoded === canonicalize(right);
+  const encoded = serializeCanonicalValue(left);
+  return encoded !== undefined && encoded === serializeCanonicalValue(right);
 };
 
 const orderedTimestamps = (values: readonly number[]): boolean =>
@@ -46,6 +46,9 @@ const validateCommitments = (
     : manifest.executable_sha256 === null &&
         manifest.executable_identity.reason !==
           null, "manifest.executable_identity", "launch identity and executable digest do not agree");
+  require((manifest.root_process.state === "withheld-by-caller") ===
+    capture.normalization
+      .pids, "manifest.root_process", "root process identity must be withheld exactly when PID normalization is selected");
   for (const [field, value] of [
     ["full_scenario_sha256", manifest.scenario],
     ["comparison_contract_sha256", manifest.comparison_contract],
