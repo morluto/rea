@@ -14,7 +14,7 @@ import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { createAnalysisProfile } from "../dist/domain/analysisProfile.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import {
   VerifierFixture,
@@ -35,13 +35,10 @@ export async function verifyProjectCoverage(run) {
     throw new Error(
       "Set GHIDRA_INSTALL_DIR to an absolute Ghidra installation path.",
     );
-  const installation = await inspectVerifierGhidraInstallation({
-    environment: process.env,
+  const installation = await inspectVerifierGhidraFromEnvironment(
+    process.env,
     installDir,
-    ...(process.env.JAVA_HOME === undefined
-      ? {}
-      : { javaHome: process.env.JAVA_HOME }),
-  });
+  );
   if (installation.status !== "available")
     throw new Error(`Ghidra is unavailable: ${JSON.stringify(installation)}`);
   if (process.platform === "win32")

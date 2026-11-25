@@ -17,7 +17,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import {
   buildDosComFixture,
   buildRejectedDosComFixture,
@@ -49,13 +49,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "verify:ghidra:com prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 if (installation.status !== "available")
   throw new Error(
     `verify:ghidra:com prerequisite unavailable: ${JSON.stringify(installation)}`,

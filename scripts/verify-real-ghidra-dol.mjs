@@ -14,7 +14,7 @@ import {
 } from "../dist/ghidra/GhidraLanguageCatalog.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildGameCubeDolFixture } from "../tests/conformance/ghidra/dol-fixture.mjs";
 import {
   GEKKO_LANGUAGE,
@@ -46,19 +46,7 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "GameCube DOL verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();

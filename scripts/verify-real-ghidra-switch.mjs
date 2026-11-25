@@ -98,19 +98,13 @@ try {
 let installation;
 try {
   if (!compilerOnly) {
-    const { inspectVerifierGhidraInstallation } =
+    const { inspectVerifierGhidraFromEnvironment } =
       await import("./lib/ghidra-installation-inspection.mjs");
     assert.ok(
       process.env.GHIDRA_INSTALL_DIR,
       "Ghidra switch lane prerequisite missing: GHIDRA_INSTALL_DIR (bring your own)",
     );
-    installation = await inspectVerifierGhidraInstallation({
-      environment: process.env,
-      installDir: process.env.GHIDRA_INSTALL_DIR,
-      ...(process.env.JAVA_HOME === undefined
-        ? {}
-        : { javaHome: process.env.JAVA_HOME }),
-    });
+    installation = await inspectVerifierGhidraFromEnvironment(process.env);
     assert.equal(
       installation.status,
       "available",
