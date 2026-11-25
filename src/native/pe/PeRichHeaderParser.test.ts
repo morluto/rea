@@ -250,6 +250,29 @@ it("reads a distant Rich header past the prefix without reading the trailing ima
   ).toBe(true);
 });
 
+it("fails closed as truncated when reading the stub past the prefix returns fewer bytes than requested", async () => {
+  const image = peRichHeaderImage({ stub: Buffer.alloc(0x2000, 0x90) });
+  const peOffset = image.readUInt32LE(0x3c);
+  const failure = await parsePeRichHeaderFromHandle(
+    {
+      size: image.length,
+      prefix: image.subarray(0, 4096),
+      readRange: (offset, length) =>
+        Promise.resolve(
+          offset === 4096 && length === peOffset - 4096
+            ? image.subarray(offset, offset + length - 1)
+            : image.subarray(offset, offset + length),
+        ),
+    },
+    { path: "/sample.exe", sha256: "a".repeat(64), bytes: image.length },
+    inspectPeRichHeaderInputSchema.parse({ path: "/sample.exe" }),
+  ).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: { kind: "truncated", format: "native-binary" },
+  });
+});
+
 it("rejects an image without a PE signature", async () => {
   const bytes = peRichHeaderImage();
   bytes.write("ZZ", 0, "latin1");

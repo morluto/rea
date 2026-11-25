@@ -12,6 +12,7 @@ import {
   type PeRichHeaderRecord,
 } from "../../domain/native/peRichHeader.js";
 import {
+  BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
@@ -222,16 +223,19 @@ export const parsePeRichHeaderFromHandle = async (
   if (peOffset < DOS_HEADER_BYTES + PE_RICH_HEADER_FOOTER_BYTES) {
     record = { state: "absent" };
   } else {
-    const headerBytes =
-      peOffset <= source.prefix.length
-        ? source.prefix.subarray(0, peOffset)
-        : Buffer.concat([
-            source.prefix,
-            await source.readRange(
-              source.prefix.length,
-              peOffset - source.prefix.length,
-            ),
-          ]);
+    let headerBytes: Buffer;
+    if (peOffset <= source.prefix.length) {
+      headerBytes = source.prefix.subarray(0, peOffset);
+    } else {
+      const needed = peOffset - source.prefix.length;
+      const tail = await source.readRange(source.prefix.length, needed);
+      if (tail.length < needed)
+        throw new BinaryFormatFailure(
+          "truncated",
+          "PE DOS stub or Rich header range exceeds the artifact size",
+        );
+      headerBytes = Buffer.concat([source.prefix, tail]);
+    }
     assertArtifactReadActive(signal);
     record = await richRecord(
       new BinaryReader(headerBytes, true, "pe"),
