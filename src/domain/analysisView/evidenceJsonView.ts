@@ -62,25 +62,6 @@ interface SerializedEvidenceJson {
  */
 export const EVIDENCE_JSON_CACHE_CODE_UNITS = 16 * 1024 * 1024;
 
-/**
- * Whole serializations of immutable retained records, least recently used
- * first, so repeated paging of a record is O(log(chunks) + limit). Their total
- * stays within {@link EVIDENCE_JSON_CACHE_CODE_UNITS}; a mutable inline parent
- * is never cached because nothing proves it is unchanged.
- */
-const serialized = new Map<object, SerializedEvidenceJson>();
-let cachedCodeUnits = 0;
-
-const remember = (evidence: object, doc: SerializedEvidenceJson): void => {
-  serialized.set(evidence, doc);
-  cachedCodeUnits += doc.totalLength;
-  for (const [key, entry] of serialized) {
-    if (cachedCodeUnits <= EVIDENCE_JSON_CACHE_CODE_UNITS) break;
-    serialized.delete(key);
-    cachedCodeUnits -= entry.totalLength;
-  }
-};
-
 /** Units kept around a window: one before it for surrogate checks, one after. */
 const WINDOW_MARGIN_CODE_UNITS = 2;
 
@@ -123,36 +104,91 @@ const scanSerializedChunks = (
   return { chunks, starts, totalLength, whole };
 };
 
+interface CacheEntry {
+  /** Weak, so a cached record is released when its owner releases it. */
+  readonly record: WeakRef<object>;
+  readonly codeUnits: number;
+}
+
 /**
- * The serialization the page reads: a cached or newly cached whole record
- * when it fits the cache, otherwise the parts around the requested window.
+ * Whole serializations of immutable records, least recently used first, so
+ * repeated paging of a record is O(log(chunks) + limit). Their total stays
+ * within the cache's code units. Records are held weakly: the cache never
+ * extends a record's lifetime, and a collected record's units are released.
+ * A mutable inline parent is never cached because nothing proves it is
+ * unchanged; it and any record too large to fit are paged from a window.
  */
-const serializeEvidence = (
-  evidence: Evidence,
-  offset: number,
-  limit: number | undefined,
-): SerializedEvidenceJson => {
-  const cacheable = isImmutableJsonSnapshot(evidence);
-  if (cacheable) {
-    const known = serialized.get(evidence);
-    if (known !== undefined) {
-      serialized.delete(evidence);
-      serialized.set(evidence, known);
-      return known;
+export class EvidenceJsonSerializationCache {
+  readonly #documents = new WeakMap<
+    object,
+    { readonly document: SerializedEvidenceJson; readonly entry: CacheEntry }
+  >();
+  readonly #order = new Set<CacheEntry>();
+  readonly #collected = new FinalizationRegistry<CacheEntry>((entry) => {
+    if (this.#order.delete(entry)) this.#codeUnits -= entry.codeUnits;
+  });
+  #codeUnits = 0;
+
+  constructor(readonly maximumCodeUnits = EVIDENCE_JSON_CACHE_CODE_UNITS) {}
+
+  /** Code units of the whole serializations currently cached. */
+  get cachedCodeUnits(): number {
+    return this.#codeUnits;
+  }
+
+  /** Whether `record`'s whole serialization is cached. */
+  holds(record: object): boolean {
+    return this.#documents.has(record);
+  }
+
+  /** The serialization one page of `evidence` reads. */
+  serialize(
+    evidence: Evidence,
+    offset: number,
+    limit: number | undefined,
+  ): SerializedEvidenceJson {
+    const cacheable = isImmutableJsonSnapshot(evidence);
+    if (cacheable) {
+      const known = this.#documents.get(evidence);
+      if (known !== undefined) {
+        this.#order.delete(known.entry);
+        this.#order.add(known.entry);
+        return known.document;
+      }
+    }
+    // A default page is at most DEFAULT_EVIDENCE_JSON_PAGE_BYTES escaped
+    // bytes, and every code unit escapes to at least one byte.
+    const window = limit ?? DEFAULT_EVIDENCE_JSON_PAGE_BYTES;
+    const document = scanSerializedChunks(
+      evidence,
+      cacheable ? this.maximumCodeUnits : 0,
+      Math.max(0, offset - WINDOW_MARGIN_CODE_UNITS),
+      offset + window + WINDOW_MARGIN_CODE_UNITS,
+    );
+    if (document.whole && cacheable) this.#remember(evidence, document);
+    return document;
+  }
+
+  #remember(record: object, document: SerializedEvidenceJson): void {
+    const entry: CacheEntry = {
+      record: new WeakRef(record),
+      codeUnits: document.totalLength,
+    };
+    this.#documents.set(record, { document, entry });
+    this.#order.add(entry);
+    this.#collected.register(record, entry);
+    this.#codeUnits += entry.codeUnits;
+    for (const oldest of this.#order) {
+      if (this.#codeUnits <= this.maximumCodeUnits) break;
+      this.#order.delete(oldest);
+      this.#codeUnits -= oldest.codeUnits;
+      const evicted = oldest.record.deref();
+      if (evicted !== undefined) this.#documents.delete(evicted);
     }
   }
-  // A default page is at most DEFAULT_EVIDENCE_JSON_PAGE_BYTES escaped bytes,
-  // and every code unit escapes to at least one byte.
-  const window = limit ?? DEFAULT_EVIDENCE_JSON_PAGE_BYTES;
-  const doc = scanSerializedChunks(
-    evidence,
-    cacheable ? EVIDENCE_JSON_CACHE_CODE_UNITS : 0,
-    Math.max(0, offset - WINDOW_MARGIN_CODE_UNITS),
-    offset + window + WINDOW_MARGIN_CODE_UNITS,
-  );
-  if (doc.whole && cacheable) remember(evidence, doc);
-  return doc;
-};
+}
+
+const sharedSerializations = new EvidenceJsonSerializationCache();
 
 /** Chunk index containing UTF-16 offset `index` (`0 <= index < doc.totalLength`). */
 const locateChunk = (doc: SerializedEvidenceJson, index: number): number => {
@@ -267,6 +303,7 @@ const pageEnd = (
 export const projectEvidenceJsonView = (
   parent: AnalysisViewParent,
   view: EvidenceJsonViewRequest,
+  serializations: EvidenceJsonSerializationCache = sharedSerializations,
 ) => {
   if (parent.evidence === undefined)
     return err(
@@ -279,7 +316,11 @@ export const projectEvidenceJsonView = (
         },
       ]),
     );
-  const doc = serializeEvidence(parent.evidence, view.offset, view.limit);
+  const doc = serializations.serialize(
+    parent.evidence,
+    view.offset,
+    view.limit,
+  );
   const start = Math.min(view.offset, doc.totalLength);
   if (splitsPair(doc, start))
     return err(

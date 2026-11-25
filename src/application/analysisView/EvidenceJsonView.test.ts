@@ -6,6 +6,7 @@ import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { inspectAnalysisViewValidated } from "./AnalysisViewService.js";
 import {
   DEFAULT_EVIDENCE_JSON_PAGE_BYTES,
+  EvidenceJsonSerializationCache,
   projectEvidenceJsonView,
 } from "../../domain/analysisView/evidenceJsonView.js";
 import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../../domain/analysisResourceLimits.js";
@@ -124,6 +125,112 @@ describe("evidence-json view", () => {
       }
       expect(joined).toBe(text);
     }
+  });
+
+  const retainedParent = (
+    ledger: EvidenceLedger,
+    label: string,
+    rows = 120,
+  ) => {
+    const evidence = createEvidence(
+      { path: `/fixture/${label}.bin`, sha256: "d".repeat(64), format: "elf" },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_byte_entropy",
+        parameters: {},
+        result: {
+          rows: Array.from({ length: rows }, (_, index) => ({
+            index,
+            label: `${label} ${String(index)} \u{1F600}`,
+          })),
+        },
+        limitations: [],
+      },
+    );
+    expect(ledger.record(evidence).ok).toBe(true);
+    const retained = ledger.forAnalysis(evidence.evidence_id)!;
+    return {
+      evidenceId: retained.evidence_id,
+      operation: retained.operation,
+      predicateType: retained.predicate_type,
+      normalizedResult: retained.normalized_result,
+      limitations: retained.limitations,
+      evidence: retained,
+    };
+  };
+
+  const joinPages = (
+    parent: ReturnType<typeof retainedParent>,
+    cache: EvidenceJsonSerializationCache,
+    limit: number,
+  ): string => {
+    let offset = 0;
+    let joined = "";
+    for (;;) {
+      const projected = projectEvidenceJsonView(
+        parent as never,
+        { kind: "evidence-json", offset, limit },
+        cache,
+      );
+      if (!projected.ok) throw projected.error;
+      joined += projected.value.text;
+      if (projected.value.coverage.next_offset === null) return joined;
+      offset = projected.value.coverage.next_offset;
+    }
+  };
+
+  it("pages a retained record past the cache size from a window without caching it", () => {
+    const ledger = new EvidenceLedger();
+    // jsonParts yields parts of up to 16 Ki code units; this record spans
+    // many, so the window can keep far fewer than the whole record.
+    const parent = retainedParent(ledger, "large", 4000);
+    const text = JSON.stringify(parent.evidence);
+    // The scan collects whole parts until the total passes the cache, then
+    // keeps only the window: pages before and after that point must match.
+    const cache = new EvidenceJsonSerializationCache(
+      Math.floor(text.length / 2),
+    );
+    for (const limit of [4096, 50_000]) {
+      expect(joinPages(parent, cache, limit)).toBe(text);
+    }
+    expect(cache.holds(parent.evidence)).toBe(false);
+    expect(cache.cachedCodeUnits).toBe(0);
+    // Past the cache size the scan keeps only parts around the window, not
+    // a transient copy of the whole record.
+    const page = cache.serialize(parent.evidence as never, 0, 8);
+    const kept = page.chunks.reduce((units, chunk) => units + chunk.length, 0);
+    expect(page.totalLength).toBe(text.length);
+    expect(kept).toBeLessThan(text.length / 2);
+  });
+
+  it("evicts the least recently used record to stay within the cache size", () => {
+    const ledger = new EvidenceLedger();
+    const first = retainedParent(ledger, "rec-a");
+    const second = retainedParent(ledger, "rec-b");
+    const third = retainedParent(ledger, "rec-c");
+    // Equal-length labels give every record the same serialized size.
+    const size = JSON.stringify(first.evidence).length;
+    expect(JSON.stringify(second.evidence).length).toBe(size);
+    const cache = new EvidenceJsonSerializationCache(size * 2 + 64);
+    const read = (parent: typeof first) =>
+      projectEvidenceJsonView(
+        parent as never,
+        { kind: "evidence-json", offset: 0, limit: 8 },
+        cache,
+      );
+    read(first);
+    read(second);
+    expect(cache.holds(first.evidence)).toBe(true);
+    expect(cache.holds(second.evidence)).toBe(true);
+    // Reading the first again makes the second the least recently used.
+    read(first);
+    read(third);
+    expect(cache.holds(first.evidence)).toBe(true);
+    expect(cache.holds(second.evidence)).toBe(false);
+    expect(cache.holds(third.evidence)).toBe(true);
+    expect(cache.cachedCodeUnits).toBeLessThanOrEqual(cache.maximumCodeUnits);
+    // An evicted record still pages exactly from a fresh scan.
+    expect(joinPages(second, cache, 97)).toBe(JSON.stringify(second.evidence));
   });
 
   it("keeps a surrogate pair whole even in a one-unit page", () => {
