@@ -108,6 +108,22 @@ describe("assessMemoryAdmission", () => {
       expect(result.reason).toContain("cgroup remaining 1024 MiB");
     }
   });
+
+  it("bounds remaining allowance by cgroupMaxBytes even if cgroupRemainingBytes is larger", () => {
+    const facts: HostMemoryAdmissionFacts = {
+      hostAvailableBytes: 16 * GiB,
+      cgroupMaxBytes: 1 * GiB,
+      cgroupUsageBytes: null,
+      cgroupRemainingBytes: 6 * GiB,
+    };
+    // 2 GiB heap + 512 MiB headroom = 2.5 GiB needed.
+    // Cgroup max is 1 GiB, so remaining can never exceed 1 GiB.
+    const result = assessMemoryAdmission(facts, 2 * GiB);
+    expect(result.admitted).toBe(false);
+    if (!result.admitted) {
+      expect(result.reason).toContain("1024 MiB available");
+    }
+  });
 });
 
 describe("readHostAvailableBytes", () => {

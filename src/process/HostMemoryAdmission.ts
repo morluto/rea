@@ -142,11 +142,15 @@ export const assessMemoryAdmission = (
   options: { readonly minHeadroomBytes?: number } = {},
 ): MemoryAdmission => {
   const minHeadroom = options.minHeadroomBytes ?? 512 * 1024 * 1024;
-  const cgroupRemaining =
+  const rawRemaining =
     facts.cgroupRemainingBytes ??
     (facts.cgroupMaxBytes === null
       ? Number.POSITIVE_INFINITY
       : Math.max(0, facts.cgroupMaxBytes - (facts.cgroupUsageBytes ?? 0)));
+  const cgroupRemaining =
+    facts.cgroupMaxBytes === null
+      ? rawRemaining
+      : Math.min(rawRemaining, facts.cgroupMaxBytes);
   const available = Math.min(facts.hostAvailableBytes, cgroupRemaining);
   const needed = requiredBytes + minHeadroom;
   if (available < needed) {

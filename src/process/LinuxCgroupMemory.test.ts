@@ -502,3 +502,35 @@ it("preserves uncertainty when ancestor limit is finite but usage cannot be dete
     effectiveRemainingBytes: null,
   });
 });
+
+it("caps remaining allowance by tighter ancestor limits when leaf usage is unreadable", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-mixed-read-");
+  const mountPoint = join(root, "cgroup");
+  const parentGroup = join(mountPoint, "parent.slice");
+  const childGroup = join(parentGroup, "child.slice");
+  await mkdir(childGroup, { recursive: true });
+
+  // Parent: 8 GiB limit, 2 GiB current usage -> 6 GiB remaining
+  await writeFile(join(parentGroup, "memory.max"), "8589934592\n");
+  await writeFile(join(parentGroup, "memory.current"), "2147483648\n");
+
+  // Child: 1 GiB limit, unreadable current usage
+  await writeFile(join(childGroup, "memory.max"), "1073741824\n");
+
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  await writeFile(procCgroupPath, "0::/parent.slice/child.slice\n");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  await writeFile(procMountInfoPath, `${mountInfoRow("/", mountPoint)}\n`);
+
+  const facts = await readLinuxCgroupAdmissionFacts({
+    platform: "linux",
+    procCgroupPath,
+    procMountInfoPath,
+  });
+
+  expect(facts).toEqual({
+    effectiveMemoryMax: 1073741824,
+    usageBytes: null,
+    effectiveRemainingBytes: 1073741824,
+  });
+});

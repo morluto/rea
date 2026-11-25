@@ -454,10 +454,15 @@ export const readLinuxCgroupAdmissionFacts = async (
     updateAncestorMetrics(acc, metrics, index === 0);
   }
 
+  const effectiveRemaining =
+    acc.tightestRemaining === null || typeof acc.tightestMax !== "number"
+      ? acc.tightestRemaining
+      : Math.min(acc.tightestRemaining, acc.tightestMax);
+
   return {
     effectiveMemoryMax: acc.tightestMax,
     usageBytes: acc.leafUsageBytes,
-    effectiveRemainingBytes: acc.tightestRemaining,
+    effectiveRemainingBytes: effectiveRemaining,
   };
 };
 
