@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { isPathWithinRoot } from "#dist/domain/localPath.js";
 
-/** Exercise the registration plan, its application, doctor and a repeat application. */
+/** Verify client setup and return the installed instructions expected in model requests. */
 export async function verifyClientSetup({
   client,
   commands,
@@ -60,4 +60,22 @@ export async function verifyClientSetup({
   assert.deepEqual(repeated.appliedActions, []);
   assert.equal(await readFile(configPath, "utf8"), configured);
   assert.equal(await readFile(backup, "utf8"), original);
+
+  const installedSkill = await readFile(
+    join(skillDirectory, "SKILL.md"),
+    "utf8",
+  );
+  assert(installedSkill.includes("name: reverse-engineer-anything"));
+  const lines = installedSkill.split("\n");
+  const headerEnd = lines.indexOf("---", 1);
+  assert(
+    lines[0] === "---" && headerEnd > 0,
+    "Installed skill must have its authored frontmatter",
+  );
+  const expectedSkillBody = lines
+    .slice(headerEnd + 1)
+    .join("\n")
+    .trim();
+  assert(expectedSkillBody.length > 0);
+  return expectedSkillBody;
 }
