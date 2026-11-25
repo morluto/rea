@@ -14,6 +14,7 @@ import {
   type TestMcp,
 } from "../support/mcp/mcpFixture.js";
 import type { TestDelivery } from "../support/completeEvidenceByDefault.js";
+import { testDeliveryEnvironment } from "../support/completeEvidenceByDefault.js";
 
 /** Owned MCP SDK session shared by application workflow scenarios. */
 export interface ApplicationMcpHarness {
@@ -68,10 +69,13 @@ export async function createApplicationMcpHarness(
       { kind: "session", session },
       {
         ...options.serverOptions,
-        environment: {
-          ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
-          ...(options.serverOptions?.environment ?? process.env),
-        },
+        environment: testDeliveryEnvironment(
+          {
+            ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+            ...(options.serverOptions?.environment ?? process.env),
+          },
+          options.testDelivery,
+        ),
       },
     );
     const client = await mcp.connect(

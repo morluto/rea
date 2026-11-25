@@ -19,6 +19,20 @@ import { COMPLETE_DETAIL } from "./completeDetail.js";
  */
 export type TestDelivery = "completeEvidenceByDefault" | "budgeted";
 
+/**
+ * The server environment for a test's delivery choice. The test environment
+ * seeds the largest agent result budget so spawned processes deliver complete
+ * Evidence; a "budgeted" test removes that seed and gets the shipped default.
+ */
+export const testDeliveryEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  delivery: TestDelivery | undefined,
+): NodeJS.ProcessEnv => {
+  if (delivery !== "budgeted") return environment;
+  const { REA_AGENT_RESULT_BUDGET_BYTES: _seed, ...shipped } = environment;
+  return shipped;
+};
+
 const contracts = new Map(
   TOOL_CONTRACTS.map((contract) => [contract.name, contract] as const),
 );
