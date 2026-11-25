@@ -15,6 +15,8 @@ export const MACOS_PKG_MAX_TOC_COMPRESSED_BYTES = 16 * 1024 * 1024;
 export const MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 /** Resource policy: TOC `<file>` elements, including nested component paths. */
 export const MACOS_PKG_MAX_TOC_FILES = 4096;
+/** Resource policy: TOC XML nodes counted before the DOM is built, 256 per admitted file. */
+export const MACOS_PKG_MAX_TOC_XML_NODES = MACOS_PKG_MAX_TOC_FILES * 256;
 /** Resource policy: gzip-cpio members from one Scripts or Payload archive. */
 export const MACOS_PKG_MAX_CPIO_MEMBERS = 4096;
 /** Resource policy: one cpio member name, including the trailing NUL. */

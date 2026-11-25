@@ -4,12 +4,17 @@ import type { Document, Element } from "@xmldom/xmldom";
 import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_TOC_FILES,
+  MACOS_PKG_MAX_TOC_XML_NODES,
   macosPkgLimitFailure,
   type MacosPkgParseError,
 } from "../../domain/macosPkgFormat.js";
-import { malformedInput, truncatedInput } from "../../domain/parseFailure.js";
+import {
+  malformedInput,
+  ParseFailureError,
+  truncatedInput,
+} from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseXmlDocument } from "../../domain/xmlDocument.js";
+import { parseXmlDocumentWithinNodeLimit } from "../../domain/xmlDocument.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { childElement, childElements, childText } from "./xmlElements.js";
 
@@ -258,17 +263,30 @@ export const parseXarTocXml = (
       }),
     );
   }
-  const document = parseXmlDocument(text, {
-    doctype: "reject",
+  // Count nodes while streaming so ignored elements cannot build an unbounded DOM.
+  const document = parseXmlDocumentWithinNodeLimit(text, {
+    maximumNodes: MACOS_PKG_MAX_TOC_XML_NODES,
     lineEndings: "preserve",
   });
-  if (!document.ok)
+  if (!document.ok) {
+    const failure = document.error;
     return err(
-      malformedInput(MACOS_PKG_FORMAT, document.error.failure.detail, {
-        field: "toc",
-        cause: document.error,
-      }),
+      failure instanceof ParseFailureError
+        ? malformedInput(MACOS_PKG_FORMAT, failure.failure.detail, {
+            field: "toc",
+            cause: failure,
+          })
+        : macosPkgLimitFailure(
+            `XAR TOC XML exceeds ${String(MACOS_PKG_MAX_TOC_XML_NODES)} nodes`,
+            {
+              name: "macos_pkg_toc_xml_nodes",
+              maximum: failure.maximum,
+              required: failure.required,
+            },
+            "toc",
+          ),
     );
+  }
   return parseXarTocDocument(document.value);
 };
 
