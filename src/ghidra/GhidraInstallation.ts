@@ -1134,16 +1134,7 @@ export const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     }
   },
   executableHeader: readGhidraExecutableHeader,
-  executable(path) {
-    try {
-      accessSync(path, constants.X_OK);
-      return statSync(path).isFile();
-    } catch (cause: unknown) {
-      // best-effort cleanup: optional executable probing; failure means missing.
-      void cause;
-      return false;
-    }
-  },
+  executable: executablePath,
   probeJava: probeGhidraJava,
   discoverInstallDirOnPath: discoverGhidraInstallationOnPath,
 });
