@@ -3,7 +3,7 @@ import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { finished } from "node:stream/promises";
-import { setTimeout as delay } from "node:timers/promises";
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -359,44 +359,69 @@ it("closes the reader when a paused volume is cancelled", async () => {
     volType: "static" as const,
     usedEbs: lebCount,
   }));
-  const reader = new UbiImageArtifactReader(
-    await fixture(ubiImage([...layouts, ...lebs], wide)),
-  );
+  const path = await fixture(ubiImage([...layouts, ...lebs], wide));
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new UbiImageArtifactReader(path, admitted);
   const controller = new AbortController();
   const reason = new Error("cancel paused volume");
-  const [volume] = await entries(reader);
-  const stream = await reader.open(volume!, controller.signal);
-  const streamError = finished(stream).catch((cause: unknown) => cause);
   const deadline = new AbortController();
   try {
-    await new Promise<void>((resolve) => {
-      stream.once("data", () => {
-        stream.pause();
-        resolve();
-      });
+    const [volume] = await entries(reader);
+    let acknowledgeReadAhead!: () => void;
+    const readAhead = new Promise<void>((resolve) => {
+      acknowledgeReadAhead = resolve;
     });
-    await Promise.race([
-      (async () => {
-        while (stream.readableLength < stream.readableHighWaterMark)
-          await delay(1, undefined, { signal: deadline.signal });
-        // Give the producer time to finish read-ahead and park at a yield.
-        await delay(50, undefined, { signal: deadline.signal });
-        controller.abort(reason);
+    // The first LEB fills the paused output. Both chunks of the next LEB
+    // are read ahead, one into each producer stream.
+    const lastReadPosition = BigInt(
+      (layouts.length + 1) * wide.pebSize + wide.dataOffset + 64 * 1024,
+    );
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      const result = await Reflect.apply(nativeRead, admitted.handle, args);
+      if (args[3] === lastReadPosition) acknowledgeReadAhead();
+      return result;
+    }) as typeof admitted.handle.read);
+    let stream: Awaited<ReturnType<UbiImageArtifactReader["open"]>> | undefined;
+    try {
+      const volumeStream = await reader.open(volume!, controller.signal);
+      stream = volumeStream;
+      const streamError = finished(volumeStream).catch((cause: unknown) => cause);
+      volumeStream.once("data", () => volumeStream.pause());
+      const failure = await Promise.race([
+        (async () => {
+          await readAhead;
+          // Let the producer continuations publish the completed read and yield.
+          await setImmediate(undefined, { signal: deadline.signal });
+          expect(volumeStream.isPaused()).toBe(true);
+          expect(volumeStream.readableLength).toBeGreaterThanOrEqual(
+            volumeStream.readableHighWaterMark,
+          );
+          controller.abort(reason);
+          await reader.close();
+          return streamError;
+        })(),
+        delay(2000, undefined, { signal: deadline.signal }).then(() => {
+          throw new Error(
+            "Reader did not close after cancelling a paused volume",
+          );
+        }),
+      ]);
+      expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+    } finally {
+      deadline.abort();
+      stream?.destroy();
+      try {
         await reader.close();
-      })(),
-      delay(2000, undefined, { signal: deadline.signal }).then(() => {
-        throw new Error(
-          "Reader did not close after cancelling a paused volume",
-        );
-      }),
-    ]);
-    const failure = await streamError;
-    expect(failure).toMatchObject({ reason: "cancelled" });
-    expect((failure as Error).cause).toBe(reason);
+      } finally {
+        read.mockRestore();
+      }
+    }
   } finally {
-    deadline.abort();
-    stream.destroy();
     await reader.close();
+    await admitted.handle.close();
   }
 });
 
