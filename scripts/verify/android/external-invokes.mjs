@@ -11,8 +11,10 @@ import {
   requireMcpToolError,
 } from "../../lib/mcp-verifier-results.mjs";
 import { hashAndroidFile } from "./digest.mjs";
-import { completeEvidenceToolArguments } from "../../lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "../../lib/complete-evidence.mjs";
 
 const operation = "trace_android_references";
 const className = "android.app.NotificationManager";

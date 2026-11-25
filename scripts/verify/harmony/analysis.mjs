@@ -18,8 +18,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
-import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hap = process.env.REA_HARMONY_TEST_HAP;

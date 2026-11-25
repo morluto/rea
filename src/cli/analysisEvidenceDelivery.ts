@@ -238,9 +238,11 @@ const budgetDelivery = (
   complete: Evidence,
   input: CliEvidencePublication,
 ): ((recovery: AgentBudgetRecovery) => AgentBudgetDelivery) | undefined => {
-  const budget = currentAgentResultBudget(
-    cliPublicationInvocation().agentBudgetSeed,
-  );
+  const invocation = cliPublicationInvocation();
+  // An explicit --filter-output selects fields directly from the command's
+  // Evidence; replacing it with {summary, delivery} would drop those paths.
+  if (invocation.hasFilterOutput === true) return undefined;
+  const budget = currentAgentResultBudget(invocation.agentBudgetSeed);
   // The one-shot CLI can always publish and page the complete record: with
   // --evidence_output through the bundle, without it by a rerun.
   const completeBytes = budgetedSummaryBytes({

@@ -11,15 +11,6 @@ export const analysisDetailSchema = z
   );
 
 /**
- * Whether a contract's `detail` is this delivery selector, which never reaches
- * the operation: a handler takes it out of the operation input, so the
- * Evidence identity is the same for every detail.
- */
-export const declaresDeliveryDetail = (inputSchema: z.ZodType): boolean =>
-  inputSchema instanceof z.ZodObject &&
-  inputSchema.shape.detail === analysisDetailSchema;
-
-/**
  * analyze_function delivery. Defaults to the token-frugal summary because a
  * complete native dossier can reach several megabytes of value-flow and
  * references; callers that need everything inline pass complete.

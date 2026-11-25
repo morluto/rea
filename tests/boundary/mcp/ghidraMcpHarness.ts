@@ -1,5 +1,4 @@
 import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
-import type { TestDelivery } from "../../support/completeEvidenceByDefault.js";
 import {
   verifiedGhidraApplicationProperties,
   verifiedGhidraJavaObservation,
@@ -9,6 +8,7 @@ import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import type { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import type { TestDelivery } from "../../support/completeEvidenceByDefault.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";

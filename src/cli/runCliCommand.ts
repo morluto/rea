@@ -150,6 +150,7 @@ export const runCliCommand = async (
         }),
       {
         agentBudgetSeed: environment.variables[AGENT_RESULT_BUDGET_ENVIRONMENT],
+        hasFilterOutput: controls.filterOutput !== undefined,
       },
     );
     if (output.error !== undefined) exit(options, 1);

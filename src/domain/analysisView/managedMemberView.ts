@@ -37,7 +37,7 @@ import type {
 
 export const MANAGED_MEMBER_SCOPE_GUIDANCE = {
   selectedNominalRows:
-    "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+    "Named type rows, exported types, fields, methods, call edges, field accesses and user strings follow the declaring-type selection; member references cover only rows referenced by selected method bodies.",
   unresolvedTypeRows:
     "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
   unresolvedMethodRows:

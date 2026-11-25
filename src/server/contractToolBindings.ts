@@ -292,7 +292,6 @@ type AnalysisBinding<Input> = {
   readonly admission: "sdk";
   readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
 } & ExclusiveBinding<"analyze"> &
-  // A declared detail selects delivery; an index signature declares no field.
   (HasDeliveryDetail<Input> extends true
     ? {
         readonly detail: "delivery";

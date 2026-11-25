@@ -1,9 +1,13 @@
+import { resolve } from "node:path";
 import type { Client } from "@modelcontextprotocol/client";
 
 import { TOOL_CONTRACTS } from "../../src/contracts/toolContracts.js";
 import { AGENT_BUDGET_OPERATIONS } from "../../src/domain/agentBudgetOperations.js";
 import { createCli } from "../../src/cli.js";
+import { parseCliArgv } from "../../src/cli/argvParser.js";
 import { cliCommands } from "../../src/cli/commandRegistry.js";
+import { isJavaScriptApplicationPath } from "../../src/cli/coreBinaryCommands.js";
+import { parseCliGlobalArguments } from "../../src/cliBuiltinArguments.js";
 import { COMPLETE_DETAIL } from "./completeDetail.js";
 
 /**
@@ -35,27 +39,81 @@ const budgeted: ReadonlySet<string> = new Set(
     return name;
   }),
 );
+
+interface CliDetailMetadata {
+  readonly detailCommands: ReadonlySet<string>;
+  readonly analyzeEntry: ReturnType<typeof cliCommands>[number] | undefined;
+  readonly jsOptionKeys: ReadonlySet<string>;
+}
+
 /**
- * CLI commands that accept `--detail`, read from the CLI's own registry. The
- * CLI budgets every Evidence-delivery command whose `--detail` is omitted,
- * and only those commands take `--detail`, so a contract's `cli` flag alone
- * cannot tell.
+ * CLI commands whose `--detail` accepts `"complete"`, read from the CLI's own
+ * registry. Commands whose `--detail` uses another enum (such as
+ * `import-reference-source` with `"full" | "summary"`) are excluded.
  */
-let detailCommandSet: ReadonlySet<string> | undefined;
-const detailCommandNames = (): ReadonlySet<string> =>
-  (detailCommandSet ??= new Set(
-    cliCommands(createCli({}))
-      .filter(
-        (entry) =>
-          (entry.definition.options as { readonly shape?: object } | undefined)
-            ?.shape !== undefined &&
-          Object.hasOwn(
-            (entry.definition.options as { readonly shape: object }).shape,
-            "detail",
-          ),
-      )
+let cachedCliMetadata: CliDetailMetadata | undefined;
+const cliDetailMetadata = (): CliDetailMetadata => {
+  if (cachedCliMetadata !== undefined) return cachedCliMetadata;
+  const commands = new Map(
+    cliCommands(createCli({})).map((entry) => [entry.name, entry] as const),
+  );
+  const detailCommands = new Set(
+    [...commands.values()]
+      .filter((entry) => {
+        const shape = (
+          entry.definition.options as
+            | {
+                readonly shape?: Readonly<
+                  Record<
+                    string,
+                    {
+                      safeParse?: (v: unknown) => { readonly success: boolean };
+                    }
+                  >
+                >;
+              }
+            | undefined
+        )?.shape;
+        const detail = shape?.detail;
+        return (
+          detail !== undefined &&
+          typeof detail.safeParse === "function" &&
+          detail.safeParse("complete").success
+        );
+      })
       .map(({ name }) => name),
-  ));
+  );
+  const jsShape = (
+    commands.get("analyze-javascript-application")?.definition.options as
+      | { readonly shape?: object }
+      | undefined
+  )?.shape;
+  cachedCliMetadata = {
+    detailCommands,
+    analyzeEntry: commands.get("analyze"),
+    jsOptionKeys: new Set(jsShape === undefined ? [] : Object.keys(jsShape)),
+  };
+  return cachedCliMetadata;
+};
+
+/** Whether an `analyze` invocation selects the JavaScript route (which takes `--detail`). */
+const selectsAnalyzeJavaScriptRoute = async (
+  metadata: CliDetailMetadata,
+  commandArgs: readonly string[],
+  cwd: string | undefined,
+): Promise<boolean> => {
+  if (metadata.analyzeEntry === undefined) return false;
+  const parsed = parseCliArgv(commandArgs, metadata.analyzeEntry.definition);
+  if (!parsed.ok) return false;
+  const suppliedOptions = Object.entries(parsed.value.options)
+    .filter(([, value]) => value !== undefined)
+    .map(([key]) => key);
+  if (!suppliedOptions.every((key) => metadata.jsOptionKeys.has(key)))
+    return false;
+  const target = parsed.value.args.path;
+  if (typeof target !== "string" || target.length === 0) return false;
+  return isJavaScriptApplicationPath(resolve(cwd ?? process.cwd(), target));
+};
 
 /**
  * The arguments one MCP call sends under the complete-Evidence default: a
@@ -75,23 +133,40 @@ export const completeEvidenceArguments = (
 
 /**
  * The argv one CLI invocation runs under the complete-Evidence default: a
- * command that takes `--detail`, given neither `--detail` nor `--view`, gets
- * `--detail complete` after the command word. Other commands (doctor, mcp,
- * help, commands without Evidence delivery) run as written.
+ * command whose `--detail` accepts `"complete"`, given neither `--detail` nor
+ * `--view` (and selecting a route that accepts `--detail` when routed), gets
+ * `--detail complete` after the command word. Other commands run as written.
  */
-export const completeEvidenceCliArguments = (
+export const completeEvidenceCliArguments = async (
   arguments_: readonly string[],
-): readonly string[] => {
+  cwd?: string,
+): Promise<readonly string[]> => {
   const [command, ...rest] = arguments_;
-  if (command === undefined || !detailCommandNames().has(command))
+  const metadata = cliDetailMetadata();
+  if (command === undefined || !metadata.detailCommands.has(command))
+    return arguments_;
+  const global = parseCliGlobalArguments(arguments_);
+  if (
+    global.flags.has("--help") ||
+    global.flags.has("-h") ||
+    global.flags.has("--schema")
+  )
     return arguments_;
   const selects = (flag: string) =>
     rest.some(
       (argument) => argument === flag || argument.startsWith(`${flag}=`),
     );
-  return selects("--detail") || selects("--view")
-    ? arguments_
-    : [command, ...COMPLETE_DETAIL, ...rest];
+  if (selects("--detail") || selects("--view")) return arguments_;
+  if (
+    command === "analyze" &&
+    !(await selectsAnalyzeJavaScriptRoute(
+      metadata,
+      global.command.slice(1),
+      cwd,
+    ))
+  )
+    return arguments_;
+  return [command, ...COMPLETE_DETAIL, ...rest];
 };
 
 const applied = new WeakSet<Client>();

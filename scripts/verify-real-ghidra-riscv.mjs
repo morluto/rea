@@ -655,21 +655,23 @@ try {
 
     for (const [command, arguments_] of [
       ...(stripped ? [] : [["search", ["rea_riscv_", "--kind", "procedures"]]]),
-      await completeEvidenceCliArguments([
+      [
         "function",
         [stripped ? addressFor("rea_riscv_entry") : "rea_riscv_entry"],
-      ]),
+      ],
     ]) {
       const cli = await execOwned(
         process.execPath,
         [
           entrypoint,
-          command,
-          fixture.path,
-          ...arguments_,
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            command,
+            fixture.path,
+            ...arguments_,
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );

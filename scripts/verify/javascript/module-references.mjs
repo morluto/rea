@@ -12,12 +12,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
-import { completeEvidenceToolArguments } from "../../lib/complete-evidence.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "../../lib/complete-evidence.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -264,7 +266,7 @@ await withVerifierCleanup(async () => {
         common_summary: summary,
         common_request: {
           name: "analyze_javascript_application",
-          arguments: { ...preparationRequest, detail: "complete" },
+          arguments: preparationRequest,
         },
         transcript,
       };

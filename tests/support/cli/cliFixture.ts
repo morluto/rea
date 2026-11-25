@@ -216,7 +216,9 @@ export const createTestCli = (
     if (terminal === true && input !== undefined)
       throw new Error("A terminal run has an empty stdin.");
     const arguments_ =
-      delivery === "budgeted" ? written : completeEvidenceCliArguments(written);
+      delivery === "budgeted"
+        ? written
+        : await completeEvidenceCliArguments(written, cwd);
     const rea = [resolve("scripts/rea.mjs"), ...arguments_];
     const { command, arguments: commandArguments } =
       terminal === true

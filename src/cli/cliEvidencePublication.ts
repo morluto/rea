@@ -16,6 +16,8 @@ const publication = new AsyncLocalStorage<PublicationContext>();
 export interface CliPublicationInvocation {
   /** REA_AGENT_RESULT_BUDGET_BYTES from the environment this invocation captured. */
   readonly agentBudgetSeed?: string | undefined;
+  /** Whether the caller selected specific output fields with `--filter-output`. */
+  readonly hasFilterOutput?: boolean | undefined;
 }
 
 /** Keep publication state in the invocation that owns delivery and formatting. */

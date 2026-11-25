@@ -1,45 +1,113 @@
+import { resolve } from "node:path";
+
 /**
  * Verifier helpers that read complete Evidence from the compiled CLI or MCP
  * request it explicitly, so the shipped budgeted default stays the default.
- * A CLI command that takes `--detail`, given neither `--detail` nor `--view`,
- * gets `--detail complete` after the command word; the set of such commands
- * is read from the compiled CLI's own registry. An MCP tool whose omitted
- * detail is budgeted, called with neither `detail` nor `view`, gets
- * `detail: "complete"`; the set is the compiled AGENT_BUDGET_OPERATIONS.
+ * A CLI command whose `--detail` accepts `"complete"`, given neither `--detail`
+ * nor `--view` (and selecting a route that accepts `--detail` when routed,
+ * such as `analyze` on a JavaScript target), gets `--detail complete` after
+ * the command word. An MCP tool whose omitted detail is budgeted, called with
+ * neither `detail` nor `view`, gets `detail: "complete"`.
  */
-let detailCommands;
+let cliMetadata;
 let budgetedOperations;
 
-const loadDetailCommands = async () => {
-  if (detailCommands !== undefined) return detailCommands;
-  const [{ createCli }, { cliCommands }] = await Promise.all([
+const loadCliMetadata = async () => {
+  if (cliMetadata !== undefined) return cliMetadata;
+  const [
+    { createCli },
+    { cliCommands },
+    { parseCliGlobalArguments },
+    { parseCliArgv },
+    { isJavaScriptApplicationPath },
+  ] = await Promise.all([
     import("../../dist/cli.js"),
     import("../../dist/cli/commandRegistry.js"),
+    import("../../dist/cliBuiltinArguments.js"),
+    import("../../dist/cli/argvParser.js"),
+    import("../../dist/cli/coreBinaryCommands.js"),
   ]);
-  detailCommands = new Set(
-    cliCommands(createCli({}))
-      .filter(
-        (entry) =>
-          entry.definition.options?.shape !== undefined &&
-          Object.hasOwn(entry.definition.options.shape, "detail"),
-      )
+  const commands = new Map(
+    cliCommands(createCli({})).map((entry) => [entry.name, entry]),
+  );
+  const detailCommands = new Set(
+    [...commands.values()]
+      .filter((entry) => {
+        const detail = entry.definition.options?.shape?.detail;
+        return detail !== undefined && detail.safeParse("complete").success;
+      })
       .map(({ name }) => name),
   );
-  return detailCommands;
+  const analyzeEntry = commands.get("analyze");
+  const jsOptionKeys = new Set(
+    Object.keys(
+      commands.get("analyze-javascript-application")?.definition.options
+        ?.shape ?? {},
+    ),
+  );
+  cliMetadata = {
+    detailCommands,
+    analyzeEntry,
+    jsOptionKeys,
+    parseCliGlobalArguments,
+    parseCliArgv,
+    isJavaScriptApplicationPath,
+  };
+  return cliMetadata;
+};
+
+/** Whether an `analyze` invocation selects the JavaScript route (which takes `--detail`). */
+const selectsAnalyzeJavaScriptRoute = async (metadata, commandArgs, cwd) => {
+  if (metadata.analyzeEntry === undefined) return false;
+  const parsed = metadata.parseCliArgv(
+    commandArgs,
+    metadata.analyzeEntry.definition,
+  );
+  if (!parsed.ok) return false;
+  const suppliedOptions = Object.entries(parsed.value.options)
+    .filter(([, value]) => value !== undefined)
+    .map(([key]) => key);
+  if (!suppliedOptions.every((key) => metadata.jsOptionKeys.has(key)))
+    return false;
+  const target = parsed.value.args.path;
+  if (typeof target !== "string" || target.length === 0) return false;
+  return metadata.isJavaScriptApplicationPath(
+    resolve(cwd ?? process.cwd(), target),
+  );
 };
 
 /** The argv for one CLI invocation that reads complete Evidence. */
-export const completeEvidenceCliArguments = async (arguments_) => {
+export const completeEvidenceCliArguments = async (arguments_, cwd) => {
   const [command, ...rest] = arguments_;
-  if (command === undefined || !(await loadDetailCommands()).has(command))
+  if (
+    typeof command !== "string" ||
+    !rest.every((argument) => typeof argument === "string")
+  )
+    return arguments_;
+  const metadata = await loadCliMetadata();
+  if (!metadata.detailCommands.has(command)) return arguments_;
+  const global = metadata.parseCliGlobalArguments(arguments_);
+  if (
+    global.flags.has("--help") ||
+    global.flags.has("-h") ||
+    global.flags.has("--schema")
+  )
     return arguments_;
   const selects = (flag) =>
     rest.some(
       (argument) => argument === flag || argument.startsWith(`${flag}=`),
     );
-  return selects("--detail") || selects("--view")
-    ? arguments_
-    : [command, "--detail", "complete", ...rest];
+  if (selects("--detail") || selects("--view")) return arguments_;
+  if (
+    command === "analyze" &&
+    !(await selectsAnalyzeJavaScriptRoute(
+      metadata,
+      global.command.slice(1),
+      cwd,
+    ))
+  )
+    return arguments_;
+  return [command, "--detail", "complete", ...rest];
 };
 
 /** The arguments for one MCP tool call that reads complete Evidence. */

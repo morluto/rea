@@ -35,9 +35,13 @@ it("requests complete Evidence only for budgeted tools that select neither detai
   );
 });
 
-it("adds --detail complete to budgeted CLI commands under the same rule", () => {
+it("adds --detail complete to budgeted CLI commands under the same rule", async () => {
   expect(
-    completeEvidenceCliArguments(["inspect-byte-entropy", "/f", "--json"]),
+    await completeEvidenceCliArguments([
+      "inspect-byte-entropy",
+      "/f",
+      "--json",
+    ]),
   ).toEqual(["inspect-byte-entropy", "--detail", "complete", "/f", "--json"]);
   for (const argv of [
     ["inspect-byte-entropy", "/f", "--detail", "summary", "--json"],
@@ -46,5 +50,5 @@ it("adds --detail complete to budgeted CLI commands under the same rule", () => 
     ["inspect-binary-layout", "/f", "--json"],
     ["doctor"],
   ])
-    expect(completeEvidenceCliArguments(argv)).toBe(argv);
+    expect(await completeEvidenceCliArguments(argv)).toBe(argv);
 });

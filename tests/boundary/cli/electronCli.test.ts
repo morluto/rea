@@ -24,7 +24,10 @@ import {
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { waitFor } from "../../support/testWait.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
+import {
+  COMPLETE_DETAIL,
+  completeApplicationAnalysis,
+} from "../../support/completeDetail.js";
 
 const cliProcesses = createTestProcessRegistry();
 const cli = createTestCli(cliProcesses);
@@ -272,6 +275,7 @@ describe("Electron CLI artifact behavior", () => {
         "--format",
         "json",
         "analyze-javascript-application",
+        ...COMPLETE_DETAIL,
         root,
         "--artifact-format",
         "directory",

@@ -3,8 +3,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { hashAndroidFile } from "./digest.mjs";
-import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
-import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const initializers = [
   {

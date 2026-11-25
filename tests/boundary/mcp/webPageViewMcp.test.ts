@@ -116,7 +116,7 @@ it("returns a small page capture inline when detail is omitted", async () => {
 });
 
 it("pages a captured script's metadata without its text, and the text separately", async () => {
-  const body = "x".repeat(40_000);
+  const body = "x".repeat(60_000);
   const browser = await startFakeCdpBrowser({
     commandEvents: ({ method }, origin) =>
       method === "Debugger.enable"
