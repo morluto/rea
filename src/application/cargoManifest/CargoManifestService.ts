@@ -4,6 +4,7 @@ import { parse as parseToml } from "smol-toml";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  artifactReaderTargetFailure,
   projectStableArtifactFailure,
   readStableArtifact,
   stableArtifactInputRecovery,
@@ -185,10 +186,9 @@ const readManifest = async (
       providerId: CARGO_MANIFEST_PROVIDER.id,
       operation,
       recognise: (cause) =>
-        cause instanceof ArtifactReaderFailure &&
-        (cause.reason === "path" || cause.reason === "format")
+        cause instanceof ArtifactReaderFailure && cause.reason === "path"
           ? inputFailure(cause.message, cause)
-          : undefined,
+          : artifactReaderTargetFailure(operation, input.path, cause),
       file: {
         path: input.path,
         description: "Cargo manifest",
