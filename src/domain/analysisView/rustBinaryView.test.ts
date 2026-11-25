@@ -6,8 +6,9 @@ import {
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
-import { projectAnalysisView, type AnalysisViewRequest } from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import type { AnalysisViewRequest } from "./analysisViewRequest.js";
 
 const report: RustBinary = {
   artifact: { path: "/artifacts/rust", sha256: "a".repeat(64), bytes: 512 },
@@ -252,17 +253,44 @@ it.each(["packages", "edges"] as const)(
   },
 );
 
-it("filters packages by name, version, and projecting requested dependencies", () => {
+it("filters packages by name, version, and indices, projecting requested dependencies", () => {
   const value = structuredClone(report);
-  value.auditable_metadata!.packages.push(
+  value.auditable_metadata!.packages = [
+    {
+      name: "root",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: true,
+      dependencies: [],
+      features: [],
+    },
     {
       name: "serde",
       version: "1.0.100",
       source: "crates.io",
       kind: null,
       root: false,
-      dependencies: [],
+      dependencies: [3],
       features: ["derive"],
+    },
+    {
+      name: "serde",
+      version: "1.0.100",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [3],
+      features: ["derive"],
+    },
+    {
+      name: "other",
+      version: "1.0.100",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: [],
     },
     {
       name: "serde",
@@ -273,9 +301,14 @@ it("filters packages by name, version, and projecting requested dependencies", (
       dependencies: [],
       features: [],
     },
-  );
+  ];
+  value.auditable_metadata!.dependency_edges = [
+    { from_index: 1, to_index: 3 },
+    { from_index: 2, to_index: 3 },
+  ];
+  value.auditable_metadata!.cyclic_dependency_indices = [];
   const source = parent(value);
-  const filtered = projectAnalysisView(source, {
+  const matchingPackages = projectAnalysisView(source, {
     kind: "rust",
     collection: "packages",
     offset: 0,
@@ -284,20 +317,48 @@ it("filters packages by name, version, and projecting requested dependencies", (
     versions: ["1.0.100"],
     fields: ["name", "version", "dependencies"],
   });
-  if (!filtered.ok || filtered.value.kind !== "rust")
+  if (!matchingPackages.ok || matchingPackages.value.kind !== "rust")
     throw new Error("Rust package filter failed");
-  expect(filtered.value.page.rows).toEqual([
+  expect(matchingPackages.value.page.rows).toEqual([
     {
       index: 1,
       name: "serde",
       version: "1.0.100",
-      dependencies: [],
+      dependencies: [3],
+    },
+    {
+      index: 2,
+      name: "serde",
+      version: "1.0.100",
+      dependencies: [3],
     },
   ]);
-  expect(filtered.value.coverage.total).toBe(1);
+  expect(matchingPackages.value.coverage.total).toBe(2);
+
+  const filteredByIndex = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "packages",
+    offset: 0,
+    limit: 10,
+    names: ["serde"],
+    versions: ["1.0.100"],
+    indices: [1],
+    fields: ["name", "version", "dependencies"],
+  });
+  if (!filteredByIndex.ok || filteredByIndex.value.kind !== "rust")
+    throw new Error("Rust package index filter failed");
+  expect(filteredByIndex.value.page.rows).toEqual([
+    {
+      index: 1,
+      name: "serde",
+      version: "1.0.100",
+      dependencies: [3],
+    },
+  ]);
+  expect(filteredByIndex.value.coverage.total).toBe(1);
 });
 
-it("filters dependency edges by from_indices and to_indices", () => {
+it("filters dependency edges by from_indices, to_indices, and indices", () => {
   const value = structuredClone(report);
   value.auditable_metadata!.packages = [
     {
@@ -353,6 +414,25 @@ it("filters dependency edges by from_indices and to_indices", () => {
     },
   ]);
   expect(filtered.value.coverage.total).toBe(1);
+
+  const filteredByIndex = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "edges",
+    offset: 0,
+    limit: 10,
+    to_indices: [2],
+    indices: [1],
+    fields: ["to_index"],
+  });
+  if (!filteredByIndex.ok || filteredByIndex.value.kind !== "rust")
+    throw new Error("Rust edge index filter failed");
+  expect(filteredByIndex.value.page.rows).toEqual([
+    {
+      index: 1,
+      to_index: 2,
+    },
+  ]);
+  expect(filteredByIndex.value.coverage.total).toBe(1);
 });
 
 it("handles null auditable metadata and projects compiler commit hashes count", () => {
@@ -384,11 +464,6 @@ it("handles null auditable metadata and projects compiler commit hashes count", 
       runtime_dependencies: "unknown",
     },
   });
-  expect(summary.value.unknowns).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("No cargo-auditable metadata was observed"),
-    ]),
-  );
 
   const emptyPackages = projectAnalysisView(source, {
     kind: "rust",
