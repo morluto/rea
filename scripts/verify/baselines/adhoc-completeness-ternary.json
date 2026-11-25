@@ -1,0 +1,9 @@
+{
+  "src/domain/analysisErrorProjection.ts": 1,
+  "src/domain/analysisView/gpuCodeObjectsView.ts": 1,
+  "src/domain/apple/interfaceBuilderGraph.ts": 1,
+  "src/domain/functionComparisonDimensions.ts": 1,
+  "src/domain/javascript/javascriptApplicationEndpointCorrespondence.ts": 1,
+  "src/domain/windows/ntfsMft.ts": 1,
+  "src/domain/windows/ntfsMftAttributes.ts": 2
+}

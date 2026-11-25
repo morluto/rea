@@ -1076,6 +1076,23 @@ checkCounted(
   [],
 );
 
+// Completeness is a derived claim built monotonically from examined input.
+// Ad-hoc `? "complete" :` / `: "complete"` ternaries drop newly added omission
+// or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
+// src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
+// so the count can only shrink.
+const adhocCompletenessTernaryCount = (content) =>
+  (content.match(/\?\s*["']complete["']\s*:/gu)?.length ?? 0) +
+  (content.match(/\?[^?\n;{}]+:\s*["']complete["'](?!\s*\|)/gu)?.length ?? 0);
+
+checkCounted(
+  'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
+  "adhoc-completeness-ternary",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  adhocCompletenessTernaryCount,
+  ["src/domain/coverage.ts", "src/domain/coverageAccumulator.ts"],
+);
+
 // Scripts covered by tsconfig.scripts.json declare and check their types in
 // JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
 // creates a second, unchecked type source that hides signature drift.

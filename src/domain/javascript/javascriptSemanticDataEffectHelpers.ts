@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
@@ -108,7 +109,7 @@ const projectedPatternBindings = (
           bindingId: binding.bindingId,
           identifier: current,
           projectionPath: path,
-          resolution: partial ? "partial" : "complete",
+          resolution: knownCoverage(!partial, "data-effect projection partial"),
         });
       return;
     }

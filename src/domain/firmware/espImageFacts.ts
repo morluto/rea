@@ -1,3 +1,4 @@
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import type {
   EspImageMetadata,
   EspImageSegmentMetadata,
@@ -195,6 +196,20 @@ export const deriveEspImage = (observed: EspImageObservations): EspImage => {
         firstUndescribed.offset,
       ),
     );
+  // Signature blocks follow the image end, so a file cut before it may
+  // hide them even when every declared segment is present.
+  const coverageAccumulator = new CoverageAccumulator().recordComplete();
+  if (truncated) coverageAccumulator.recordUnknown("ESP image is truncated");
+  if (!imageComplete(observed))
+    coverageAccumulator.recordUnknown("ESP image metadata is incomplete");
+  if (trailing.undescribed.length > 0)
+    coverageAccumulator.recordUnknown(
+      "ESP image has undescribed trailing bytes",
+    );
+  if (trailing.truncated)
+    coverageAccumulator.recordUnknown(
+      "ESP image trailing signature blocks are truncated",
+    );
   return {
     metadata: {
       kind: "esp-image",
@@ -219,15 +234,7 @@ export const deriveEspImage = (observed: EspImageObservations): EspImage => {
     },
     segments,
     signatureBlocks: trailing.blocks,
-    // Signature blocks follow the image end, so a file cut before it may
-    // hide them even when every declared segment is present.
-    coverage:
-      truncated ||
-      !imageComplete(observed) ||
-      trailing.undescribed.length > 0 ||
-      trailing.truncated
-        ? "unknown"
-        : "complete",
+    coverage: coverageAccumulator.finalizeCompleteOrUnknown(),
     limitations,
   };
 };
