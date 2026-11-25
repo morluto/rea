@@ -108,7 +108,6 @@ import {
   inspectPeCodeViewFromReader,
 } from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";

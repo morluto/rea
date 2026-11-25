@@ -37,7 +37,6 @@ import {
   AnalysisOutputError,
   type AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { StreamableHttpListenError } from "../http/streamableHttpListenError.js";
 import { ok, type Result } from "../../domain/result.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";

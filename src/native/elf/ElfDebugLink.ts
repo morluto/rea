@@ -44,7 +44,6 @@ import {
   readElfImageFromReader,
 } from "../../domain/native/elfImage.js";
 import { readElfBuildIds, readElfBuildIdsFromHandle } from "./ElfNoteParser.js";
-import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import {
   sharedElfSectionNameDecoder,
   type CooperativeElfSectionNameDecoder,
