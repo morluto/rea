@@ -48,14 +48,11 @@ export class LeandecProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
+    const availability = this.inspectAvailability();
     return leandecCapabilities(
-      this.#resolution.ok
+      availability.status === "available"
         ? { available: true }
-        : {
-            available: false,
-            reason: this.#resolution.reason,
-            code: this.#resolution.code,
-          },
+        : { available: false, reason: availability.reason, code: availability.code },
     );
   }
 
@@ -121,6 +118,8 @@ export class LeandecProvider implements AnalysisProviderCandidate {
         architecture: target.architecture ?? null,
         analysis: "leandec-ghidra-cache",
         inventory_limit: this.#resolution.settings.inventoryLimit,
+        string_limit: this.#resolution.settings.stringLimit,
+        auto_analyze: this.#resolution.settings.autoAnalyze,
       },
     );
     return ok({ profile });

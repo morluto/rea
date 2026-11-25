@@ -10,6 +10,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -33,6 +34,9 @@ import {
   leandecLimitations,
   LEANDEC_PROVIDER_IDENTITY,
 } from "./LeandecProviderCapabilities.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
+import type { AnalysisSearchQuery } from "../domain/analysisSearch.js";
 import type { LeandecSettings } from "./LeandecSettings.js";
 
 interface InventoryEntry {
@@ -75,13 +79,51 @@ const canonicalAddress = (raw: unknown): string | undefined => {
   }
 };
 
+const invalidReply = (detail: string): never => {
+  throw new AnalysisOutputError("leandec", `Malformed Leandec reply: ${detail}`);
+};
+
 const record = (value: JsonValue | undefined): Record<string, JsonValue> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
+  value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, JsonValue>)
-    : {};
+    : invalidReply("expected object");
 
 const list = (value: JsonValue | undefined): readonly JsonValue[] =>
-  Array.isArray(value) ? value : [];
+  Array.isArray(value) ? value : invalidReply("expected array");
+
+const requiredText = (value: JsonValue | undefined): string =>
+  typeof value === "string" ? value : invalidReply("expected string");
+
+const requiredCount = (value: JsonValue | undefined): number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value : invalidReply("expected nonnegative integer");
+
+const inventoryEntry = (row: JsonValue): InventoryEntry => {
+  const cells = list(row);
+  const address = canonicalAddress(requiredText(cells[0])) ?? invalidReply("invalid function address");
+  const name = requiredText(cells[1]);
+  const namespace = requiredText(cells[2]);
+  return { address, name, qualified: namespace ? `${namespace}::${name}` : name, size: requiredCount(cells[3]) };
+};
+
+const waitShared = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+  const result = await waitForAbortable(promise, signal);
+  if (result === ABORTED) throw new LeandecCallCancelled("aborted", "Caller cancelled the request");
+  return result;
+};
+
+const filterEntries = async <T>(entries: readonly T[], value: (entry: T) => string,
+  query: AnalysisSearchQuery, operation: string, signal?: AbortSignal): Promise<readonly T[]> => {
+  if (query.mode !== "regex") return entries.filter(entry => analysisSearchPredicate(query)(value(entry)));
+  const matched = await matchRegexValues({ operation, pattern: query.pattern,
+    caseSensitive: query.case_sensitive ?? false, values: entries.map(value), signal });
+  if (!matched.ok) throw matched.error;
+  const indices = new Set(matched.value);
+  return entries.filter((_entry, index) => indices.has(index));
+};
+
+const coverage = (kind: string, retained: number, total: number): readonly string[] =>
+  retained < total ? [`Leandec returned ${retained} of ${total} ${kind}; results are incomplete.`] : [];
 
 const text = (value: JsonValue | undefined): string | undefined =>
   typeof value === "string" ? value : undefined;
@@ -102,6 +144,7 @@ export class LeandecSessionClient implements AnalysisClient {
     | Promise<{ items: readonly StringEntry[]; total: number }>
     | undefined;
   #closed = false;
+  readonly #owner = new AbortController();
 
   constructor(
     target: BinaryTarget,
@@ -172,8 +215,14 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async close(): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
-    await this.#client.close();
-    return ok(null);
+    this.#owner.abort();
+    try {
+      await this.#client.close();
+      await Promise.allSettled([this.#session, this.#inventory, this.#strings]);
+      return ok(null);
+    } catch (cause: unknown) {
+      return err(this.#project(cause, "close", {}));
+    }
   }
 
   reuseReadiness(): "ready" | "blocked" | "unknown" {
@@ -279,17 +328,15 @@ export class LeandecSessionClient implements AnalysisClient {
     options: ExecutionOptions,
   ): Promise<Answer> {
     const query = this.#searchQuery(operation, parameters);
-    const matches = analysisSearchPredicate(query);
     const inventory = await this.#inventoryOf(
       await this.#ensureSession(options),
       options,
     );
     return {
-      result: inventory.entries
-        .filter((entry) => matches(entry.qualified))
+      result: (await filterEntries(inventory.entries, entry => entry.qualified, query, operation, options.signal))
         .map((entry) => ({ address: entry.address, value: entry.qualified })),
       locations: [],
-      limitations: [],
+      limitations: coverage("functions", inventory.entries.length, inventory.total),
     };
   }
 
@@ -324,14 +371,12 @@ export class LeandecSessionClient implements AnalysisClient {
     options: ExecutionOptions,
   ): Promise<Answer> {
     const query = this.#searchQuery(operation, parameters);
-    const matches = analysisSearchPredicate(query);
     const strings = await this.#stringsOf(options);
     return {
-      result: strings.items
-        .filter((entry) => matches(entry.value))
+      result: (await filterEntries(strings.items, entry => entry.value, query, operation, options.signal))
         .map(({ address, value }) => ({ address, value })),
       locations: [],
-      limitations: [],
+      limitations: coverage("strings", strings.items.length, strings.total),
     };
   }
 
@@ -377,7 +422,8 @@ export class LeandecSessionClient implements AnalysisClient {
         options,
       ),
     );
-    const label = text(list(list(labels.rows)[0])[0]);
+    const labelRows = list(labels.rows);
+    const label = labelRows.length === 0 ? undefined : requiredText(list(labelRows[0])[0]);
     return {
       result: label ?? null,
       locations: [{ kind: "address", address }],
@@ -399,7 +445,7 @@ export class LeandecSessionClient implements AnalysisClient {
         options,
       ),
     );
-    const code = text(payload.pseudocode);
+    const code = requiredText(payload.pseudocode);
     return {
       result: code === undefined || code.length === 0 ? null : code,
       locations: [{ kind: "address", address: entry.address }],
@@ -425,7 +471,7 @@ export class LeandecSessionClient implements AnalysisClient {
       ),
     );
     return {
-      result: text(payload.assembly) ?? null,
+      result: requiredText(payload.assembly),
       locations: [{ kind: "address", address: entry.address }],
       limitations: [],
     };
@@ -448,8 +494,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const field = operation === "procedure_callers" ? "callers" : "callees";
     return {
       result: list(payload[field])
-        .map((item) => text(record(item).address))
-        .filter((address): address is string => address !== undefined),
+        .map((item) => requiredText(record(item).address)),
       locations: [{ kind: "address", address: entry.address }],
       limitations:
         payload.cached === true
@@ -491,8 +536,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const sources = [
       ...new Set(
         list(references.references)
-          .map((item) => text(record(item).src))
-          .filter((value): value is string => value !== undefined),
+          .map((item) => requiredText(record(item).src)),
       ),
     ];
     return {
@@ -529,7 +573,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const payload = record(
       await this.#call("read_bytes", { target: key, address, length }, options),
     );
-    const bytes = hexFromDump(text(payload.dump) ?? "");
+    const bytes = hexFromDump(requiredText(payload.dump));
     return {
       result: {
         address,
@@ -559,51 +603,37 @@ export class LeandecSessionClient implements AnalysisClient {
     options: ExecutionOptions,
   ): Promise<InventoryEntry> {
     const key = await this.#ensureSession(options);
-    const inventory = await this.#inventoryOf(key, options);
-    const address = canonicalAddress(raw);
-    if (address !== undefined) {
-      const exact = inventory.entries.find(
-        (entry) => entry.address === address,
-      );
-      if (exact !== undefined) return exact;
-      const resolved = record(
-        await this.#call(
-          "resolve",
-          { target: key, selector: address },
-          options,
-        ),
-      );
-      const inside = text(resolved.address);
-      const owner = inventory.entries.find((entry) => entry.address === inside);
-      if (owner !== undefined) return owner;
-      throw new AnalysisInputError(operation, { userMessage: INTERIOR_ONLY });
-    }
     if (typeof raw !== "string" || raw.trim().length === 0)
-      throw new AnalysisInputError(operation, {
-        userMessage: "procedure is required.",
-      });
+      throw new AnalysisInputError(operation, { userMessage: "procedure is required." });
     const wanted = raw.trim();
-    const matches = inventory.entries.filter(
-      (entry) => entry.qualified === wanted || entry.name === wanted,
-    );
-    if (matches.length === 1 && matches[0] !== undefined) return matches[0];
-    if (matches.length === 0)
-      throw new AnalysisInputError(operation, {
-        userMessage: `Leandec found no procedure named ${wanted}; search_procedures finds similar names.`,
-      });
-    throw new AnalysisInputError(operation, {
-      userMessage: `${wanted} names ${String(matches.length)} Leandec entries (${matches
-        .map((entry) => entry.address)
-        .join(", ")}); select one by address.`,
-    });
+    // Exact names take precedence over unprefixed hexadecimal addresses.
+    if (!/^0x[0-9a-f]+$/iu.test(wanted)) {
+      const literal = wanted.replaceAll("'", "''");
+      const reply = record(await this.#call("sql", {
+        target: key, limit: 2,
+        query: "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND (name = '" +
+          literal + "' OR (CASE WHEN COALESCE(ns, '') = '' THEN name ELSE ns || '::' || name END) = '" + literal + "')",
+      }, options));
+      const matches = list(reply.rows).map(inventoryEntry);
+      if (matches.length > 1)
+        throw new AnalysisInputError(operation, { userMessage: `${wanted} is ambiguous; select a procedure by address.` });
+      if (matches[0] !== undefined) return matches[0];
+    }
+    const address = canonicalAddress(wanted);
+    if (address === undefined)
+      throw new AnalysisInputError(operation, { userMessage: `No exact procedure named ${wanted}.` });
+    const resolved = record(await this.#call("resolve", { target: key, selector: address }, options));
+    const entryAddress = canonicalAddress(requiredText(resolved.address)) ?? invalidReply("invalid resolved address");
+    const name = requiredText(resolved.name);
+    return { address: entryAddress, name, qualified: name, size: requiredCount(resolved.size) };
   }
 
   async #ensureSession(options: ExecutionOptions): Promise<string> {
-    this.#session ??= this.#open(options).catch((cause: unknown) => {
+    this.#session ??= this.#open({ signal: this.#owner.signal }).catch((cause: unknown) => {
       this.#session = undefined;
       throw cause;
     });
-    return this.#session;
+    return waitShared(this.#session, options.signal);
   }
 
   async #open(options: ExecutionOptions): Promise<string> {
@@ -631,11 +661,16 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   async #findByDigest(options: ExecutionOptions): Promise<string | undefined> {
-    const targets = list(await this.#call("targets", {}, options));
+    const response = await this.#call("targets", {}, options);
+    const targets = typeof response === "string" && response.startsWith("no targets yet:") ? [] : list(response);
     const match = targets
       .map((item) => record(item))
       .find((item) => text(item.slice_sha256) === this.#target.sha256);
-    return text(match?.key);
+    if (match === undefined) return undefined;
+    const key = requiredText(match.key);
+    const overview = record(await this.#call("overview", { target: key }, options));
+    requiredCount(overview.functions);
+    return key;
   }
 
   async #overviewKey(options: ExecutionOptions): Promise<string> {
@@ -648,12 +683,10 @@ export class LeandecSessionClient implements AnalysisClient {
         "open_binary",
         "Leandec did not report a target key for this path.",
       );
-    if (typeof overview.functions === "number")
-      this.#overviewTotal = overview.functions;
+    requiredCount(overview.functions);
     return key;
   }
 
-  #overviewTotal: number | undefined;
 
   async #importTarget(options: ExecutionOptions): Promise<void> {
     const job = record(
@@ -716,8 +749,11 @@ export class LeandecSessionClient implements AnalysisClient {
     key: string,
     options: ExecutionOptions,
   ): Promise<Inventory> {
-    this.#inventory ??= this.#loadInventory(key, options);
-    return this.#inventory;
+    this.#inventory ??= this.#loadInventory(key, { signal: this.#owner.signal }).catch((cause: unknown) => {
+      this.#inventory = undefined;
+      throw cause;
+    });
+    return waitShared(this.#inventory, options.signal);
   }
 
   async #loadInventory(
@@ -737,30 +773,24 @@ export class LeandecSessionClient implements AnalysisClient {
         options,
       ),
     );
-    const entries = list(payload.rows).flatMap((row) => {
-      const cells = list(row);
-      const address = text(cells[0]);
-      const name = text(cells[1]);
-      if (address === undefined || name === undefined) return [];
-      const namespace = text(cells[2]) ?? "";
-      return [
-        {
-          address,
-          name,
-          qualified: namespace.length > 0 ? `${namespace}::${name}` : name,
-          size: typeof cells[3] === "number" ? cells[3] : 0,
-        },
-      ];
-    });
-    const total = this.#overviewTotal ?? entries.length;
+    const entries = list(payload.rows).map(inventoryEntry);
+    const count = record(await this.#call("sql", {
+      target: key, limit: 1,
+      query: "SELECT COUNT(*) FROM functions WHERE kind != 'external'",
+    }, options));
+    const total = requiredCount(list(list(count.rows)[0])[0]);
+    if (total < entries.length) invalidReply("function count is smaller than returned inventory");
     return { entries, total };
   }
 
   async #stringsOf(
     options: ExecutionOptions,
   ): Promise<{ items: readonly StringEntry[]; total: number }> {
-    this.#strings ??= this.#loadStrings(options);
-    return this.#strings;
+    this.#strings ??= this.#loadStrings({ signal: this.#owner.signal }).catch((cause: unknown) => {
+      this.#strings = undefined;
+      throw cause;
+    });
+    return waitShared(this.#strings, options.signal);
   }
 
   async #loadStrings(
@@ -774,21 +804,14 @@ export class LeandecSessionClient implements AnalysisClient {
         options,
       ),
     );
-    const items = list(payload.items).flatMap((item) => {
+    const items = list(payload.items).map((item) => {
       const value = record(item);
-      const address = text(value.address);
-      const string = text(value.value);
-      return address === undefined || string === undefined
-        ? []
-        : [{ address, value: string }];
+      const address = canonicalAddress(requiredText(value.address)) ?? invalidReply("invalid string address");
+      return { address, value: requiredText(value.value) };
     });
-    return {
-      items,
-      total:
-        typeof payload.total_strings === "number"
-          ? payload.total_strings
-          : items.length,
-    };
+    const total = requiredCount(payload.total_strings);
+    if (total < items.length) invalidReply("string count is smaller than returned inventory");
+    return { items, total };
   }
 
   async #call(
