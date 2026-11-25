@@ -9,7 +9,9 @@ import {
   unownedChangedFolders,
   unownedFoldersLimitation,
   unretainedOpenedLimitation,
+  unreadDconfLimitation,
 } from "./appExportUnowned.js";
+import { stateFilesByHomePath } from "./appExport.js";
 import type { DesktopStatePath } from "./desktopState.js";
 
 const version = (index: number) => ({
@@ -51,6 +53,77 @@ const file = (
           complete: true,
         },
       ],
+});
+
+it("reports the distinct recovery for each unread dconf seed", () => {
+  const path = ".config/dconf/user";
+  const retained = {
+    ...version(1),
+    format: "dconf",
+    sha256: "a".repeat(64),
+    view_error: "selected reader exited",
+    view_failure: {
+      kind: "exited",
+      code: null,
+      exit_code: 17,
+      command: "fixture-dconf",
+      stderr: "selected reader exited",
+    },
+  } as const;
+  const baseline: DesktopStatePath["versions"][number] = {
+    ...version(0),
+    format: "dconf",
+    sha256: "b".repeat(64),
+    view: { groups: {}, other_groups: [] },
+  };
+  for (const [snapshot, recovery] of [
+    [
+      retained,
+      "Review the reported dconf read failure before exporting again.",
+    ],
+    [
+      { ...version(1), view_error: "content not retained" },
+      "Capture again with the changed dconf database retained.",
+    ],
+    [
+      {
+        ...retained,
+        view_error: "no reader selected",
+        view_failure: {
+          ...retained.view_failure,
+          kind: "not-installed",
+          code: "ENOENT",
+          exit_code: null,
+          stderr: null,
+        },
+      },
+      "Export again where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf.",
+    ],
+    [
+      {
+        ...retained,
+        view_error: "cannot open the saved database descriptor",
+        view_failure: {
+          ...retained.view_failure,
+          kind: "descriptor-unavailable",
+          exit_code: null,
+          stderr: null,
+        },
+      },
+      "Export on Linux with readable /proc file descriptors to recover these settings.",
+    ],
+  ] as const) {
+    const database: DesktopStatePath = {
+      ...file("shared_desktop"),
+      format: "dconf",
+      versions: [baseline, snapshot],
+    };
+    const { dconf } = stateFilesByHomePath([database], () => path);
+    expect(unreadDconfLimitation(dconf, 0)).toBeUndefined();
+    const limitation = unreadDconfLimitation(dconf, 1);
+    expect(limitation).toContain(snapshot.view_error);
+    expect(limitation?.split("are not seeded. ")[1]).toBe(recovery);
+  }
 });
 
 describe("unownedChangedFolders", () => {
@@ -391,4 +464,20 @@ describe("runtimeSeeds", () => {
       },
     ]);
   });
+});
+
+it.each([
+  [
+    "Documents/quarter\nreport.gnucash",
+    "Documents/quarter\nreport.gnucash.LCK",
+  ],
+  ["Documents/quarter\nreport.gsb", "Documents/.quarter\nreport.gsb.lock"],
+  ["Documents/quarter\nreport.vym", "Documents/quarter\nreport.vym.lock"],
+])("identifies a sibling document lock for %j", (document, lock) => {
+  expect(isLockFile(lock, [], new Set([document]))).toBe(true);
+  expect(isLockFile(lock, [], new Set())).toBe(false);
+});
+
+it("recognizes a LibreOffice lock whose document name contains a line break", () => {
+  expect(isLockFile("Documents/.~lock.quarter\nreport.ods#", [])).toBe(true);
 });

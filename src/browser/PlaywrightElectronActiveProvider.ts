@@ -11,7 +11,7 @@ import {
 } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { randomUUID } from "node:crypto";
@@ -261,9 +261,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       actions = actionOutcome.actions;
       if (actionOutcome.cleanupError !== undefined)
         throw actionOutcome.cleanupError;
-      const state = await readFinalApplicationState(
-        application,
-        options.signal,
+      const signal = options.signal;
+      const actionCancellation = actionOutcome.actionCancellation;
+      const cancelledInAction =
+        signal?.aborted === true &&
+        actionCancellation !== undefined &&
+        Object.is(actionCancellation.cause, signal.reason);
+      const state = await readFinalApplicationState(application, signal).catch(
+        (cause: unknown) => {
+          const failure = providerError(cause);
+          // A cancellation already recorded for an action precedes the
+          // best-effort final read, which can lose its Inspector transport.
+          if (
+            cancelledInAction &&
+            !failure.cleanupIncomplete &&
+            !(failure instanceof AnalysisCancelledError) &&
+            failure.userCategory !== "cancelled"
+          )
+            throw actionCancellation.retainSecondaryFailure(failure);
+          throw failure;
+        },
       );
       const finalCapture = projectElectronActiveCapture(paths, actions, state);
       retained = { stage: "final", state };
@@ -351,11 +368,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         );
         owner.bind(failure);
         if (outcome.ok) return err(failure);
-        const composed = analysisErrorWithCleanupFailure(
+        const composed = analysisErrorWithCleanupDependencies(
           outcome.error,
           failure,
           OPERATION,
-        ).bindCleanupDependencies([outcome.error, failure]);
+        );
         if (failure.partialObservation !== undefined)
           composed.partialObservation = failure.partialObservation;
         return err(composed);

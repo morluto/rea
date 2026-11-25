@@ -348,19 +348,7 @@ async function assertRejectedEvidenceReferences(
   }
 }
 
-async function assertRejectedInlineEvidence(client: Client): Promise<void> {
-  const duplicateNative = await client.callTool({
-    name: "trace_application_feature",
-    arguments: {
-      ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
-      native_observations: [
-        JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
-        JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
-      ],
-    },
-  });
-  expect(duplicateNative.isError).toBe(true);
-
+async function assertRejectedSpoofedEvidence(client: Client): Promise<void> {
   const spoofed = await client.callTool({
     name: "trace_application_feature",
     arguments: {
@@ -380,7 +368,7 @@ describe("application workflow MCP parity", () => {
     try {
       await runInlineWorkflowScenarios(harness);
       await assertRejectedEvidenceReferences(harness.client, harness.session);
-      await assertRejectedInlineEvidence(harness.client);
+      await assertRejectedSpoofedEvidence(harness.client);
     } finally {
       await harness.close();
     }

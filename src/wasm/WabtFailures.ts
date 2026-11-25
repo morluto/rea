@@ -17,6 +17,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -27,12 +28,13 @@ import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  WABT_ACCEPTED_RANGE,
   WABT_VERSION,
   WASM_RESOURCE_DEFAULTS,
   WASM_RESOURCE_MAXIMUMS,
   type WasmResourceLimits,
 } from "../domain/wasm/wasmArtifact.js";
-import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
+import { WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 const OPERATION = "inspect_wasm_artifact";
@@ -132,16 +134,13 @@ const wabtUnavailable = (
 
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
+  ...capturedProviderOutput(snapshot),
   stdout: utf8HeadExcerpt(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   stderr: utf8HeadExcerpt(snapshot.stderr.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   // The command reports output-limit only after retention was truncated.
   truncated: true,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
 });
 /** WABT's per-call command deadline and the setting that changes it. */
 const wabtCommandTimeout = (execution: WabtFailureContext | undefined) => {
@@ -177,7 +176,7 @@ const allocationRefused = (cause: unknown): boolean => {
         "ERR_MEMORY_ALLOCATION_FAILED",
         "ERR_BUFFER_TOO_LARGE",
       ].includes(String(physical.code))) ||
-      (physical instanceof RangeError &&
+      (hostRangeErrorKind(physical) === "host-capacity" &&
         physical.message === "Array buffer allocation failed"))
   );
 };

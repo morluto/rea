@@ -1,9 +1,18 @@
+import { listFixtureFiles } from "../../support/workspace/listFixtureFiles.js";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { createHash } from "node:crypto";
 
 import { expect } from "vitest";
 
 import { environmentManifestHar } from "../../fixtures/historicalHar.js";
+import {
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
+} from "../../fixtures/analysisView.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { environmentBuildReportSchema } from "../../../src/domain/environmentBundleExport.js";
+import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -14,16 +23,83 @@ const RULES = [
   "prefix-variance",
 ];
 
-const listFiles = async (root: string): Promise<string[]> =>
-  (await readdir(root, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) =>
-      join(entry.parentPath, entry.name)
-        .slice(root.length + 1)
-        .split(sep)
-        .join("/"),
-    )
-    .sort();
+cliTest.for(["different-content", "wrong-role", "matching"] as const)(
+  "reports credential scan coverage for shipped HAR source bytes: %s",
+  async (mode, { cli }) => {
+    const root = await createTestTempDirectory("rea-environment-body-source-");
+    const retained = Buffer.from('{"token":"retained-only-secret"}');
+    const encoded = retained.toString("base64");
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: { method: "GET", url: "http://app.example/api/proof" },
+        response: {
+          status: 200,
+          content: {
+            mimeType: "application/json",
+            encoding: "base64",
+            text:
+              mode === "different-content"
+                ? Buffer.from('{"ok":true}').toString("base64")
+                : ` \t${encoded}\n`,
+          },
+        },
+      },
+    ]);
+    capture.records[0]!.binary_fields = [
+      {
+        pointer: "/response/content/text",
+        representation:
+          mode === "wrong-role" ? "producer-bytes" : "har-base64-content",
+        state: "retained",
+        content_base64: encoded,
+        bytes: retained.length,
+        sha256: createHash("sha256").update(retained).digest("hex"),
+      },
+    ];
+    const input = JSON.stringify(analysisViewCaptureEvidence(capture));
+    const path = join(root, "capture.json");
+    const output = join(root, "bundle");
+    await writeFile(path, input);
+    const result = await cli.run({
+      arguments: ["environment-build", path, output, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = environmentBuildReportSchema.parse(result.json);
+    const shipped = webNetworkCaptureSchema.parse(
+      parseEvidence(
+        JSON.parse(
+          await readFile(
+            join(output, "envs", report.name, "evidence.json"),
+            "utf8",
+          ),
+        ),
+      ).normalized_result,
+    );
+    expect(shipped.records[0]!.binary_fields).toEqual(
+      capture.records[0]!.binary_fields,
+    );
+    expect(shipped.records[0]!.reported).toEqual(capture.records[0]!.reported);
+    expect(await readFile(path, "utf8")).toBe(input);
+    const warnings = report.warnings.filter(({ code }) =>
+      code.startsWith("credential-"),
+    );
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        code:
+          mode === "matching"
+            ? "credential-named-members"
+            : "credential-scan-incomplete",
+        pointers: [
+          mode === "matching"
+            ? "record 0 response /token"
+            : "record 0 response",
+        ],
+      }),
+    ]);
+    if (mode !== "matching") expect(warnings[0]?.message).toContain("source");
+    expect(JSON.stringify(report)).not.toContain("retained-only-secret");
+  },
+);
 
 cliTest(
   "attributes invalid capture JSON to the capture argument",
@@ -101,25 +177,29 @@ cliTest(
     expect(projected.exitCode, projected.stderr).toBe(0);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, projected.stdout);
-    for (const command of [
-      "environment-build",
-      "environment-export",
-    ] as const) {
-      const parent = join(root, `${command}-refused`);
-      await mkdir(parent);
-      // Do not use join for the last segment: the caller's spelling matters.
-      const destination = `${join(parent, "a", "b", "c")}${sep}..`;
-      const args =
-        command === "environment-build"
-          ? [command, har, destination, "--json"]
-          : [command, manifest, "--evidence", capture, destination, "--json"];
-      const refused = await cli.run({ arguments: args });
-      expect(refused.exitCode, refused.stderr).toBe(1);
-      expect(refused.json).toMatchObject({
-        code: "invalid_request",
-        details: { issues: [{ path: ["directory"] }] },
-      });
-      expect(await readdir(parent)).toEqual([]);
+    // POSIX resolves the final dot-dot only after traversing the preceding components.
+    if (process.platform !== "win32") {
+      for (const command of [
+        "environment-build",
+        "environment-export",
+      ] as const) {
+        const parent = join(root, `${command}-refused`);
+        // Do not use join for the last segment: the caller's spelling matters.
+        const destination = `${join(parent, "a", "b", "c")}${sep}..`;
+        const args =
+          command === "environment-build"
+            ? [command, har, destination, "--json"]
+            : [command, manifest, "--evidence", capture, destination, "--json"];
+        const refused = await cli.run({ arguments: args });
+        expect(refused.exitCode, refused.stderr).toBe(1);
+        expect(refused.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["directory"], reason: "invalid_value" }],
+          },
+        });
+        await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+      }
     }
     const exported = await cli.run({
       arguments: [
@@ -133,8 +213,8 @@ cliTest(
     });
     expect(exported.exitCode, exported.stderr).toBe(0);
 
-    const files = await listFiles(join(root, "built"));
-    expect(files).toEqual(await listFiles(join(root, "three-step")));
+    const files = await listFixtureFiles(join(root, "built"));
+    expect(files).toEqual(await listFixtureFiles(join(root, "three-step")));
     expect(files).toHaveLength(7);
     for (const file of files)
       expect(
@@ -202,6 +282,7 @@ cliTest(
       status: "planned",
       directory: null,
       next: [],
+      coverage: { reads: { state: 5, recorded: 9 } },
     });
     expect(await readdir(root)).toEqual(["grafana.har"]);
 

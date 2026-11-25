@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
   OwnerCancellation,
+  AnalysisTargetFailureError,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -20,6 +21,7 @@ import {
   type ArtifactReaderTraversal,
   DirectoryArtifactReader,
   translateArtifactFailure,
+  translateArtifactOperationFailure,
 } from "../../resources/index.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -29,8 +31,8 @@ import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
 } from "../ArtifactTraversalObservation.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
+import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import {
   appleAssetCatalogInputSchema,
   appleResourceKeyFields,
@@ -153,9 +155,14 @@ export const analyzeAppleAssetCatalogs = async (input: {
               "inspect_asset_catalog",
               { cause },
             )
-          : translateArtifactFailure("inspect_asset_catalog", cause);
+          : translateArtifactFailure(
+              "inspect_asset_catalog",
+              input.bundlePath,
+              cause,
+            );
       const cleanup = translateArtifactFailure(
         "inspect_asset_catalog",
+        input.bundlePath,
         joined.error,
       );
       throw analysisErrorWithCleanupDependencies(
@@ -307,7 +314,7 @@ const collectAssetCatalogs = async (input: {
   });
   if (released.kind === "failed") {
     if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError) {
-      const cleanup = translateArtifactFailure(
+      const cleanup = translateArtifactOperationFailure(
         "inspect_asset_catalog",
         input.resources.cleanupFailure({ kind: "completed" }, [released]),
       );
@@ -396,16 +403,21 @@ const inspectAssetCatalogEntry = async (input: {
     signal: null,
   };
   const diagnostics = { catalog_path: entry.path };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch (cause: unknown) {
+  const decoded = parseJsonWithDuplicatePolicy(output, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw new AnalysisOutputError(
+        "inspect_asset_catalog",
+        `assetutil returned duplicate JSON member ${JSON.stringify(decoded.duplicate.name)} for ${entry.path}`,
+        { capturedOutput, diagnostics },
+      );
     throw new AnalysisOutputError(
       "inspect_asset_catalog",
       `assetutil returned invalid JSON for ${entry.path}`,
-      { cause, capturedOutput, diagnostics },
+      { cause: decoded.cause, capturedOutput, diagnostics },
     );
   }
+  const parsed = decoded.value;
   try {
     return {
       catalog: {
@@ -593,11 +605,14 @@ const assetUtilOutcomeContext = (
       outcome.output?.truncated === false &&
       rejectsCatalog
     )
-      return new ArtifactOperationError(
+      return new AnalysisTargetFailureError(
         OPERATION,
-        "format",
-        undefined,
-        `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        entry.adapterKey,
+        {
+          kind: "malformed",
+          format: "asset-catalog",
+          detail: `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        },
         details,
       );
     return new AnalysisOutputError(

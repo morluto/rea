@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { joinCoverageStatus } from "../coverage.js";
 import type { Evidence } from "../evidence.js";
@@ -362,28 +363,27 @@ const matchPinvoke = (
     };
 
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
-  const moduleRelation = (symbol: NativeSymbol) =>
-    moduleCompatibility(
+  let exact: NativeSymbol | undefined;
+  let exactUnknownModule: NativeSymbol | undefined;
+  let firstUnknownModule: NativeSymbol | undefined;
+  let decorated: NativeSymbol | undefined;
+  for (const symbol of candidates) {
+    const relation = moduleCompatibility(
       managed.import_scope_name,
       symbol,
       modulePlatformsByEvidenceId.get(symbol.evidence_id) ?? null,
     );
-  const exact = candidates.find(
-    (symbol) =>
-      managed.import_name === lookupSymbolName(symbol) &&
-      moduleRelation(symbol) === "match",
-  );
-  const exactUnknownModule = candidates.find(
-    (symbol) =>
-      managed.import_name === lookupSymbolName(symbol) &&
-      moduleRelation(symbol) === "unknown",
-  );
-  const unknownModule =
-    exactUnknownModule ??
-    candidates.find((symbol) => moduleRelation(symbol) === "unknown");
-  const decorated = candidates.find(
-    (symbol) => moduleRelation(symbol) === "match",
-  );
+    const isExactName = managed.import_name === lookupSymbolName(symbol);
+    if (relation === "match") {
+      if (isExactName && exact === undefined) exact = symbol;
+      if (decorated === undefined) decorated = symbol;
+    } else if (relation === "unknown") {
+      if (isExactName && exactUnknownModule === undefined)
+        exactUnknownModule = symbol;
+      if (firstUnknownModule === undefined) firstUnknownModule = symbol;
+    }
+  }
+  const unknownModule = exactUnknownModule ?? firstUnknownModule;
   const selected = exact ?? decorated ?? first;
   if (exact !== undefined)
     return {
@@ -590,7 +590,7 @@ export const buildVerificationResult = ({
       evidence_id: managedEvidence.evidence_id,
       artifact_sha256: managed.artifact.sha256,
       artifact_path: managed.artifact.path,
-      mvid: managed.module?.mvid ?? null,
+      mvid: managedModuleRow(managed)?.mvid ?? null,
       metadata_status: managed.metadata.status,
       pinvoke_imports_total: managed.pinvoke_imports.length,
       native_implementations_total: managed.native_implementations.length,

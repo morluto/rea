@@ -155,21 +155,16 @@ it("refuses a missing Mach-O source before running lipo", async () => {
   }
 });
 
-it("declares the signature snapshot write in provider capabilities", () => {
-  expect(
-    nativeMacOSCapabilities("darwin").find(
-      ({ operation }) => operation === "inspect_signature",
-    )?.effects,
-  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
-});
-
-it("declares the temporary private operand write in inspect_macho provider capabilities", () => {
-  expect(
-    nativeMacOSCapabilities("darwin").find(
-      ({ operation }) => operation === "inspect_macho",
-    )?.effects,
-  ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
-});
+it.each(["inspect_signature", "inspect_macho", "inspect_plist"])(
+  "declares temporary writes and preserves the artifact for %s",
+  (name) => {
+    expect(
+      nativeMacOSCapabilities("darwin").find(
+        ({ operation }) => operation === name,
+      )?.effects,
+    ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
+  },
+);
 
 it.each(["before command", "during command"] as const)(
   "rejects architecture facts when the admitted target changes %s",

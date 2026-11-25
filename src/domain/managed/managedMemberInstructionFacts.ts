@@ -16,3 +16,7 @@ export const isManagedMemberReferenceInstruction = (
   instruction.operand !== null &&
   (instruction.operand_kind === "method" ||
     instruction.operand_kind === "field");
+
+/** A string load's operand is a #US coordinate regardless of its encoded table byte. */
+export const isManagedUserStringLoad = (opcode: string): boolean =>
+  opcode === "ldstr";

@@ -31,6 +31,7 @@ export interface AnalysisSettingValues {
   readonly "windows.change_time_drift_ms": number;
   readonly "windows.change_time_settle_poll_ms": number;
   readonly "windows.change_time_settle_max_polls": number;
+  readonly "zstd.max_frames": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {

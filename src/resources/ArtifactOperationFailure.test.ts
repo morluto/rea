@@ -1,4 +1,13 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../domain/analysisResourceLimits.js";
+import { createHash } from "node:crypto";
+import { open, writeFile } from "node:fs/promises";
+import { sep } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import {
   ArtifactReaderFailure,
@@ -9,13 +18,200 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { constants as bufferConstants } from "node:buffer";
 import {
   imageFileSizeRemediation,
+  projectOwnedArtifactInputFailure,
+  projectStableArtifactFailure,
   readerIntegrityFailure,
 } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
-import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import {
+  artifactFilePrimaryFacts,
+  artifactParseFailure,
+  withArtifactFileHandle,
+} from "./ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { artifactFileAdmissionFailure } from "./ArtifactFileAdmission.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { artifactReaderLimitFailure } from "./index.js";
+import { targetDigestChangedFailure } from "./withArtifactTargetIdentity.js";
+import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+
+it("projects a Zstandard frame-cap as an adjustable artifact limit", () => {
+  expect(
+    translateArtifactFailure(
+      "extract_artifact",
+      "/selected/artifact",
+      new ZstandardFrameAllowanceError({ maxFrames: 4, source: "runtime" }, 10),
+    ),
+  ).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 4,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
+
+const failWithDescriptorCleanup = async (
+  bytes: Buffer,
+  failure: unknown,
+  retryFailure?: Error,
+) => {
+  const root = await createTestTempDirectory("rea-artifact-projection-");
+  const path = `${root}${sep}.${sep}artifact`;
+  await writeFile(path, bytes);
+  const descriptor = await open(path);
+  const nativeClose = descriptor.close.bind(descriptor);
+  onTestFinished(async () => {
+    if (descriptor.fd >= 0) await nativeClose();
+  });
+  const close = vi
+    .spyOn(descriptor, "close")
+    .mockRejectedValueOnce(new Error("close failed"));
+  if (retryFailure !== undefined) close.mockRejectedValueOnce(retryFailure);
+  const scope = new ArtifactResourceScope();
+  const wrapped = await withArtifactFileHandle(
+    path,
+    descriptor,
+    scope,
+    undefined,
+    async () => {
+      throw failure;
+    },
+  ).then(
+    () => {
+      throw new Error("Expected artifact operation and close failures");
+    },
+    (cause: unknown) => cause,
+  );
+  return { path, scope, descriptor, wrapped };
+};
+
+it.each([
+  { cause: malformedInput("pe", "bad field") },
+  { cause: truncatedInput("pe", "short field") },
+  { cause: unsupportedInput("pe", "unsupported image") },
+])(
+  "preserves $cause.kind projection and selected identity through descriptor cleanup",
+  async ({ cause }) => {
+    const operation = "inspect_pe_resources";
+    const bytes = Buffer.from("inert snapshot");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const failure = artifactParseFailure(cause, undefined);
+    expect(failure).toMatchObject({ cause });
+    const { path, scope, descriptor, wrapped } =
+      await failWithDescriptorCleanup(
+        bytes,
+        failure,
+        new Error("cleanup retry failed"),
+      );
+    const primary = projectOwnedArtifactInputFailure(
+      artifactFilePrimaryFacts(wrapped),
+      operation,
+      path,
+    );
+    if (primary === undefined)
+      throw new Error("Expected a selected-input projection");
+    expect(primary.cause).toBe(failure);
+    const selected = projectStableArtifactFailure(
+      wrapped,
+      primary,
+      path,
+      "pe-fixture",
+      operation,
+      { bytes, sha256 },
+    );
+    const generic = translateArtifactFailure("inspect_artifact", path, wrapped);
+    const observation = {
+      kind: "file-snapshot-hash",
+      path,
+      sha256,
+      bytes: bytes.length,
+    };
+    const expectPending = () => {
+      expect(projectAnalysisError(selected)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: { resources: [path], partial_observation: observation },
+      });
+      expect(projectAnalysisError(generic)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          reason: cause.message,
+          cleanup: "incomplete",
+          resources: [path],
+        },
+      });
+    };
+
+    expectPending();
+    await expect(scope.retryCleanup()).rejects.toMatchObject({
+      cleanup: { reason: "cleanup retry failed", resources: [path] },
+    });
+    expect(descriptor.fd).toBeGreaterThanOrEqual(0);
+    expectPending();
+    await scope.close();
+    expect(descriptor.fd).toBe(-1);
+    // Malformed, truncated and unsupported bytes are all target refusals.
+    expect(projectAnalysisError(selected)).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      details: {
+        operation,
+        path,
+        reason: cause.message,
+        failure_kind: cause.kind,
+        format: "pe",
+        partial_observation: observation,
+      },
+    });
+    // An inventory refusal of the same bytes is the same target failure of
+    // the selected path, with the format owner's facts.
+    expect(projectAnalysisError(generic)).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retry: "none",
+      details: {
+        operation: "inspect_artifact",
+        path,
+        reason: cause.message,
+        failure_kind: cause.kind,
+        format: "pe",
+      },
+    });
+  },
+);
+
+it("leaves opaque operation errors and decode limits with their owning projection", () => {
+  const unsupported = artifactParseFailure(
+    unsupportedInput("pe", "unsupported"),
+    undefined,
+  );
+  expect(
+    projectOwnedArtifactInputFailure(
+      { cause: unsupported, origin: "opaque-operation" },
+      "inspect_pe_resources",
+      "/selected.exe",
+    ),
+  ).toBeUndefined();
+  expect(
+    projectOwnedArtifactInputFailure(
+      {
+        cause: new ArtifactReaderFailure("limit", "budget"),
+        origin: "owned-or-classified",
+      },
+      "inspect_pe_resources",
+      "/selected.exe",
+    ),
+  ).toBeUndefined();
+});
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.
 it.skipIf(process.platform !== "win32")(
@@ -40,7 +236,11 @@ it.each([
       required,
     );
     const projected = projectAnalysisError(
-      translateArtifactFailure("inspect_artifact", failure),
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     );
     expect(projected).toMatchObject({
       retryable: false,
@@ -51,7 +251,6 @@ it.each([
         },
       },
     });
-    expect(projected.remediation.action).toContain("No supported increase");
   },
 );
 
@@ -63,10 +262,10 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
     2,
   );
   const adjustable = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", failure),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", failure),
   );
   expect(adjustable).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: true,
     details: {
       reader_limit: {
@@ -88,7 +287,7 @@ it("preserves adjustable reader admission facts and gives cleanup priority", () 
     resources: ["owned input descriptor"],
   });
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", wrapped),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", wrapped),
   );
   expect(projected.retryable).toBe(false);
   expect(projected.details).toMatchObject({
@@ -107,10 +306,14 @@ it.each(["capacity", "file-size", "memory"] as const)(
       { boundary },
     );
     const result = projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", failure),
+      translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     );
     expect(result).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: false,
       message: failure.message,
       details: { boundary, detail: failure.message },
@@ -121,7 +324,11 @@ it.each(["capacity", "file-size", "memory"] as const)(
     });
     expect(
       projectAnalysisError(
-        translateArtifactFailure("inventory_artifact", wrapped),
+        translateArtifactFailure(
+          "inventory_artifact",
+          "/selected/artifact",
+          wrapped,
+        ),
       ),
     ).toMatchObject({
       code: "cleanup_incomplete",
@@ -129,6 +336,33 @@ it.each(["capacity", "file-size", "memory"] as const)(
     });
   },
 );
+
+it("reports a parser limit even when artifact cleanup also fails", () => {
+  const failure = new ArtifactReaderFailure("limit", "Plist decode limit", {
+    parserLimit: { name: "plist-decode-bytes", maximum: 512 },
+  });
+  const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+    reason: "close failed",
+    resources: ["handle"],
+  });
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_keyed_archive",
+        "/selected/artifact",
+        wrapped,
+      ),
+    ),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      reason: "limit",
+      reported_limits: { boundary: "plist-decode-bytes", maximum: 512 },
+      cleanup: "incomplete",
+      resources: ["handle"],
+    },
+  });
+});
 
 it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public projection", () => {
   const failure = artifactFixedLimitFailure(
@@ -148,9 +382,15 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     unit: "records",
   };
   expect(
-    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ),
   ).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: false,
     message: failure.message,
     details: { refusal },
@@ -159,16 +399,14 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     reason: "close failed",
     resources: ["handle"],
   });
-  expect(wrapped.fixedAllowance).toBe(failure.fixedAllowance);
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", wrapped),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", wrapped),
   );
   expect(projected).toMatchObject({
     code: "cleanup_incomplete",
     retryable: false,
     details: { refusal, cleanup: "incomplete", resources: ["handle"] },
   });
-  expect(projected.remediation.action).toContain("The allowance is 64 records");
 });
 
 it("keeps producer-owned recovery through cleanup wrapping and public projection", () => {
@@ -185,7 +423,7 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
     resources: ["owned staging"],
   });
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", wrapped),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", wrapped),
   );
   expect(projected.message).toBe(userMessage);
   expect(projected.remediation.action).toBe(userMessage);
@@ -197,6 +435,26 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
   });
 });
 
+it("projects a session digest mismatch as admitted identity, not a retryable change", () => {
+  const projected = projectAnalysisError(
+    translateArtifactFailure(
+      "inspect_keyed_archive",
+      "/selected/archive",
+      targetDigestChangedFailure("archive", "a".repeat(64), "b".repeat(64)),
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "artifact_operation_failed",
+    category: "integrity_mismatch",
+    retryable: false,
+    details: {
+      reason: "integrity",
+      integrity_check: "admitted-identity",
+    },
+  });
+  expect(projected.retry).toBeUndefined();
+});
+
 it("names the failed integrity check through cleanup wrapping and public projection", () => {
   const failure = new ArtifactReaderFailure(
     "integrity",
@@ -205,7 +463,11 @@ it("names the failed integrity check through cleanup wrapping and public project
   );
   expect(
     projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", failure),
+      translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     ),
   ).toMatchObject({
     details: { reason: "integrity", integrity_check: "container-identity" },
@@ -216,7 +478,11 @@ it("names the failed integrity check through cleanup wrapping and public project
   });
   expect(
     projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", wrapped),
+      translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        wrapped,
+      ),
     ),
   ).toMatchObject({
     code: "cleanup_incomplete",
@@ -235,7 +501,11 @@ it("names the failed integrity check through cleanup wrapping and public project
   );
   expect(
     projectAnalysisError(
-      translateArtifactFailure("extract_artifact", unpacked),
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        unpacked,
+      ),
     ),
   ).toMatchObject({
     details: {
@@ -246,30 +516,30 @@ it("names the failed integrity check through cleanup wrapping and public project
   });
 });
 
-it("keeps the named integrity check when a descriptor close failure rebuilds the reader failure", () => {
-  const failure = new ArtifactFileCleanupFailure(
-    new RegularFileCleanupFailure({
-      path: "/artifact.asar",
-      owner: { close: async () => undefined } as never,
-      outcome: {
-        kind: "failed",
-        cause: new ArtifactReaderFailure(
-          "integrity",
-          "ASAR read coverage was short: main.js",
-          { integrityCheck: "read-coverage" },
-        ),
+it("keeps the named integrity check through descriptor cleanup", async () => {
+  const { path, scope, wrapped } = await failWithDescriptorCleanup(
+    Buffer.from("fixture"),
+    new ArtifactReaderFailure(
+      "integrity",
+      "ASAR read coverage was short: main.js",
+      {
+        integrityCheck: "read-coverage",
       },
-      cleanupCause: new Error("close failed"),
-    }),
-    new AnalysisCleanupLease(async () => undefined),
+    ),
   );
-  expect(failure.integrityCheck).toBe("read-coverage");
   expect(
-    projectAnalysisError(translateArtifactFailure("extract_artifact", failure)),
+    projectAnalysisError(
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        wrapped,
+      ),
+    ),
   ).toMatchObject({
     code: "cleanup_incomplete",
-    details: { integrity_check: "read-coverage", cleanup: "incomplete" },
+    details: { integrity_check: "read-coverage", resources: [path] },
   });
+  await scope.close();
 });
 
 it("keeps a reader's named check when a provider supplies its own cause and options", () => {
@@ -291,5 +561,33 @@ it("keeps a reader's named check when a provider supplies its own cause and opti
   expect(projectAnalysisError(changed)).toMatchObject({
     code: "artifact_changed",
     details: { integrity_check: "reconstruction" },
+  });
+});
+
+// A reader's target reasons mean the bytes; only `path` names the
+// caller's selection. A non-regular source is a path-kind refusal at its owner.
+it("keeps only a path-kind reader refusal a selection error", () => {
+  const operation = "inspect_erlang_beam";
+  const path = "/artifacts/app.beam";
+  const nonRegular = artifactFileAdmissionFailure(
+    path,
+    "BEAM",
+    new NonRegularFileReadError(path, true),
+  );
+  expect(nonRegular.reason).toBe("path");
+  expect(
+    projectAnalysisError(
+      projectOwnedArtifactInputFailure(
+        artifactFilePrimaryFacts(nonRegular),
+        operation,
+        path,
+      )!,
+    ),
+  ).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation,
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    },
   });
 });

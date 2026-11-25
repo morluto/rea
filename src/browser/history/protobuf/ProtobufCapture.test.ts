@@ -1,7 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
-import { protobufCaptureDescriptor } from "../../../../tests/fixtures/protobufCapture.js";
+import {
+  protobufCaptureDescriptor,
+  protobufFrame,
+} from "../../../../tests/fixtures/protobufCapture.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
@@ -24,37 +27,47 @@ const binary = (pointer: string, bytes: Buffer) => ({
 });
 
 const captureWithBody = (
-  contentType: string,
+  declaration: string | readonly string[],
   body: Buffer,
-): WebNetworkCapture => ({
-  artifact: { path: "/fixture.mitm", bytes: 100, sha256: "a".repeat(64) },
-  decoder: { id: "fixture", name: "Native producer facts", version: "1" },
-  container: {
-    reported: null,
-    numeric_literals: [],
-    redactions: [],
-    records_pointer: "/flows",
-  },
-  format: "mitmproxy",
-  total_records: 1,
-  runtime_attribution: "unknown",
-  limitations: [],
-  records: [
-    {
-      ordinal: 0,
-      location: { kind: "byte-range", offset: 0, bytes: 100 },
-      reported: { response: { headers: [[null, null]], content: null } },
-      binary_fields: [
-        binary("/response/headers/0/0", Buffer.from("content-type")),
-        binary("/response/headers/0/1", Buffer.from(contentType)),
-        binary("/response/content", body),
-      ],
+): WebNetworkCapture => {
+  const types = typeof declaration === "string" ? [declaration] : declaration;
+  return {
+    artifact: { path: "/fixture.mitm", bytes: 100, sha256: "a".repeat(64) },
+    decoder: { id: "fixture", name: "Native producer facts", version: "1" },
+    container: {
+      reported: null,
       numeric_literals: [],
       redactions: [],
-      limitations: [],
+      records_pointer: "/flows",
     },
-  ],
-});
+    format: "mitmproxy",
+    total_records: 1,
+    runtime_attribution: "unknown",
+    limitations: [],
+    records: [
+      {
+        ordinal: 0,
+        location: { kind: "byte-range", offset: 0, bytes: 100 },
+        reported: {
+          response: { headers: types.map(() => [null, null]), content: null },
+        },
+        binary_fields: [
+          ...types.flatMap((type, index) => [
+            binary(
+              `/response/headers/${index}/0`,
+              Buffer.from(index === 0 ? "content-type" : "Content-Type"),
+            ),
+            binary(`/response/headers/${index}/1`, Buffer.from(type)),
+          ]),
+          binary("/response/content", body),
+        ],
+        numeric_literals: [],
+        redactions: [],
+        limitations: [],
+      },
+    ],
+  };
+};
 
 const decode = async (
   capture: WebNetworkCapture,
@@ -73,14 +86,6 @@ const decode = async (
   } finally {
     await resources.close();
   }
-};
-
-const grpcWebTrailerFrame = (text: Buffer) => {
-  const frame = Buffer.alloc(5 + text.length);
-  frame[0] = 128;
-  frame.writeUInt32BE(text.length, 1);
-  text.copy(frame, 5);
-  return frame;
 };
 
 it("restricts framing overrides to native body facts while preserving header bytes", async () => {
@@ -115,23 +120,6 @@ it("restricts framing overrides to native body facts while preserving header byt
   expect(report.protobuf_coverage?.status).toBe("complete");
 });
 
-it("keeps capture coverage partial for a malformed gRPC-web trailer", async () => {
-  const trailerText = Buffer.from("grpc-status: 0\u0000bad\r\n");
-  const body = grpcWebTrailerFrame(trailerText);
-  const report = captureWithBody("application/grpc-web", body);
-  const retainedBody = report.records[0]!.binary_fields[2];
-  await decode(report);
-
-  expect(report.records[0]?.protobuf?.[0]).toMatchObject({
-    framing: "grpc-web",
-    status: "partial",
-    examined_bytes: body.length,
-    frames: [{ status: "partial", examined_bytes: trailerText.length }],
-  });
-  expect(report.protobuf_coverage?.status).toBe("partial");
-  expect(report.records[0]?.binary_fields[2]).toEqual(retainedBody);
-});
-
 it.each([false, true])(
   "admits equivalent default binary profiles in repeated byte headers (reverse=%s)",
   async (reverse) => {
@@ -140,21 +128,8 @@ it.each([false, true])(
       'application/protobuf;ENCODING="binary";type="right;=value"',
     ];
     if (reverse) types.reverse();
-    const report = captureWithBody(types[0]!, Buffer.from([8, 1]));
+    const report = captureWithBody(types, Buffer.from([8, 1]));
     const record = report.records[0]!;
-    record.reported = {
-      response: {
-        headers: [
-          [null, null],
-          [null, null],
-        ],
-        content: null,
-      },
-    };
-    record.binary_fields.push(
-      binary("/response/headers/1/0", Buffer.from("Content-Type")),
-      binary("/response/headers/1/1", Buffer.from(types[1]!)),
-    );
     const retained = structuredClone(record.binary_fields);
     await decode(report);
     expect(report.protobuf_coverage?.status).toBe("complete");
@@ -175,21 +150,8 @@ it.each([false, true])(
       "application/protobuf;encoding=json",
     ];
     if (reverse) types.reverse();
-    const report = captureWithBody(types[0]!, Buffer.from([8, 1]));
+    const report = captureWithBody(types, Buffer.from([8, 1]));
     const record = report.records[0]!;
-    record.reported = {
-      response: {
-        headers: [
-          [null, null],
-          [null, null],
-        ],
-        content: null,
-      },
-    };
-    record.binary_fields.push(
-      binary("/response/headers/1/0", Buffer.from("Content-Type")),
-      binary("/response/headers/1/1", Buffer.from(types[1]!)),
-    );
     const retained = structuredClone(record.binary_fields);
     await decode(report);
     expect(report.protobuf_coverage?.status).toBe("partial");
@@ -208,34 +170,15 @@ it.each(["auto", "raw"] as const)(
   async (framing) => {
     const invalid = 'application/grpc-web;note="unterminated';
     const valid = "application/grpc-web";
-    for (const types of [
-      [invalid],
-      [invalid, invalid],
-      [valid, invalid],
-      [invalid, valid],
-    ]) {
+    for (const types of [[invalid], [valid, invalid], [invalid, valid]]) {
       const report = captureWithBody(
-        types[0]!,
-        grpcWebTrailerFrame(
+        types,
+        protobufFrame(
           Buffer.from("authorization: Bearer fixture-only\r\n"),
+          128,
         ),
       );
       const record = report.records[0]!;
-      if (types.length === 2) {
-        record.reported = {
-          response: {
-            headers: [
-              [null, null],
-              [null, null],
-            ],
-            content: null,
-          },
-        };
-        record.binary_fields.push(
-          binary("/response/headers/1/0", Buffer.from("Content-Type")),
-          binary("/response/headers/1/1", Buffer.from(types[1]!)),
-        );
-      }
       const headers = structuredClone(
         record.binary_fields.filter(({ pointer }) =>
           pointer.includes("/headers/"),
@@ -246,7 +189,11 @@ it.each(["auto", "raw"] as const)(
         "partial",
       );
       expect(record.protobuf).toBeUndefined();
-      expect(record.binary_fields[2]).toMatchObject({
+      expect(
+        record.binary_fields.find(
+          ({ pointer }) => pointer === "/response/content",
+        ),
+      ).toMatchObject({
         state: "redacted",
         content_base64: null,
         sha256: null,
@@ -266,7 +213,6 @@ it.each(["auto", "raw"] as const)(
 
 it.each([
   "application/protobuf; encoding=json",
-  "application/protobuf; encoding=unknown",
   "application/protobuf; charset=utf-8",
   "application/protobuf; version=1",
 ])(

@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
 import { buffer } from "node:stream/consumers";
@@ -14,9 +15,11 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCommandRunner } from "../providers/NativeCommandRunner.js";
 import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
-import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 
 const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");
@@ -60,15 +63,7 @@ const sliceOwnershipFixture = async (secondSlice = false) => {
         signal: null,
       }),
   };
-  return { path, runner };
-};
-
-const sliceEntries = async (
-  reader: MachOSliceArtifactReader,
-): Promise<ArtifactEntry[]> => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
+  return { path, runner, bytes };
 };
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
@@ -334,122 +329,140 @@ describe("MachOSliceArtifactReader", () => {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "io",
       message: expect.stringMatching(
         /lipo.*readable architecture records.*no architectures/i,
       ),
       cause: { failure: { kind: "malformed", format: "lipo-output" } },
     });
   });
+});
 
-  it("keeps a borrowed source usable after idle and active cancelled slice reads", async () => {
-    const root = await createTestTempDirectory("rea-slices-cancelled-");
-    const binary = join(root, "fat");
-    const x86 = machoImage({ cpu: CPU.x86_64 });
-    const arm = Buffer.concat([
-      Buffer.from(machoImage({ cpu: CPU.arm64 })),
-      Buffer.alloc(160_000, 0x5a),
-    ]);
-    await writeFile(
-      binary,
-      fatImage([
-        { cpu: CPU.x86_64, bytes: x86 },
-        { cpu: CPU.arm64, bytes: arm },
-      ]),
-    );
-    const source = await openRegularFile(binary, { symlinks: "reject" });
-    const { handle } = source;
-    const runner: NativeCommandRunner = {
-      run: () =>
-        Promise.resolve(
-          ok({
-            tool: "lipo",
-            executable: "/usr/bin/lipo",
-            executableSha256: "1".repeat(64),
-            toolVersion: null,
-            versionReason: "fixture",
-            arguments: ["-detailed_info", binary],
-            stdout: `architecture x86_64\n cputype 16777223\n cpusubtype 3\n offset 4096\n size ${String(x86.length)}\n align 2^12 (4096)\narchitecture arm64\n cputype 16777228\n cpusubtype 0\n offset 8192\n size ${String(arm.length)}\n align 2^12 (4096)\n`,
-            stderr: "",
-            stdoutBytes: 1,
-            stderrBytes: 0,
-            exitCode: 0,
-            signal: null,
-          }),
-        ),
-    };
-    const reader = new MachOSliceArtifactReader(binary, {}, runner, source);
-    onTestFinished(async () => {
+it("keeps a borrowed source usable after idle and active cancelled slice reads", async () => {
+  const { path, runner, bytes } = await sliceOwnershipFixture(true);
+  const source = await openRegularFile(path, { symlinks: "reject" });
+  const { handle } = source;
+  const reader = new MachOSliceArtifactReader(path, {}, runner, source);
+  onTestFinished(async () => {
+    try {
       await reader.close();
+    } finally {
       await handle.close();
-    });
-
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const armEntry = entries.find((entry) => entry.path === "slices/arm64");
-    if (armEntry === undefined) throw new Error("Expected an arm64 slice");
-
-    const idleController = new AbortController();
-    const idle = await reader.open(armEntry, idleController.signal);
-    const idleFailure = new Promise<Error>((resolve) =>
-      idle.once("error", resolve),
-    );
-    idleController.abort(null);
-    await expect(idleFailure).resolves.toMatchObject({
-      reason: "cancelled",
-      cancellation: { reason: null },
-    });
-    expect((await handle.stat()).isFile()).toBe(true);
-
-    const controller = new AbortController();
-    const cancelledRead = await reader.open(armEntry, controller.signal);
-    const iterator = cancelledRead[Symbol.asyncIterator]();
-    const firstChunk = await iterator.next();
-    expect(firstChunk.value).toHaveLength(64 * 1024);
-    controller.abort();
-    await expect(iterator.next()).rejects.toMatchObject({
-      reason: "cancelled",
-    });
-
-    const verifiedEntries = [];
-    for await (const entry of reader.entries()) verifiedEntries.push(entry);
-    const verifiedArmEntry = verifiedEntries.find(
-      (entry) => entry.path === "slices/arm64",
-    );
-    if (verifiedArmEntry === undefined)
-      throw new Error("Expected arm64 after re-verifying the borrowed source");
-    const verifiedChunks: Buffer[] = [];
-    const verifiedRead = await reader.open(verifiedArmEntry);
-    for await (const chunk of verifiedRead)
-      verifiedChunks.push(Buffer.from(chunk));
-    expect(Buffer.compare(Buffer.concat(verifiedChunks), arm)).toBe(0);
-
-    const truncatedController = new AbortController();
-    const truncated = await reader.open(
-      verifiedArmEntry,
-      truncatedController.signal,
-    );
-    await truncate(binary, 8193);
-    let readEOF = false;
-    const read = handle.read.bind(handle);
-    vi.spyOn(handle, "read").mockImplementation((async (...args: unknown[]) => {
-      const result = (await Reflect.apply(read, handle, args)) as {
-        bytesRead: number;
-        buffer: Buffer;
-      };
-      if (result.bytesRead === 0) readEOF = true;
-      return result;
-    }) as typeof handle.read);
-    const failed = new Promise<Error>((resolve) =>
-      truncated.once("error", resolve),
-    );
-    truncated.read(0);
-    await expect.poll(() => readEOF).toBe(true);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(truncated.readableLength).toBeGreaterThan(0);
-    truncatedController.abort(null);
-    await expect(failed).resolves.toMatchObject({ reason: "integrity" });
+    }
   });
+
+  const [entry] = await collectEntries(reader);
+  if (entry === undefined) throw new Error("Expected an x86_64 slice");
+  const idleController = new AbortController();
+  const idle = await reader.open(entry, idleController.signal);
+  const idleFailure = once(idle, "error");
+  idleController.abort(null);
+  await expect(idleFailure).resolves.toMatchObject([
+    { reason: "cancelled", cancellation: { reason: null } },
+  ]);
+  expect((await handle.stat()).isFile()).toBe(true);
+
+  const read = handle.read.bind(handle);
+  const activeRead = phaseGate();
+  let reads = 0;
+  const activeSpy = vi.spyOn(handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(read, handle, args);
+    if (reads++ > 0) await activeRead.hold();
+    return result;
+  }) as typeof handle.read);
+  let activeReadVerified = false;
+  try {
+    const controller = new AbortController();
+    const cancelled = await reader.open(entry, controller.signal);
+    const closed = new Promise<void>((resolve) =>
+      cancelled.once("close", resolve),
+    );
+    const iterator = cancelled[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value.byteLength).toBeGreaterThan(0);
+    const pending = iterator.next();
+    void pending.catch(() => undefined);
+    await activeRead.reached(
+      pending,
+      "slice descriptor read after the first chunk",
+    );
+    const reason = { stage: "descriptor read" };
+    controller.abort(reason);
+    activeRead.release();
+    const failure = await pending.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ reason: "cancelled" });
+    expect((failure as Error).cause).toBe(reason);
+    await closed;
+    activeReadVerified = true;
+  } finally {
+    activeRead.release();
+    try {
+      if (!activeReadVerified) await reader.close();
+    } finally {
+      activeSpy.mockRestore();
+    }
+  }
+
+  const [verified] = await collectEntries(reader);
+  if (verified === undefined)
+    throw new Error("Expected the same slice after cancellation");
+  const reopened = await buffer(await reader.open(verified));
+  expect(reopened.byteLength).toBe(bytes.byteLength);
+  expect(reopened.equals(bytes), "reopened slice bytes changed").toBe(true);
+
+  const controller = new AbortController();
+  const truncated = await reader.open(verified, controller.signal);
+  const bufferedCaller = new AbortController();
+  const buffered = await reader.open(verified, bufferedCaller.signal);
+  await truncate(path, 4097);
+  const incomplete = { reason: "integrity", integrityCheck: "declared-size" };
+  const eof = phaseGate();
+  const returnedEof = phaseArrival();
+  let eofCount = 0;
+  const eofSpy = vi.spyOn(handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = (await Reflect.apply(read, handle, args)) as {
+      bytesRead: number;
+      buffer: Buffer;
+    };
+    if (result.bytesRead === 0) {
+      if (eofCount++ === 0) await eof.hold();
+      // After the real read returns, let the stream publish its coverage.
+      else setImmediate(() => returnedEof.arrive());
+    }
+    return result;
+  }) as typeof handle.read);
+  try {
+    const consumed = buffer(truncated);
+    void consumed.catch(() => undefined);
+    await eof.reached(consumed, "physical EOF within the declared slice");
+    controller.abort(null);
+    eof.release();
+    await expect(consumed).rejects.toMatchObject(incomplete);
+
+    const failure = once(buffered, "error");
+    buffered.read(0);
+    await returnedEof.reached(
+      failure,
+      "returned EOF with unconsumed slice data",
+    );
+    expect(buffered.readableLength).toBeGreaterThan(0);
+    expect(buffered.destroyed).toBe(false);
+    bufferedCaller.abort(null);
+    expect(buffered.destroyed).toBe(true);
+    await expect(failure).resolves.toMatchObject([incomplete]);
+  } finally {
+    eof.release();
+    try {
+      await reader.close();
+    } finally {
+      eofSpy.mockRestore();
+    }
+  }
 });
 
 describe("universal slices outside the structural index", () => {
@@ -590,7 +603,7 @@ describe("Mach-O slice stream ownership", () => {
         fixture.runner,
       );
       try {
-        const [entry] = await sliceEntries(reader);
+        const [entry] = await collectEntries(reader);
         const caller = new AbortController();
         const stream = await reader.open(entry!, caller.signal);
         await once(stream, "readable");
@@ -607,7 +620,6 @@ describe("Mach-O slice stream ownership", () => {
         await Promise.all([reader.close(), reader.close()]);
         expect(stream.destroyed).toBe(true);
         expect(stream.closed).toBe(true);
-        await reader.close();
       } finally {
         await reader.close();
       }
@@ -628,7 +640,7 @@ describe("Mach-O slice stream ownership", () => {
     let reads: { mockRestore(): void } | undefined;
     let consumed: Promise<Buffer> | undefined;
     try {
-      const [entry] = await sliceEntries(reader);
+      const [entry] = await collectEntries(reader);
       reads = vi.spyOn(source.handle, "read").mockImplementation((async (
         ...args: unknown[]
       ) => {
@@ -667,7 +679,7 @@ describe("Mach-O slice stream ownership", () => {
       {},
       fixture.runner,
     );
-    const [entry] = await sliceEntries(reader);
+    const [entry] = await collectEntries(reader);
     const stream = await reader.open(entry!);
     const failure = new Error("Mach-O descriptor close denied");
     const close = vi
@@ -690,7 +702,7 @@ describe("Mach-O slice stream ownership", () => {
       const fixture = await sliceOwnershipFixture();
       const reader = new MachOSliceArtifactReader(fixture.path, process.env);
       try {
-        const [entry] = await sliceEntries(reader);
+        const [entry] = await collectEntries(reader);
         const stream = await reader.open(entry!);
         await once(stream, "readable");
         await reader.close();
@@ -708,10 +720,17 @@ describe("Mach-O slice stream ownership", () => {
 it("joins Mach-O structural enumeration reads admitted before close", async () => {
   const fixture = await sliceOwnershipFixture();
   const source = await openRegularFile(fixture.path, { symlinks: "reject" });
+  const events: ("read" | "cleanup")[] = [];
   const reader = new MachOSliceArtifactReader(
     fixture.path,
     {},
-    fixture.runner,
+    {
+      ...fixture.runner,
+      retryCleanup: async () => {
+        events.push("cleanup");
+        return [];
+      },
+    },
     source,
   );
   const enumerationRead = phaseGate();
@@ -720,21 +739,20 @@ it("joins Mach-O structural enumeration reads admitted before close", async () =
     ...args: unknown[]
   ) => {
     await enumerationRead.hold();
-    return Reflect.apply(nativeRead, source.handle, args);
+    const result = await Reflect.apply(nativeRead, source.handle, args);
+    events.push("read");
+    return result;
   }) as typeof source.handle.read);
   const traversal = reader.entries()[Symbol.asyncIterator]();
   const next = traversal.next();
   try {
     await enumerationRead.reached(next, "slice enumeration read");
-    let closed = false;
-    const closing = reader.close().then(() => {
-      closed = true;
-    });
-    await Promise.resolve();
-    expect(closed).toBe(false);
+    const closing = reader.close();
     enumerationRead.release();
     await expect(next).rejects.toMatchObject({ reason: "unavailable" });
     await closing;
+    expect(events).toContain("read");
+    expect(events.at(-1)).toBe("cleanup");
   } finally {
     enumerationRead.release();
     await next.catch(() => undefined);

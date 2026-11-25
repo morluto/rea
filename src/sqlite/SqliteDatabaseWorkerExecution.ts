@@ -17,11 +17,12 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -56,28 +57,30 @@ const {
   ...inspectionShape
 } = sqliteDatabaseSchema.shape;
 const inspectionSchema = z.strictObject(inspectionShape);
-const replySchema = z.union([
+const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z
-      .enum(SQLITE_INSPECTION_REASONS)
-      .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
-    message: z.string(),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-evaluation"),
-    message: z.string(),
-    readable_columns: z.array(z.string()),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.literal("column-limit"),
-    message: z.string(),
-    selected_columns: z.int().positive(),
-    engine_column_limit: z.int().positive(),
-  }),
+  z.discriminatedUnion("reason", [
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z
+        .enum(SQLITE_INSPECTION_REASONS)
+        .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
+      message: z.string(),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-evaluation"),
+      message: z.string(),
+      readable_columns: z.array(z.string()),
+    }),
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("column-limit"),
+      message: z.string(),
+      selected_columns: z.int().positive(),
+      engine_column_limit: z.int().positive(),
+    }),
+  ]),
 ]);
 /** Replaceable launcher retains the shared owned-process supervision boundary. */
 export type SqliteWorkerLauncher = NonNullable<
@@ -92,7 +95,6 @@ interface SqliteWorkerInspection {
 
 // Each input rejection names the caller argument that requires correction.
 const rejectedArgument = {
-  format: "path",
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
@@ -185,6 +187,15 @@ const rejectedReply = (
         retryable: false,
         remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
       },
+    );
+  // SQLite established that the selected snapshot's bytes are not a valid
+  // database: a target refusal at the caller's path, not a bad argument.
+  if (reply.reason === "malformed")
+    return new AnalysisTargetFailureError(
+      operation,
+      selectedPath,
+      { kind: "malformed", format: "sqlite", detail: reply.message },
+      { capturedOutput },
     );
   const argument = rejectedArgument[reply.reason];
   return new AnalysisInputError(operation, { capturedOutput }, [
@@ -335,11 +346,7 @@ const sqliteReplyCompletionFailure = (
     carriedReason(artifactFileCancellationCause(cause)),
     { capturedOutput },
   );
-  return analysisErrorWithCleanupFailure(
-    cancellation,
-    cleanup,
-    operation,
-  ).bindCleanupDependencies([cancellation, cleanup]);
+  return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 
 /** A malformed reply or producer refusal stays primary over its later close. */
@@ -350,9 +357,5 @@ export const sqliteReplyFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          operation,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, operation)
       : primary.retainSecondaryFailure(finalization);

@@ -27,6 +27,11 @@ import { silentLogger } from "../../../../src/logger.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
 import { ArtifactResourceScope } from "../../../../src/resources/index.js";
+import {
+  phaseArrival,
+  type PhaseArrival,
+} from "../../../support/lifecycleHarness.js";
+import { testWaitDeadline } from "../../../support/testWait.js";
 
 class RetryCleanupLauncher implements BridgeLauncher {
   readonly sessions: BridgeSession[] = [];
@@ -292,6 +297,8 @@ it("permits a fresh launch after stopping an owned bridge-request provider witho
 
 it("retains a cross-client lease until owned cleanup succeeds", async () => {
   const fixture = new RetryCleanupLauncher();
+  const firstLease = phaseArrival();
+  const secondLease = phaseArrival();
   let owner: string | undefined;
   const launcher: BridgeLauncher = {
     async launch(session) {
@@ -300,29 +307,52 @@ it("retains a cross-client lease until owned cleanup succeeds", async () => {
       const launched = await fixture.launch(session);
       if (!launched.ok) return launched;
       owner = session.runId;
+      (owner === "first" ? firstLease : secondLease).arrive();
       return ok({
         ...launched.value,
         releaseLease: async () => void (owner = undefined),
       });
     },
   };
-  const first = createClient({ launcher, runId: "first" });
-  const second = createClient({ launcher, runId: "second" });
-  await expect(first.start()).resolves.toMatchObject({ ok: false });
-  await expect(second.start()).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "HopperStartError", ownerRunId: "first" },
-  });
-  expect(fixture.processes).toHaveLength(1);
+  const startupTimeoutMs = testWaitDeadline();
+  const first = createClient({ launcher, runId: "first", startupTimeoutMs });
+  const second = createClient({ launcher, runId: "second", startupTimeoutMs });
+  const cancelAfterLease = async (
+    client: HopperClient,
+    lease: PhaseArrival,
+  ) => {
+    const caller = new AbortController();
+    const started = client.start(caller.signal);
+    try {
+      await lease.reached(started, "fixture lease acquisition");
+    } finally {
+      caller.abort();
+    }
+    return started;
+  };
+  try {
+    await expect(cancelAfterLease(first, firstLease)).resolves.toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(owner).toBe("first");
+    await expect(second.start()).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "HopperStartError", ownerRunId: "first" },
+    });
+    expect(fixture.processes).toHaveLength(1);
 
-  fixture.allowCleanup = true;
-  await expect(first.close()).resolves.toEqual({ ok: true, value: null });
-  await expect(second.start()).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "HopperTimeoutError" },
-  });
-  expect(fixture.processes).toHaveLength(2);
-  expect(owner).toBeUndefined();
+    fixture.allowCleanup = true;
+    await expect(first.close()).resolves.toEqual({ ok: true, value: null });
+    await expect(cancelAfterLease(second, secondLease)).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "HopperCancelledError" },
+    });
+    expect(fixture.processes).toHaveLength(2);
+    expect(owner).toBeUndefined();
+  } finally {
+    fixture.allowCleanup = true;
+  }
 });
 
 it("retries a failed lease release after document, process, and runtime cleanup are confirmed", async () => {

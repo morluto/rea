@@ -9,10 +9,7 @@ import { describe, expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import {
-  EVIDENCE_FORMAT_REVISION,
-  RECREATE_EVIDENCE_GUIDANCE,
-} from "../../../src/domain/evidenceFormat.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import {
   createEvidence,
   evidenceSchema,
@@ -257,29 +254,22 @@ describe("reconstruction obligation ledger process provider admission", () => {
   );
 });
 
-describe("reconstruction obligation ledger Evidence format", () => {
-  it.each([
-    ["an unmarked", undefined],
-    ["a later", EVIDENCE_FORMAT_REVISION + 1],
-  ])(
-    "refuses %s Evidence format through the format owner, not the SDK",
-    async (_label, revision) => {
-      const { evidence_format: _current, ...unmarked } = createEvidenceBundle(
-        [],
+it("reports unmarked and later Evidence bundle formats on one MCP connection", async () => {
+  const { evidence_format: revision, ...unmarked } = createEvidenceBundle([]);
+  await withLedgerClient(async (request) => {
+    for (const [bundle, reason] of [
+      [unmarked, "This Evidence bundle predates format revision"],
+      [{ ...unmarked, evidence_format: revision + 1 }, "is not format"],
+    ] as const) {
+      const result = await request(bundle);
+      expect(result.isError).toBe(true);
+      const projected = parseMcpToolError(result);
+      expect(projected).toMatchObject(integrityError(reason));
+      expect(projected).toMatchObject(
+        integrityError(RECREATE_EVIDENCE_GUIDANCE),
       );
-      const bundle =
-        revision === undefined
-          ? unmarked
-          : { ...unmarked, evidence_format: revision };
-      await withLedgerClient(async (request) => {
-        const result = await request(bundle);
-        expect(result.isError).toBe(true);
-        expect(parseMcpToolError(result)).toMatchObject(
-          integrityError(RECREATE_EVIDENCE_GUIDANCE),
-        );
-      });
-    },
-  );
+    }
+  });
 });
 
 describe("reconstruction obligation ledger MCP parity", () => {
@@ -296,29 +286,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       ),
     );
     const canonical = createEvidenceBundle(records);
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      { name: "obligation-ledger-test", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const request = (evidenceBundle: unknown) =>
-        client.callTool({
-          name: "build_reconstruction_obligation_ledger",
-          arguments: {
-            evidence_bundle: evidenceBundle,
-            reviewed_obligations: [],
-            manifest: { bindings: [], contradictions: [] },
-          },
-        });
+    await withLedgerClient(async (request) => {
       const valid = await request(canonical);
       expect(valid.isError).not.toBe(true);
       expect(valid.structuredContent).toMatchObject({
@@ -332,11 +300,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       expect(parseMcpToolError(result)).toMatchObject(
         integrityError("Evidence bundle sections are not canonical: records"),
       );
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   });
 
   it("distinguishes corrupt source bundles from missing caller-selected review references", async () => {
@@ -384,38 +348,31 @@ describe("reconstruction obligation ledger MCP parity", () => {
         input.reviewed_obligations,
       );
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        normalized_result: { summary: MIXED_AUTHORITY_SUMMARY },
+      const ledger = reconstructionObligationLedgerSchema.parse(
+        evidenceSchema.parse(result.structuredContent).normalized_result,
+      );
+      expect(ledger.summary).toMatchObject(MIXED_AUTHORITY_SUMMARY);
+      const authorities = Object.fromEntries(
+        ledger.obligations.map(({ obligation_id, authority_references }) => [
+          obligation_id,
+          authority_references.map(
+            ({ authority, state }) => `${authority}/${state}`,
+          ),
+        ]),
+      );
+      expect(authorities).toEqual({
+        "review.mixed": expect.arrayContaining([
+          "shipped-artifact/candidate",
+          "controlled-replay/reviewed",
+        ]),
+        "review.shipped": ["shipped-artifact/candidate"],
       });
     });
   });
 
   it("returns the complete Evidence-backed ledger inline", async () => {
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      { name: "obligation-ledger-test", version: "1" },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: "build_reconstruction_obligation_ledger",
-        arguments: {
-          evidence_bundle: createEvidenceBundle([]),
-          reviewed_obligations: [],
-          manifest: {
-            bindings: [],
-            contradictions: [],
-          },
-        },
-      });
+    await withLedgerClient(async (request) => {
+      const result = await request(createEvidenceBundle([]));
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
@@ -425,11 +382,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
           summary: { total: 0 },
         },
       });
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    });
   });
 });
 

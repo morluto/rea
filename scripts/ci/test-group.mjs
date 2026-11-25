@@ -28,7 +28,7 @@ if (group === "selected") {
     throw new Error("Selected test groups are already sharded");
   runner = [
     resolve("scripts/run-exact-tests.mjs"),
-    "run",
+    "ci-selected",
     `--shard=${shard}`,
     ...rest,
     ...plan.files,

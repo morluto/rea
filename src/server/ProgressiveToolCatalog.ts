@@ -14,6 +14,20 @@ import {
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
 
+type CatalogListing = {
+  registered: RegisteredTool;
+  description: string;
+  fullDescription: string;
+};
+const catalogListing = (registered: RegisteredTool): CatalogListing => {
+  const fullDescription = registered.description ?? "";
+  return {
+    registered,
+    description: fullDescription.slice(0, 240),
+    fullDescription,
+  };
+};
+
 const rankCatalogMatches = (
   tools: ReadonlyMap<string, { search: string }>,
   words: readonly string[],
@@ -39,13 +53,21 @@ const rankCatalogMatches = (
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
   readonly identity: CatalogIdentity;
+  /** In-scope domain tools; the adapter is never a search result or reset. */
   private readonly tools: ReadonlyMap<
     string,
-    { registered: RegisteredTool; description: string; search: string }
+    CatalogListing & { search: string }
   >;
+  /** Exact names and counts also cover the always-advertised adapter. */
+  private readonly inventory: ReadonlyMap<string, CatalogListing>;
+  private readonly inputSchemas = new WeakMap<
+    RegisteredTool,
+    Record<string, unknown>
+  >();
 
   constructor(
     registrations: ReadonlyMap<string, RegisteredTool>,
+    adapter: RegisteredTool,
     identity: CatalogIdentity,
     private readonly batchChanges: (change: () => void) => void,
     private readonly delivery: () => ToolResultDelivery,
@@ -59,13 +81,16 @@ export class ProgressiveToolCatalog {
         .map(([name, registered]) => [
           name,
           {
-            registered,
-            description: (registered.description ?? "").slice(0, 240),
+            ...catalogListing(registered),
             search:
               `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
           },
         ]),
     );
+    this.inventory = new Map<string, CatalogListing>([
+      ...this.tools,
+      [DISCOVER_TOOLS.name, catalogListing(adapter)],
+    ]);
     this.reset();
   }
 
@@ -79,10 +104,26 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
+    let schema = this.inputSchemas.get(registered);
+    if (schema === undefined) {
+      schema = (registered.inputSchema?.["~standard"].jsonSchema.input({
+        target: "draft-2020-12",
+      }) as Record<string, unknown> | undefined) ?? { type: "object" };
+      this.inputSchemas.set(registered, schema);
+    }
+    return schema;
+  }
+
+  private rankMatches(query: string | undefined): readonly string[] {
+    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
+    return rankCatalogMatches(this.tools, words);
+  }
+
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {
     const names =
       input.names === undefined ? undefined : [...new Set(input.names)];
-    const unknown = names?.filter((name) => !this.tools.has(name)) ?? [];
+    const unknown = names?.filter((name) => !this.inventory.has(name)) ?? [];
     if (unknown.length > 0)
       return this.delivery().toErrorToolResult(
         new AnalysisInputError(
@@ -102,34 +143,36 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
-    const matches = names ?? rankCatalogMatches(this.tools, words);
+    const matches = names ?? this.rankMatches(input.query);
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
-    const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
+    const selected = page.map((name) => ({
+      name,
+      ...this.inventory.get(name)!,
+    }));
+    let loadedCount = 0;
+    for (const { registered } of this.inventory.values()) {
+      if (registered.enabled) loadedCount += 1;
+    }
+    for (let i = 0; i < selected.length; i++) {
+      if (!selected[i]!.registered.enabled) loadedCount += 1;
+    }
     const result: z.infer<typeof DISCOVER_TOOLS.outputSchema> = {
       profile: "hot-cold",
-      inventory_count: this.tools.size + 1,
-      loaded_count:
-        1 +
-        [...this.tools.values()].filter(({ registered }) => registered.enabled)
-          .length +
-        selected.filter(({ registered }) => !registered.enabled).length,
+      inventory_count: this.inventory.size,
+      loaded_count: loadedCount,
       total_matches: matches.length,
       next_offset:
         names === undefined && input.offset + page.length < matches.length
           ? input.offset + page.length
           : null,
-      tools: selected.map(({ name, description, registered }) => ({
-        name,
-        description,
-        input_schema: registered.inputSchema?.["~standard"].jsonSchema.input({
-          target: "draft-2020-12",
-        }) ?? { type: "object" },
-      })),
+      tools: selected.map(
+        ({ name, description, fullDescription, registered }) => ({
+          name,
+          description: names !== undefined ? fullDescription : description,
+          input_schema: this.inputSchemaFor(registered),
+        }),
+      ),
       next_step:
         selected.length === 0
           ? matches.length === 0

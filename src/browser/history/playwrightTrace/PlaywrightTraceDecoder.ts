@@ -13,9 +13,10 @@ import {
 } from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
+  unrecognizedTarget,
 } from "../../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../../domain/analysisErrorCancellation.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { err, ok } from "../../../domain/result.js";
 import {
@@ -116,6 +117,11 @@ class TraceArchiveRead {
           ? this.inventory.finish(true)
           : this.identity);
       if (partial !== undefined) error.retainPartialObservation(partial);
+      if (this.signal?.aborted)
+        analysisErrorWithCancellation(
+          error,
+          cancelledBy(operation, this.signal),
+        );
       return err(
         projectStableArtifactFailure(
           cause,
@@ -179,9 +185,10 @@ class TraceArchiveRead {
           selected.push({ entry, member });
       }
       if (selected.length === 0)
-        throw new AnalysisUnsupportedTargetError(
+        throw unrecognizedTarget(
           operation,
           this.path,
+          "playwright-trace",
           "Archive contains no Playwright trace or network stream members.",
         );
       if (!selected.some((row) => row.member.path.endsWith(".network")))

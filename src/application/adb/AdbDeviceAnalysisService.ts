@@ -1,9 +1,11 @@
-import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
 } from "../../ports/AnalysisProvider.js";
 import {
+  ADB_DEVICE_OBSERVATION_AUTHORITY,
   adbRequestSchema,
   adbDeviceListObservationSchema,
   type AdbOperation,
@@ -17,7 +19,7 @@ import { executeProviderOperation } from "../ProviderOperationExecution.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for ADB. */
 export class AdbDeviceAnalysisService {
-  constructor(readonly provider: AdbDeviceAnalysisPort) {}
+  constructor(readonly provider: RequestAnalysisPort<AdbRequest>) {}
 
   /** Run one caller-selected ADB request and retain device provenance inline. */
   async execute(
@@ -33,9 +35,17 @@ export class AdbDeviceAnalysisService {
       {
         execute: async (request, options) => {
           const result = await this.provider.execute(request, options);
-          return result.ok && request.operation === "list_adb_devices"
-            ? projectDeviceList(result.value)
-            : result;
+          if (!result.ok) return result;
+          // A device is a service REA attaches to and does not own, so what it
+          // reports is an external observation rather than a replay REA drives.
+          const observed = {
+            ...result.value,
+            authority:
+              result.value.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
+          } as const;
+          return request.operation === "list_adb_devices"
+            ? projectDeviceList(observed)
+            : ok(observed);
         },
       },
       "observed",

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ParseFailureError } from "../domain/parseFailure.js";
 import { ok } from "../domain/result.js";
 import {
   Utf8NdjsonLineBuffer,
@@ -15,27 +14,44 @@ const texts = (lines: Iterable<{ ok: boolean; value?: string }>): string[] =>
   });
 
 describe("UTF-8 NDJSON line buffer", () => {
-  it("drains complete buffered lines on an empty push after iteration stops", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 1024 * 1024);
-    const iterator = lines.push(Buffer.from("first\nsecond\nthird\npartial"));
-    expect(iterator.next()).toEqual({ value: ok("first"), done: false });
-    iterator.return(undefined);
+  it("resumes buffered lines on empty or nonempty input and discards them on reset", () => {
+    const lines = new Utf8NdjsonLineBuffer(() => 128);
+    const consumeFirst = (chunk: string, wanted: string) => {
+      const iterator = lines.push(Buffer.from(chunk));
+      expect(iterator.next()).toEqual({ value: ok(wanted), done: false });
+      iterator.return(undefined);
+    };
 
-    expect(texts(lines.push(Buffer.from("")))).toEqual(["second", "third"]);
-    expect(texts(lines.push(Buffer.from(" line\n")))).toEqual(["partial line"]);
-  });
+    consumeFirst("first\nsecond\nthird\npartial", "first");
+    expect(texts(lines.push(Buffer.alloc(0)))).toEqual(["second", "third"]);
+    consumeFirst(" line\nkeep\n", "partial line");
+    expect(texts(lines.push(Buffer.from("new\n")))).toEqual(["keep", "new"]);
 
-  it("joins fragments and yields trimmed nonblank complete lines", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 1024 * 1024);
-
-    expect(texts(lines.push(Buffer.from("  first ")))).toEqual([]);
-    expect(
-      texts(lines.push(Buffer.from("\n \t\n second \n unfinished"))),
-    ).toEqual(["first", "second"]);
-    expect(texts(lines.push(Buffer.from(" line\n")))).toEqual([
-      "unfinished line",
+    consumeFirst("discard me\nqueued\nand partial", "discard me");
+    lines.reset();
+    expect(texts(lines.push(Buffer.from("after reset\n")))).toEqual([
+      "after reset",
     ]);
   });
+
+  it.each([
+    { projection: "bridge", expected: ["é", "second"] },
+    { projection: "raw", expected: ["\uFEFF é ", " \t", " second "] },
+  ] as const)(
+    "preserves the $projection whitespace policy across fragments",
+    ({ projection, expected }) => {
+      const lines = new Utf8NdjsonLineBuffer(() => 64);
+      const encoded = Buffer.from("\uFEFF é \n \t\n second \n unfinished");
+      const cut = encoded.indexOf(0xc3) + 1;
+      const push = (chunk: Buffer) =>
+        projection === "bridge" ? lines.push(chunk) : lines.pushRaw(chunk);
+      expect(texts(push(encoded.subarray(0, cut)))).toEqual([]);
+      expect(texts(push(encoded.subarray(cut)))).toEqual(expected);
+      expect(texts(push(Buffer.from(" line\n")))).toEqual(
+        projection === "bridge" ? ["unfinished line"] : [" unfinished line"],
+      );
+    },
+  );
 
   it("preserves an unexpected decoder failure without classifying it as malformed UTF-8", () => {
     const failure = new RangeError("controlled decoder failure");
@@ -58,104 +74,88 @@ describe("UTF-8 NDJSON line buffer", () => {
     }
   });
 
-  it("yields a line that is not UTF-8 as a malformed parse failure and stops", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 1024 * 1024);
-    const yielded = Array.from(
-      lines.push(Buffer.from([0x61, 0x0a, 0xff, 0x0a, 0x62, 0x0a])),
-    );
-    expect(yielded).toHaveLength(2);
-    expect(yielded[0]).toEqual(ok("a"));
-    const failure = yielded[1];
-    expect(failure?.ok).toBe(false);
-    if (failure === undefined || failure.ok) return;
-    if (!(failure.error instanceof ParseFailureError))
-      throw new Error("expected a malformed parse failure");
-    expect(failure.error.failure).toMatchObject({
-      kind: "malformed",
-      format: "ndjson",
-    });
+  it("keeps completed lines when malformed UTF-8 stops a frame or EOF validation", () => {
+    const lines = new Utf8NdjsonLineBuffer(() => 64);
+    const malformed = { kind: "malformed", format: "ndjson" };
+    const yielded = [
+      ...lines.push(Buffer.from([0x61, 0x0a, 0xff, 0x0a, 0x62, 0x0a, 0xff])),
+    ];
+    expect(yielded).toMatchObject([
+      ok("a"),
+      { ok: false, error: { failure: malformed } },
+    ]);
     expect(texts(lines.push(Buffer.alloc(0)))).toEqual(["b"]);
-  });
+    expect(lines.finish()).toMatchObject({
+      ok: false,
+      error: { failure: malformed },
+    });
 
-  it("reports an unfinished tail that is not UTF-8 at EOF", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 1024 * 1024);
-    expect(texts(lines.push(Buffer.from([0x61, 0x0a, 0xff])))).toEqual(["a"]);
-    const tail = lines.finish();
-    expect(tail.ok).toBe(false);
-    if (tail.ok) return;
-    expect(tail.error.kind).toBe("malformed");
     lines.reset();
     expect(lines.finish()).toEqual(ok(null));
   });
 
-  it("retains unconsumed complete lines and reset discards them", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 1024 * 1024);
-    const iterator = lines.push(Buffer.from('invalid\n{"id":2}\n'));
+  it.each(["", "partial"])(
+    "releases a drained full frame with tail %j",
+    (tail) => {
+      const bytes = 64 * 1024;
+      const lines = new Utf8NdjsonLineBuffer(() => bytes);
+      expect(texts(lines.push(Buffer.alloc(bytes, 0x78)))).toEqual([]);
+      const iterator = lines.push(Buffer.from(`\n${tail}`));
+      expect(iterator.next()).toEqual({
+        done: false,
+        value: ok("x".repeat(bytes)),
+      });
+      if (tail === "") iterator.return(undefined);
+      else expect(iterator.next().done).toBe(true);
 
-    expect(iterator.next()).toEqual({ value: ok("invalid"), done: false });
-    iterator.return(undefined);
-    expect(texts(lines.push(Buffer.from('{"id":3}\n')))).toEqual([
-      '{"id":2}',
-      '{"id":3}',
-    ]);
+      const retained = lines.retainedTail();
+      expect(retained.pendingBytes).toBe(tail.length);
+      expect(retained.backingBytes).toBeLessThanOrEqual(
+        tail.length === 0 ? 0 : Buffer.poolSize,
+      );
+      if (tail !== "") {
+        expect(texts(lines.push(Buffer.from(" line\n")))).toEqual([
+          "partial line",
+        ]);
+      }
+    },
+  );
 
-    const nextIterator = lines.push(
-      Buffer.from("discard me\nwill also be discarded\nkeep partial"),
-    );
-    expect(nextIterator.next()).toEqual({
-      value: ok("discard me"),
-      done: false,
-    });
-    nextIterator.return(undefined);
-    lines.reset();
-    expect(texts(lines.push(Buffer.from("after reset\n")))).toEqual([
-      "after reset",
-    ]);
-  });
+  it.each([
+    { boundary: "tail", ending: "y" },
+    { boundary: "line", ending: "y\n" },
+  ] as const)(
+    "discards a $boundary above the newly reduced byte ceiling",
+    ({ boundary, ending }) => {
+      let maximumBytes = 17;
+      const lines = new Utf8NdjsonLineBuffer(() => maximumBytes);
+      const prefix = Buffer.alloc(16, 0x78);
+      expect([...lines.push(prefix)]).toEqual([]);
 
-  it("releases the backing allocation when a frame ends at the newline", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 1024 * 1024);
-    const frame = Buffer.alloc(64 * 1024, 0x78);
-    frame[frame.length - 1] = 0x0a;
-    expect(texts(lines.push(frame))).toEqual([
-      frame.subarray(0, frame.length - 1).toString("utf8"),
-    ]);
-    expect(lines.retainedTail()).toEqual({ pendingBytes: 0, backingBytes: 0 });
+      maximumBytes = 16;
+      const refused = [...lines.push(Buffer.from(ending))];
+      expect(refused).toHaveLength(1);
+      const refusal = refused[0]?.ok ? undefined : refused[0]?.error;
+      expect(refusal).toBeInstanceOf(Utf8NdjsonOversizeError);
+      expect(refusal).toMatchObject({
+        maximumBytes: 16,
+        observedBytes: 17,
+        boundary,
+        failure: {
+          kind: "limit",
+          format: "ndjson",
+          limit: { name: "ndjson-line-bytes", maximum: 16 },
+        },
+      });
+      expect(lines.retainedTail()).toEqual({
+        pendingBytes: 0,
+        backingBytes: 0,
+      });
 
-    const tail = Buffer.from("next");
-    expect(texts(lines.push(tail))).toEqual([]);
-    expect(lines.retainedTail()).toEqual({
-      pendingBytes: tail.length,
-      backingBytes: tail.buffer.byteLength,
-    });
-  });
-
-  it("discards an unterminated tail once it passes the ceiling", () => {
-    const lines = new Utf8NdjsonLineBuffer(() => 16);
-    expect([...lines.push(Buffer.alloc(16, 0x78))]).toEqual([]);
-
-    const refused = [...lines.push(Buffer.from("y"))];
-    expect(refused).toHaveLength(1);
-    const refusal = refused[0]?.ok ? undefined : refused[0]?.error;
-    expect(refusal).toEqual(new Utf8NdjsonOversizeError(16, 17));
-    // The refusal is the shared limit parse failure, with the observed bytes.
-    expect(refusal).toBeInstanceOf(ParseFailureError);
-    expect(refusal?.failure).toMatchObject({
-      kind: "limit",
-      format: "ndjson",
-      limit: { name: "ndjson-line-bytes", maximum: 16 },
-    });
-    expect(lines.retainedTail()).toEqual({ pendingBytes: 0, backingBytes: 0 });
-  });
-
-  it("reads the ceiling on each push so a runtime change applies to the next chunk", () => {
-    let maximumBytes = 4;
-    const lines = new Utf8NdjsonLineBuffer(() => maximumBytes);
-    const refused = [...lines.push(Buffer.from("12345\n"))];
-    expect(refused[0]?.ok ? undefined : refused[0]?.error).toBeInstanceOf(
-      Utf8NdjsonOversizeError,
-    );
-    maximumBytes = 8;
-    expect(texts(lines.push(Buffer.from("12345\n")))).toEqual(["12345"]);
-  });
+      maximumBytes = 17;
+      expect(
+        texts(lines.push(Buffer.concat([prefix, Buffer.from("y\n")]))),
+      ).toEqual(["x".repeat(16) + "y"]);
+    },
+  );
 });

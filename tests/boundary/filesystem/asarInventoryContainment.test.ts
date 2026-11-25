@@ -88,46 +88,41 @@ describe("ASAR JSON signature boundaries", () => {
     expect(await inventoryArtifact(application)).toEqual(inventory);
   });
 
-  it.each([
-    { label: "vertical tab", prefix: "\v", padding: undefined },
-    { label: "form feed", prefix: "\f", padding: undefined },
-    { label: "nonbreaking space", prefix: "\u00a0", padding: undefined },
-    { label: "byte order mark", prefix: "\ufeff", padding: undefined },
-    {
-      label: "pickle padding outside jsonBytes",
-      prefix: " ",
-      padding: Buffer.from("{"),
-    },
-  ])("requires an object within jsonBytes for $label", async (fixture) => {
+  it("classifies ZIP members as opaque when their ASAR JSON object starts outside its valid framing", async () => {
     const root = await createTestTempDirectory("rea-asar-invalid-json-space-");
-    const json =
-      fixture.padding === undefined
-        ? `${fixture.prefix}${JSON.stringify({
-            files: { "main.js": { size: 0, offset: "0" } },
-          })}`
-        : fixture.prefix;
-    const invalid = asarHeaderBytes(
-      json,
-      fixture.padding === undefined ? {} : { padding: fixture.padding },
-    );
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("resources/app.asar", new Uint8ArrayReader(invalid));
     const outerPath = join(root, "opaque.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    const header = '{"files":{"main.js":{"size":0,"offset":"0"}}}';
+    const invalidHeaders = {
+      "vertical-tab": asarHeaderBytes(`\v${header}`),
+      "form-feed": asarHeaderBytes(`\f${header}`),
+      nonbreaking: asarHeaderBytes(`\u00a0${header}`),
+      bom: asarHeaderBytes(`\ufeff${header}`),
+      padding: asarHeaderBytes(" ", { padding: Buffer.from("{") }),
+    };
+    await writer.add("resources/", undefined, { directory: true });
+    const members = Object.entries(invalidHeaders);
+    for (const [name, bytes] of members)
+      await writer.add(`resources/${name}.asar`, new Uint8ArrayReader(bytes));
     await writeFile(outerPath, await writer.close());
 
     const inventory = await inventoryArtifact(outerPath);
-    expect(artifactOccurrenceAt(inventory, "resources/app.asar")).toMatchObject(
-      {
+    expect(artifactParentPaths(inventory)).toEqual({
+      ".": null,
+      resources: ".",
+      ...Object.fromEntries(
+        members.map(([name]) => [`resources/${name}.asar`, "resources"]),
+      ),
+    });
+    for (const [name] of members)
+      expect(
+        artifactOccurrenceAt(inventory, `resources/${name}.asar`),
+        name,
+      ).toMatchObject({
         artifact_kind: "resource",
         artifact_format: "file",
         hash_status: "verified",
-      },
-    );
-    expect(
-      inventory.occurrences.some(({ logical_path }) =>
-        logical_path.startsWith("resources/app.asar/"),
-      ),
-    ).toBe(false);
+      });
   });
 });
 
@@ -314,7 +309,7 @@ describe("unexpanded ASAR inventory controls", () => {
       asarHeaderBytes('{"files":{not-json}}'),
     );
     await expect(inventoryArtifact(root)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   });
 

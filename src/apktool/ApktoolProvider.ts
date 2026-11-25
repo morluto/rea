@@ -23,6 +23,7 @@ import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -37,7 +38,6 @@ import {
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  apktoolResultSchemas,
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -47,10 +47,10 @@ import { projectApktoolStringTables } from "./ApktoolStringTables.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   OwnerCancellation,
   carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -98,7 +98,7 @@ const APKTOOL_JVM: ExternalJvm = {
   smaller: "decode a smaller APK",
 };
 
-const STDERR_EXCERPT_BYTES = 512;
+const STDERR_EXCERPT_CHARACTERS = 512;
 
 const apktoolDecodeTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
@@ -179,7 +179,8 @@ const runApktool = async (
       },
       signal === undefined ? {} : { signal },
     );
-    return ok({ stdout: output.stdout.text, stderr: output.stderr.text });
+    const { stdout, stderr } = capturedProviderOutput(output);
+    return ok({ stdout, stderr });
   } catch (cause) {
     return err(
       commands.retainFailure(
@@ -258,12 +259,14 @@ const apktoolCommandFailure = (
         exit.output?.truncated !== false
       )
         return unclassified({ userMessage, diagnostics });
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         targetPath,
-        exit.output.snapshot.stderr.text
-          .trim()
-          .slice(0, STDERR_EXCERPT_BYTES) ||
+        "apk",
+        ellipsisExcerpt(
+          exit.output.snapshot.stderr.text.trim(),
+          STDERR_EXCERPT_CHARACTERS,
+        ) ||
           `apktool exited with code ${String(exit.exitCode)} for ${operation}`,
         details,
       );
@@ -701,14 +704,10 @@ export class ApktoolProvider {
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;
       result = ok(
-        createAnalysisExecution(
-          apktoolResultSchemas.decode_android_resources.parse(completedDecode),
-          provider,
-          {
-            subject: { path: input.path, sha256, format: "apk" },
-            limitations,
-          },
-        ),
+        createAnalysisExecution(completedDecode, provider, {
+          subject: { path: input.path, sha256, format: "apk" },
+          limitations,
+        }),
       );
     } catch (cause) {
       const { cause: physical, origin } = artifactFilePrimaryFacts(cause);

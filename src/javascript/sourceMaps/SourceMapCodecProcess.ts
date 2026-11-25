@@ -70,7 +70,7 @@ const execute = async (): Promise<string> => {
         !isSourceMapFailure(cause) ||
         cause.kind === "malformed" ||
         cause.kind === "truncated"
-          ? "format"
+          ? "malformed"
           : cause.kind,
       message: cause.message,
     });

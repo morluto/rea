@@ -11,12 +11,16 @@ import {
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type CompletedStableArtifact,
+} from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -62,6 +66,35 @@ export const projectOwnedArtifactIdentityFailure = (
 
 /** The request field that selected a file: a name, or a path into the request. */
 export type RequestField = string | readonly (string | number)[];
+
+/** Keep a selected parser refusal's established path and structured input projection. */
+export const projectOwnedArtifactInputFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  operation: string,
+  path: string,
+  field: RequestField = "path",
+): AnalysisError | undefined => {
+  if (
+    origin !== "owned-or-classified" ||
+    !(cause instanceof ArtifactReaderFailure)
+  )
+    return undefined;
+  // A format owner's malformed, truncated or unsupported bytes keep its facts
+  // and are a target refusal; the request that selected the file is not at
+  // fault. The reader records those facts only for its own target reason, so
+  // a cancelled read whose opaque abort reason happens to be a parser failure
+  // stays a cancellation.
+  if (cause.parseFailure !== undefined)
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
+      cause,
+    });
+  // Only a path-kind refusal (a symlink, directory or other non-regular file)
+  // is the caller's selection. Byte faults without parsed facts are left to
+  // the reader's own artifact-operation classification.
+  if (cause.reason === "path")
+    return stableArtifactInputFailure(cause, operation, field);
+  return undefined;
+};
 
 const requestFieldPath = (field: RequestField): (string | number)[] =>
   typeof field === "string" ? [field] : [...field];
@@ -114,7 +147,7 @@ export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
       }
     : {};
 
-/** Report a rejected artifact path or format with its source-provided recovery. */
+/** Report a rejected artifact path with its source-provided recovery. */
 export const stableArtifactInputFailure = (
   cause: ArtifactReaderFailure,
   operation: string,
@@ -167,7 +200,7 @@ export const projectStableArtifactFailure = (
   path: string,
   providerId: string,
   operation: string,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: CompletedStableArtifact,
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);

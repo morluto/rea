@@ -1,7 +1,18 @@
+import type { GoBinary } from "./go/goBinary.js";
+import type { RustBinary } from "./rust/rustBinary.js";
+import type { ElfDebugLink } from "./native/elfDebugLink.js";
+import type { ElfDependencies } from "./native/elfDependencies.js";
+import type { ElfNotes } from "./native/elfNotes.js";
+import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
+import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
+import type { KernelModule } from "./native/kernelModule.js";
+import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { ErlangBeam } from "./erlang/beam.js";
 import type { ApiContract } from "./apiContract/apiContract.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
@@ -19,7 +30,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
-  "AnalysisUnsupportedTargetError",
+  "AnalysisTargetFailureError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
   "AnalysisResourceConstraintError",
@@ -76,6 +87,9 @@ export interface AnalysisCapturedOutput {
   readonly stderr_bytes?: number;
   readonly exit_code?: number | null;
   readonly signal?: string | null;
+  /** Set when the runner reported invalid UTF-8, decoded as replacement characters. */
+  readonly stdout_invalid_utf8?: true;
+  readonly stderr_invalid_utf8?: true;
 }
 
 /** Cleanup uncertainty attached to the original typed analysis failure. */
@@ -126,6 +140,8 @@ export interface AnalysisContinuingCallerGuidance {
 export interface AnalysisRelatedInputs {
   readonly parameters?: readonly string[];
   readonly operations?: readonly string[];
+  /** Providers, by ID, that offer the operation for this target. */
+  readonly providers?: readonly string[];
 }
 
 /** Optional provider-neutral context that must survive typed error projection. */
@@ -297,6 +313,9 @@ export abstract class AnalysisError extends Error {
             ...(options.related.operations === undefined
               ? {}
               : { operations: Object.freeze([...options.related.operations]) }),
+            ...(options.related.providers === undefined
+              ? {}
+              : { providers: Object.freeze([...options.related.providers]) }),
           });
     this.diagnostics =
       options?.diagnostics === undefined
@@ -645,6 +664,7 @@ import type {
   ElectronPagePartialObservation,
 } from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
+import type { UefiPartialObservation } from "./uefi/uefiFirmwareAnalysis.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
   AdbActivityStartPartialObservation,
@@ -654,6 +674,7 @@ import type {
 } from "./adb/adbDeviceAnalysis.js";
 import type {
   InspectMacho,
+  InspectPlist,
   InspectSignature,
 } from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
@@ -686,6 +707,16 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | GoBinary
+  | RustBinary
+  | ElfDebugLink
+  | ElfDependencies
+  | ElfNotes
+  | ElfUnwindRanges
+  | PeUnwindRanges
+  | KernelBuildConfig
+  | KernelModule
+  | V8CodeCache
   | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {
@@ -696,6 +727,7 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | ErlangBeam
   | ApiContract
   | GraphqlContract
   | PlaywrightTrace
@@ -738,9 +770,11 @@ export type AnalysisPartialObservation =
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
+  | UefiPartialObservation
   | NativeUiObservationResult
   | InspectSignature
   | InspectMacho
+  | InspectPlist
   | ElectronPagePartialObservation
   | ElectronPageInspection
   | AdbActivityStartPartialObservation

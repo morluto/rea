@@ -24,6 +24,7 @@
 import { z } from "zod";
 
 import type { CliCommandEntry } from "./commandRegistry.js";
+import { optionFlagName } from "./optionFields.js";
 
 /** The manifests' format version, which callers may already check. */
 const MANIFEST_VERSION = "incur.v1";
@@ -124,7 +125,7 @@ const commandBody = (cli: string, { name, definition }: CliCommandEntry) => {
         const text = field.description ?? "";
         const description =
           property?.deprecated === true ? `**Deprecated.** ${text}` : text;
-        return `| \`--${key}\` | \`${tableType(property)}\` | ${fallback === "" ? "" : `\`${fallback}\``} | ${description} |`;
+        return `| \`--${optionFlagName(key)}\` | \`${tableType(property)}\` | ${fallback === "" ? "" : `\`${fallback}\``} | ${description} |`;
       },
     );
     sections.push(

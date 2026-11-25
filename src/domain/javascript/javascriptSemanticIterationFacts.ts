@@ -13,6 +13,8 @@ export interface SemanticIterationSource extends IterationSourceValue {
   readonly iterationSources?: readonly IterationSourceValue[];
   readonly kind: "iteration" | "reference-store";
   readonly mutation: t.Node;
+  /** A declaration or assignment can close this iterator when its pattern finishes. */
+  readonly arrayPattern?: t.ArrayPattern;
   readonly target?: t.MemberExpression;
   readonly fallbackSources?: readonly IterationSourceValue[];
   readonly requiredSources?: readonly IterationSourceValue[];

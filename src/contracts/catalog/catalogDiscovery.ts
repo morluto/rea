@@ -62,7 +62,7 @@ const outputSchema = z.strictObject({
       description: z
         .string()
         .describe(
-          "Abbreviated canonical description; read tools/list for the complete contract.",
+          "Complete advertised tool description for exact-name lookups. Keyword searches return an abbreviated description.",
         ),
       input_schema: z
         .record(z.string(), z.unknown())

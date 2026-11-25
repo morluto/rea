@@ -8,12 +8,12 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
-  clientConfigurationValuesEqual,
   clientRegistrationEntry,
   geminiServerPolicyBlock,
   parseGeminiMcpPolicy,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import {
   launchedRegistrationEntry,
   readConfigurationFile,

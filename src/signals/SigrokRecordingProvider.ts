@@ -313,9 +313,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             operation,
             {
               diagnostics: {
-                exit_code: output.exitCode ?? null,
-                stdout: output.stdout.text,
-                stderr: output.stderr.text,
+                exit_code: capturedOutput.exit_code ?? null,
+                stdout: capturedOutput.stdout,
+                stderr: capturedOutput.stderr,
               },
             },
           );

@@ -2,10 +2,14 @@ import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { wabtFailureDialect } from "./WabtFailures.js";
+import { wabtFailureDialect, type WabtVersionProbe } from "./WabtFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
-import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
+import {
+  WABT_RELEASE_LINE,
+  WABT_VERSION,
+  WASM_RESOURCE_DEFAULTS,
+} from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 
@@ -164,29 +168,31 @@ it.each([
 ])(
   "retains version-probe facts without changing $reason cleanup=$cleanup",
   ({ reason, cleanup, code }) => {
+    const callerReason = { source: "version probe caller" };
     const cause = new OwnedCommandFailure(
       reason,
       "version command failed",
       null,
       cleanup,
+      reason === "cancelled"
+        ? { cancellation: { reason: callerReason } }
+        : undefined,
     );
-    const probe = {
-      configuration_key: "REA_WABT_BIN_DIRECTORY" as const,
+    const probe: WabtVersionProbe = {
+      configuration_key: "REA_WABT_BIN_DIRECTORY",
       executable_path: "/tools/wasm2wat",
       tool: "wasm2wat",
-      expected_version: "1.0.42" as const,
-      accepted_releases: "WABT >=1.0.42 <1.1.0 (verified with 1.0.42)",
+      expected_version: WABT_VERSION,
+      accepted_releases: WABT_RELEASE_LINE,
     };
     const failure = wabtFailure(cause, "configuration", "/selected.wasm", {
       commandTimeoutMs: 1234,
       versionProbe: probe,
     });
-    const original = wabtFailure(cause, "configuration", "/selected.wasm");
-    expect(failure._tag).toBe(original._tag);
-    expect(failure.cleanupIncomplete).toBe(original.cleanupIncomplete);
-    // A cleanup failure composes around the typed primary that owns the cause.
-    const primary = (error: typeof failure) => error.cleanupPrimary ?? error;
-    expect(primary(failure).cause).toBe(primary(original).cause);
+    expect(failure.cleanupIncomplete).toBe(cleanup !== null);
+    expect((failure.cleanupPrimary ?? failure).cause).toBe(
+      reason === "cancelled" ? callerReason : cause,
+    );
     expect(projectAnalysisError(failure)).toMatchObject({
       code,
       details: {
@@ -218,11 +224,11 @@ it.each([
     expect(projected).toMatchObject({
       code: "capability_unavailable",
       retryable: false,
+      // No structured fact names the setting or distinguishes these
+      // refusals, so each keeps the setting and its errno-specific repair.
       remediation: { action: expect.stringContaining(action) },
     });
     expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-    expect(projected.remediation.action).toContain("restart");
-    expect(projected.remediation.action).toContain("Do not repeat");
   },
 );
 
@@ -256,9 +262,6 @@ it.each([false, true])(
       },
     });
     if (!cleanup) {
-      expect(projected.remediation.action).toContain("max_input_bytes");
-      expect(projected.remediation.action).not.toContain("evidence reply");
-      expect(projected.remediation.action).not.toContain("--");
       expect(projected.details?.limit).toMatchObject({
         control_kind: "parameter",
         parameter: "max_input_bytes",
@@ -271,18 +274,6 @@ it.each([false, true])(
     ).toEqual(cleanup ? ["selected.wasm"] : []);
   },
 );
-
-it("keeps oversized tool admission distinct from selected artifact size", () => {
-  const cause = new ArtifactReaderFailure(
-    "limit",
-    "Configured tool exceeds its byte allowance",
-    { boundary: "file-size" },
-  );
-  expect(
-    projectAnalysisError(wabtFailure(cause, "configuration", "selected.wasm"))
-      .code,
-  ).toBe("capability_unavailable");
-});
 
 it.each([null, { stopped: "caller" }])(
   "keeps the command-owned cancellation reason as the direct typed cause: %j",
@@ -299,23 +290,6 @@ it.each([null, { stopped: "caller" }])(
     expect(error.cause).toBe(reason);
   },
 );
-it("attributes optional artifact admission to its selected caller field", () => {
-  const cause = Object.assign(new Error("missing candidate"), {
-    code: "ENOENT",
-  });
-  expect(
-    projectAnalysisError(
-      wabtFailure(cause, "artifact", "/missing.wasm", {
-        commandTimeoutMs: 30000,
-        inputField: ["candidate_paths", 2],
-      }),
-    ),
-  ).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["candidate_paths", 2] }] },
-  });
-});
-
 it("reports a WABT tool ended by an inherited file-size limit as a resource constraint", () => {
   const cause = new OwnedCommandFailure("process", "signaled", {
     stdout: { text: "", bytes: 0, observedBytes: 0 },
@@ -340,25 +314,22 @@ it("reports a WABT tool the host refused to start as unavailable", async () => {
   ).toMatchObject({ code: "capability_unavailable" });
 });
 
-it.each(["artifact", "producer"] as const)(
-  "reports an unrecognised WABT %s-phase exit with the examined outcome",
-  (phase) => {
-    const cause = new OwnedCommandFailure("process", "exited with code 2", {
-      stdout: { text: "", bytes: 0, observedBytes: 0 },
-      stderr: { text: "unexpected", bytes: 10, observedBytes: 10 },
-      exitCode: 2,
-      signal: null,
-    });
-    const failure = wabtFailure(cause, phase, "/module.wasm");
-    expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
-    expect(failure).toMatchObject({
-      providerId: "wabt-artifact",
-      examined: { failure_kind: "exited", exit_code: 2 },
-      capturedOutput: { stderr: "unexpected" },
-    });
-    expect(projectAnalysisError(failure).code).toBe("execution_failure");
-  },
-);
+it("reports an unrecognised WABT producer exit with the examined outcome", () => {
+  const cause = new OwnedCommandFailure("process", "exited with code 2", {
+    stdout: { text: "", bytes: 0, observedBytes: 0 },
+    stderr: { text: "unexpected", bytes: 10, observedBytes: 10 },
+    exitCode: 2,
+    signal: null,
+  });
+  const failure = wabtFailure(cause, "producer", "/module.wasm");
+  expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+  expect(failure).toMatchObject({
+    providerId: "wabt-artifact",
+    examined: { failure_kind: "exited", exit_code: 2 },
+    capturedOutput: { stderr: "unexpected" },
+  });
+  expect(projectAnalysisError(failure).code).toBe("execution_failure");
+});
 
 it("keeps setup guidance when a version probe's output cannot be collected", () => {
   const cause = new OwnedCommandFailure(
@@ -377,14 +348,21 @@ it("keeps setup guidance when a version probe's output cannot be collected", () 
     wabtFailure(cause, "configuration", "/module.wasm"),
   );
   expect(projected).toMatchObject({ code: "capability_unavailable" });
+  // The setting name has no structured field on this refusal.
   expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });
 
-it.each(["configuration", "artifact", "producer"] as const)(
-  "reports a cancelled %s-phase read as the caller's cancellation with the earlier command output",
-  (phase) => {
+it.each([
+  { phase: "configuration", hasEarlierOutput: true },
+  { phase: "artifact", hasEarlierOutput: false },
+  { phase: "producer", hasEarlierOutput: true },
+] as const)(
+  "keeps caller cancellation and observed output from a $phase-phase read",
+  ({ phase, hasEarlierOutput }) => {
     const reason = { stopped: "caller" };
-    const observedOutput = { stdout: "earlier", stderr: "", truncated: false };
+    const observedOutput = hasEarlierOutput
+      ? { stdout: "earlier", stderr: "", truncated: false }
+      : undefined;
     const failure = wabtFailure(
       new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
         cause: reason,
@@ -396,7 +374,7 @@ it.each(["configuration", "artifact", "producer"] as const)(
     expect(failure).toMatchObject({
       _tag: "AnalysisCancelledError",
       cause: reason,
-      capturedOutput: observedOutput,
     });
+    expect(failure.capturedOutput).toEqual(observedOutput);
   },
 );

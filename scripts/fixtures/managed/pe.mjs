@@ -1,8 +1,52 @@
 import { Buffer } from "node:buffer";
 
-// Named types come from the declaration file TypeScript consumers import.
-/** @typedef {import("./pe.mjs").ManagedPeFixtureOptions} ManagedPeFixtureOptions */
-/** @typedef {import("./pe.mjs").ManagedPeFixtureMethod} ManagedPeFixtureMethod */
+/**
+ * @typedef {{
+ *   readonly body?: Buffer;
+ *   readonly flags?: number;
+ *   readonly implFlags?: number;
+ *   readonly name: string;
+ *   readonly rva?: number;
+ * }} ManagedPeFixtureMethod
+ */
+/**
+ * @typedef {{
+ *   readonly cliFlags?: number;
+ *   readonly corruptMetadataSignature?: boolean;
+ *   readonly fieldName?: string;
+ *   readonly fields?: readonly {
+ *     readonly name: string;
+ *     readonly flags?: number;
+ *     readonly signature?: Buffer;
+ *   }[];
+ *   readonly constants?: readonly {
+ *     readonly typeCode: number;
+ *     readonly padding?: number;
+ *     readonly parentRaw?: number;
+ *     readonly value: Buffer;
+ *   }[];
+ *   readonly ilBody?: Buffer;
+ *   readonly machine?: number;
+ *   readonly metadataValidMaskExtra?: bigint;
+ *   readonly methodImplFlags?: number;
+ *   readonly methodName?: string;
+ *   readonly methods?: readonly ManagedPeFixtureMethod[];
+ *   readonly mvid?: Buffer;
+ *   readonly pinvoke?: {
+ *     readonly importName?: string;
+ *     readonly mappingFlags?: number;
+ *     readonly memberRow?: number;
+ *     readonly moduleName?: string;
+ *   };
+ *   readonly readyToRun?: boolean;
+ *   readonly references?: readonly string[];
+ *   readonly resourceData?: Buffer;
+ *   readonly targetFramework?: string | null;
+ *   readonly secondType?: { readonly name: string; readonly firstField: number };
+ *   readonly typeName?: string;
+ *   readonly typeNamespace?: string;
+ * }} ManagedPeFixtureOptions
+ */
 /** A method whose metadata row has an RVA. @typedef {ManagedPeFixtureMethod & { readonly rva: number }} PlacedFixtureMethod */
 
 const textEncoder = new TextEncoder();
@@ -337,6 +381,7 @@ const buildManagedMetadata = (options, methods) => {
   const constructorName = strings.add(".ctor");
   const typeName = strings.add(options.typeName ?? "Program");
   const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
+  const secondType = options.secondType;
   const fields = options.fields ?? [{ name: options.fieldName ?? "counter" }];
   const namedFields = fields.map((field) => ({
     field,
@@ -391,7 +436,22 @@ const buildManagedMetadata = (options, methods) => {
   const rows = new Map([
     [0, [moduleRow(moduleName)]],
     [1, [typeRefRow(attributeName, attributeNamespace)]],
-    [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
+    [
+      2,
+      [
+        typeDefRow(typeName, typeNamespace, 1, 1),
+        ...(secondType === undefined
+          ? []
+          : [
+              typeDefRow(
+                strings.add(secondType.name),
+                typeNamespace,
+                secondType.firstField,
+                methods.length + 1,
+              ),
+            ]),
+      ],
+    ],
     [4, fieldRows],
     [6, methodRows],
     [10, [memberRefRow(constructorName, constructorSignature)]],

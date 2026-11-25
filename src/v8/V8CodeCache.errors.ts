@@ -1,13 +1,2 @@
-import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
-
-/** A caller-selected budget was exceeded while scanning the payload. */
-export class V8CodeCacheBudgetFailure extends Error {
-  constructor(
-    readonly boundary: keyof V8CodeCacheInputBudget,
-    readonly limit: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "V8CodeCacheBudgetFailure";
-  }
-}
+/** The ParseFailure format of V8 code cache containers. */
+export const V8_CODE_CACHE_FORMAT = "v8-code-cache";

@@ -12,12 +12,13 @@ import {
   CLI_OUTPUT_FORMATS,
   readCliOutputArguments,
   renderCliDocument,
+  renderCliOutputArgumentError,
   type CliOutputFormat,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { formatCliOutput } from "./cliOutputFormatter.js";
 import { estimateTokenCount } from "tokenx";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
-import { sliceTextByTokenWindow } from "./tokenWindow.js";
+import { formatTokenWindow } from "./tokenWindow.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   commandSchemaDocument,
@@ -203,14 +204,8 @@ const presentDiscoveryAnswer = (
     return text;
   if (controls.tokenCount) return `${estimateTokenCount(text)}\n`;
   if (!controls.tokenWindow) return text;
-  const window = sliceTextByTokenWindow(
-    text,
-    controls.tokenOffset ?? 0,
-    controls.tokenLimit,
-  );
-  return window.truncated
-    ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]\n`
-    : text;
+  const window = formatTokenWindow(text, controls);
+  return window.truncated ? `${window.text}\n` : text;
 };
 
 const sortedCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
@@ -227,7 +222,9 @@ const llmsAnswer = (
   global: CliGlobalArguments,
   full: boolean,
 ): DiscoveryAnswer => {
-  const { format, formatExplicit } = readCliOutputArguments(global);
+  const { format, formatExplicit, validation } = readCliOutputArguments(global);
+  if (!validation.ok)
+    return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   const scoped = cliCommands(cli).find(
     ({ name }) => name === global.command[0],
   );
@@ -269,7 +266,9 @@ const schemaAnswer = (
     });
     return answer(`Error: ${failure.message}`, 1);
   }
-  const { format, formatExplicit } = readCliOutputArguments(global);
+  const { format, formatExplicit, validation } = readCliOutputArguments(global);
+  if (!validation.ok)
+    return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   return documentAnswer(
     commandSchemaDocument(entry, CLI_CUSTOM_GLOBAL_OPTIONS),
     formatExplicit ? format : "toon",
@@ -440,6 +439,11 @@ const discoveryAnswer = (
           `Error (INVALID_SHELL): Unknown shell '${shell}'. Supported: ${HELP_SHELLS.join(", ")}`,
           declaredSensitiveValues(global.command),
         ),
+        1,
+      );
+    if (!help && command.length > completions + 2)
+      return answer(
+        "Error (PARSE_ERROR): completions expects exactly one shell. Use 'rea completions --help' for usage.",
         1,
       );
     return help || shell === undefined

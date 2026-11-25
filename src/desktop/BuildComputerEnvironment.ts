@@ -1,7 +1,6 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -17,13 +16,7 @@ export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];
 export const buildComputerArchiveDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string =>
-  reaCacheDirectory(
-    homeDirectoryFromEnvironment(environment, platform),
-    environment,
-    platform,
-    "build-computer",
-  );
+): string => reaCacheDirectory(environment, platform, "build-computer");
 
 /** The runtime archive packed for this REA version, named by that version. */
 export const defaultBuildComputerArchive = (

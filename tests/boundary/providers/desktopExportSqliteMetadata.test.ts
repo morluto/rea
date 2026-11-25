@@ -13,18 +13,14 @@ import { PYTHON_TASK_EVALUATOR } from "../../../src/domain/desktop/appTaskPython
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const collisions = [
-  ["table", "pragma_table_list"],
-  ["table", "pragma_table_info"],
-  ["view", "pragma_table_list"],
-  ["view", "pragma_table_info"],
-] as const;
-
-it.each(
-  (["UTF-8", "UTF-16le", "UTF-16be"] as const).flatMap((encoding) =>
-    collisions.map(([kind, name]) => [encoding, kind, name] as const),
-  ),
-)(
+// Each PRAGMA must resolve past both kinds of application object. The other
+// SQLite encoding boundaries exercise all three encodings independently.
+it.each([
+  ["UTF-8", "table", "pragma_table_list"],
+  ["UTF-16le", "table", "pragma_table_info"],
+  ["UTF-16be", "view", "pragma_table_list"],
+  ["UTF-8", "view", "pragma_table_info"],
+] as const)(
   "reads exported %s SQLite state when a %s shadows %s",
   async (encoding, kind, name) => {
     const root = await createTestTempDirectory("desktop-sqlite-metadata-");

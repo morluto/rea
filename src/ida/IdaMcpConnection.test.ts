@@ -44,7 +44,10 @@ describe("upstream IDA tool result decoding", () => {
     ).toEqual({ evidence });
     expect(
       decodeIdaToolResult(
-        { content: [{ type: "text", text: JSON.stringify({ evidence }) }] },
+        {
+          content: [{ type: "text", text: JSON.stringify({ evidence }) }],
+          structuredContent: { result: [], _output_truncated: true },
+        },
         "native",
         redact,
       ),
@@ -105,13 +108,11 @@ describe("upstream IDA tool result decoding", () => {
       }),
     ).toEqual([{ address: "0x1000" }]);
   });
-  it.each([
-    ["truncated JSON", '{"code": "int main('],
-    ["ordinary text", "int main(void);"],
-  ])("rejects %s text", (_label, text) => {
-    expect(
-      () => decodeIdaToolResult({ content: [{ type: "text", text }] }),
-      "malformed JSON is never decoded as an ordinary string",
+  it("rejects truncated JSON text without a structured result", () => {
+    expect(() =>
+      decodeIdaToolResult({
+        content: [{ type: "text", text: '{"code": "int main(' }],
+      }),
     ).toThrow("IDA MCP returned malformed JSON text.");
   });
   it("preserves upstream failures and rejects truncated previews that still satisfy item schemas", () => {
@@ -795,6 +796,22 @@ it("keeps error, truncation and native-text precedence ahead of structured JSON 
       "native",
     ),
   ).toEqual({ complete: true });
+  const preview = {
+    content: [],
+    structuredContent: { result: [{ observed: true }] },
+  };
+  expect(() => decodeIdaToolResult(preview, "native")).toThrow(
+    "omitted its complete JSON text result",
+  );
+  expect(() =>
+    decodeIdaToolResult(
+      {
+        ...preview,
+        content: [{ type: "text", text: "broken JSON" }],
+      },
+      "native",
+    ),
+  ).toThrow("returned malformed JSON text");
 });
 
 it("requires a valid content array even when IDA supplies structured evidence", () => {
