@@ -71,6 +71,73 @@ nonempty decompiled code is not proof of correct vector behavior. Existing
 session-local metadata editing does not change executable bytes or turn a
 snapshot into a persistent Ghidra project.
 
+## PPSSPP function labels (opt-in, read-only)
+
+An offline source-tree script compares caller-supplied function labels with a
+complete `list_procedures` inventory. For an Evidence record, the script checks
+the current format, semantic identifier, operation and file target SHA-256. The
+report marks that input `rea-evidence` and records the file digest in
+`inventory_target_claim`. A bare array is marked `raw-unverified` and has a
+null target claim. Recreate inventories from earlier Evidence formats with the
+current REA release.
+
+The extension's legacy `.sym` exporter emits `address name,size` rows. Modern
+PPSSPP also saves module-relative `.ppsym 1` files with a module CRC; those are
+not the legacy `.sym` syntax, and older PPSSPP `.map` files are **not** accepted
+here. Build REA and capture the inventory before supplying the file format and
+address bases explicitly.
+
+```bash
+npm run build:cached
+node scripts/rea.mjs list-procedures ./target.elf --provider ghidra --detail complete --json \
+  > ./list-procedures.json
+
+node scripts/psp-symbol-correlation.mjs \
+  --symbols ./labels.sym --format sym \
+  --inventory ./list-procedures.json \
+  --source-base 0x08000000 --analysis-base 0x08800000 \
+  --target-sha256 <selected ELF SHA-256>
+
+node scripts/psp-symbol-correlation.mjs \
+  --symbols ./module.ppsym --format ppsym \
+  --inventory ./list-procedures.json \
+  --analysis-base 0x08804000 \
+  --target-sha256 <selected ELF SHA-256> \
+  --expected-crc <independently known module CRC>
+```
+
+For `.sym`, the selected bases translate the source addresses to Ghidra's
+address space. For `.ppsym`, addresses are relative for a loaded module, so the
+analysis base must refer to that module. PPSSPP's module-index-zero game/RAM
+records instead store absolute addresses: use `--analysis-base 0x0` for those
+records. The file does not establish its module index; the caller selects
+whether its addresses are relative or absolute. Ghidra function inventory
+rows in other address spaces (such as `EXTERNAL:0x1`) are preserved in the input
+but excluded from an unqualified PSP mapping; the report counts these rows.
+Observed names are listed once per matching coordinate in
+`observed_labels_by_address`, avoiding repeated names for duplicate source rows.
+CRC checking is reported as unknown when either the file or independent
+expected CRC is unavailable. The symbol file is hashed as original bytes and
+invalid UTF-8 is refused. Returned
+`address_and_label_agree` means agreement only in the supplied inventory,
+not proved program correspondence or equivalent code. Duplicates, differing
+labels, generated placeholders, absent rows and out-of-range addresses retain
+separate outcomes. The report includes the input symbol SHA-256 and selected
+target SHA-256 but cannot prove that a caller's symbol file belongs to that
+binary. Verify module identity, residency, relocation and any CRC independently.
+
+Run the local and command controls after building REA with
+`node scripts/verify-psp-symbol-correlation.mjs`. They cover raw-array and
+Evidence inputs, semantic identifier and target-digest refusal, input paths,
+address-space filtering, UTF-8 refusal, and duplicate-heavy output. Both
+symbol and inventory file reads enforce their byte limits while streaming,
+including pipes whose filesystem metadata reports a zero length.
+The existing `--psp` real
+Ghidra lane additionally correlates export-shaped **source-owned** labels
+created from independent PSP GNU readelf symbols against the observed REA
+inventory, including a wrong-base negative control. That fixture is not a
+PPSSPP runtime capture or a general-game compatibility claim.
+
 ## Verification
 
 Use the existing real MIPS verifier with its PSP option. Required tools are

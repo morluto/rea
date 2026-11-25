@@ -12,6 +12,7 @@ import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { correlatePspSymbols } from "./psp-symbol-correlation.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
@@ -181,7 +182,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     requireMcpOperationResult(opened, "open_binary");
     const result = await client.callTool(
-      { name: "list_procedures", arguments: {} },
+      { name: "list_procedures", arguments: { detail: "complete" } },
       { timeout: 180000 },
     );
     const observation = parseEvidence(
@@ -325,7 +326,9 @@ try {
           image.observations.language_id,
           `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
         );
-        const procedures = await call("list_procedures");
+        const procedures = await call("list_procedures", {
+          detail: "complete",
+        });
         const entry = procedures.find((p) => p.value === "rea_mips_entry");
         assert.ok(entry, "Entry function missing from legacy inventory");
         assert.equal(
@@ -391,7 +394,10 @@ try {
           provider_id: "ghidra",
           snapshot_path: snapshotPath,
         });
-        assert.deepEqual(await call("list_procedures"), procedures);
+        assert.deepEqual(
+          await call("list_procedures", { detail: "complete" }),
+          procedures,
+        );
         await call("close_binary");
       } catch (cause) {
         throw new Error(
@@ -538,7 +544,7 @@ try {
       const image = await call("inspect_native_load_image");
       if (psp) assertPspLoadedImage(image.observations, fixture.sha256);
       else assertMipsLoadedImage(image.observations, byteOrder, fixture.sha256);
-      const procedures = await call("list_procedures");
+      const procedures = await call("list_procedures", { detail: "complete" });
       const entry = procedures.find((p) => p.value === `${prefix}_entry`);
       const leaf = procedures.find((p) => p.value === `${prefix}_leaf`);
       assert.ok(entry, "Entry function missing from real Ghidra inventory");
@@ -551,6 +557,57 @@ try {
         BigInt(leaf.address),
         BigInt(independent.symbols[`${prefix}_leaf`]),
       );
+      let symbolCorrelation;
+      if (psp) {
+        // Model the legacy exported .sym address space explicitly. This is an
+        // independent readelf-derived input, not a PPSSPP runtime capture.
+        const sourceBase = 0x08000000n;
+        const analysisBase = 0x08800000n;
+        const names = ["rea_psp_entry", "rea_psp_leaf", "rea_psp_probe"];
+        const legacy =
+          names
+            .map((name) => {
+              const relocated =
+                BigInt(independent.symbols[name]) - analysisBase + sourceBase;
+              assert.ok(relocated >= 0n && relocated <= 0xffffffffn);
+              return (
+                relocated.toString(16).padStart(8, "0") + " " + name + ",0010"
+              );
+            })
+            .join("\n") + "\n";
+        const agreement = correlatePspSymbols(legacy, procedures, {
+          format: "sym",
+          sourceBase: "0x08000000",
+          analysisBase: "0x08800000",
+          targetSha256: fixture.sha256,
+        });
+        assert.deepEqual(
+          agreement.records.map(({ outcome }) => outcome),
+          names.map(() => "address_and_label_agree"),
+          "Selected legacy PPSSPP-style names disagree with real Ghidra's inventory",
+        );
+        const wrongBase = correlatePspSymbols(legacy, procedures, {
+          format: "sym",
+          sourceBase: "0x08000000",
+          analysisBase: "0x08810000",
+          targetSha256: fixture.sha256,
+        });
+        assert.ok(
+          wrongBase.records.every(
+            ({ outcome }) => outcome !== "address_and_label_agree",
+          ),
+        );
+        symbolCorrelation = {
+          format: agreement.format,
+          source_sha256: agreement.source_sha256,
+          target_sha256: agreement.target_sha256,
+          selected_bases: agreement.selected_bases,
+          verified_address_and_label_observations: agreement.records.length,
+          negative_rebase_control: "did_not_agree",
+          source:
+            "source-owned legacy export-shaped rows derived from PSP GNU readelf; not PPSSPP runtime symbols",
+        };
+      }
       const probe = independent.symbols[`${prefix}_probe`];
       assert.ok(
         procedures.some(
@@ -718,7 +775,10 @@ try {
         provider_id: "ghidra",
         snapshot_path: snapshotPath,
       });
-      assert.deepEqual(await call("list_procedures"), procedures);
+      assert.deepEqual(
+        await call("list_procedures", { detail: "complete" }),
+        procedures,
+      );
       await call("close_binary");
 
       if (psp) {
@@ -874,6 +934,9 @@ try {
         effective_compiler_spec: image.observations.compiler_spec_id,
         checks: [
           "independent ELF/ABI and symbols",
+          ...(psp
+            ? ["explicit-base PPSSPP-style symbol / Ghidra inventory agreement"]
+            : []),
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
           ...(psp
@@ -888,6 +951,9 @@ try {
             ? ["soft-float o32 parameter/return storage and caller constants"]
             : []),
         ],
+        ...(symbolCorrelation === undefined
+          ? {}
+          : { psp_symbol_correlation: symbolCorrelation }),
         ...(vfpuCoverage === undefined ? {} : { vfpu_decode: vfpuCoverage }),
         ...(softFloat === undefined ? {} : { soft_float: softFloat }),
         procedures: procedures.length,
