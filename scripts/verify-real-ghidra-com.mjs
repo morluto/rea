@@ -37,6 +37,7 @@ import {
   createVerifierMcpOwner,
   VerifierStdioTransport,
 } from "./lib/verifier-mcp-owner.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -107,7 +108,9 @@ const transport = new StdioClientTransport({
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-com-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-com-proof", version: "1" }),
+);
 let stderr = "";
 let connected = false;
 let verifierRun;
@@ -406,7 +409,10 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(outside.comment.state, "unavailable");
     assert.match(outside.comment.remediation, /binary_session/u);
     assert.equal(
-      await call("procedure_address", { procedure: changes.name }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: changes.name,
+      }),
       fixture.entry,
     );
     assert.equal(
@@ -565,10 +571,12 @@ async function verifyRejectedCom() {
   await writeFile(rejectedPath, rejectedFixture.bytes, { mode: 0o600 });
   const fallbackOwner = createVerifierMcpOwner();
   workspaceFixture.releaseAfter(() => fallbackOwner.close());
-  const rejectedClient = new Client({
-    name: "rea-real-com-fallback",
-    version: "1",
-  });
+  const rejectedClient = completeEvidenceClient(
+    new Client({
+      name: "rea-real-com-fallback",
+      version: "1",
+    }),
+  );
   const rejectedTransport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -594,7 +602,7 @@ async function verifyRejectedCom() {
     const session = requireMcpLifecycleResult(opened, "open_binary");
     assert.equal(session.format, "dos-com");
     const response = await rejectedClient.callTool(
-      { name: "inspect_native_load_image", arguments: {} },
+      { name: "inspect_native_load_image", arguments: { detail: "complete" } },
       { timeout: 240000 },
     );
     const evidence = parseEvidence(

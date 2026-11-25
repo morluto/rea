@@ -24,6 +24,7 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -121,7 +122,9 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
   const opened = await call("open_binary", { path: imagePath });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
 
-  const inspectedSession = await call("inspect_artifact", {});
+  const inspectedSession = await call("inspect_artifact", {
+    detail: "complete",
+  });
   expect(inspectedSession.isError, JSON.stringify(inspectedSession)).not.toBe(
     true,
   );
@@ -262,6 +265,7 @@ it("never admits prose carrying a `_FVH` string as the flash image format", asyn
     const cliResult = await execute(process.execPath, [
       cli,
       "inspect-artifact",
+      ...COMPLETE_DETAIL,
       path,
       "--json",
     ]);
@@ -294,6 +298,7 @@ it.each([
     const command = await execute(process.execPath, [
       cli,
       "inspect-artifact",
+      ...COMPLETE_DETAIL,
       path,
       "--json",
     ]);
@@ -381,7 +386,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
   const inventoryEvidence = parseEvidence(
-    (await call("inspect_artifact", {})).structuredContent,
+    (await call("inspect_artifact", { detail: "complete" })).structuredContent,
   );
   const inventory = artifactInventoryResultSchema.parse(
     artifactInspectionResultSchema.parse(inventoryEvidence.normalized_result)

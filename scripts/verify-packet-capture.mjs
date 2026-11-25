@@ -22,6 +22,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -44,7 +48,9 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "packet-capture-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "packet-capture-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -346,7 +352,14 @@ await withVerifierFixture(root, async () => {
         (
           await execute(
             process.execPath,
-            [entrypoint, "inspect-pcap-capture", capturePath, "--json"],
+            [
+              entrypoint,
+              ...(await completeEvidenceCliArguments([
+                "inspect-pcap-capture",
+                capturePath,
+                "--json",
+              ])),
+            ],
             { env: environment, timeout: 60000, maxBuffer: 16 * 1024 * 1024 },
           )
         ).stdout,

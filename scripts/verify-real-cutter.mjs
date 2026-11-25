@@ -11,6 +11,7 @@ import { access, constants, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const cli = resolve("scripts/rea.mjs");
 const runCli = async (...arguments_) => {
@@ -111,10 +112,12 @@ await withVerifierCleanup(async () => {
       providerEnvironment: process.env,
     },
   );
-  const mcpClient = new Client({
-    name: "rea-cutter-upstream-smoke",
-    version: "1",
-  });
+  const mcpClient = completeEvidenceClient(
+    new Client({
+      name: "rea-cutter-upstream-smoke",
+      version: "1",
+    }),
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const mcpOwner = {

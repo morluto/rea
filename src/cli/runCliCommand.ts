@@ -1,3 +1,4 @@
+import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../domain/agentResultBudget.js";
 import { Writable } from "node:stream";
 
 import {
@@ -123,29 +124,34 @@ export const runCliCommand = async (
       report(cliArgumentFailure(cli.name, entry.name, parsed.error));
       return;
     }
-    await withCliEvidencePublication(() =>
-      withCliResultControls(async () => {
-        const rawValue = await entry.definition.run({
-          ...parsed.value,
-          formatExplicit: controls.formatExplicit,
-        });
-        const value = projectCliCommandOutput(rawValue, {
-          operations: entry.operations,
-          commands: cliCommands(cli),
-          cliName: cli.name,
-          recordedCommands: RECORDED_CLI_COMMAND_REGISTRATIONS,
-        });
-        rebindLoggedCliFailure(rawValue, value);
-        if (!output.handled)
-          await output.write(value, {
-            command: entry.name,
-            duration: `${Math.round(performance.now() - started)}ms`,
-            renderOutput:
-              !human || entry.definition.outputPolicy !== "agent-only",
-            collectCliControls: cliResultControls,
-            cta,
+    await withCliEvidencePublication(
+      () =>
+        withCliResultControls(async () => {
+          const rawValue = await entry.definition.run({
+            ...parsed.value,
+            formatExplicit: controls.formatExplicit,
           });
-      }),
+          const value = projectCliCommandOutput(rawValue, {
+            operations: entry.operations,
+            commands: cliCommands(cli),
+            cliName: cli.name,
+            recordedCommands: RECORDED_CLI_COMMAND_REGISTRATIONS,
+          });
+          rebindLoggedCliFailure(rawValue, value);
+          if (!output.handled)
+            await output.write(value, {
+              command: entry.name,
+              duration: `${Math.round(performance.now() - started)}ms`,
+              renderOutput:
+                !human || entry.definition.outputPolicy !== "agent-only",
+              collectCliControls: cliResultControls,
+              cta,
+            });
+        }),
+      {
+        agentBudgetSeed: environment.variables[AGENT_RESULT_BUDGET_ENVIRONMENT],
+        hasFilterOutput: controls.filterOutput !== undefined,
+      },
     );
     if (output.error !== undefined) exit(options, 1);
   } catch (cause: unknown) {

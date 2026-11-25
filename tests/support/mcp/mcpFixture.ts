@@ -6,6 +6,10 @@ import {
 import type { McpServer } from "@modelcontextprotocol/server";
 import { test as base } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  applyCompleteEvidenceByDefault,
+  type TestDelivery,
+} from "../completeEvidenceByDefault.js";
 
 /** Client identity used during an in-memory MCP negotiation. */
 export interface McpClientIdentity {
@@ -37,6 +41,7 @@ export interface TestMcp {
     server: McpServer,
     identity?: McpClientIdentity,
     jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
+    delivery?: TestDelivery,
   ): Promise<Client>;
   close(): Promise<void>;
 }
@@ -100,6 +105,7 @@ export const createTestMcp = (): TestMcp => {
       server,
       identity = DEFAULT_CLIENT_IDENTITY,
       jsonSchemaValidator,
+      delivery = "completeEvidenceByDefault",
     ) => {
       if (closed) return Promise.reject(registryClosed());
       // Compile shared schema references once per connection instead of
@@ -110,7 +116,10 @@ export const createTestMcp = (): TestMcp => {
         validation = createMcpSchemaValidation();
         jsonSchemaValidator = validation;
       }
-      const client = new Client(identity, { jsonSchemaValidator });
+      const client = applyCompleteEvidenceByDefault(
+        new Client(identity, { jsonSchemaValidator }),
+        delivery,
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       const connection: McpConnectionOwner = {

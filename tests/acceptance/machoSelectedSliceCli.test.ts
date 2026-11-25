@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 const thin = (subtype: number): Buffer => {
   const bytes = Buffer.alloc(4096);
@@ -61,7 +62,7 @@ cliTest.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
       const path = join(root, name);
       await writeFile(path, bytes);
       const result = await cli.run({
-        arguments: ["inspect-macho", path, "--json"],
+        arguments: completeArguments("inspect-macho", path),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.json).toMatchObject({
@@ -102,7 +103,7 @@ cliTest.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     ]);
     const before = await readFile(path);
     const result = await cli.run({
-      arguments: ["inspect-macho", path, "--json"],
+      arguments: completeArguments("inspect-macho", path),
     });
     expect(result.exitCode, result.stderr + result.stdout).toBe(0);
     expect(result.json).toMatchObject({
@@ -131,7 +132,7 @@ cliTest.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     patched[sectionName] = 0xff;
     await writeFile(path, patched);
     const undecodable = await cli.run({
-      arguments: ["inspect-macho", path, "--json"],
+      arguments: completeArguments("inspect-macho", path),
     });
     expect(undecodable.exitCode, undecodable.stderr + undecodable.stdout).toBe(
       0,
