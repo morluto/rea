@@ -418,7 +418,7 @@ it("budgets tools whose SDK schema defers validation to the application", async 
   });
 });
 
-it("writes nothing for CLI overflow without --evidence_output and names both rerun commands", async () => {
+it("writes nothing for CLI overflow with --no-retain and names both rerun commands", async () => {
   const input = await entropyTarget(1024 * 1024);
   // Every location a spill could use is a fresh, empty directory.
   const home = await createTestTempDirectory("rea-agent-budget-home-");
@@ -437,6 +437,7 @@ it("writes nothing for CLI overflow without --evidence_output and names both rer
     "--block-size",
     "256",
     "--json",
+    "--no-retain",
   ];
   let stdout = "";
   let exitCode = 0;

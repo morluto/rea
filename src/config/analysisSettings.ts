@@ -35,7 +35,10 @@ import {
 } from "./windowsChangeTimeSettle.js";
 import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
 import { zstandardMaxFramesSchema } from "../domain/compression/zstandardFrameAllowance.js";
-import { agentResultBudgetBytesSchema } from "../domain/agentResultBudget.js";
+import {
+  agentResultBudgetBytesSchema,
+  cliRetainedEvidenceBytesSchema,
+} from "../domain/agentResultBudget.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
@@ -71,6 +74,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
       windowsChangeTimeSettleMaxPollsSchema,
     REA_ZSTD_MAX_FRAMES: zstandardMaxFramesSchema,
     REA_AGENT_RESULT_BUDGET_BYTES: agentResultBudgetBytesSchema,
+    REA_CLI_RETAINED_EVIDENCE_BYTES: cliRetainedEvidenceBytesSchema,
   };
 export const launchAnalysisSetting = (
   id: AnalysisSettingId,

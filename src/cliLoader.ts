@@ -14,6 +14,7 @@ const COMMAND_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
   "--token-count",
   "--timings",
   "--no-timings",
+  "--no-retain",
 ]);
 
 /** Global switches that inspect a single known command without listing others. */

@@ -64,6 +64,9 @@ import {
   MINIMUM_ZSTD_MAX_FRAMES,
   MAXIMUM_ZSTD_MAX_FRAMES,
   DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
+  MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+  MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
   MINIMUM_AGENT_RESULT_BUDGET_BYTES,
   MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
 } from "./analysisResourceLimits.js";
@@ -659,6 +662,19 @@ export const ANALYSIS_SETTINGS = {
     defaultValue: DEFAULT_AGENT_RESULT_BUDGET_BYTES,
     minimum: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
     maximum: MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-delivery",
+    operations: AGENT_BUDGET_OPERATIONS,
+  },
+  // One-shot CLI invocations read only the launch seed; MCP retains
+  // over-budget Evidence in its session instead.
+  "delivery.cli_retained_evidence_bytes": {
+    updateMode: "runtime",
+    environment: "REA_CLI_RETAINED_EVIDENCE_BYTES",
+    defaultValue: DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
+    minimum: MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+    maximum: MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
     unit: "bytes",
     appliesAt: "next_operation",
     provider: "rea-delivery",

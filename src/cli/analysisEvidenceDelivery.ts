@@ -17,6 +17,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   cliEvidenceDeliveryInputError,
@@ -187,11 +188,28 @@ export const publishCliAnalysisEvidence = async (
   if (evidenceOutput === undefined) {
     if (overBudget === undefined) return complete;
     const summary = await overBudgetSummary(complete);
-    return summary === undefined
-      ? complete
+    if (summary === undefined) return complete;
+    const retained = await retainOverBudgetEvidence(
+      complete,
+      closureInput,
+      overBudget({ kind: "not-retained" }).complete_bytes,
+    );
+    return retained?.ok === true
+      ? {
+          summary,
+          evidence_bundle: retained.value.receipt,
+          delivery: deliveryJson(
+            overBudget({ kind: "cache-file", path: retained.value.path }),
+          ),
+        }
       : {
           summary,
-          delivery: deliveryJson(overBudget({ kind: "not-retained" })),
+          delivery: deliveryJson(
+            overBudget({
+              kind: "not-retained",
+              ...(retained === undefined ? {} : { reason: retained.error }),
+            }),
+          ),
         };
   }
   const outputPath = absoluteCallerPath(evidenceOutput);
@@ -223,6 +241,53 @@ export const publishCliAnalysisEvidence = async (
         ...(delivery === undefined ? {} : { delivery: deliveryJson(delivery) }),
       }
     : published.value.delivered;
+};
+
+/**
+ * Keep an over-budget result this invocation was not told to save in the
+ * private retained-Evidence cache, so it pages without a rerun. Undefined
+ * when retention is off (--no-retain, or the setting is 0); a failure says
+ * why, and the result falls back to the rerun arguments.
+ */
+const retainOverBudgetEvidence = async (
+  complete: Evidence,
+  input: CliEvidencePublication,
+  completeBytes: number,
+): Promise<
+  | Result<{ readonly path: string; readonly receipt: JsonValue }, string>
+  | undefined
+> => {
+  const { retention } = cliPublicationInvocation();
+  if (retention === undefined) return undefined;
+  const { retainCliEvidence } = await import("./cliEvidenceRetention.js");
+  const kept = await retainCliEvidence({
+    evidenceId: complete.evidence_id,
+    completeBytes,
+    retention,
+    write: async (path) => {
+      // The bundle writer creates the file exclusively and never overwrites.
+      const published = await publishDeliveredEvidence(
+        complete,
+        path,
+        input,
+        true,
+      );
+      if (published.ok) {
+        const { bytes } = published.value.receipt as { readonly bytes: number };
+        return ok({ bytes });
+      }
+      const { error } = published.error;
+      return err(
+        error instanceof EvidenceFileError && error.reason === "exists"
+          ? "exists"
+          : error.message,
+      );
+    },
+  });
+  if (!kept.ok) return kept;
+  const receipt = bundleReceipt(kept.value.path, kept.value.bytes, input);
+  recordCliEvidencePublication(receipt);
+  return ok({ path: kept.value.path, receipt });
 };
 
 /** Delivery facts are plain JSON by construction. */
