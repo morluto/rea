@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   access,
   mkdir,
@@ -15,6 +14,7 @@ import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./verifier-file-sha256.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import {
   completeEvidenceCliArguments,
@@ -36,9 +36,7 @@ export async function verifyGhidraSocketBoundary({
       reason: "The Ghidra Unix-socket lane is not used on this host.",
     };
   const limit = process.platform === "darwin" ? 102 : 106;
-  const before = createHash("sha256")
-    .update(await readFile(target.path))
-    .digest("hex");
+  const before = await sha256File(target.path);
   const root = await realpath(await mkdtemp("/tmp/rea-gsock-"));
   const suffixBytes = Buffer.byteLength("/rea-ghidra-XXXXXX/bridge.sock");
   let cleanupIncomplete = false;
@@ -189,12 +187,7 @@ export async function verifyGhidraSocketBoundary({
         );
       }
     }
-    assert.equal(
-      createHash("sha256")
-        .update(await readFile(target.path))
-        .digest("hex"),
-      before,
-    );
+    assert.equal(await sha256File(target.path), before);
     return {
       status: "verified",
       samples,

@@ -13,6 +13,7 @@ import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
@@ -155,12 +156,12 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     };
     await walk(join(projectDir, "ExistingMips.rep"));
     return Promise.all(
-      paths.sort().map(async (path) => [
-        relative(projectDir, path),
-        createHash("sha256")
-          .update(await readFile(path))
-          .digest("hex"),
-      ]),
+      paths
+        .sort()
+        .map(async (path) => [
+          relative(projectDir, path),
+          await sha256File(path),
+        ]),
     );
   };
   const before = await digestTree();
@@ -219,12 +220,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     before,
     "REA changed the source project",
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(fixture.path))
-      .digest("hex"),
-    fixture.sha256,
-  );
+  assert.equal(await sha256File(fixture.path), fixture.sha256);
   return {
     byte_order: byteOrder,
     project_unchanged: true,
@@ -797,9 +793,7 @@ try {
       assert.equal(cliDossier.procedure.address, dossier.procedure.address);
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        createHash("sha256")
-          .update(await readFile(fixture.path))
-          .digest("hex"),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
@@ -316,9 +316,7 @@ async function verifyFixture(byteOrder, softFloat) {
       dossier.procedure.address,
     );
     assert.equal(
-      createHash("sha256")
-        .update(await readFile(fixture.path))
-        .digest("hex"),
+      await sha256File(fixture.path),
       fixture.sha256,
       "Analysis modified the source library",
     );
