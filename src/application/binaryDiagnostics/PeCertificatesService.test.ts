@@ -1,11 +1,10 @@
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
-import { createHash } from "node:crypto";
 import { inspectPeCertificatesInputSchema } from "../../domain/native/peCertificates.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
 } from "../../native/pe/PeCertificates.fixture.js";
-import { parsePeCertificates } from "../../native/pe/PeCertificateParser.js";
+import { parsePeCertificateFixture } from "../../../tests/fixtures/binaryDiagnostics/peCertificates.js";
 import { expect, it } from "vitest";
 import { PeCertificatesService } from "./PeCertificatesService.js";
 import { PE_CERTIFICATES_PROVIDER } from "../../domain/investigationProviders.js";
@@ -17,16 +16,12 @@ import {
 } from "../../domain/analysisErrorCore.js";
 
 const identity = PE_CERTIFICATES_PROVIDER;
-const path = "/artifacts/app.exe";
-const bytes = peWithoutCertificateTableFixture();
-const report = parsePeCertificates(
-  bytes,
-  {
-    path,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    bytes: bytes.length,
-  },
-  inspectPeCertificatesInputSchema.parse({ path }),
+const input = inspectPeCertificatesInputSchema.parse({
+  path: "/artifacts/app.exe",
+});
+const report = await parsePeCertificateFixture(
+  peWithoutCertificateTableFixture(),
+  input,
 );
 
 it("rejects a relative path and extra arguments before reading", async () => {
@@ -63,7 +58,10 @@ it("retains a completed observation when the caller cancels as the provider comp
 });
 
 it("retains complete certificate provenance from the production parser", async () => {
-  const parsed = parsedCertificateReport();
+  const parsed = await parsePeCertificateFixture(
+    peCertificateFixture(false),
+    input,
+  );
   const result = await new PeCertificatesService({
     identity,
     inspect: () => Promise.resolve(ok(parsed)),
@@ -120,7 +118,10 @@ it.each([
 ] as const)(
   "rejects %s before creating observed Evidence",
   async (_label, mutate) => {
-    const parsed = parsedCertificateReport();
+    const parsed = await parsePeCertificateFixture(
+      peCertificateFixture(false),
+      input,
+    );
     mutate(parsed);
     const result = await new PeCertificatesService({
       identity,
@@ -130,19 +131,3 @@ it.each([
     if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
   },
 );
-
-function parsedCertificateReport(): PeCertificates {
-  const bytes = peCertificateFixture(false);
-  const input = inspectPeCertificatesInputSchema.parse({
-    path: report.artifact.path,
-  });
-  return parsePeCertificates(
-    bytes,
-    {
-      path: input.path,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
-    },
-    input,
-  );
-}
