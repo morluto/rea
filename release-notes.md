@@ -1316,6 +1316,7 @@
 * **mcp:** share address context capacity setup ([#14542](https://github.com/morluto/rea/issues/14542)) ([d11eba6](https://github.com/morluto/rea/commit/d11eba6295c764b10a72341d9fa29178bf7b2b7f))
 * **mcp:** share caller-owned in-memory handshakes ([#14424](https://github.com/morluto/rea/issues/14424)) ([efeac85](https://github.com/morluto/rea/commit/efeac85e0f2338b91d35c32ae2a67b75d96604ea))
 * **mcp:** share isolated file inspection sessions ([#14426](https://github.com/morluto/rea/issues/14426)) ([d0c51d1](https://github.com/morluto/rea/commit/d0c51d1fa063c09d345a279b732d6b7c32623baa))
+* **mcp:** share the successful tool assertion ([#14576](https://github.com/morluto/rea/issues/14576)) ([3bb225c](https://github.com/morluto/rea/commit/3bb225c564249330b6286187bffaccd12f5b1f10))
 * **mcp:** strengthen portable pattern witnesses ([#13324](https://github.com/morluto/rea/issues/13324)) ([d08c523](https://github.com/morluto/rea/commit/d08c52384ac1e7dde8a5c1f0a4a320a83f082268))
 * **mitmproxy:** consolidate transport evidence checks ([#12935](https://github.com/morluto/rea/issues/12935)) ([f61c38c](https://github.com/morluto/rea/commit/f61c38c8208f33c2b0a7fd906b89d505cfd5a917))
 * **model:** consolidate historical layout and retained views ([#12878](https://github.com/morluto/rea/issues/12878)) ([6dde865](https://github.com/morluto/rea/commit/6dde865ccf11625aaafd4c1daed22b0e01aa8495))
