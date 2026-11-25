@@ -217,6 +217,10 @@ Playwright 1.58.2 can also leave an artifacts directory when launch preparation
 fails before a browser process exists, such as for a missing executable.
 POSIX wrappers can request awaited cancellation with `SIGINT` or `SIGTERM`;
 Windows process termination is not an equivalent graceful-cancellation channel.
+On Windows, a wrapper can instead send `CTRL_BREAK_EVENT` to REA's process
+group: Node delivers it as `SIGBREAK`, which runs the same abort-and-cleanup
+path and exits 149. `TerminateProcess` (what `child.kill()` does on Windows)
+still skips cleanup entirely.
 Do not identify owned artifacts by directory prefix or creation time alone.
 See [#4659](https://github.com/morluto/rea/issues/4659) for the remaining recovery
 and wrapper-cancellation work.
