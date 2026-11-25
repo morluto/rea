@@ -10,6 +10,7 @@ import { createEvidence } from "../evidence.js";
 import type { RustBinary } from "../rust/rustBinary.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import type { AnalysisViewRequest } from "./analysisViewRequest.js";
 
 const report: RustBinary = {
   artifact: { path: "/artifacts/rust", sha256: "a".repeat(64), bytes: 512 },
@@ -304,3 +305,242 @@ it.each(["packages", "edges"] as const)(
     });
   },
 );
+
+it("filters packages by name, version, and indices, projecting requested dependencies", () => {
+  const value = structuredClone(report);
+  value.auditable_metadata!.packages = [
+    {
+      name: "root",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: true,
+      dependencies: [],
+      features: [],
+    },
+    {
+      name: "serde",
+      version: "1.0.100",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [3],
+      features: ["derive"],
+    },
+    {
+      name: "serde",
+      version: "1.0.100",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [3],
+      features: ["derive"],
+    },
+    {
+      name: "other",
+      version: "1.0.100",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: [],
+    },
+    {
+      name: "serde",
+      version: "2.0.0",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: [],
+    },
+  ];
+  value.auditable_metadata!.dependency_edges = [
+    { from_index: 1, to_index: 3 },
+    { from_index: 2, to_index: 3 },
+  ];
+  value.auditable_metadata!.cyclic_dependency_indices = [];
+  const source = parent(value);
+  const matchingPackages = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "packages",
+    offset: 0,
+    limit: 10,
+    names: ["serde"],
+    versions: ["1.0.100"],
+    fields: ["name", "version", "dependencies"],
+  });
+  if (!matchingPackages.ok || matchingPackages.value.kind !== "rust")
+    throw new Error("Rust package filter failed");
+  expect(matchingPackages.value.page.rows).toEqual([
+    {
+      index: 1,
+      name: "serde",
+      version: "1.0.100",
+      dependencies: [3],
+    },
+    {
+      index: 2,
+      name: "serde",
+      version: "1.0.100",
+      dependencies: [3],
+    },
+  ]);
+  expect(matchingPackages.value.coverage.total).toBe(2);
+
+  const filteredByIndex = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "packages",
+    offset: 0,
+    limit: 10,
+    names: ["serde"],
+    versions: ["1.0.100"],
+    indices: [1],
+    fields: ["name", "version", "dependencies"],
+  });
+  if (!filteredByIndex.ok || filteredByIndex.value.kind !== "rust")
+    throw new Error("Rust package index filter failed");
+  expect(filteredByIndex.value.page.rows).toEqual([
+    {
+      index: 1,
+      name: "serde",
+      version: "1.0.100",
+      dependencies: [3],
+    },
+  ]);
+  expect(filteredByIndex.value.coverage.total).toBe(1);
+});
+
+it("filters dependency edges by from_indices, to_indices, and indices", () => {
+  const value = structuredClone(report);
+  value.auditable_metadata!.packages = [
+    {
+      name: "root",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: true,
+      dependencies: [1, 2],
+      features: [],
+    },
+    {
+      name: "a",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: false,
+      dependencies: [2],
+      features: [],
+    },
+    {
+      name: "b",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: [],
+    },
+  ];
+  value.auditable_metadata!.dependency_edges = [
+    { from_index: 0, to_index: 1 },
+    { from_index: 0, to_index: 2 },
+    { from_index: 1, to_index: 2 },
+  ];
+  value.auditable_metadata!.cyclic_dependency_indices = [];
+  const source = parent(value);
+  const filtered = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "edges",
+    offset: 0,
+    limit: 10,
+    from_indices: [0],
+    to_indices: [2],
+    fields: ["to_index"],
+  });
+  if (!filtered.ok || filtered.value.kind !== "rust")
+    throw new Error("Rust edge filter failed");
+  expect(filtered.value.page.rows).toEqual([
+    {
+      index: 1,
+      to_index: 2,
+    },
+  ]);
+  expect(filtered.value.coverage.total).toBe(1);
+
+  const filteredByIndex = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "edges",
+    offset: 0,
+    limit: 10,
+    to_indices: [2],
+    indices: [1],
+    fields: ["to_index"],
+  });
+  if (!filteredByIndex.ok || filteredByIndex.value.kind !== "rust")
+    throw new Error("Rust edge index filter failed");
+  expect(filteredByIndex.value.page.rows).toEqual([
+    {
+      index: 1,
+      to_index: 2,
+    },
+  ]);
+  expect(filteredByIndex.value.coverage.total).toBe(1);
+});
+
+it("handles null auditable metadata and projects compiler commit hashes count", () => {
+  const value: RustBinary = {
+    ...report,
+    auditable_metadata: null,
+    rustc_commit: {
+      evidence_kind: "inferred",
+      hashes: [
+        { hash: "1".repeat(40), file_offset: 0 },
+        { hash: "2".repeat(40), file_offset: 48 },
+      ],
+    },
+  };
+  const source = parent(value);
+  const summary = projectAnalysisView(source, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  expect(summary.value).toMatchObject({
+    summary: {
+      auditable_metadata: null,
+      rustc_commit: {
+        evidence_kind: "inferred",
+        hashes_count: 2,
+      },
+    },
+    source_coverage: {
+      auditable_metadata_available: false,
+      embedded_records: "unknown",
+      runtime_dependencies: "unknown",
+    },
+  });
+
+  const emptyPackages = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "packages",
+    offset: 0,
+    limit: 10,
+  });
+  if (!emptyPackages.ok || emptyPackages.value.kind !== "rust")
+    throw new Error("Rust packages on null metadata failed");
+  expect(emptyPackages.value.page.rows).toEqual([]);
+  expect(emptyPackages.value.coverage.total).toBe(null);
+  expect(emptyPackages.value.coverage.status).toBe("unavailable");
+});
+
+it("rejects unsupported view kinds with an input error", () => {
+  const source = parent();
+  const invalid = projectAnalysisView(source, {
+    kind: "cve",
+  } as unknown as AnalysisViewRequest);
+  expect(invalid.ok).toBe(false);
+  if (!invalid.ok) {
+    expect(invalid.error).toMatchObject({
+      operation: "inspect_analysis_view",
+      issues: [{ path: ["view"], reason: "invalid_value" }],
+    });
+  }
+});
