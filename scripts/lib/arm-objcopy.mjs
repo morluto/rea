@@ -1,7 +1,20 @@
 import { readFile, writeFile } from "node:fs/promises";
 
+import { importVerifierSource } from "./verifier-source-loader.mjs";
+
 const SHT_ARM_ATTRIBUTES = 0x70000003;
-const ELF_MAGIC = 0x7f454c46;
+
+/** @type {Promise<typeof import("../../src/domain/binaryContainer.js")> | undefined} */
+let binaryContainer;
+/** The shared bounds-checked reader from src/domain/binaryContainer. */
+const binaryReader = async (bytes, little) => {
+  binaryContainer ??= importVerifierSource(
+    new URL("../../src/domain/binaryContainer.ts", import.meta.url).href,
+    import.meta.url,
+  );
+  const { BinaryReader } = await binaryContainer;
+  return new BinaryReader(bytes, little, "elf");
+};
 
 /**
  * Read the section header table of an ELF32/ELF64 image.
@@ -9,16 +22,15 @@ const ELF_MAGIC = 0x7f454c46;
  */
 const readSectionTable = async (path) => {
   const bytes = await readFile(path);
-  if (bytes.length < 52 || bytes.readUInt32BE(0) !== ELF_MAGIC) return null;
+  if (bytes.length < 52 || bytes.toString("hex", 0, 4) !== "7f454c46")
+    return null;
   const elfClass = bytes[4];
-  const little = bytes[5] === 1;
-  const u16 = (offset) =>
-    little ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
-  const u32 = (offset) =>
-    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
+  // The section table fields follow the file's declared byte order.
+  const reader = await binaryReader(bytes, bytes[5] === 1);
+  const u16 = (offset) => reader.u16(offset);
+  const u32 = (offset) => reader.u32(offset);
   if (elfClass !== 1 && elfClass !== 2) return null;
-  const tableOffset =
-    elfClass === 1 ? u32(32) : Number(bytes.readBigUInt64LE(40));
+  const tableOffset = elfClass === 1 ? u32(32) : Number(reader.word(40, 64));
   const stride = elfClass === 1 ? u16(46) : u16(58);
   const count = elfClass === 1 ? u16(48) : u16(60);
   if (tableOffset === 0 || stride === 0 || count === 0) return null;

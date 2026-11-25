@@ -619,6 +619,11 @@ export const documentationSections = [
         route: "/ghidra-riscv",
       },
       {
+        text: "32-bit ARM (armhf) analysis through Ghidra",
+        source: "providers/ghidra-arm.md",
+        route: "/ghidra-arm",
+      },
+      {
         text: "Windows Ghidra P0",
         source: "providers/windows-ghidra-p0.md",
         route: "/windows-ghidra-p0",
@@ -647,11 +652,6 @@ export const documentationSections = [
         text: "PowerPC ELF analysis through Ghidra",
         source: "ghidra-ppc.md",
         route: "/ghidra-ppc",
-      },
-      {
-        text: "32-bit ARM (armhf) analysis through Ghidra",
-        source: "ghidra-arm.md",
-        route: "/ghidra-arm",
       },
       {
         text: "Kuna provider",

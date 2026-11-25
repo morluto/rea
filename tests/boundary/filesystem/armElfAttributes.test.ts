@@ -3,6 +3,7 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { readArmElfCpuArch } from "../../../src/application/ArmElfAttributes.js";
+import { BinaryReader } from "../../../src/domain/binaryContainer.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -176,6 +177,7 @@ const writeArm = async (bytes: Buffer): Promise<string> => {
 /** General ELF admission refuses these tables first; read the ARM declarations directly. */
 const inspectArm = async (bytes: Buffer) => {
   const path = await writeArm(bytes);
+  const header = new BinaryReader(bytes, true, "elf");
   const handle = await open(path, "r");
   try {
     return await readArmElfCpuArch(
@@ -183,9 +185,9 @@ const inspectArm = async (bytes: Buffer) => {
       {
         elfClass: 32,
         byteOrder: "little",
-        headerSize: bytes.readUInt16LE(40),
-        type: bytes.readUInt16LE(16),
-        flags: bytes.readUInt32LE(36),
+        headerSize: header.u16(40),
+        type: header.u16(16),
+        flags: header.u32(36),
       },
       () => undefined,
     );

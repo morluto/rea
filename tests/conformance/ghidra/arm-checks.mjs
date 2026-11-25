@@ -1,8 +1,4 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execute = promisify(execFile);
 
 /** Parse only the documented GNU readelf fields needed by the armhf fixture. */
 export function parseArmReadelf(text) {
@@ -56,20 +52,24 @@ export function parseArmReadelf(text) {
 }
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
-export async function inspectArmReadelf(path) {
+export async function inspectArmReadelf(commands, path) {
   const command = process.env.REA_ARM_READELF ?? "readelf";
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await commands.exec(command, ["--version"], options);
   assert.match(
     version.stdout,
     /^GNU readelf\b/u,
     "This lane requires GNU readelf",
   );
-  const result = await execute(command, ["-h", "-s", "-W", path], options);
+  const result = await commands.exec(
+    command,
+    ["-h", "-s", "-W", path],
+    options,
+  );
   assert.equal(
     result.stderr.trim(),
     "",

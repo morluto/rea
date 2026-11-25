@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -16,14 +14,21 @@ import {
 } from "../tests/conformance/ghidra/arm-checks.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { BinaryReader } from "../dist/domain/binaryContainer.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildArmFixture } from "../tests/conformance/ghidra/arm-fixture.mjs";
 import {
   requireMcpToolError,
   requireMcpOperationResult,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { removeArmAttributes } from "./lib/arm-objcopy.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
@@ -45,7 +50,6 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 // A caller-selected objcopy is exclusive; defaults are tried only without one.
 const selectedObjcopy = process.env.REA_ARM_OBJCOPY;
 const objcopyCandidates =
@@ -75,11 +79,16 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
+// One owner for the compiler, readers, objcopy and the CLI; closed before the
+// lineage check so no launched child outlives the run unobserved.
+const commands = await createVerifierCommands();
+const execute = (command, args, options) =>
+  commands.exec(command, args, options);
 const reports = [];
 let primaryFailure;
 try {
-  const fixture = await buildArmFixture(workspace);
-  const independent = await inspectArmReadelf(fixture.path);
+  const fixture = await buildArmFixture(workspace, commands);
+  const independent = await inspectArmReadelf(commands, fixture.path);
   const resolved = await parseBinaryTarget(fixture.path);
   if (!resolved.ok) throw resolved.error;
   assert.equal(resolved.value.architecture, "arm");
@@ -126,9 +135,10 @@ try {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
   const call = async (name, args = {}) => {
-    const reply = await client.callTool({ name, arguments: args }, undefined, {
-      timeout: 180000,
-    });
+    const reply = await client.callTool(
+      { name, arguments: args },
+      { timeout: 180000 },
+    );
     return requireMcpOperationResult(reply, name);
   };
   try {
@@ -195,7 +205,10 @@ try {
       "Expected interworking call into the Thumb probe not recovered",
     );
     const dossier = functionDossierSchema.parse(
-      await call("analyze_function", { procedure: entry.address }),
+      await call("analyze_function", {
+        procedure: entry.address,
+        detail: "complete",
+      }),
     );
     assert.ok(dossier.pseudocode.trim().length > 0);
     const saved = await call("close_binary", { snapshot_path: snapshotPath });
@@ -203,7 +216,7 @@ try {
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(await readFile(snapshotPath, "utf8")),
     );
-    assert.equal(snapshot.target.architecture, "arm");
+    assert.equal(snapshot.target.identity.architecture, "arm");
     const parameters = snapshot.binding.analysis_profile.parameters;
     assert.equal(parameters.language_id, "ARM:LE:32:v7");
     assert.equal(parameters.language_selection, "provider-pinned");
@@ -219,7 +232,10 @@ try {
       float_abi: "hard",
     });
     for (const evidence of snapshot.evidence_bundle.records)
-      assert.equal(parseEvidence(evidence).subject?.architecture, "arm");
+      assert.equal(
+        parseEvidence(evidence).subject?.identity.architecture,
+        "arm",
+      );
     await call("open_binary", {
       path: fixture.path,
       provider_id: "ghidra",
@@ -248,7 +264,8 @@ try {
   ]) {
     const original = await readFile(fixture.path);
     const patched = Buffer.from(original);
-    patched.writeUInt32LE((patched.readUInt32LE(36) & ~mask) | set, 36);
+    const flags = new BinaryReader(patched, true, "elf").u32(36);
+    patched.writeUInt32LE((flags & ~mask) | set, 36);
     const variantPath = join(workspace, `arm-${label}.elf`);
     await writeFile(variantPath, patched);
     const transport = new StdioClientTransport({
@@ -265,7 +282,6 @@ try {
           name: "open_binary",
           arguments: { path: variantPath, provider_id: "ghidra" },
         },
-        undefined,
         { timeout: 60000 },
       );
       const error = requireMcpToolError(rejected);
@@ -412,7 +428,6 @@ try {
           name: "open_binary",
           arguments: { path: variant.path, provider_id: "ghidra" },
         },
-        undefined,
         { timeout: 60000 },
       );
       const error = requireMcpToolError(rejected);
@@ -447,8 +462,8 @@ try {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(cli.stdout));
-  assert.equal(evidence.subject?.architecture, "arm");
-  assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+  assert.equal(evidence.subject?.identity.architecture, "arm");
+  assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
   const cliDossier = functionDossierSchema.parse(evidence.normalized_result);
   assert.ok(cliDossier.pseudocode.trim().length > 0);
   assert.equal(
@@ -477,19 +492,22 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
-const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw workspaceFixture.retainedError(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
-  );
-if (primaryFailure !== undefined)
+let completed;
+try {
+  await withVerifierCleanup(async () => {
+    if (primaryFailure !== undefined) throw primaryFailure;
+  }, [
+    async () => {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+      completed = await completeVerifierRun(run);
+      assertVerifierCleanupComplete(completed.process_lineage);
+    },
+  ]);
+} catch (cause) {
   throw workspaceFixture.retainedError(
     `ARM verification failed; retained workspace: ${workspace}`,
-    { cause: primaryFailure },
+    { cause },
   );
+}
 await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

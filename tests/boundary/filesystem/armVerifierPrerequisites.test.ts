@@ -1,13 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   hasArmAttributes,
   removeArmAttributes,
 } from "../../../scripts/lib/arm-objcopy.mjs";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** A minimal ELF32 section table with one SHT_ARM_ATTRIBUTES section. */
 const armAttributesElf = (sectionType = 0x70000003): Buffer => {
@@ -23,15 +23,8 @@ const armAttributesElf = (sectionType = 0x70000003): Buffer => {
   return bytes;
 };
 
-const directories: string[] = [];
-afterAll(async () => {
-  for (const directory of directories)
-    await rm(directory, { recursive: true, force: true });
-});
-
 const createFile = async (name: string, sectionType?: number) => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-arm-objcopy-"));
-  directories.push(directory);
+  const directory = await createTestTempDirectory("rea-arm-objcopy-");
   const path = join(directory, name);
   await writeFile(path, armAttributesElf(sectionType));
   return path;
@@ -96,6 +89,21 @@ describe("ARM verifier objcopy prerequisite", () => {
         { fallback: false },
       ),
     ).rejects.toThrow("selected-objcopy: cannot read ARM input");
+    await expect(hasArmAttributes(path)).resolves.toBe(true);
+  });
+
+  it("reads a big-endian ELF64 section table in the file's byte order", async () => {
+    const bytes = Buffer.alloc(64 + 2 * 64);
+    bytes.write("\u007fELF", 0, "ascii");
+    bytes[4] = 2; // ELF64
+    bytes[5] = 2; // big-endian
+    bytes.writeBigUInt64BE(64n, 40); // e_shoff
+    bytes.writeUInt16BE(64, 58); // e_shentsize
+    bytes.writeUInt16BE(2, 60); // e_shnum
+    bytes.writeUInt32BE(0x70000003, 64 + 64 + 4);
+    const directory = await createTestTempDirectory("rea-arm-objcopy-");
+    const path = join(directory, "elf64be.elf");
+    await writeFile(path, bytes);
     await expect(hasArmAttributes(path)).resolves.toBe(true);
   });
 
