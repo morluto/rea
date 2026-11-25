@@ -29,13 +29,16 @@ const hasXmlPlistSignature = (bytes: Buffer): boolean => {
   return probe.state === "matched";
 };
 
-const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat =>
-  recognizeBoundedArtifactFormat({
+const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat => {
+  const format = recognizeBoundedArtifactFormat({
     prefix: bytes.subarray(0, PE_OVERLAY_ENTROPY_WINDOW_BYTES),
     fileSize: bytes.length,
     suffix: bytes.subarray(Math.max(0, bytes.length - DFUSE_SUFFIX_BYTES)),
     xmlPlistSignature: hasXmlPlistSignature(bytes),
-  }) ?? "unrecognized";
+  });
+  // The overlay samples 4 KiB. ISO 9660 recognition requires a sector 16 probe.
+  return format === "iso9660" ? "unrecognized" : (format ?? "unrecognized");
+};
 
 /** Project the shared PE owner's declared section facts onto overlay inputs. */
 function* overlaySections(
