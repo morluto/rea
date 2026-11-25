@@ -2263,4 +2263,32 @@ describe("Mach-O container read failures", () => {
       failure: { kind: "changed", format: "macho" },
     });
   });
+
+  it("reports a FAT table re-read that comes up short as changed, not as foreign bytes", async () => {
+    const bytes = universal();
+    // The file shrinks to two bytes after its eight-byte FAT header was read.
+    let reads = 0;
+    const shrinking = (offset: number, length: number) =>
+      Promise.resolve(
+        bytes.subarray(offset, offset + (reads++ === 0 ? length : 2)),
+      );
+    expect(await readMachoContainer(shrinking, bytes.length)).toMatchObject({
+      kind: "issue",
+      failure: { kind: "changed", format: "macho" },
+    });
+  });
+
+  it("reports a slice header re-read that comes up short as changed", async () => {
+    const bytes = universal();
+    const tableEnd = 8 + 2 * 20;
+    // The FAT table reads whole, then the file shrinks to the end of it.
+    const shrinking = (offset: number, length: number) =>
+      Promise.resolve(
+        bytes.subarray(offset, Math.min(offset + length, tableEnd)),
+      );
+    expect(await readMachoContainer(shrinking, bytes.length)).toMatchObject({
+      kind: "issue",
+      failure: { kind: "changed", format: "macho" },
+    });
+  });
 });

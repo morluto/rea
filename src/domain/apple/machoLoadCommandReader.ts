@@ -161,10 +161,19 @@ export const readMachoContainer = async (
   } else header = readFatContainerHeader(head, size);
   if (header.state !== "not-fat") {
     if (header.state === "needs-data") {
-      header = readFatContainerHeader(
-        await readAt(0, header.requiredBytes),
-        size,
-      );
+      const { requiredBytes } = header;
+      const table = await readAt(0, requiredBytes);
+      // The measured size admits the table, so a short re-read means the file
+      // changed while it was read. Parsing the short bytes could call the
+      // file not FAT, so the length is checked first.
+      if (table.byteLength < requiredBytes)
+        return {
+          kind: "issue",
+          failure: machoFailure.changed(
+            "FAT table read came up short of the measured file",
+          ),
+        };
+      header = readFatContainerHeader(table, size);
     }
     if (header.state === "not-fat") return { kind: "not-mach-o" };
     // A FAT header or table past the file's measured end is cut short.
@@ -175,13 +184,13 @@ export const readMachoContainer = async (
           extent: header.extent,
         }),
       };
-    // The measured size admits the table, so a second short read means the
-    // file changed while it was read.
+    // The complete re-read declares a larger table than the first read did,
+    // so the header bytes changed between the two reads.
     if (header.state === "needs-data")
       return {
         kind: "issue",
         failure: machoFailure.changed(
-          "FAT table read came up short of the measured file",
+          "FAT header changed between reads of the measured file",
         ),
       };
     if (header.state === "malformed")
@@ -195,11 +204,16 @@ export const readMachoContainer = async (
         sliceHeaders.get(offset),
       );
     }
-    if (
-      identity.state === "not-mach-o" ||
-      identity.state === "needs-slice-header"
-    )
-      return { kind: "not-mach-o" };
+    if (identity.state === "not-mach-o") return { kind: "not-mach-o" };
+    // Every slice still missing its first word lies inside the measured file
+    // and was read, so a short slice-header read means the file changed.
+    if (identity.state === "needs-slice-header")
+      return {
+        kind: "issue",
+        failure: machoFailure.changed(
+          "FAT slice header read came up short of the measured file",
+        ),
+      };
     if (mayBeJvmClass && size > MAX_JVM_CLASS_IDENTITY_BYTES) {
       const limitIssue = await readFatJvmIdentityLimitIssue(
         header,
