@@ -14,6 +14,7 @@ import {
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import {
+  hasElfMagic,
   BinaryFormatFailure,
   BinaryResourceFailure,
   binaryResourceCeiling,
@@ -46,13 +47,6 @@ import { readMachoInitializers } from "./MachoInitializers.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
-
-const isElf = (bytes: Buffer): boolean =>
-  bytes.length >= 4 &&
-  bytes[0] === 0x7f &&
-  bytes[1] === 0x45 &&
-  bytes[2] === 0x4c &&
-  bytes[3] === 0x46;
 
 /** Portable ELF and Mach-O initializer reader over one stable regular file. */
 export class NativeInitializersProvider implements NativeInitializersPort {
@@ -133,7 +127,7 @@ const inspectSelected = async (
   page: { readonly offset: number; readonly limit: number },
   signal: AbortSignal | undefined,
 ): Promise<NativeInitializerInspection> => {
-  if (isElf(selected.bytes)) {
+  if (hasElfMagic(selected.bytes)) {
     if (selected.selection !== null)
       throw new BinaryFormatFailure(
         "malformed",

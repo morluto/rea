@@ -27,6 +27,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  hasElfMagic,
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
@@ -88,13 +89,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
               sha256: handle.sha256,
               bytes: handle.size,
             };
-            if (
-              handle.prefix.length >= 4 &&
-              handle.prefix[0] === 0x7f &&
-              handle.prefix[1] === 0x45 &&
-              handle.prefix[2] === 0x4c &&
-              handle.prefix[3] === 0x46
-            )
+            if (hasElfMagic(handle.prefix))
               return {
                 artifact,
                 format: "elf" as const,
