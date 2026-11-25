@@ -804,10 +804,17 @@ const createReader = async (
 };
 
 const preflight = (entry: ArtifactEntry): void => {
-  if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
+  // A directory or other non-byte entry is the caller's selection; an
+  // encrypted member holds bytes REA cannot read.
+  if (entry.kind !== "file" && entry.kind !== "slice")
     throw new ArtifactReaderFailure(
-      "format",
+      "path",
       `Selected artifact entry cannot be read: ${entry.path}`,
+    );
+  if (entry.encrypted)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `Selected artifact entry is encrypted: ${entry.path}`,
     );
 };
 

@@ -45,7 +45,6 @@ it.each([
   "malformed",
   "truncated",
   "unsupported",
-  "format",
   "integrity",
   "path",
   "unavailable",

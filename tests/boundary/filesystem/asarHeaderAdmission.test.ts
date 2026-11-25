@@ -75,7 +75,8 @@ it("admits a real serialized header only when its complete extent exists", async
       admit(archive),
       `truncated at byte ${length}`,
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
+      parseFailure: { kind: "truncated", format: "asar" },
     });
   }
   await writeFile(archive, original.subarray(0, headerEnd));
@@ -103,7 +104,7 @@ it("rejects contradictory and unsigned-boundary extents before decoding", async 
         admit(archive),
         `uint32 at ${offset} = ${value}`,
       ).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     }
   }

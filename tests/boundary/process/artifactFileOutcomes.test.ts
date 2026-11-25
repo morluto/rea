@@ -66,7 +66,10 @@ const physicalFailure = (failure: FileOutcomeControl["failure"]): Error =>
   failure === "denied"
     ? Object.assign(new Error("controlled read denial"), { code: "EACCES" })
     : failure === "format"
-      ? new ArtifactReaderFailure("format", "controlled physical file failure")
+      ? new ArtifactReaderFailure(
+          "malformed",
+          "controlled physical file failure",
+        )
       : failure === "limit"
         ? // The stable reader names the bound it refused, as production does.
           new ArtifactReaderFailure(

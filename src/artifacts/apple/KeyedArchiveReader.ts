@@ -13,6 +13,8 @@ import {
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
   translateArtifactFailure,
+  artifactParseFailure,
+  malformedArtifact,
 } from "../../resources/index.js";
 import {
   decodeLimit,
@@ -498,13 +500,15 @@ const decodeSelectedArchive = (
       cause instanceof ParseFailureError && cause.failure.kind === "limit"
         ? cause.failure.limit
         : undefined;
-    throw new ArtifactReaderFailure(
-      parserLimit !== undefined || isHostLimitFailure(cause)
-        ? "limit"
-        : "format",
-      `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
-      { cause, ...(parserLimit === undefined ? {} : { parserLimit }) },
-    );
+    const message = `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`;
+    if (parserLimit !== undefined || isHostLimitFailure(cause))
+      throw new ArtifactReaderFailure("limit", message, {
+        cause,
+        ...(parserLimit === undefined ? {} : { parserLimit }),
+      });
+    if (cause instanceof ParseFailureError)
+      throw artifactParseFailure(cause, undefined);
+    throw malformedArtifact("keyed-archive", message, { cause });
   }
 };
 

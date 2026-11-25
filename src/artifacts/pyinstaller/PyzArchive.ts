@@ -63,7 +63,7 @@ const readPyzHeaderFacts = (
 ): Result<PyzHeaderFacts, PyInstallerFailure> => {
   if (!header.subarray(0, 4).equals(PYZ_MAGIC))
     return err(
-      pyInstallerFailure("format", "PYZ archive magic does not match"),
+      pyInstallerFailure("malformed", "PYZ archive magic does not match"),
     );
   const pythonMagic = Buffer.from(header.subarray(4, 8));
   const tocOffset = new BinaryReader(header, false, "pyz").u32(8);
@@ -87,7 +87,7 @@ export const readPyzArchive = async (
 ): Promise<Result<PyzArchive, PyInstallerFailure>> => {
   if (size < PYZ_HEADER_BYTES)
     return err(
-      pyInstallerFailure("format", "PYZ archive magic does not match"),
+      pyInstallerFailure("malformed", "PYZ archive magic does not match"),
     );
   const headerRead = await readPyInstallerBytes(handle, {
     position: start,
@@ -126,7 +126,7 @@ export const readPyzArchive = async (
   );
   if (digest.bytes !== size)
     return err(
-      pyInstallerFailure("format", "PYZ image extends outside the file"),
+      pyInstallerFailure("malformed", "PYZ image extends outside the file"),
     );
   return parsePyzParts(header, table, digest.sha256);
 };
@@ -148,13 +148,13 @@ const parsePyzParts = (
   if (header.tableBytes === null)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table of contents is outside the archive",
       ),
     );
   const marshalled = readMarshalSubset(table);
   if (!marshalled.ok) {
-    if (marshalled.error.reason !== "format") return marshalled;
+    if (marshalled.error.reason !== "malformed") return marshalled;
     return ok({
       kind: "opaque",
       pythonMagic,
@@ -165,7 +165,7 @@ const parsePyzParts = (
   }
   const entries = pyzEntries(marshalled.value, tocOffset, table.length);
   if (!entries.ok)
-    return entries.error.reason === "format"
+    return entries.error.reason === "malformed"
       ? ok({
           kind: "opaque",
           pythonMagic,
@@ -196,7 +196,7 @@ const pyzEntries = (
 ): Result<readonly PyzEntry[], PyInstallerFailure> => {
   if (!Array.isArray(value))
     return err(
-      pyInstallerFailure("format", "PYZ table of contents is not a list"),
+      pyInstallerFailure("malformed", "PYZ table of contents is not a list"),
     );
   const entries: PyzEntry[] = [];
   const nameByteBudget = tableBytes * 2;
@@ -225,7 +225,7 @@ const onePyzEntry = (
   if (!Array.isArray(item) || item.length !== 2)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table entry is not a name and position pair",
       ),
     );
@@ -237,7 +237,7 @@ const onePyzEntry = (
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table entry is not a name, type, offset, and length",
       ),
     );
@@ -249,7 +249,7 @@ const onePyzEntry = (
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "PYZ table entry positions are not integers",
       ),
     );
@@ -257,14 +257,14 @@ const onePyzEntry = (
   if (role === undefined)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `PYZ table entry type ${String(typeCode)} is not a known module, package, data, or namespace code`,
       ),
     );
   if (role !== "namespace" && length === 0)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `PYZ entry at table index ${String(index)} has no compressed bytes`,
       ),
     );

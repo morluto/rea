@@ -115,7 +115,7 @@ it("rejects a truncated length and a mismatched closing marker as malformed", as
   await expect(
     parseDenoSectionBytes(buildDenoSection({ metadataLength: 1_000_000 })),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("overruns"),
   });
   await expect(
@@ -123,7 +123,7 @@ it("rejects a truncated length and a mismatched closing marker as malformed", as
       buildDenoSection({ closingMagic: Buffer.from("xxxxxxxx") }),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("closing marker"),
   });
 });
@@ -197,7 +197,7 @@ it.each([
     const read = async (offset: number, length: number) =>
       bytes.subarray(offset, offset + length);
     await expect(parseDenoSection(bytes.length, read)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(`${field} length overruns`),
     });
     // The same body could fit at this logical section size. The selected
@@ -232,7 +232,7 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
       }),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringContaining("duplicate specifier id"),
   });
 });
@@ -293,11 +293,11 @@ it.each([false, true])(
       );
     };
     await expect(parseShort(1)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/duplicate redirect specifier id 1/iu),
     });
     await expect(parseShort(2)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(
         physicalEof ? /section read was short/iu : /overruns the section/iu,
       ),
@@ -316,7 +316,7 @@ it("keeps the redirect count allowance and rejects duplicate IDs across batches"
   await expect(
     parseDenoSectionBytes(redirectSection([...sources, 0])),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/duplicate redirect specifier id 0/iu),
   });
 });

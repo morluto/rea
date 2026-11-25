@@ -92,13 +92,13 @@ def inspect_elf(path, cache):
     if length < 4 or content[:4] != b"\x7fELF":
         raise LayoutFailure("format", "Selected object does not contain an ELF header.")
     if length < 16:
-        raise LayoutFailure("format", "Selected ELF identification is truncated.")
+        raise LayoutFailure("truncated", "Selected ELF identification is truncated.")
     if content[4] not in (1, 2) or content[5] not in (1, 2):
         raise LayoutFailure("unsupported-target", "Selected ELF declares an unknown class or byte order.")
     bits, header_size = (32, 52) if content[4] == 1 else (64, 64)
     order = "little" if content[5] == 1 else "big"
     if length < header_size:
-        raise LayoutFailure("format", f"Selected ELF{bits} header is truncated.")
+        raise LayoutFailure("truncated", f"Selected ELF{bits} header is truncated.")
     profile = (int.from_bytes(content[18:20], order), bits, order)
     if profile not in PROFILES:
         raise LayoutFailure("unsupported-target", PROFILE_SCOPE)

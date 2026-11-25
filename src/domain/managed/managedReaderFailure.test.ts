@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  AnalysisTargetFailureError,
-  AnalysisUnsupportedTargetError,
-} from "../analysisErrorCore.js";
+import { AnalysisTargetFailureError } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
 import {
@@ -65,8 +62,16 @@ describe("managedInspectionTargetFailure", () => {
         PATH,
         managedFailure(code, "metadata.tables", "a newer layout"),
       );
-      expect(failure).toBeInstanceOf(AnalysisUnsupportedTargetError);
-      expect(failure).toMatchObject({ path: PATH, reason: "a newer layout" });
+      expect(failure).toBeInstanceOf(AnalysisTargetFailureError);
+      expect(failure).toMatchObject({
+        path: PATH,
+        failure: {
+          kind: "unsupported",
+          format: "pe-cli",
+          field: "metadata.tables",
+          detail: "a newer layout",
+        },
+      });
     },
   );
 
@@ -88,7 +93,7 @@ describe("managedInspectionTargetFailure", () => {
         managedFailure(code, "metadata.tables", "detail"),
       );
       // Only a broken rule is malformed in both the inventory and a refusal.
-      expect(refusal instanceof AnalysisTargetFailureError).toBe(
+      expect(refusal?.failure.kind === "malformed").toBe(
         status === "malformed",
       );
     },

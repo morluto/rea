@@ -3,6 +3,7 @@ import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.j
 import { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "../resources/index.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,
@@ -157,8 +158,7 @@ export const readValidatedAsarEntry = (
           if (next.done) break;
           const chunk: unknown = next.value;
           if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array))
-            throw new ArtifactReaderFailure(
-              "format",
+            throw invariantViolation(
               `ASAR entry did not return bytes: ${entryPath}`,
             );
           const coverage = source.readCoverage();

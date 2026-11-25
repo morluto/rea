@@ -374,6 +374,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         const chunk =
           plain === undefined
             ? await readArtifactFileBytes(
+                "unityfs",
                 handle,
                 this.#dataStart + block.compressedStart + offset,
                 size,
@@ -409,6 +410,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
     this.#reserveMemberRead();
     this.#decodeBytes.charge(block.uncompressedSize, exhausted);
     const encoded = await readArtifactFileBytes(
+      "unityfs",
       handle,
       this.#dataStart + block.compressedStart,
       block.compressedSize,

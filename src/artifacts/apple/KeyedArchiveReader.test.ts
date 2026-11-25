@@ -680,7 +680,7 @@ describe("binary keyed archive invalid dates", () => {
         }),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(decodeFailure.message),
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
