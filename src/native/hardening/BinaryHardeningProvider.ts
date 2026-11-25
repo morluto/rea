@@ -76,12 +76,6 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
-            const source = {
-              size: handle.size,
-              prefix: handle.prefix,
-              readRange: (offset: number, length: number) =>
-                handle.readRange(offset, length),
-            };
             const artifact = {
               path: input.path,
               sha256: handle.sha256,
@@ -92,7 +86,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
                 artifact,
                 format: "elf" as const,
                 images: [
-                  await readElfHardeningFromHandle(source, options?.signal),
+                  await readElfHardeningFromHandle(handle, options?.signal),
                 ],
                 limitations: [...BINARY_HARDENING_LIMITATIONS],
               };
@@ -102,7 +96,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
                 format: "pe" as const,
                 images: [
                   await readPeHardeningFromHandle(
-                    source,
+                    handle,
                     artifact,
                     options?.signal,
                   ),
@@ -113,7 +107,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
               artifact,
               format: "mach-o" as const,
               images: await readMachoHardeningFromHandle(
-                source,
+                handle,
                 options?.signal,
               ),
               limitations: [...BINARY_HARDENING_LIMITATIONS],
