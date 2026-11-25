@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createGoBinaryService } from "../composition/go.js";
 import { GO_TOOL_CONTRACTS } from "../contracts/go/goToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Resolve caller paths and inspect static build metadata through the shared workflow. */

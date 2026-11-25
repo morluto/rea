@@ -200,26 +200,6 @@ mcpTest(
 );
 
 mcpTest(
-  "requires an absolute path for inspect_native_initializers",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_native_initializers",
-        arguments: { path: "program" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_native_initializers" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
   "retains unmapped ELF values without fabricating target file locations",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);

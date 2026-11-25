@@ -124,9 +124,8 @@ export interface DoctorHost {
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
-  validTarget(path: string): Promise<boolean>;
-  /** Route-specific target admission details, when supplied by the host. */
-  inspectTarget?(path: string): Promise<DoctorCheck>;
+  /** Route-specific target admission details from the host. */
+  inspectTarget(path: string): Promise<DoctorCheck>;
   executable(path: string): Promise<boolean>;
   inspectLinuxHopper(
     path: string,
@@ -192,7 +191,11 @@ export interface DoctorReport {
   readonly healthy: boolean;
   readonly environment_healthy: boolean;
   readonly scope: DoctorScopeReport;
-  readonly scope_checks: readonly DoctorCheck[];
+  /**
+   * Checks that decide `healthy` in an explicit scope. Absent in audit-wide
+   * mode, where every check in `checks` is in scope.
+   */
+  readonly scope_checks?: readonly DoctorCheck[];
   readonly informational_checks: readonly DoctorCheck[];
   readonly hopperPath?: string;
   readonly staticProviderSettings?: StaticDoctorProviderSettings;
@@ -348,7 +351,9 @@ const inspectDoctor = async (
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
     environment_healthy: environmentHealthy,
     scope,
-    scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
+    ...(scope.mode === "audit-wide"
+      ? {}
+      : { scope_checks: scoped.scopeChecks }),
     informational_checks:
       scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
@@ -491,7 +496,9 @@ const doctorReportWithCleanup = (
     healthy: false,
     environment_healthy: false,
     checks: [...report.checks, check],
-    scope_checks: [...report.scope_checks, check],
+    ...(report.scope_checks === undefined
+      ? {}
+      : { scope_checks: [...report.scope_checks, check] }),
   };
 };
 
@@ -989,15 +996,6 @@ export const systemDoctorHost = (
     macosVersion: () =>
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: () => readLinuxDistribution(architecture),
-    async validTarget(path) {
-      const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
-      return (
-        await parseBinaryTarget(path, {
-          cwd: process.cwd(),
-          hostArchitecture: architecture,
-        })
-      ).ok;
-    },
     async inspectTarget(path) {
       const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
       const result = await parseBinaryTarget(path, {

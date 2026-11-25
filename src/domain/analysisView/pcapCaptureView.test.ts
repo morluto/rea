@@ -1,7 +1,10 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createEvidence } from "../evidence.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
+import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import type { AnalysisViewRequest } from "./analysisViewRequest.js";
 
 const capture = (
   tsharkStderr: string,
@@ -190,3 +193,100 @@ it.each([
     });
   },
 );
+
+it("caches sealed pcap parents and matches query_index and query_labels_hex parity", () => {
+  const queries = [
+    {
+      query: "a.b",
+      query_labels_hex: ["612e62"],
+      response_addresses: ["192.0.2.1"],
+      response_address_count: 1,
+    },
+    {
+      query: "a.b",
+      query_labels_hex: ["61", "62"],
+      response_addresses: ["192.0.2.2"],
+      response_address_count: 1,
+    },
+    {
+      query: "unique.example",
+      query_labels_hex: null,
+      response_addresses: ["192.0.2.3"],
+      response_address_count: 1,
+    },
+  ];
+  const unsealed = capture("", queries);
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(
+      structuredClone(unsealed.normalizedResult) as Record<string, never>,
+    ),
+  };
+  const parseSpy = vi.spyOn(
+    pcapResultSchemas.inspect_pcap_capture,
+    "safeParse",
+  );
+  try {
+    const views: AnalysisViewRequest[] = [
+      { kind: "summary" },
+      {
+        kind: "pcap",
+        facet: "dns-addresses",
+        query: "a.b",
+        query_index: 1,
+        offset: 0,
+        limit: 64,
+      },
+      {
+        kind: "pcap",
+        facet: "dns-addresses",
+        query: "a.b",
+        query_index: 1,
+        query_labels_hex: ["61", "62"],
+        offset: 0,
+        limit: 64,
+      },
+      {
+        kind: "pcap",
+        facet: "dns-addresses",
+        query: "a.b",
+        query_index: 0,
+        query_labels_hex: ["61", "62"],
+        offset: 0,
+        limit: 64,
+      },
+      {
+        kind: "pcap",
+        facet: "dns-addresses",
+        query: "a.b",
+        query_index: 99,
+        offset: 0,
+        limit: 64,
+      },
+      {
+        kind: "pcap",
+        facet: "dns-addresses",
+        query: "unique.example",
+        query_labels_hex: null,
+        offset: 0,
+        limit: 64,
+      },
+    ];
+
+    const sealedResults = views.map((view) =>
+      projectAnalysisView(sealed, view),
+    );
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    for (const [index, view] of views.entries()) {
+      const sealedResult = sealedResults[index]!;
+      const unsealedResult = projectAnalysisView(unsealed, view);
+      expect(sealedResult.ok).toBe(unsealedResult.ok);
+      if (sealedResult.ok && unsealedResult.ok)
+        expect(sealedResult.value).toEqual(unsealedResult.value);
+    }
+    expect(parseSpy).toHaveBeenCalledTimes(1 + views.length);
+  } finally {
+    parseSpy.mockRestore();
+  }
+});

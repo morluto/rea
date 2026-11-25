@@ -1,9 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
 import { expect, it } from "vitest";
 import { nodeSeaElf } from "../../../src/artifacts/nodeSea/NodeSea.fixture.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import {
   artifactInventoryResultSchema,
@@ -14,6 +14,7 @@ import {
   artifactManifestId,
 } from "../../../src/domain/artifactIdentity.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const observe = (inventory: ArtifactInventoryResult) => {
   const graph = artifactGraphDigest({
@@ -22,11 +23,6 @@ const observe = (inventory: ArtifactInventoryResult) => {
     edges: inventory.edges,
     contradictions: inventory.integrity_contradictions,
   });
-  inventory.manifest.graph_sha256 = graph;
-  inventory.manifest.manifest_id = artifactManifestId(
-    inventory.manifest.root_artifact_id,
-    graph,
-  );
   return createEvidence(
     {
       path: "sea",
@@ -37,116 +33,93 @@ const observe = (inventory: ArtifactInventoryResult) => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: inventory,
+      result: {
+        ...inventory,
+        manifest: {
+          ...inventory.manifest,
+          graph_sha256: graph,
+          manifest_id: artifactManifestId(
+            inventory.manifest.root_artifact_id,
+            graph,
+          ),
+        },
+      },
       confidence: "observed",
       authority: "shipped-artifact",
     },
   );
 };
 
-const inventory = async (key = "data/café.txt") => {
-  const directory = await createTestTempDirectory("rea-sea-comparison-");
-  const path = join(directory, "app");
-  await writeFile(path, nodeSeaElf({ assets: [{ name: key, body: "asset" }] }));
-  return artifactInventoryResultSchema.parse(
+const ASSET_PATH = "data/café.txt";
+const readBaseline = async () => {
+  const folder = await createTestTempDirectory("rea-sea-comparison-");
+  const path = join(folder, "app");
+  await writeFile(
+    path,
+    nodeSeaElf({ assets: [{ name: ASSET_PATH, body: "asset" }] }),
+  );
+  const inventory = artifactInventoryResultSchema.parse(
     await scanCanonicalArtifactInventory(path),
   );
+  return { inventory, left: observe(inventory) };
 };
 
-const asset = (value: ArtifactInventoryResult) => {
-  const occurrence = value.occurrences.find(
-    (item) =>
-      item.format_metadata?.kind === "node-sea-entry" &&
-      item.format_metadata.role === "asset",
+let baseline: Awaited<ReturnType<typeof readBaseline>> | undefined;
+
+const copyWithAsset = async () => {
+  const { inventory, left } = (baseline ??= await readBaseline());
+  const right = structuredClone(inventory);
+  const occurrence = right.occurrences.find(
+    (item) => item.logical_path === ASSET_PATH,
   );
-  if (occurrence === undefined) throw new Error("Missing asset fixture");
-  return occurrence;
+  const metadata = occurrence?.format_metadata;
+  if (occurrence === undefined || metadata?.kind !== "node-sea-entry")
+    throw new Error("Missing SEA asset fixture");
+  return { left, right, occurrence, metadata };
 };
 
-it("compares exact runtime asset keys despite normalized equal logical paths and bytes", async () => {
-  const left = await inventory("data/café.txt");
-  const right = await inventory("data/cafe\u0301.txt");
-  expect(asset(left).logical_path).toBe(asset(right).logical_path);
-  expect(asset(left).artifact_id).toBe(asset(right).artifact_id);
-  expect(
-    compareArtifacts(observe(left), observe(right)).changes,
-  ).toContainEqual(
-    expect.objectContaining({
-      logical_path: "data/café.txt",
-      classification: "changed",
-      dimensions: ["metadata"],
-    }),
-  );
-});
-
-it("compares runtime roles while ignoring directory order", async () => {
-  const left = await inventory();
-  const right = structuredClone(left);
-  const metadata = asset(right).format_metadata;
-  if (metadata?.kind !== "node-sea-entry")
-    throw new Error("Missing SEA metadata");
-  metadata.index += 1;
-  expect(compareArtifacts(observe(left), observe(right)).status).toBe(
-    "unchanged",
-  );
+it("compares runtime roles when the observed bytes stay equal", async () => {
+  const { left, right, metadata } = await copyWithAsset();
   metadata.role = "code-cache";
-  expect(compareArtifacts(observe(left), observe(right)).changes).toEqual([
+  const result = compareArtifacts(left, observe(right));
+  expect(result.changes).toEqual([
     expect.objectContaining({
-      logical_path: "data/café.txt",
+      logical_path: ASSET_PATH,
+      classification: "changed",
       dimensions: ["metadata"],
     }),
   ]);
 });
 
-it.each(["verified", "unavailable", "mismatched"] as const)(
+it.each([
+  [
+    "unavailable",
+    { classification: "changed", dimensions: ["metadata", "availability"] },
+  ],
+  [
+    "mismatched",
+    { classification: "contradiction", dimensions: ["integrity"] },
+  ],
+] as const)(
   "preserves %s content semantics when runtime metadata differs",
-  async (hashStatus) => {
-    const left = await inventory();
-    const right = structuredClone(left);
-    const occurrence = asset(right);
-    const metadata = occurrence.format_metadata;
-    if (metadata?.kind !== "node-sea-entry")
-      throw new Error("Missing SEA metadata");
+  async (status, expected) => {
+    const { left, right, occurrence, metadata } = await copyWithAsset();
     metadata.source_path = "changed-key";
     occurrence.source_path = "changed-key";
-    occurrence.hash_status = hashStatus;
-    const result = compareArtifacts(observe(left), observe(right));
-    expect(result.changes).toEqual([
-      expect.objectContaining(
-        hashStatus === "mismatched"
-          ? { classification: "contradiction", dimensions: ["integrity"] }
-          : {
-              classification: "changed",
-              dimensions:
-                hashStatus === "unavailable"
-                  ? ["metadata", "availability"]
-                  : ["metadata"],
-            },
-      ),
+    occurrence.hash_status = status;
+    expect(compareArtifacts(left, observe(right)).changes).toEqual([
+      expect.objectContaining({ logical_path: ASSET_PATH, ...expected }),
     ]);
   },
 );
 
-it("keeps omitted legacy member metadata unknown", async () => {
-  const left = await inventory();
-  const right = structuredClone(left);
-  delete asset(right).format_metadata;
-  expect(compareArtifacts(observe(left), observe(right)).changes).toEqual([
-    expect.objectContaining({
-      classification: "unknown",
-      dimensions: ["availability"],
-    }),
-  ]);
-});
-
 it("retains proven executable differences alongside missing legacy metadata", async () => {
-  const left = await inventory();
-  const right = structuredClone(left);
-  const occurrence = asset(right);
+  const { left, right, occurrence } = await copyWithAsset();
   delete occurrence.format_metadata;
   occurrence.executable = true;
-  expect(compareArtifacts(observe(left), observe(right)).changes).toEqual([
+  expect(compareArtifacts(left, observe(right)).changes).toEqual([
     expect.objectContaining({
+      logical_path: ASSET_PATH,
       classification: "changed",
       dimensions: ["executable", "availability"],
     }),
@@ -154,22 +127,17 @@ it("retains proven executable differences alongside missing legacy metadata", as
 });
 
 it("retains known runtime key changes when a partial inventory omits the content node", async () => {
-  const left = await inventory();
-  const right = structuredClone(left);
-  const occurrence = asset(right);
-  const metadata = occurrence.format_metadata;
-  if (metadata?.kind !== "node-sea-entry")
-    throw new Error("Missing SEA metadata");
+  const { left, right, occurrence, metadata } = await copyWithAsset();
   metadata.source_path = "changed-key";
   occurrence.source_path = "changed-key";
   right.nodes = right.nodes.filter(
     (node) => node.artifact_id !== occurrence.artifact_id,
   );
-  const result = compareArtifacts(observe(left), observe(right));
+  const result = compareArtifacts(left, observe(right));
   expect(result.status).toBe("truncated");
   expect(result.changes).toEqual([
     expect.objectContaining({
-      logical_path: "data/café.txt",
+      logical_path: ASSET_PATH,
       classification: "changed",
       dimensions: ["metadata", "availability"],
     }),

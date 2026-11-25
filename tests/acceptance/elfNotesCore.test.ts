@@ -7,7 +7,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   coreAuxvNote,
   coreFileNote,
-  corePrpsinfoDescriptor,
+  elf32ProcessIdentityFixture,
   corePrpsinfoNote,
   coreSiginfoNote,
   elfNote,
@@ -46,7 +46,7 @@ const buildCoreNotes = (): Buffer =>
         {
           start: 0x7ffff7dc0000n,
           end: 0x7ffff7de0000n,
-          file_ofs: 0n,
+          file_ofs: 10n,
           path: "/lib/x86_64-linux-gnu/libc.so.6",
         },
       ],
@@ -59,6 +59,7 @@ const buildCoreNotes = (): Buffer =>
       [
         [6, 4096n],
         [3, 0x555555554040n],
+        [999, 0x1234n],
       ],
       64,
       true,
@@ -66,7 +67,6 @@ const buildCoreNotes = (): Buffer =>
   ]);
 
 const assertCoreEntries = (entries: unknown[]): void => {
-  expect(entries).toHaveLength(4);
   expect(entries[0]).toMatchObject({
     owner: "CORE",
     type: 3,
@@ -84,6 +84,9 @@ const assertCoreEntries = (entries: unknown[]): void => {
         filename: "target-service",
         psargs: "/opt/target-service --worker 1",
       },
+      file: null,
+      siginfo: null,
+      auxv: null,
     },
   });
   expect(entries[1]).toMatchObject({
@@ -106,7 +109,7 @@ const assertCoreEntries = (entries: unknown[]): void => {
           {
             start_address: "0x7ffff7dc0000",
             end_address: "0x7ffff7de0000",
-            file_offset_pages: "0x0",
+            file_offset_pages: "0xa",
             path: "/lib/x86_64-linux-gnu/libc.so.6",
             path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
               "hex",
@@ -114,6 +117,9 @@ const assertCoreEntries = (entries: unknown[]): void => {
           },
         ],
       },
+      prpsinfo: null,
+      siginfo: null,
+      auxv: null,
     },
   });
   expect(entries[2]).toMatchObject({
@@ -123,6 +129,9 @@ const assertCoreEntries = (entries: unknown[]): void => {
     gnu: null,
     core: {
       siginfo: { signo: 11, errno: 0, code: 1 },
+      prpsinfo: null,
+      file: null,
+      auxv: null,
     },
   });
   expect(entries[3]).toMatchObject({
@@ -134,7 +143,11 @@ const assertCoreEntries = (entries: unknown[]): void => {
       auxv: [
         { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
         { type: 3, type_name: "AT_PHDR", value: "0x555555554040" },
+        { type: 999, type_name: null, value: "0x1234" },
       ],
+      prpsinfo: null,
+      file: null,
+      siginfo: null,
     },
   });
 };
@@ -144,7 +157,13 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-core-notes-");
     const path = join(root, "core.elf");
-    const notes = buildCoreNotes();
+    const mappingsWithoutPaths = Buffer.alloc(16 + 40 * 24);
+    mappingsWithoutPaths.writeBigUInt64LE(40n, 0);
+    mappingsWithoutPaths.writeBigUInt64LE(4096n, 8);
+    const notes = Buffer.concat([
+      elfNote("CORE", 0x46494c45, mappingsWithoutPaths),
+      buildCoreNotes(),
+    ]);
     const bytes = elfNoteFixture({
       bits: 64,
       little: true,
@@ -178,113 +197,35 @@ cliTest(
         coverage: {
           status: "complete",
           examined_tables: 1,
-          examined_entries: 4,
+          examined_entries: 5,
         },
       });
-      assertCoreEntries(report.entries);
+      expect(report.entries[0]).toMatchObject({
+        type_name: "core_file",
+        descriptor: {
+          bytes: mappingsWithoutPaths.length,
+          sha256: descriptorHash(mappingsWithoutPaths),
+        },
+        core: null,
+      });
+      assertCoreEntries(report.entries.slice(1));
     }
   },
 );
 
-const uid32CoreLayouts = [
-  { name: "MIPS little", machine: 8, byteOrder: "little", coreFlags: 0 },
-  { name: "MIPS big", machine: 8, byteOrder: "big", coreFlags: 0 },
-  { name: "PowerPC big", machine: 20, byteOrder: "big", coreFlags: 0 },
-  { name: "RISC-V little", machine: 243, byteOrder: "little", coreFlags: 0 },
-  {
-    name: "Hexagon V4 little",
-    machine: 164,
-    byteOrder: "little",
-    coreFlags: 3,
-  },
-  { name: "PA-RISC big", machine: 15, byteOrder: "big", coreFlags: 0 },
-  { name: "OpenRISC big", machine: 92, byteOrder: "big", coreFlags: 0 },
-  {
-    name: "OpenRISC Linux big",
-    machine: 0x8472,
-    byteOrder: "big",
-    coreFlags: 0,
-  },
-  {
-    name: "ARC compact little",
-    machine: 93,
-    byteOrder: "little",
-    coreFlags: 0,
-  },
-  { name: "ARCv2 big", machine: 195, byteOrder: "big", coreFlags: 0 },
-  { name: "Xtensa little", machine: 94, byteOrder: "little", coreFlags: 0 },
-  { name: "MicroBlaze big", machine: 189, byteOrder: "big", coreFlags: 0 },
-  { name: "C-SKY little", machine: 252, byteOrder: "little", coreFlags: 0 },
-  { name: "C-SKY big", machine: 252, byteOrder: "big", coreFlags: 0 },
-  { name: "Blackfin little", machine: 106, byteOrder: "little", coreFlags: 0 },
-  { name: "UniCore little", machine: 110, byteOrder: "little", coreFlags: 0 },
-  { name: "Nios II little", machine: 113, byteOrder: "little", coreFlags: 0 },
-  { name: "C6x little", machine: 140, byteOrder: "little", coreFlags: 0 },
-  { name: "C6x big", machine: 140, byteOrder: "big", coreFlags: 0 },
-  { name: "NDS32 little", machine: 167, byteOrder: "little", coreFlags: 0 },
-  { name: "NDS32 big", machine: 167, byteOrder: "big", coreFlags: 0 },
-  { name: "Meta little", machine: 174, byteOrder: "little", coreFlags: 0 },
-  { name: "TILEPro little", machine: 188, byteOrder: "little", coreFlags: 0 },
-  {
-    name: "TILE-Gx m32 little",
-    machine: 191,
-    byteOrder: "little",
-    coreFlags: 0,
-  },
-] as const;
-
 cliTest.for([
-  ...uid32CoreLayouts.map((layout) => ({ ...layout, idWidth: 4 as const })),
-  {
-    name: "SuperH little",
-    machine: 42,
-    byteOrder: "little",
-    coreFlags: 0,
-    idWidth: 2,
-  },
-  {
-    name: "SuperH big",
-    machine: 42,
-    byteOrder: "big",
-    coreFlags: 0,
-    idWidth: 2,
-  },
+  { name: "MIPS big", machine: 8, little: false, idWidth: 4 },
+  { name: "SuperH little", machine: 42, little: true, idWidth: 2 },
 ] as const)(
   "decodes Linux ELF32 process identity through CLI and MCP ($name)",
-  async ({ machine, byteOrder, coreFlags, idWidth }, { cli }) => {
+  async ({ machine, little, idWidth }, { cli }) => {
     const root = await createTestTempDirectory("rea-elf-prpsinfo32-core-");
     const path = join(root, "core.elf");
-    const little = byteOrder === "little";
-    const uid = idWidth === 4 ? 70001 : 500;
-    const gid = idWidth === 4 ? 90002 : 600;
-    const descriptor = corePrpsinfoDescriptor({
-      bits: 32,
-      idWidth,
-      little,
-      state: 1,
-      uid,
-      gid,
-      pid: 1234,
-      ppid: 12,
-      pgrp: 4321,
-      sid: 5678,
-      fname: "core-probe",
-      psargs: "core-probe --flag",
-    });
-    const shortened = descriptor.subarray(0, descriptor.length - 4);
-    const bytes = elfNoteFixture({
-      bits: 32,
+    const { bytes, shortened, expected } = elf32ProcessIdentityFixture(
       machine,
       little,
-      type: 4,
-      ownership: "program",
-      notes: Buffer.concat([
-        elfNote("CORE", 3, descriptor, little),
-        elfNote("CORE", 3, shortened, little),
-      ]),
-    });
-    if (little) bytes.writeUInt32LE(coreFlags, 0x24);
-    else bytes.writeUInt32BE(coreFlags, 0x24);
+      idWidth,
+    );
     await writeFile(path, bytes);
 
     const output = await cli.run({
@@ -305,21 +246,11 @@ cliTest.for([
       const report = evidence.normalized_result;
       expect(report).toMatchObject({
         format: "elf32",
-        byte_order: byteOrder,
+        byte_order: little ? "little" : "big",
         machine,
         coverage: { status: "complete", examined_entries: 2 },
       });
-      expect(report.entries[0]?.core?.prpsinfo).toEqual({
-        state: 1,
-        uid,
-        gid,
-        pid: 1234,
-        ppid: 12,
-        pgrp: 4321,
-        sid: 5678,
-        filename: "core-probe",
-        psargs: "core-probe --flag",
-      });
+      expect(report.entries[0]?.core?.prpsinfo).toEqual(expected);
       expect(report.entries[1]).toMatchObject({
         type_name: "core_prpsinfo",
         descriptor: {

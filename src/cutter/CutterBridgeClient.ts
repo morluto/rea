@@ -158,7 +158,7 @@ const serializeRequest = (
     throw bridgeRequestOversizeError(
       "cutter_command",
       limit,
-      measured,
+      { bytesAtLeast: measured },
       "Cutter",
     );
   const requestBytes = JSON.stringify(requestValue);
@@ -1018,6 +1018,7 @@ export class CutterBridgeClient {
                 const bytes = await readBoundedFileBytes(
                   file,
                   MAX_DESCRIPTOR_BYTES,
+                  { expectedSize: info.size },
                 );
                 assertArtifactReadActive(signal);
                 return bytes;

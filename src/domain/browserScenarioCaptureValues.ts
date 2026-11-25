@@ -452,7 +452,7 @@ const browserScenarioStepShape = {
   artifacts: browserStepArtifactsSchema,
   completeness: browserScenarioCompletenessSchema,
 };
-export const browserScenarioStepSchema = z.union([
+export const browserScenarioStepSchema = z.discriminatedUnion("status", [
   z.strictObject({
     ...browserScenarioStepShape,
     status: z.literal("completed"),

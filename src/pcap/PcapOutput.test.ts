@@ -3,7 +3,12 @@ import { dnsResponseLayers } from "../../tests/fixtures/pcap/pcapTestTools.js";
 import { expect, it } from "vitest";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
+import {
+  finalizeTsharkWithDns,
+  parseCapinfosOutput,
+  parseTsharkJsonOutput,
+  prepareTsharkBaseOutput,
+} from "./PcapOutput.js";
 
 const capture = (layers: ReadonlyArray<Record<string, unknown>>) =>
   JSON.stringify(
@@ -529,4 +534,115 @@ it("preserves selected occurrences omitted by a partial DNS message pass", async
   expect(result.unattributedDnsPackets).toBe(1);
   expect(result.partial).toBe(true);
   expect(result.dnsLimitations.join(" ")).toContain("occurrences");
+});
+
+it("still reconciles selected DNS facts when embedded messages report unattributed addresses", async () => {
+  const base = capture([
+    {
+      "dns.qry.name": ["tree.example", "missing.example"],
+      "dns.a": ["192.0.2.1", "192.0.2.2"],
+    },
+  ]);
+  const tree = JSON.stringify([
+    {
+      _source: {
+        layers: {
+          frame: { "frame.number": "1" },
+          dns: {
+            Queries: { question: { "dns.qry.name": "tree.example" } },
+            Answers: { answer: { "dns.a": "192.0.2.1" } },
+          },
+        },
+      },
+    },
+  ]);
+  const expectedQueries = [
+    {
+      query: "tree.example",
+      query_labels_hex: null,
+      response_addresses: [],
+      response_address_count: 0,
+    },
+    {
+      query: "missing.example",
+      query_labels_hex: null,
+      response_addresses: [],
+      response_address_count: 0,
+    },
+  ];
+  for (const result of [
+    await parseTsharkJsonOutput(base, undefined, tree),
+    await finalizeTsharkWithDns(await prepareTsharkBaseOutput(base), tree),
+  ]) {
+    expect(result.dnsQueries).toEqual(expectedQueries);
+    expect(result.unattributedDnsAddresses).toEqual(["192.0.2.1", "192.0.2.2"]);
+    expect(result.unattributedDnsPackets).toBe(1);
+    expect(result.partial).toBe(true);
+  }
+});
+
+it("handles unique HTTP request targets beyond the cache limit without dropping resolution checks", async () => {
+  const packets = Array.from({ length: 1100 }, (_, index) => ({
+    "http.request.uri": [`http://example.test/u/${String(index)}`],
+    "http.request.full_uri": [`http://example.test/u/${String(index)}`],
+  }));
+  packets.push({
+    "http.request.uri": ["relative-without-slash"],
+    "http.request.full_uri": [],
+  });
+  const result = await parseTsharkJsonOutput(capture(packets));
+  expect(result.httpRequestUriCount).toBe(1100);
+  expect(result.partial).toBe(true);
+});
+
+it("reports hasDnsProtocol only when base dissection sees DNS, mDNS, or LLMNR traffic or fields", async () => {
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([{ "frame.protocols": ["eth:ethertype:ip:tcp:tls"] }]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(false);
+  for (const stack of [
+    "eth:ethertype:ip:udp:dns",
+    "eth:ethertype:ip:udp:mdns",
+    "eth:ethertype:ip:udp:llmnr",
+  ]) {
+    expect(
+      (await prepareTsharkBaseOutput(capture([{ "frame.protocols": [stack] }])))
+        .hasDnsProtocol,
+    ).toBe(true);
+  }
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([
+          {
+            "frame.protocols": ["eth:ethertype:ip:udp"],
+            "dns.qry.name": ["example.com"],
+          },
+        ]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(true);
+});
+
+it("refuses tshark JSON above producer_limits.output_bytes and admits it when raised", async () => {
+  const text = capture([{ "ip.src": ["192.0.2.1"] }]);
+  await expect(
+    parseTsharkJsonOutput(text, undefined, undefined, text.length - 1),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: undefined,
+    limit: {
+      control_kind: "parameter",
+      parameter: "producer_limits.output_bytes",
+      effective_value: text.length - 1,
+      maximum: 128 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
+    },
+  });
+  await expect(
+    parseTsharkJsonOutput(text, undefined, undefined, text.length),
+  ).resolves.toMatchObject({ endpointCount: 1 });
 });

@@ -5,9 +5,10 @@ import {
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
-  AnalysisUnsupportedTargetError,
   isAborted,
   cancelledBy,
+  AnalysisTargetFailureError,
+  targetFailureOfKind,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
@@ -71,8 +72,13 @@ export const evaluateAnalysisProviderCandidate = async (
     return err(resolved.error);
   if (!resolved.ok) {
     const error = resolved.error;
+    const unsupported = targetFailureOfKind(
+      error,
+      "unsupported",
+      "unrecognized",
+    );
     const rejection =
-      error instanceof AnalysisUnsupportedTargetError
+      unsupported !== undefined && error instanceof AnalysisTargetFailureError
         ? {
             candidate,
             status: withCandidateRejections({
@@ -80,7 +86,7 @@ export const evaluateAnalysisProviderCandidate = async (
               targetSupport: {
                 status: "unsupported" as const,
                 code: "target_format_unsupported" as const,
-                reason: error.reason,
+                reason: unsupported.detail,
                 diagnostics: { path: error.path, error_tag: error._tag },
               },
             }),
