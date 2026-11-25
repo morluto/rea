@@ -487,6 +487,7 @@
 * **ci:** resolve test snapshot blobs in one tree walk ([#14334](https://github.com/morluto/rea/issues/14334)) ([73c1689](https://github.com/morluto/rea/commit/73c1689aefeabd29d235f8d4341d71f1d3316544))
 * **ci:** reuse installed website rendering packages ([#14337](https://github.com/morluto/rea/issues/14337)) ([1e1db9e](https://github.com/morluto/rea/commit/1e1db9e342ad13d26c27f34af8a2d7a5648387c9))
 * **ci:** run scheduled full qualification every six hours ([#14374](https://github.com/morluto/rea/issues/14374)) ([14b9167](https://github.com/morluto/rea/commit/14b916795c9c80ba46109bdb0ea6b9aafe5daf44))
+* **ci:** skip ancestor lookup for reused scheduled runs ([#14431](https://github.com/morluto/rea/issues/14431)) ([079f426](https://github.com/morluto/rea/commit/079f426eb57f354cdd6034fa93f90a6cf6031f7a))
 * **ci:** skip the portable report runner for non-code changes ([#14333](https://github.com/morluto/rea/issues/14333)) ([7e16cb3](https://github.com/morluto/rea/commit/7e16cb3600489aedb28bffd3e79d9e21c75b1c7b))
 * **ci:** trace fixed-ceiling baselines and owned bridge sources in PR test selection ([#14375](https://github.com/morluto/rea/issues/14375)) ([229ba77](https://github.com/morluto/rea/commit/229ba77b1aa552192ab7b714c93bb3313f130392))
 * **ci:** warm caches on main push and run scheduled fast main sweeps ([#14383](https://github.com/morluto/rea/issues/14383)) ([c718143](https://github.com/morluto/rea/commit/c718143643658c81b3d0c1ed4f60b43ce680eed0))
