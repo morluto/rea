@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
@@ -329,4 +330,60 @@ it("delivers an over-budget partial observation as its summary on the CLI, with 
   expect(fitting).toEqual(
     projectAnalysisError(stoppedWith(small, "inspect_byte_entropy")),
   );
+});
+
+it("keeps the paging call when a summarized partial's bundle commits but its cleanup fails", async () => {
+  const large = await entropyEvidence(1024 * 1024);
+  const root = await createTestTempDirectory("rea-partial-budget-committed-");
+  const bundle = join(root, "evidence.json");
+  // Every removal of this bundle's staging directory fails, after the
+  // bundle itself is committed.
+  const fs = createRequire(import.meta.url)("node:fs/promises") as {
+    rmdir: (...arguments_: unknown[]) => Promise<void>;
+  };
+  const rmdir = fs.rmdir;
+  fs.rmdir = async (...arguments_: unknown[]) => {
+    if (String(arguments_[0]).startsWith(root))
+      throw Object.assign(new Error("injected staging cleanup failure"), {
+        code: "EBUSY",
+      });
+    return rmdir(...arguments_);
+  };
+  syncBuiltinESMExports();
+  let failure: Failure;
+  try {
+    failure = (await publishCliAnalysisEvidence(
+      {
+        ok: false,
+        error: projectAnalysisError(
+          stoppedWith(large, "inspect_byte_entropy"),
+        ) as unknown as JsonValue,
+      },
+      {
+        operation: "inspect_byte_entropy",
+        signal: new AbortController().signal,
+        detail: undefined,
+        evidenceOutput: bundle,
+      },
+    )) as unknown as Failure;
+  } finally {
+    fs.rmdir = rmdir;
+    syncBuiltinESMExports();
+  }
+  expect(failure).toMatchObject({ code: "cleanup_incomplete" });
+  expect(parseEvidence(failure.details.partial_observation).operation).toBe(
+    "inspect_analysis_view",
+  );
+  expect(failure.details[PARTIAL_OBSERVATION_DELIVERY]).toMatchObject({
+    evidence_id: large.evidence_id,
+    next: {
+      arguments: {
+        source: {
+          kind: "evidence-file",
+          path: bundle,
+          evidence_id: large.evidence_id,
+        },
+      },
+    },
+  });
 });

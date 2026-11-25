@@ -539,27 +539,37 @@ const publishFailurePartialEvidence = async (
     input,
     overBudget !== undefined,
   );
+  // Where a budgeted summary's complete partial Evidence is: the bundle.
+  const outputPath = absoluteCallerPath(evidenceOutput);
+  const bundleDelivery = (): JsonValue | undefined =>
+    overBudget === undefined
+      ? undefined
+      : deliveryJson(
+          overBudget({
+            kind: "evidence-file",
+            path: revealsSensitiveValue(outputPath, input)
+              ? undefined
+              : outputPath,
+          }),
+        );
   if (!published.ok) {
+    // A committed bundle holds the complete partial even when a later step
+    // failed, so a summary delivered with it keeps its paging call.
+    const summarized =
+      published.error.delivered !== undefined &&
+      published.error.delivered.evidence_id !== partial.evidence_id;
     const refusal = refusedPartialPublication(
       failure,
       details,
       published.error,
       input,
+      summarized ? bundleDelivery() : undefined,
     );
     return published.error.committed
       ? refusal
       : withUndeliveredSourceClosure(refusal, input);
   }
-  const outputPath = absoluteCallerPath(evidenceOutput);
-  const delivery =
-    published.value.budgeted && overBudget !== undefined
-      ? overBudget({
-          kind: "evidence-file",
-          path: revealsSensitiveValue(outputPath, input)
-            ? undefined
-            : outputPath,
-        })
-      : undefined;
+  const delivery = published.value.budgeted ? bundleDelivery() : undefined;
   return {
     ...failure,
     details: {
@@ -567,7 +577,7 @@ const publishFailurePartialEvidence = async (
       partial_observation: published.value.delivered,
       ...(delivery === undefined
         ? {}
-        : { [PARTIAL_OBSERVATION_DELIVERY]: deliveryJson(delivery) }),
+        : { [PARTIAL_OBSERVATION_DELIVERY]: delivery }),
       diagnostics: { ...diagnostics, evidence_bundle: published.value.receipt },
     },
   };
@@ -590,6 +600,8 @@ const refusedPartialPublication = (
   details: JsonObject,
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
   input: CliEvidencePublication,
+  /** Delivery facts for a budgeted summary that replaced the partial. */
+  delivery?: JsonValue,
 ): JsonValue => {
   const diagnostics = isObject(details.diagnostics) ? details.diagnostics : {};
   const refusal = projectAnalysisError(
@@ -619,7 +631,12 @@ const refusedPartialPublication = (
         : {}),
       ...(receipt === undefined || refused.delivered === undefined
         ? {}
-        : { partial_observation: refused.delivered }),
+        : {
+            partial_observation: refused.delivered,
+            ...(delivery === undefined
+              ? {}
+              : { [PARTIAL_OBSERVATION_DELIVERY]: delivery }),
+          }),
       diagnostics: {
         ...diagnostics,
         ...(receipt === undefined ? {} : { evidence_bundle: receipt }),

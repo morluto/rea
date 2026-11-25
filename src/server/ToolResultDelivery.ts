@@ -571,7 +571,8 @@ export class ToolResultDelivery {
         const content = { error: compact };
         const compactEncoded = encodeToolResult(
           content,
-          this.resultBudgetBytes,
+          // The link is appended to whichever encoding is kept.
+          this.resultBudgetBytes - linkBytes,
           "error-text",
           targetContent,
         );

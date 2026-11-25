@@ -317,3 +317,43 @@ it("links the complete record only when one read can fit the frame, and refuses 
     }),
   );
 });
+
+it("keeps a partial observation's link within the frame when another observation is compacted away", async () => {
+  const evidence = await largeEntropyEvidence();
+  const ledger = new EvidenceLedger();
+  // One read of the partial fits this frame; the other observation does not.
+  const delivery = new ToolResultDelivery(1024 * 1024);
+  const request = new McpToolRequest(1, contract.name);
+  request.deliverySelection = {
+    detail: undefined,
+    pageable: true,
+    record: (value) => ledger.record(value),
+  };
+  const result = runMcpToolRequest(request, () =>
+    delivery.toErrorToolResult(
+      new AnalysisResourceConstraintError(
+        contract.name,
+        "capacity",
+        "The fixture stopped after completing its observation.",
+        null,
+        { partialObservation: evidence },
+      ),
+      false,
+      // Too large for the frame, so the encoding retries without it.
+      {
+        completed_observation: {
+          kind: "unretained-evidence",
+          evidence: { filler: "x".repeat(2 * 1024 * 1024) },
+        },
+      },
+    ),
+  );
+  expect(result.content.map(({ type }) => type)).toEqual([
+    "text",
+    "resource_link",
+  ]);
+  const { structuredContent: _carrier, ...wire } = result;
+  expect(
+    measureMcpResultWithinBudget(wire, delivery.resultBudgetBytes).ok,
+  ).toBe(true);
+});
