@@ -347,7 +347,7 @@ export class TarArtifactReader implements ArtifactReader {
         }
       } catch (cause: unknown) {
         if (cause instanceof TarStreamEnded)
-          throw new ArtifactReaderFailure("integrity", cause.detail, {
+          throw new ArtifactReaderFailure("integrity", cause.message, {
             integrityCheck: "declared-size",
             cause,
           });
