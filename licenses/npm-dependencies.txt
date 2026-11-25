@@ -2865,11 +2865,11 @@ isexe@2.0.0 | runtime | ISC
   Package: https://www.npmjs.com/package/isexe/v/2.0.0
   Archive: https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz
   Integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==
-isomorphic-git@1.44.15 | runtime | MIT
+isomorphic-git@1.44.16 | runtime | MIT
   Lockfile path: node_modules/isomorphic-git
-  Package: https://www.npmjs.com/package/isomorphic-git/v/1.44.15
-  Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.15.tgz
-  Integrity: sha512-jm7drCsGNOuyAKCKiZ9n0WtGImsEjfTbms0HxLHJF3H8A+luGSerLnVFeAo/gADjF8PrdLzmO/p2G/0IqjNwig==
+  Package: https://www.npmjs.com/package/isomorphic-git/v/1.44.16
+  Archive: https://registry.npmjs.org/isomorphic-git/-/isomorphic-git-1.44.16.tgz
+  Integrity: sha512-ejYi++i9TdYwJoypfdNWEWQgltDqlDgvX9yX/QKa9ZSvny9iFwFXw0KgAqYxWHRqFsCacmJPiNtErfgaoq6W+Q==
 ignore@5.3.2 | runtime | MIT
   Lockfile path: node_modules/isomorphic-git/node_modules/ignore
   Package: https://www.npmjs.com/package/ignore/v/5.3.2
