@@ -813,6 +813,7 @@
 * **ghidra:** require an owned committed project copy ([#13363](https://github.com/morluto/rea/issues/13363)) ([fb6e0dc](https://github.com/morluto/rea/commit/fb6e0dc6e8558fea2931cdfb7280854c0cfbca6c))
 * **go:** consolidate native parser checks on positional reads ([#14027](https://github.com/morluto/rea/issues/14027)) ([68cc2b9](https://github.com/morluto/rea/commit/68cc2b9bb07cf118cad6cb59ec75d31406ab8dc1))
 * **hopper:** compose bridge image cleanup through the shared owner ([3ba20f0](https://github.com/morluto/rea/commit/3ba20f0eb8387c2eede14249a32c86ba15fef294)), refs [#11859](https://github.com/morluto/rea/issues/11859)
+* **indexes:** share ordered map bucket appends ([8da1e56](https://github.com/morluto/rea/commit/8da1e562775eced153123b32cdace52c8030ef19))
 * **inspector:** compose provider close failures through the shared owner ([a5f3689](https://github.com/morluto/rea/commit/a5f36891793f2a901326f7443d177ff9e277065d)), refs [#11859](https://github.com/morluto/rea/issues/11859)
 * **inspector:** own the Node discovery path rule in one module ([#10680](https://github.com/morluto/rea/issues/10680)) ([559956c](https://github.com/morluto/rea/commit/559956cf6b5db2677aa4f8b4f34ee67b8038f4d8))
 * **investigation:** build comparison unknowns in their owning function ([#14335](https://github.com/morluto/rea/issues/14335)) ([c2c4298](https://github.com/morluto/rea/commit/c2c4298f3ca4a2a02028cc1d11cfc9316491e14f))
@@ -905,6 +906,7 @@
 * **views:** share fixed page budget errors ([#14479](https://github.com/morluto/rea/issues/14479)) ([a2fd2d7](https://github.com/morluto/rea/commit/a2fd2d7d3045951ee684b6612294495d9c4f7435))
 * **views:** share invalid parent subject errors ([#14505](https://github.com/morluto/rea/issues/14505)) ([59a0ed3](https://github.com/morluto/rea/commit/59a0ed33fb5dad9b6bcce3e7f318350d88fbc78c))
 * **web:** remove the superseded single-query module matcher ([#14319](https://github.com/morluto/rea/issues/14319)) ([ab96130](https://github.com/morluto/rea/commit/ab96130f2277fa8a8571fb4bb4f210b6902acd5b))
+* **web:** reuse the shared map list appender ([#14531](https://github.com/morluto/rea/issues/14531)) ([8da1e56](https://github.com/morluto/rea/commit/8da1e562775eced153123b32cdace52c8030ef19))
 * **xml:** share DOM element traversal helpers in xmlDocument ([#13799](https://github.com/morluto/rea/issues/13799)) ([4b648f2](https://github.com/morluto/rea/commit/4b648f23fd061417a7b0b57e560683e907f83020))
 
 
