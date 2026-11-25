@@ -167,12 +167,11 @@ export const stableArtifactInputFailure = (
   );
 
 const artifactCleanupFailure = (
-  cause: unknown,
+  cause: ArtifactReaderFailure,
   providerId: string,
   operation: string,
 ): ProviderCleanupError | undefined => {
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return undefined;
+  if (cause.cleanup === undefined) return undefined;
   return new ProviderCleanupError(
     providerId,
     cause.cleanup.resources,
@@ -187,6 +186,7 @@ export const projectArtifactCloseFailure = (
   providerId: string,
   operation: string,
 ): unknown => {
+  if (!(cause instanceof ArtifactReaderFailure)) return cause;
   const error = artifactCleanupFailure(cause, providerId, operation);
   if (error === undefined) return cause;
   bindArtifactFileCleanup(cause, error);
@@ -208,7 +208,7 @@ export const closeArtifactResources = async (
 
 /** Keep the primary failure and bind any descriptor cleanup to its returned error. */
 export const withArtifactCleanupFailure = (
-  cause: unknown,
+  cause: ArtifactReaderFailure,
   primary: AnalysisError,
   providerId: string,
   operation: string,
@@ -231,5 +231,6 @@ export const projectStableArtifactFailure = (
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
   return withArtifactCleanupFailure(cause, primary, providerId, operation);
 };

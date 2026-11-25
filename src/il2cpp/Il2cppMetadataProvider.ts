@@ -226,8 +226,8 @@ const failureFor = (
     maximum,
     metadataPath,
   );
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
   if (
-    cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
     primary.partialObservation === undefined
   )
