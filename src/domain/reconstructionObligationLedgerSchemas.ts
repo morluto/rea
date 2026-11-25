@@ -8,11 +8,13 @@ import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
+  reconstructionObligationClosureLimitationCounts,
   reconstructionObligationCoverage,
   reconstructionObligationDependencyGraph,
   reconstructionObligationLedgerClosureDigest,
   reconstructionObligationLedgerStatus,
   reconstructionObligationEvidenceIds,
+  reconstructionObligationOvergeneration,
   reconstructionObligationOwnershipGraph,
   reconstructionObligationReports,
   summarizeReconstructionObligations,
@@ -115,7 +117,11 @@ const obligationTargetSchema = z.strictObject({
 const authorityReferenceSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
   authority: evidenceAuthoritySchema,
-  state: obligationEvidenceStateSchema,
+  state: z
+    .enum([...obligationEvidenceStateSchema.options, "other-artifact"])
+    .describe(
+      "Evidence state for this obligation. other-artifact marks observed runtime Evidence that does not observe the obligation's target artifact; it is listed but is not authority for the obligation.",
+    ),
   location: textSchema,
 });
 
@@ -179,7 +185,7 @@ export const reconstructionObligationManifestSchema = z.strictObject({
   ),
 });
 
-export const reviewedReconstructionObligationSchema = z.strictObject({
+const reviewedReconstructionObligationDefinitionSchema = z.strictObject({
   obligation_id: stableIdSchema,
   obligation_version: z.int().min(1),
   title: textSchema,
@@ -196,9 +202,26 @@ export const reviewedReconstructionObligationSchema = z.strictObject({
   residual_unknown_ids: z.array(stableIdSchema),
   unavailable_authority: z.array(textSchema),
   required_next_evidence: z.array(textSchema),
-  disposition: z.enum(["active", "blocked", "out-of-scope"]),
   review_evidence_ids: z.array(evidenceIdSchema).min(1),
 });
+
+/**
+ * A retiring disposition (`out-of-scope` or `not-applicable`) must state its
+ * reason. When its obligation ID names a generated candidate, the record
+ * reviews that candidate instead of competing with it.
+ */
+export const reviewedReconstructionObligationSchema = z.discriminatedUnion(
+  "disposition",
+  [
+    reviewedReconstructionObligationDefinitionSchema.extend({
+      disposition: z.enum(["active", "blocked"]),
+    }),
+    reviewedReconstructionObligationDefinitionSchema.extend({
+      disposition: z.enum(["out-of-scope", "not-applicable"]),
+      disposition_reason: textSchema,
+    }),
+  ],
+);
 
 const diagnosticSchema = z.strictObject({
   code: z.enum([
@@ -228,6 +251,7 @@ const diagnosticSchema = z.strictObject({
     "unavailable-authority",
     "blocked",
     "out-of-scope",
+    "not-applicable",
   ]),
   detail: textSchema,
 });
@@ -257,6 +281,8 @@ export const reconstructionObligationSchema = z.strictObject({
   status: obligationStatusSchema,
   diagnostics: z.array(diagnosticSchema),
 });
+
+const limitationKindSchema = z.enum(["closure", "obligation-overgeneration"]);
 
 const countBySchema = <Schema extends z.ZodType>(
   key: Schema,
@@ -321,7 +347,7 @@ export const reconstructionObligationLedgerSchema = z
       by_status: countBySchema(obligationStatusSchema),
       by_application_layer: countBySchema(obligationLayerSchema),
       by_evidence_authority: countBySchema(evidenceAuthoritySchema).describe(
-        "Obligations per Evidence authority. An obligation counts once under each distinct authority among its authority_references, so counts can sum above total.",
+        "Obligations per Evidence authority. An obligation counts once under each distinct authority among its authority_references, except other-artifact references, so counts can sum above total.",
       ),
       by_source_state: countBySchema(obligationEvidenceStateSchema).describe(
         "Obligations per source_state; each obligation counts once.",
@@ -349,15 +375,56 @@ export const reconstructionObligationLedgerSchema = z
     obligations: z.array(reconstructionObligationSchema),
     evidence_links: z.array(evidenceIdSchema),
     limitations: z.array(textSchema),
+    limitation_kinds: z
+      .array(limitationKindSchema)
+      .exactOptional()
+      .describe(
+        "Kind of each limitation, in limitations order. Only closure limitations bound coverage and status; obligation-overgeneration is advisory. Absent from ledgers retained before kinds were recorded; their kinds are then derived from the obligations.",
+      ),
   })
   .superRefine((ledger, context) => {
-    if (
-      ledger.status !==
-      reconstructionObligationLedgerStatus(
-        ledger.obligations,
-        ledger.limitations,
+    const kinds = ledger.limitation_kinds;
+    if (kinds !== undefined) {
+      if (kinds.length !== ledger.limitations.length)
+        context.addIssue({
+          code: "custom",
+          path: ["limitation_kinds"],
+          message: "Limitation kinds must name one kind per limitation",
+        });
+      let advisory = 0;
+      for (const kind of kinds)
+        if (kind === "obligation-overgeneration") advisory += 1;
+      if (
+        advisory !==
+        reconstructionObligationOvergeneration(ledger.obligations).length
       )
-    )
+        context.addIssue({
+          code: "custom",
+          path: ["limitation_kinds"],
+          message: "Advisory limitation kinds do not match the obligations",
+        });
+    }
+    // A ledger retained without kinds may also carry the status rule it was
+    // written under; a ledger with kinds is read by the current rule only.
+    const rules = kinds === undefined ? [false, true] : [false];
+    const readings = reconstructionObligationClosureLimitationCounts(
+      ledger.obligations,
+      ledger.limitations,
+      kinds,
+    ).flatMap((count) =>
+      rules.map((legacy) => ({
+        status: reconstructionObligationLedgerStatus(
+          ledger.obligations,
+          count,
+          legacy,
+        ),
+        coverage: reconstructionObligationCoverage(count).status,
+      })),
+    );
+    const statusReadings = readings.filter(
+      ({ status }) => status === ledger.status,
+    );
+    if (statusReadings.length === 0)
       context.addIssue({
         code: "custom",
         path: ["status"],
@@ -383,9 +450,11 @@ export const reconstructionObligationLedgerSchema = z
         path: ["closure_digest"],
         message: "Ledger closure digest does not match its contents",
       });
+    // Status and coverage must come from one reading of the limitations.
     if (
-      ledger.coverage.status !==
-      reconstructionObligationCoverage(ledger.limitations).status
+      !(statusReadings.length === 0 ? readings : statusReadings).some(
+        ({ coverage }) => coverage === ledger.coverage.status,
+      )
     )
       context.addIssue({
         code: "custom",

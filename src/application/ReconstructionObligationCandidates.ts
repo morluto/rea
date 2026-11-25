@@ -26,35 +26,100 @@ type CandidateFields = Omit<
 /** Internal generated or reviewed obligation before manifest closure evaluation. */
 export interface ReconstructionObligationCandidate extends CandidateFields {
   readonly definitionCount: number;
-  readonly disposition: "active" | "blocked" | "out-of-scope";
+  readonly disposition: ReviewedReconstructionObligation["disposition"];
+  /** Analyst reason recorded with a retiring disposition. */
+  readonly dispositionReason: string | null;
+  /** Retiring reviewed records for this ID that were not applied. */
+  readonly competingRetirements: readonly CompetingRetirement[];
 }
+
+type RetiringDisposition = "out-of-scope" | "not-applicable";
+
+/** A retiring review that competes with the applied definition. */
+export interface CompetingRetirement {
+  readonly disposition: RetiringDisposition;
+  readonly reason: string;
+}
+
+/** A retiring disposition removes the obligation from required closure work. */
+export const retiresObligation = (
+  disposition: ReconstructionObligationCandidate["disposition"],
+): disposition is RetiringDisposition =>
+  disposition === "out-of-scope" || disposition === "not-applicable";
 
 export interface ReconstructionObligationCandidateSet {
   readonly candidates: readonly ReconstructionObligationCandidate[];
   readonly limitations: readonly string[];
 }
 
-/** Derive conservative candidates from graph, process, and reviewed inputs. */
+/**
+ * Derive conservative candidates from graph, process, and reviewed inputs.
+ * Each capture is parsed once per request with `parseCaptureEvidence`.
+ */
 export const deriveReconstructionObligationCandidates = (
   request: Pick<
     ResolvedReconstructionObligationRequest,
     "sources" | "reviewedObligations"
   >,
+  parseCaptureEvidence: ProcessCaptureParser = parseProcessCaptureEvidence,
 ): ReconstructionObligationCandidateSet => {
   const { bundle, records } = request.sources;
   const candidates = new Map<string, ReconstructionObligationCandidate>();
   const limitations = new Set<string>();
+  const parseCapture = processCaptureParserForRequest(parseCaptureEvidence);
   for (const evidence of bundle.records) {
     deriveApplicationCandidates(evidence, records, candidates, limitations);
-    deriveProcessCandidate(evidence, candidates, limitations);
+    deriveProcessCandidate(evidence, candidates, limitations, parseCapture);
   }
-  for (const obligation of request.reviewedObligations)
-    addCandidate(candidates, reviewedCandidate(obligation, records));
+  // Reviewed records merge in a canonical order so competing definitions of
+  // one ID do not depend on the order the caller listed them.
+  const reviewed = request.reviewedObligations
+    .map((obligation) => ({ key: reviewedOrderKey(obligation), obligation }))
+    .sort((left, right) => compareUnicodeCodePoints(left.key, right.key));
+  const reviewCounts = new Map<string, number>();
+  for (const { obligation_id: id } of request.reviewedObligations)
+    reviewCounts.set(id, (reviewCounts.get(id) ?? 0) + 1);
+  for (const { obligation } of reviewed) {
+    // A merged definition keeps the first definition's target, so review
+    // Evidence is tied to that artifact.
+    const target =
+      candidates.get(obligation.obligation_id)?.target ?? obligation.target;
+    addCandidate(
+      candidates,
+      reviewedCandidate(
+        obligation,
+        records,
+        target.artifact_sha256,
+        parseCapture,
+      ),
+      reviewCounts.get(obligation.obligation_id) === 1,
+    );
+  }
   return {
     candidates: [...candidates.values()].sort((left, right) =>
       compareUnicodeCodePoints(left.obligation_id, right.obligation_id),
     ),
     limitations: [...limitations].sort(),
+  };
+};
+
+type ProcessCaptureParse = ReturnType<typeof parseProcessCaptureEvidence>;
+type ProcessCaptureParser = (evidence: Evidence) => ProcessCaptureParse;
+
+/**
+ * Parse each capture once per request: bundle Evidence IDs are unique, so a
+ * capture cited by many reviews reuses the facts parsed for its first use.
+ */
+const processCaptureParserForRequest = (
+  parse: ProcessCaptureParser,
+): ProcessCaptureParser => {
+  const parsed = new Map<string, ProcessCaptureParse>();
+  return (evidence) => {
+    const cached = parsed.get(evidence.evidence_id);
+    if (cached !== undefined) return cached;
+    const result = parse(evidence);
+    parsed.set(evidence.evidence_id, result);
+    return result;
   };
 };
 
@@ -181,8 +246,9 @@ const deriveProcessCandidate = (
   input: Evidence,
   candidates: Map<string, ReconstructionObligationCandidate>,
   limitations: Set<string>,
+  parseCapture: ProcessCaptureParser,
 ): void => {
-  const parsed = parseProcessCaptureEvidence(input);
+  const parsed = parseCapture(input);
   if (!parsed.ok) {
     switch (parsed.error.kind) {
       case "wrong-workflow":
@@ -269,6 +335,8 @@ const deriveProcessCandidate = (
       : [],
     definitionCount: 1,
     disposition: "active",
+    dispositionReason: null,
+    competingRetirements: [],
   });
   if (capture.truncated)
     limitations.add(
@@ -328,17 +396,55 @@ const generatedCandidate = ({
   ],
   definitionCount: 1,
   disposition: "active",
+  dispositionReason: null,
+  competingRetirements: [],
 });
 
-const reviewedCandidate = (
+/** Separate the review-only fields from the obligation definition. */
+const splitReviewedObligation = (
   obligation: ReviewedReconstructionObligation,
-  records: ReadonlyMap<string, Evidence>,
-): ReconstructionObligationCandidate => {
+): {
+  readonly definition: Omit<
+    ReviewedReconstructionObligation,
+    "disposition" | "disposition_reason" | "review_evidence_ids"
+  >;
+  readonly reviewEvidenceIds: readonly string[];
+  readonly disposition: ReconstructionObligationCandidate["disposition"];
+  readonly dispositionReason: string | null;
+} => {
+  if (
+    obligation.disposition === "out-of-scope" ||
+    obligation.disposition === "not-applicable"
+  ) {
+    const {
+      review_evidence_ids: reviewEvidenceIds,
+      disposition,
+      disposition_reason: dispositionReason,
+      ...definition
+    } = obligation;
+    return { definition, reviewEvidenceIds, disposition, dispositionReason };
+  }
   const {
     review_evidence_ids: reviewEvidenceIds,
     disposition,
     ...definition
   } = obligation;
+  return {
+    definition,
+    reviewEvidenceIds,
+    disposition,
+    dispositionReason: null,
+  };
+};
+
+const reviewedCandidate = (
+  obligation: ReviewedReconstructionObligation,
+  records: ReadonlyMap<string, Evidence>,
+  artifactSha256: string | null,
+  parseCapture: ProcessCaptureParser,
+): ReconstructionObligationCandidate => {
+  const { definition, reviewEvidenceIds, disposition, dispositionReason } =
+    splitReviewedObligation(obligation);
   return {
     ...definition,
     origin: "reviewed",
@@ -351,7 +457,7 @@ const reviewedCandidate = (
       return {
         evidence_id: evidenceId,
         authority: evidence.authority,
-        state: reviewedEvidenceState(evidence),
+        state: reviewedEvidenceState(evidence, artifactSha256, parseCapture),
         location: `/evidence/${evidenceId}`,
       };
     }),
@@ -359,6 +465,8 @@ const reviewedCandidate = (
     observed_cases: [],
     definitionCount: 1,
     disposition,
+    dispositionReason,
+    competingRetirements: [],
   };
 };
 
@@ -394,30 +502,96 @@ const graphReference = (
   };
 };
 
+/**
+ * Runtime Evidence cited by a review is authority only for the artifact it
+ * observes: when the obligation names a target artifact, Evidence observing
+ * another (or no known) artifact is `other-artifact`. That includes
+ * controlled-replay records that are not process captures.
+ */
 const reviewedEvidenceState = (
   evidence: Evidence,
+  artifactSha256: string | null,
+  parseCapture: ProcessCaptureParser,
 ): ReconstructionObligation["authority_references"][number]["state"] => {
-  if (evidenceSupportsOriginalAuthority(evidence, "process")) return "observed";
-  if (
-    evidence.authority === "external-service" &&
-    evidence.confidence === "observed"
-  )
-    return "observed";
+  const observed =
+    evidenceSupportsOriginalAuthority(evidence, "process", parseCapture) ||
+    (evidence.authority === "external-service" &&
+      evidence.confidence === "observed");
+  if (observed || evidence.authority === "controlled-replay") {
+    if (
+      artifactSha256 !== null &&
+      observedArtifactSha256(evidence, parseCapture) !== artifactSha256
+    )
+      return "other-artifact";
+    return observed ? "observed" : "reviewed";
+  }
   if (evidence.authority === "shipped-artifact") return "candidate";
   return "reviewed";
+};
+
+/** The artifact an Evidence record observes, when it names one. */
+const observedArtifactSha256 = (
+  evidence: Evidence,
+  parseCapture: ProcessCaptureParser,
+): string | null => {
+  const capture = parseCapture(evidence);
+  if (capture.ok) return capture.value.capture.manifest.executable_sha256;
+  const { identity } = evidence.subject;
+  return identity.kind === "file" ? identity.sha256 : null;
 };
 
 const addCandidate = (
   candidates: Map<string, ReconstructionObligationCandidate>,
   candidate: ReconstructionObligationCandidate,
+  soleReview = false,
 ): void => {
   const current = candidates.get(candidate.obligation_id);
   if (current === undefined) {
     candidates.set(candidate.obligation_id, candidate);
     return;
   }
+  // The only reviewed record for a generated ID, when it retires that claim,
+  // reviews it: its disposition, reason, and next steps apply to the
+  // generated definition, which is kept rather than redefined. A retiring
+  // record beside another reviewed record for the ID, or one for another
+  // obligation version, competes with the definition instead, so no
+  // retirement applies, whatever the records' order.
+  const reviewsGenerated =
+    current.origin === "generated" && candidate.origin === "reviewed";
+  const retiresGenerated =
+    reviewsGenerated &&
+    soleReview &&
+    retiresObligation(candidate.disposition) &&
+    candidate.obligation_version === current.obligation_version;
+  // A retiring record that is not applied keeps its reason visible on the
+  // competing-definition diagnostic instead of being dropped.
+  const competing: CompetingRetirement[] =
+    !retiresGenerated &&
+    retiresObligation(candidate.disposition) &&
+    candidate.dispositionReason !== null
+      ? [
+          {
+            disposition: candidate.disposition,
+            reason: candidate.dispositionReason,
+          },
+        ]
+      : [];
   candidates.set(candidate.obligation_id, {
     ...current,
+    ...(retiresGenerated
+      ? {
+          disposition: candidate.disposition,
+          dispositionReason: candidate.dispositionReason,
+        }
+      : {}),
+    competingRetirements: uniqueSortedBy(
+      [
+        ...current.competingRetirements,
+        ...candidate.competingRetirements,
+        ...competing,
+      ],
+      ({ disposition, reason }) => `${disposition}:${reason}`,
+    ),
     authority_references: uniqueSortedBy(
       [...current.authority_references, ...candidate.authority_references],
       (reference) =>
@@ -427,10 +601,15 @@ const addCandidate = (
       [...current.observed_cases, ...candidate.observed_cases],
       (item) => `${item.kind}:${item.evidence_id}:${item.location}`,
     ),
-    source_state: sourceState([
-      ...current.authority_references,
-      ...candidate.authority_references,
-    ]),
+    // Review Evidence is attached but never upgrades the generated claim's
+    // source state: no review, retiring or competing, and no second review
+    // of an already retired claim can make it look observed.
+    source_state: reviewsGenerated
+      ? current.source_state
+      : sourceState([
+          ...current.authority_references,
+          ...candidate.authority_references,
+        ]),
     residual_unknown_ids: uniqueSorted([
       ...current.residual_unknown_ids,
       ...candidate.residual_unknown_ids,
@@ -440,19 +619,27 @@ const addCandidate = (
       ...current.unavailable_authority,
       ...candidate.unavailable_authority,
     ]),
-    required_next_evidence: uniqueSorted([
-      ...current.required_next_evidence,
-      ...candidate.required_next_evidence,
-    ]),
+    required_next_evidence: retiresGenerated
+      ? candidate.required_next_evidence
+      : uniqueSorted([
+          ...current.required_next_evidence,
+          ...candidate.required_next_evidence,
+        ]),
     // A generated ID digests its derivation key, so two generated candidates
     // with one ID are the same claim seen by several records. Only another
     // reviewed definition can introduce a competing definition.
     definitionCount:
-      current.origin === "generated" && candidate.origin === "generated"
+      (current.origin === "generated" && candidate.origin === "generated") ||
+      retiresGenerated
         ? current.definitionCount
         : current.definitionCount + candidate.definitionCount,
   });
 };
+
+const reviewedOrderKey = (
+  obligation: ReviewedReconstructionObligation,
+): string =>
+  `${obligation.obligation_id}:${digestCanonicalValue(obligation, "Reviewed reconstruction obligation")}`;
 
 const sourceState = (
   references: ReconstructionObligation["authority_references"],

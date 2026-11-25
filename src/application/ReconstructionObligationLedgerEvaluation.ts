@@ -13,11 +13,16 @@ import {
   reconstructionObligationLedgerClosureDigest,
   reconstructionObligationLedgerStatus,
   hasReconstructionObligationDiagnostic as hasDiagnostic,
+  reconstructionObligationOvergeneration,
+  reconstructionObligationOvergenerationLimitation,
   reconstructionObligationOwnershipGraph,
   reconstructionObligationReports,
   summarizeReconstructionObligations,
 } from "../domain/reconstructionObligationLedgerIntegrity.js";
-import type { ReconstructionObligationCandidate } from "./ReconstructionObligationCandidates.js";
+import {
+  retiresObligation,
+  type ReconstructionObligationCandidate,
+} from "./ReconstructionObligationCandidates.js";
 import {
   parseReconstructionProofEvidence,
   qualifyReconstructionProof,
@@ -38,6 +43,13 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
+
+/** Binding diagnostics a retired claim keeps: supplied proof that failed. */
+const RETIRED_PROOF_FAILURES: readonly Diagnostic["code"][] = [
+  "fixture-failed",
+  "verifier-failed",
+  "contradiction",
+];
 
 const groupByObligation = <T extends { readonly obligation_id: string }>(
   entries: readonly T[],
@@ -89,13 +101,26 @@ export const evaluateReconstructionObligationLedger = ({
   const ownershipGraph = reconstructionObligationOwnershipGraph(obligations);
   const dependencyGraph = reconstructionObligationDependencyGraph(obligations);
   const evidenceLinks = obligationLedgerEvidenceLinks(obligations, manifest);
-  const limitations = ledgerLimitations(
+  const closureLimitations = ledgerLimitations(
     generationLimitations,
     candidates.length,
     orphanManifestIds,
     evidenceLinks.filter((id) => !records.has(id)).length,
   );
-  const coverage = reconstructionObligationCoverage(limitations);
+  // Over-generation is advisory: it is listed with its kind but never bounds
+  // coverage or closure, which count only the closure limitations.
+  const limitations = [
+    ...closureLimitations.map((text) => ({ text, kind: "closure" as const })),
+    ...reconstructionObligationOvergeneration(obligations).map(
+      (overgeneration) => ({
+        text: reconstructionObligationOvergenerationLimitation(overgeneration),
+        kind: "obligation-overgeneration" as const,
+      }),
+    ),
+  ].sort((left, right) =>
+    left.text < right.text ? -1 : left.text > right.text ? 1 : 0,
+  );
+  const coverage = reconstructionObligationCoverage(closureLimitations.length);
   const semantic = {
     coverage,
     summary: summarizeReconstructionObligations(obligations),
@@ -104,9 +129,13 @@ export const evaluateReconstructionObligationLedger = ({
     dependency_graph: dependencyGraph,
     obligations,
     evidence_links: evidenceLinks,
-    limitations,
+    limitations: limitations.map(({ text }) => text),
+    limitation_kinds: limitations.map(({ kind }) => kind),
   };
-  const status = reconstructionObligationLedgerStatus(obligations, limitations);
+  const status = reconstructionObligationLedgerStatus(
+    obligations,
+    closureLimitations.length,
+  );
   const closureDigest = reconstructionObligationLedgerClosureDigest({
     status,
     ...semantic,
@@ -203,13 +232,37 @@ const evaluateObligation = (
   const binding = bindings.length === 1 ? (bindings[0] ?? null) : null;
   const originalCases = originalCasesFor(candidate, binding);
   const diagnostics: Diagnostic[] = [];
-  if (candidate.definitionCount > 1)
+  // A retired claim keeps its facts and contradictions visible but demands no
+  // owner, fixture, original case, or authority; that work is not required.
+  // A contested definition applies no retirement, as for any other duplicate:
+  // every retiring record's reason stays visible as a competing definition.
+  const contested = candidate.definitionCount > 1;
+  const retired = retiresObligation(candidate.disposition) && !contested;
+  const competingRetirements =
+    contested &&
+    retiresObligation(candidate.disposition) &&
+    candidate.dispositionReason !== null
+      ? [
+          ...candidate.competingRetirements,
+          {
+            disposition: candidate.disposition,
+            reason: candidate.dispositionReason,
+          },
+        ]
+      : candidate.competingRetirements;
+  if (contested)
     addDiagnostic(
       diagnostics,
       "duplicate-definition",
       "Multiple candidate definitions share this obligation ID.",
     );
-  if (bindings.length === 0)
+  for (const { disposition, reason } of competingRetirements)
+    addDiagnostic(
+      diagnostics,
+      "duplicate-definition",
+      `A competing reviewed record that would mark this obligation ${disposition} was not applied. Reason: ${reason}`,
+    );
+  if (bindings.length === 0 && !retired)
     addDiagnostic(
       diagnostics,
       "missing-owner",
@@ -221,13 +274,25 @@ const evaluateObligation = (
       "ambiguous-owner",
       "Multiple reconstruction manifest bindings claim this obligation.",
     );
-  if (binding !== null)
-    evaluateBinding(candidate, binding, context, diagnostics);
-  diagnostics.push(
-    ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
-  );
-  evaluateAuthority(candidate, originalCases, context, diagnostics);
-  evaluateDisposition(candidate, diagnostics);
+  if (binding !== null) {
+    if (retired) {
+      // Supplied proof is still checked: a failing fixture or verifier stays
+      // visible on a retired claim, while diagnostics that would demand more
+      // fixtures, a verifier, or authority are dropped.
+      const checked: Diagnostic[] = [];
+      evaluateBinding(candidate, binding, context, checked);
+      diagnostics.push(
+        ...checked.filter(({ code }) => RETIRED_PROOF_FAILURES.includes(code)),
+      );
+    } else evaluateBinding(candidate, binding, context, diagnostics);
+  }
+  if (!retired) {
+    diagnostics.push(
+      ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
+    );
+    evaluateAuthority(candidate, originalCases, context, diagnostics);
+  }
+  evaluateDisposition(candidate, retired, diagnostics);
   diagnostics.push(
     ...contradictionDiagnostics(
       candidate.obligation_id,
@@ -468,6 +533,7 @@ const evaluateAuthority = (
 
 const evaluateDisposition = (
   candidate: ReconstructionObligationCandidate,
+  retired: boolean,
   diagnostics: Diagnostic[],
 ): void => {
   if (candidate.disposition === "blocked")
@@ -476,13 +542,25 @@ const evaluateDisposition = (
       "blocked",
       "Reviewed disposition marks this obligation blocked.",
     );
+  if (!retired) return;
   if (candidate.disposition === "out-of-scope")
     addDiagnostic(
       diagnostics,
       "out-of-scope",
-      "Reviewed disposition marks this obligation out of scope; it remains visible.",
+      `Reviewed disposition marks this obligation out of scope; it remains visible.${retiredReason(candidate)}`,
+    );
+  if (candidate.disposition === "not-applicable")
+    addDiagnostic(
+      diagnostics,
+      "not-applicable",
+      `Reviewed disposition marks this obligation not applicable; it remains visible.${retiredReason(candidate)}`,
     );
 };
+
+const retiredReason = (candidate: ReconstructionObligationCandidate): string =>
+  candidate.dispositionReason === null
+    ? ""
+    : ` Reason: ${candidate.dispositionReason}`;
 
 const applyDependencyDiagnostics = (
   obligations: readonly ReconstructionObligation[],
@@ -520,7 +598,11 @@ const obligationStatus = (
   binding: Binding | null,
   diagnostics: readonly Diagnostic[],
 ): ReconstructionObligation["status"] => {
-  if (hasDiagnostic(diagnostics, "out-of-scope")) return "out-of-scope";
+  if (
+    hasDiagnostic(diagnostics, "out-of-scope") ||
+    hasDiagnostic(diagnostics, "not-applicable")
+  )
+    return "out-of-scope";
   if (hasDiagnostic(diagnostics, "blocked")) return "blocked";
   if (hasDiagnostic(diagnostics, "contradiction")) return "contradicted";
   if (
