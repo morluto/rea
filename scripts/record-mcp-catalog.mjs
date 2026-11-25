@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // Runtime discovery is generated from the same canonical registrations, after
 // default identity has been recorded and before bundling.
@@ -59,9 +58,7 @@ const recordCatalog = async () => {
     });
     const server = createServer({ kind: "session", session }, { environment });
     cleanup.push(() => server.close());
-    const client = completeEvidenceClient(
-      new Client({ name: "rea-catalog-recorder", version: "1" }),
-    );
+    const client = new Client({ name: "rea-catalog-recorder", version: "1" });
     cleanup.push(() => client.close());
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -96,12 +93,10 @@ const recordCatalog = async () => {
       },
     );
     cleanup.push(() => compactServer.close());
-    const compactClient = completeEvidenceClient(
-      new Client({
-        name: "rea-catalog-recorder-compact",
-        version: "1",
-      }),
-    );
+    const compactClient = new Client({
+      name: "rea-catalog-recorder-compact",
+      version: "1",
+    });
     cleanup.push(() => compactClient.close());
     const [compactClientTransport, compactServerTransport] =
       InMemoryTransport.createLinkedPair();
