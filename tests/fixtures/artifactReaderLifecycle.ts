@@ -1,6 +1,4 @@
 import { collectEntries } from "./artifactEntries.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { getDefaultHighWaterMark } from "node:stream";
 import { buffer, text } from "node:stream/consumers";
 import { finished } from "node:stream/promises";
@@ -12,7 +10,7 @@ import {
   type StableRegularFileDescriptor,
 } from "../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { createTestTempFile } from "./temporaryDirectory.js";
 import { createDeferred } from "./binarySession.js";
 import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
 
@@ -24,14 +22,8 @@ interface LifecycleFixture {
   ) => ArtifactReader;
 }
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-reader-lifecycle-"),
-    "image",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-reader-lifecycle-", "image", bytes);
 
 const readerClosureCases = ({
   image,
