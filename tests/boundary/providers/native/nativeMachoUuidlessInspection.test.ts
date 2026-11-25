@@ -143,13 +143,19 @@ it.each(
 );
 
 it.each([
-  { fileType: 3, signal: null },
-  { fileType: 99, signal: null },
-  { fileType: 4, signal: "SIGTERM" },
+  { fileType: 3, signal: null, exitCode: 0 },
+  { fileType: 3, signal: null, exitCode: 1 },
+  { fileType: 99, signal: null, exitCode: 1 },
+  { fileType: 4, signal: "SIGTERM", exitCode: 1 },
 ])(
-  "keeps the dyld_info refusal as a failure for header $fileType and signal $signal",
-  async ({ fileType, signal }) => {
-    const runner = new UuidlessDyldRunner("unknown mh.filetype 4", "", signal);
+  "keeps the dyld_info refusal as a failure for header $fileType, exit $exitCode and signal $signal",
+  async ({ fileType, signal, exitCode }) => {
+    const runner = new UuidlessDyldRunner(
+      "unknown mh.filetype 4",
+      "",
+      signal,
+      exitCode,
+    );
     const target = await makeTarget("conflicting-type", fileType);
     const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
@@ -159,7 +165,7 @@ it.each([
       ok: false,
       error: {
         _tag: signal === null ? "AnalysisOutputError" : "ProviderAdapterError",
-        capturedOutput: { exit_code: 1, signal },
+        capturedOutput: { exit_code: exitCode, signal },
       },
     });
   },
