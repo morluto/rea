@@ -29,7 +29,6 @@ import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import {
   browserStepArtifactsSchema,
   type BrowserScenarioEvent,
-  type BrowserScenarioEventFamily,
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
