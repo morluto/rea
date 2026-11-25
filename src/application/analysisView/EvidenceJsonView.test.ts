@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -231,6 +231,34 @@ describe("evidence-json view", () => {
     expect(cache.cachedCodeUnits).toBeLessThanOrEqual(cache.maximumCodeUnits);
     // An evicted record still pages exactly from a fresh scan.
     expect(joinPages(second, cache, 97)).toBe(JSON.stringify(second.evidence));
+  });
+
+  it("unregisters evicted entries from FinalizationRegistry during repeated churn", () => {
+    const ledger = new EvidenceLedger();
+    const first = retainedParent(ledger, "churn-a");
+    const second = retainedParent(ledger, "churn-b");
+    const size = JSON.stringify(first.evidence).length;
+    const cache = new EvidenceJsonSerializationCache(size + 64);
+    const unregister = vi.spyOn(FinalizationRegistry.prototype, "unregister");
+    try {
+      for (let round = 0; round < 4; round += 1) {
+        projectEvidenceJsonView(
+          first as never,
+          { kind: "evidence-json", offset: 0, limit: 8 },
+          cache,
+        );
+        projectEvidenceJsonView(
+          second as never,
+          { kind: "evidence-json", offset: 0, limit: 8 },
+          cache,
+        );
+      }
+      // 8 insertions into a 1-record cache trigger 7 evictions, each unregistered.
+      expect(unregister).toHaveBeenCalledTimes(7);
+      expect(cache.cachedCodeUnits).toBe(size);
+    } finally {
+      unregister.mockRestore();
+    }
   });
 
   it("keeps a surrogate pair whole even in a one-unit page", () => {

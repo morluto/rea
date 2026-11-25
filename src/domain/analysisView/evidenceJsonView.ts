@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Evidence } from "../evidence.js";
+import { Budget } from "../budget.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../analysisResourceLimits.js";
 import { jsonParts } from "../jsonSerialization.js";
@@ -125,15 +126,17 @@ export class EvidenceJsonSerializationCache {
   >();
   readonly #order = new Set<CacheEntry>();
   readonly #collected = new FinalizationRegistry<CacheEntry>((entry) => {
-    if (this.#order.delete(entry)) this.#codeUnits -= entry.codeUnits;
+    if (this.#order.delete(entry)) this.#budget.refund(entry.codeUnits);
   });
-  #codeUnits = 0;
+  readonly #budget: Budget;
 
-  constructor(readonly maximumCodeUnits = EVIDENCE_JSON_CACHE_CODE_UNITS) {}
+  constructor(readonly maximumCodeUnits = EVIDENCE_JSON_CACHE_CODE_UNITS) {
+    this.#budget = new Budget(maximumCodeUnits);
+  }
 
   /** Code units of the whole serializations currently cached. */
   get cachedCodeUnits(): number {
-    return this.#codeUnits;
+    return this.#budget.used;
   }
 
   /** Whether `record`'s whole serialization is cached. */
@@ -170,21 +173,23 @@ export class EvidenceJsonSerializationCache {
   }
 
   #remember(record: object, document: SerializedEvidenceJson): void {
+    const charged = this.#budget.chargeEvicting(document.totalLength, () => {
+      const oldest = this.#order.values().next().value;
+      if (oldest === undefined) return undefined;
+      this.#order.delete(oldest);
+      this.#collected.unregister(oldest);
+      const evicted = oldest.record.deref();
+      if (evicted !== undefined) this.#documents.delete(evicted);
+      return oldest.codeUnits;
+    });
+    if (!charged) return;
     const entry: CacheEntry = {
       record: new WeakRef(record),
       codeUnits: document.totalLength,
     };
     this.#documents.set(record, { document, entry });
     this.#order.add(entry);
-    this.#collected.register(record, entry);
-    this.#codeUnits += entry.codeUnits;
-    for (const oldest of this.#order) {
-      if (this.#codeUnits <= this.maximumCodeUnits) break;
-      this.#order.delete(oldest);
-      this.#codeUnits -= oldest.codeUnits;
-      const evicted = oldest.record.deref();
-      if (evicted !== undefined) this.#documents.delete(evicted);
-    }
+    this.#collected.register(record, entry, entry);
   }
 }
 
