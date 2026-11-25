@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import assert from "node:assert/strict";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -128,15 +129,9 @@ async function runPass({ fixture, languageOverride, label, layout }) {
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
-  const call = async (name, args = {}) => {
-    const reply = await client.callTool(
-      { name, arguments: args },
-      {
-        timeout: 180000,
-      },
-    );
-    return requireMcpOperationResult(reply, name);
-  };
+  const call = createGhidraVerifierMcpOperations(client, {
+    timeout: 180000,
+  }).decodedCall(requireMcpOperationResult);
   const report = { label, language_override: languageOverride ?? null };
   try {
     await withVerifierCleanup(async () => {
