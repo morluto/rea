@@ -19,7 +19,7 @@ const expectRefusal = (diagnostic: unknown, large: boolean): void => {
     code: large ? "partial" : "unsupported_target",
     details: large
       ? { reason: "limit", boundary: "memory", truncated: true }
-      : { failure_kind: "malformed" },
+      : { failure_kind: "malformed", format: "zip" },
   });
   if (large) {
     expect(diagnostic).toMatchObject({
