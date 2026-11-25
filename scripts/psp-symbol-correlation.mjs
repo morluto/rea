@@ -4,14 +4,18 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { evidenceFileTarget, parseEvidence } from "#dist/domain/evidence.js";
+import { OBSERVED_NATIVE_ADDRESS_PATTERN } from "#dist/domain/native/nativeAddress.js";
+import { listProceduresFact } from "#dist/domain/native/nativeOperationFacts.js";
 
 const HEX32 = /^(?:0x)?[0-9a-f]{1,8}$/iu;
 const SHA256 = /^[a-f0-9]{64}$/u;
-// Address-space-qualified observations are valid, but never silently rebased
-// into the unqualified PSP address space selected by this script.
-const SPACED_ADDRESS = /^(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+:0x[0-9a-fA-F]+$/u;
+const GENERATED_PLACEHOLDER = /^z_un_[0-9a-fA-F]{8}$/u;
+// Caller-supplied arrays may use either hex case for qualified coordinates.
+const QUALIFIED_ADDRESS = new RegExp(
+  OBSERVED_NATIVE_ADDRESS_PATTERN.source,
+  "i",
+);
 
 function hex32(value, label) {
   assert.match(value, HEX32, label + " must be a 32-bit hex address");
@@ -19,6 +23,32 @@ function hex32(value, label) {
 }
 
 const addressText = (value) => "0x" + value.toString(16);
+
+function indexFunctionInventory(inventory) {
+  assert.ok(
+    Array.isArray(inventory) && inventory.length <= 50000,
+    "Invalid function inventory",
+  );
+  const rows = listProceduresFact.schema.safeParse(inventory);
+  assert.ok(rows.success, "Invalid function inventory row");
+  const observed = new Map();
+  let unselectedSpaceRows = 0;
+  for (const { address, value } of rows.data) {
+    if (address.includes(":")) {
+      assert.match(
+        address,
+        QUALIFIED_ADDRESS,
+        "Invalid Ghidra address-space coordinate",
+      );
+      unselectedSpaceRows++;
+      continue;
+    }
+    const key = addressText(hex32(address, "Ghidra function address"));
+    if (!observed.has(key)) observed.set(key, []);
+    observed.get(key).push(value);
+  }
+  return { observed, unselectedSpaceRows };
+}
 
 /** Parse the two-column legacy .sym export or modern module-relative .ppsym v1. */
 export function parsePspSymbols(source, format) {
@@ -97,10 +127,7 @@ export function correlatePspSymbols(source, inventory, options) {
     SHA256,
     "Provide the exact selected target SHA-256",
   );
-  assert.ok(
-    Array.isArray(inventory) && inventory.length <= 50000,
-    "Invalid function inventory",
-  );
+  const { observed, unselectedSpaceRows } = indexFunctionInventory(inventory);
   const sourceStart =
     format === "ppsym" ? 0n : hex32(sourceBase, "source base");
   const analysisStart = hex32(analysisBase, "Ghidra analysis base");
@@ -116,29 +143,6 @@ export function correlatePspSymbols(source, inventory, options) {
     assert.ok(format === "ppsym", "CRC applies only to .ppsym");
     if (parsed.crc !== 0n)
       assert.equal(parsed.crc, expected, "Module CRC does not match");
-  }
-  const observed = new Map();
-  let unselectedSpaceRows = 0;
-  for (const row of inventory) {
-    assert.ok(
-      row !== null &&
-        typeof row === "object" &&
-        typeof row.address === "string" &&
-        typeof row.value === "string",
-      "Invalid Ghidra inventory row",
-    );
-    if (row.address.includes(":")) {
-      assert.match(
-        row.address,
-        SPACED_ADDRESS,
-        "Invalid Ghidra address-space coordinate",
-      );
-      unselectedSpaceRows++;
-      continue;
-    }
-    const key = addressText(hex32(row.address, "Ghidra function address"));
-    if (!observed.has(key)) observed.set(key, []);
-    observed.get(key).push(row.value);
   }
   const mapped = parsed.entries.map((entry) => {
     const relative = entry.address - sourceStart;
@@ -170,7 +174,8 @@ export function correlatePspSymbols(source, inventory, options) {
       if (analysisAddress === null) outcome = "outside_selected_mapping";
       else if ((duplicates.get(analysisAddress) ?? 0) > 1 || names.length > 1)
         outcome = "ambiguous";
-      else if (name.startsWith("z_un_")) outcome = "generated_placeholder";
+      else if (GENERATED_PLACEHOLDER.test(name))
+        outcome = "generated_placeholder";
       else if (names.length === 0) outcome = "not_observed";
       else
         outcome =
@@ -258,29 +263,24 @@ async function main(args) {
       await readBounded(flags.get("--inventory"), 32 * 1024 * 1024),
     ),
   );
-  if (!Array.isArray(data)) {
+  const evidence = Array.isArray(data) ? null : parseEvidence(data);
+  let claimedHash = null;
+  if (evidence !== null) {
     assert.equal(
-      data?.operation,
-      "list_procedures",
+      evidence.operation,
+      listProceduresFact.operation,
       "Evidence inventory must come from list_procedures",
     );
-  }
-  const inventory = Array.isArray(data) ? data : data.normalized_result;
-  const identity = data?.subject?.identity;
-  const claimedHash =
-    data?.evidence_format === 2
-      ? identity?.kind === "file"
-        ? identity.sha256
-        : undefined
-      : data?.subject?.digest?.sha256;
-  if (data?.evidence_format === 2 && identity?.kind === "file")
-    assert.match(claimedHash, SHA256, "Invalid Evidence file identity");
-  if (claimedHash !== undefined)
+    const file = evidenceFileTarget(evidence);
+    assert.ok(file, "Procedure inventory Evidence must identify a file");
     assert.equal(
-      claimedHash,
+      file.sha256,
       flags.get("--target-sha256"),
       "Inventory target identity disagrees",
     );
+    claimedHash = file.sha256;
+  }
+  const inventory = evidence === null ? data : evidence.normalized_result;
   const report = correlatePspSymbols(source, inventory, {
     format: flags.get("--format"),
     sourceBase: flags.get("--source-base"),
@@ -296,7 +296,9 @@ async function main(args) {
           symbols: flags.get("--symbols"),
           inventory: flags.get("--inventory"),
         },
-        inventory_target_claim: claimedHash ?? null,
+        inventory_provenance:
+          evidence === null ? "raw-unverified" : "rea-evidence",
+        inventory_target_claim: claimedHash,
       },
       null,
       2,
@@ -304,10 +306,7 @@ async function main(args) {
   );
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
-) {
+if (import.meta.main) {
   main(process.argv.slice(2)).catch((error) => {
     process.stderr.write(
       "PSP symbol correlation failed: " + error.message + "\n",

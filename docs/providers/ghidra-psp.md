@@ -73,21 +73,25 @@ snapshot into a persistent Ghidra project.
 
 ## PPSSPP function labels (opt-in, read-only)
 
-An offline source-tree script compares caller-supplied function labels against an
-existing REA `list_procedures` JSON array (or a saved `list_procedures`
-Evidence record's `normalized_result`). Other Evidence operations such as
-`list_names` are refused, since data labels are not function observations.
-It does not import labels into Ghidra, rename functions,
-execute PSP code or change public REA CLI/MCP contracts. An Evidence v2 file identity or a legacy Evidence record's
-selected target digest is checked for consistency when present; this standalone
-script does not independently authenticate an Evidence bundle.
+An offline source-tree script compares caller-supplied function labels with a
+complete `list_procedures` inventory. For an Evidence record, the script checks
+the current format, semantic identifier, operation and file target SHA-256. The
+report marks that input `rea-evidence` and records the file digest in
+`inventory_target_claim`. A bare array is marked `raw-unverified` and has a
+null target claim. Recreate inventories from earlier Evidence formats with the
+current REA release.
 
 The extension's legacy `.sym` exporter emits `address name,size` rows. Modern
 PPSSPP also saves module-relative `.ppsym 1` files with a module CRC; those are
 not the legacy `.sym` syntax, and older PPSSPP `.map` files are **not** accepted
-here. Supply the file format and address bases explicitly:
+here. Build REA and capture the inventory before supplying the file format and
+address bases explicitly.
 
 ```bash
+npm run build:cached
+node scripts/rea.mjs list-procedures ./target.elf --provider ghidra --detail complete --json \
+  > ./list-procedures.json
+
 node scripts/psp-symbol-correlation.mjs \
   --symbols ./labels.sym --format sym \
   --inventory ./list-procedures.json \
@@ -122,9 +126,9 @@ separate outcomes. The report includes the input symbol SHA-256 and selected
 target SHA-256 but cannot prove that a caller's symbol file belongs to that
 binary. Verify module identity, residency, relocation and any CRC independently.
 
-Run the fast source-only and command controls with
+Run the local and command controls after building REA with
 `node scripts/verify-psp-symbol-correlation.mjs`. They cover raw-array and
-Evidence-shaped inventory files, target-digest refusal, verbatim input paths,
+Evidence inputs, semantic identifier and target-digest refusal, input paths,
 address-space filtering, UTF-8 refusal, and duplicate-heavy output. Both
 symbol and inventory file reads enforce their byte limits while streaming,
 including pipes whose filesystem metadata reports a zero length.

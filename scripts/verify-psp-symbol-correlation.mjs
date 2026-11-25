@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// Source-only checks for caller-selected, read-only PSP symbol comparison.
+// Local checks for caller-selected, read-only PSP symbol comparison.
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createEvidence } from "#dist/domain/evidence.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import {
@@ -51,7 +53,8 @@ const withOtherSpaces = correlatePspSymbols(
   [
     ...inventory,
     { address: "EXTERNAL:0x1", value: "sceKernelLibcTime" },
-    { address: "ram:0x08805000", value: "different_space" },
+    { address: "ram:0x08805000", value: "different_space_at_same_offset" },
+    { address: "overlay%3a1:0x0880500A", value: "different_space" },
   ],
   settings,
 );
@@ -59,7 +62,7 @@ assert.deepEqual(
   withOtherSpaces.records.map(({ outcome }) => outcome),
   report.records.map(({ outcome }) => outcome),
 );
-assert.equal(withOtherSpaces.ignored_unselected_space_rows, 2);
+assert.equal(withOtherSpaces.ignored_unselected_space_rows, 3);
 assert.deepEqual(
   withOtherSpaces.observed_labels_by_address,
   report.observed_labels_by_address,
@@ -95,11 +98,14 @@ assert.deepEqual(
   ["ambiguous", "ambiguous"],
 );
 const placeholder = correlatePspSymbols(
-  "08005000 z_un_08005000,0010\n",
-  inventory,
+  "08005000 z_un_08005000,0010\n08005020 z_un_custom,0010\n",
+  [inventory[0], { address: "0x08805020", value: "z_un_custom" }],
   settings,
 );
-assert.equal(placeholder.records[0].outcome, "generated_placeholder");
+assert.deepEqual(
+  placeholder.records.map(({ outcome }) => outcome),
+  ["generated_placeholder", "address_and_label_agree"],
+);
 assert.equal(
   correlatePspSymbols("07ffffff out_of_range,0004\n", inventory, settings)
     .records[0].outcome,
@@ -213,27 +219,23 @@ try {
   const symbolsPath = join(scratch, "source.sym");
   const rawInventoryPath = join(scratch, "functions.json");
   const evidencePath = join(scratch, "evidence.json");
-  const labelsPath = join(scratch, "labels-evidence.json");
   const invalidSymbolsPath = join(scratch, "invalid-utf8.sym");
+  const target = {
+    path: join(scratch, "target.elf"),
+    sha256: targetSha256,
+    format: "elf",
+    architecture: "mips",
+  };
+  const provider = { id: "fixture", name: "Fixture provider", version: "1" };
+  const observation = {
+    operation: "list_procedures",
+    parameters: {},
+    result: inventory,
+  };
+  const evidence = createEvidence(target, provider, observation);
   await writeFile(symbolsPath, legacy);
   await writeFile(rawInventoryPath, JSON.stringify(inventory));
-  await writeFile(
-    evidencePath,
-    JSON.stringify({
-      evidence_format: 2,
-      operation: "list_procedures",
-      normalized_result: inventory,
-      subject: { identity: { kind: "file", sha256: targetSha256 } },
-    }),
-  );
-  await writeFile(
-    labelsPath,
-    JSON.stringify({
-      operation: "list_names",
-      normalized_result: inventory,
-      subject: { digest: { sha256: targetSha256 } },
-    }),
-  );
+  await writeFile(evidencePath, JSON.stringify(evidence));
   await writeFile(
     invalidSymbolsPath,
     Buffer.concat([
@@ -247,10 +249,15 @@ try {
   );
   const run = (
     inventoryPath,
-    { symbols = symbolsPath, sha256 = targetSha256, extra = [] } = {},
+    {
+      symbols = symbolsPath,
+      sha256 = targetSha256,
+      extra = [],
+      entrypoint = command,
+    } = {},
   ) =>
     exec(process.execPath, [
-      command,
+      entrypoint,
       "--symbols",
       symbols,
       "--inventory",
@@ -277,6 +284,7 @@ try {
     inventory: rawInventoryPath,
   });
   assert.equal(rawReport.inventory_target_claim, null);
+  assert.equal(rawReport.inventory_provenance, "raw-unverified");
 
   const fromEvidence = await run(evidencePath);
   const evidenceReport = JSON.parse(fromEvidence.stdout);
@@ -285,12 +293,34 @@ try {
     inventory: evidencePath,
   });
   assert.equal(evidenceReport.inventory_target_claim, targetSha256);
+  assert.equal(evidenceReport.inventory_provenance, "rea-evidence");
   assert.deepEqual(evidenceReport.records, rawReport.records);
 
-  await assertRefusal(
-    run(labelsPath),
-    /Evidence inventory must come from list_procedures/u,
-  );
+  const invalidEvidencePath = join(scratch, "invalid-evidence.json");
+  for (const [record, message] of [
+    [
+      createEvidence(target, provider, {
+        ...observation,
+        operation: "list_names",
+      }),
+      /Evidence inventory must come from list_procedures/u,
+    ],
+    [
+      { ...evidence, evidence_format: 3 },
+      /Recreate observations with the current REA release/u,
+    ],
+    [
+      { ...evidence, normalized_result: [] },
+      /Evidence semantic identifier does not match/u,
+    ],
+    [
+      createEvidence(unknownTarget("not-observed"), provider, observation),
+      /Procedure inventory Evidence must identify a file/u,
+    ],
+  ]) {
+    await writeFile(invalidEvidencePath, JSON.stringify(record));
+    await assertRefusal(run(invalidEvidencePath), message);
+  }
   await assertRefusal(
     run(evidencePath, { extra: ["--target-sha256", "b".repeat(64)] }),
     /Unknown or repeated flag/u,
@@ -307,6 +337,13 @@ try {
   // A shell pipe has zero stat size. Feed it a finite over-limit input
   // and bound the child so a broken reader cannot hang or exhaust the runner.
   if (process.platform === "linux") {
+    const link = join(scratch, "correlate.mjs");
+    await symlink(command, link);
+    assert.deepEqual(
+      JSON.parse((await run(evidencePath, { entrypoint: link })).stdout),
+      evidenceReport,
+    );
+
     const pipe = (source, bytes) =>
       exec(
         "bash",
