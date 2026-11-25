@@ -10,6 +10,9 @@ export const CODEQL_LANGUAGES = ["javascript-typescript", "python", "actions"];
 const EXCLUDED_PATTERNS = [
   "tests/**",
   "scripts/fixtures/**",
+  "scripts/verify/**",
+  "scripts/verify-real-*.mjs",
+  "scripts/verify-*-client.mjs",
   "**/*.test.*",
   "**/*.fixture.*",
   "**/test_*.py",

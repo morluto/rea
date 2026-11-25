@@ -6,7 +6,10 @@ import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { executeWorkflowFixture } from "../../support/workflowGit.js";
+import {
+  executeWorkflowFixture,
+  workflowFixtureEnvironment,
+} from "../../support/workflowGit.js";
 
 const workflow = async (filename = "ci.yml") =>
   z
@@ -410,6 +413,7 @@ it("exports every canonical scope with read authority for admission and keeps te
   expect(checkout?.with).toEqual({
     ref: "${{ github.event.repository.default_branch }}",
     "persist-credentials": false,
+    "sparse-checkout": ".github/actions/npm-cache\nscripts/ci\n",
   });
   const report = timings.jobs.report.steps.find((step) =>
     step.run?.includes("scripts/ci/job-timings-batch.mjs"),
@@ -456,7 +460,7 @@ it("runs architecture guards for fast code feedback before installing dependenci
   expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
 });
 
-it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {
+it("holds broad PR shards and native checks behind static validation", async () => {
   const { jobs } = await workflow();
   const earlyJobs = new Set([
     "changes",
@@ -613,10 +617,12 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   expect(buildSteps[stage]?.run).toContain(
     "node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json",
   );
-  expect(buildSteps[stage]?.if).toBeUndefined();
+  expect(buildSteps[stage]?.if).toBe(
+    "needs.changes.outputs.build_cache == 'true'",
+  );
   expect(buildSteps[stage]?.shell).toBe("bash");
   expect(buildSteps[stage]?.["continue-on-error"]).not.toBe(true);
-  expect(buildSteps[upload]?.if).toBeUndefined();
+  expect(buildSteps[upload]?.if).toBe(buildSteps[stage]?.if);
   expect(buildSteps[upload]?.with).toMatchObject({
     path: ".cache/ci-build-cache/",
     "if-no-files-found": "error",
@@ -637,21 +643,53 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "go_binary",
     "ghidra_bridge",
   ];
-  const buildTerms = z
-    .string()
-    .parse(jobs.build?.if)
-    .split("||")
-    .map((term) => term.trim());
-  // Provider workflow edits select their lane without code=true. The build
-  // producer must still run, without selecting the portable test shards.
-  expect(new Set(buildTerms)).toEqual(
-    new Set(
-      ["code", ...consumers].map(
-        (scope) => `needs.changes.outputs.${scope} == 'true'`,
-      ),
-    ),
+  const { build_cache: cacheOutput } = z
+    .object({ build_cache: z.string() })
+    .parse(jobs.changes?.outputs);
+  const downloadStep = z.object({
+    uses: z.string().optional(),
+    with: z.object({ name: z.string().optional() }).optional(),
+  });
+  const cacheConsumers = z
+    .array(
+      z.object({
+        if: z.string().optional(),
+        with: z
+          .object({ build_cache_artifact: z.string().optional() })
+          .optional(),
+        steps: z.array(downloadStep).optional(),
+      }),
+    )
+    .parse(Object.values(jobs))
+    .filter(
+      (job) =>
+        job.with?.build_cache_artifact === "rea-build-cache" ||
+        job.steps?.some(
+          (step) =>
+            step.uses?.startsWith("actions/download-artifact@") &&
+            step.with?.name === "rea-build-cache",
+        ),
+    );
+  const cacheConditions = cacheConsumers.map((job) =>
+    z.string().parse(job.if).replace("needs.changes.", "steps.plan."),
   );
-  expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(cacheOutput.startsWith("${{ ") && cacheOutput.endsWith(" }}")).toBe(
+    true,
+  );
+  expect(new Set(cacheOutput.slice(4, -3).split(/\s*\|\|\s*/u))).toEqual(
+    new Set(cacheConditions),
+  );
+  expect(jobs.build?.if).toBe(
+    "needs.changes.outputs.code == 'true' || needs.changes.outputs.build_cache == 'true'",
+  );
+  for (const name of ["test-shard", "test-shard-broad"])
+    expect(jobs[name]?.if).toBe(
+      `needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm' && needs.changes.outputs.test_shard_job == '${name}'`,
+    );
+  expect(jobs["test-shard-broad"]?.steps).toEqual(jobs["test-shard"]?.steps);
+  expect(jobs["test-shard-broad"]?.strategy).toEqual(
+    jobs["test-shard"]?.strategy,
+  );
   await assertProviderCacheCallers(jobs, consumers);
   const action = z
     .object({
@@ -801,7 +839,8 @@ it("keeps fast feedback separate from complete qualification and release proof",
       ),
     );
   expect(ci.on.schedule).toEqual([
-    { cron: "23 0-2,4-23 * * *" },
+    { cron: "23 1,5,7,11,13,17,19,23 * * *" },
+    { cron: "23 9,15,21 * * *" },
     { cron: "23 3 * * *" },
   ]);
   expect(ci.concurrency.group).toContain("'qualification' || 'feedback'");
@@ -864,7 +903,9 @@ it.each([
           new URL("../../../scripts/ci/required.mjs", import.meta.url),
         ),
       ],
-      { env: { ...process.env, CI_JOBS: JSON.stringify(jobs) } },
+      {
+        env: { ...workflowFixtureEnvironment(), CI_JOBS: JSON.stringify(jobs) },
+      },
     );
     if (passes) await expect(execution).resolves.toMatchObject({ stderr: "" });
     else
@@ -892,11 +933,11 @@ it("rejects incomplete or malformed classification even when available jobs succ
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           CI_JOBS: JSON.stringify({
             changes: { result: "success", outputs },
             static: { result: "success" },
-            test: { result: "success" },
+            test: { result: "skipped" },
           }),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -968,7 +1009,12 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
             new URL("../../../scripts/ci/required.mjs", import.meta.url),
           ),
         ],
-        { env: { ...process.env, CI_JOBS: JSON.stringify(needs) } },
+        {
+          env: {
+            ...workflowFixtureEnvironment(),
+            CI_JOBS: JSON.stringify(needs),
+          },
+        },
       ),
     ).rejects.toMatchObject({
       code: 1,
@@ -979,6 +1025,9 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
 
 it("runs a selected PR subset in planner-owned groups and still gates it", async () => {
   const { jobs } = await workflow();
+  expect(jobs.test?.if).toBe(
+    "${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.code == 'true' && needs.changes.outputs.tier != 'warm')) }}",
+  );
   // The planner owns every shard list, including one job per selected group.
   expect(jobs["test-shard"]?.strategy).toMatchObject({
     matrix: { shard: "${{ fromJSON(needs.changes.outputs.test_shards) }}" },
@@ -1022,7 +1071,7 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
           GITHUB_EVENT_NAME: event,
           CI_QUALIFICATION_DIRECTORY: "",
           CI_JOBS: JSON.stringify({
@@ -1051,13 +1100,22 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
   const ran = { build: "success", "test-shard": "success" };
   // A selected subset skips the separate source job.
   await expect(gate({}, ran)).resolves.toMatchObject({ stderr: "" });
-  for (const name of ["test-shard", "build"])
+  for (const name of ["test-shard", "build", "test"])
     await expect(gate({}, { ...ran, [name]: "skipped" })).rejects.toMatchObject(
       {
         code: 1,
         stderr: expect.stringContaining(name),
       },
     );
+  const broad = { ...ran, "test-source": "success", "test-shard": "skipped" };
+  await expect(
+    gate({ test_mode: "full" }, { ...broad, "test-shard-broad": "success" }),
+  ).resolves.toMatchObject({ stderr: "" });
+  await expect(
+    gate({ test_mode: "full" }, { ...broad, "test-shard": "success" }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("test-shard-broad"),
+  });
   // The complete fast suite still requires its source job.
   await expect(gate({ test_mode: "full" }, ran)).rejects.toMatchObject({
     stderr: expect.stringContaining("test-source"),
@@ -1084,8 +1142,8 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
   // gate decision, rather than silently assuming that its job has the same name.
   const expected: Record<string, { fast: string[]; full: string[] }> = {
     code: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     runtime: {
       fast: ["windows-native-build", "package-e2e"],
@@ -1156,7 +1214,8 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       ],
       {
         env: {
-          ...process.env,
+          ...workflowFixtureEnvironment(),
+          GITHUB_EVENT_NAME: "push",
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -1177,7 +1236,6 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       },
     };
     context.static = { result: "success" };
-    context.test = { result: "success" };
     for (const name of required.fast) context[name] = { result: "success" };
     await expect(executeGate(context), scope).resolves.toMatchObject({
       stderr: "",

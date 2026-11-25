@@ -96,6 +96,27 @@ export const MAX_ELF_DEBUG_CANDIDATE_BYTES = 0xffffffff;
 export const ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION =
   "Multiple distinct GNU build-ids were observed. None is selected as the image build-id.";
 
+/** Typed limitation discriminators emitted by ELF debug-link inspection. */
+export const ELF_DEBUG_LINK_LIMITATION_CODES = [
+  "standing_caveats",
+  "name_not_single_segment",
+  "multiple_build_ids",
+  "candidate_prefix_only",
+  "candidate_budget_exceeded",
+  "candidate_unreadable",
+  "candidate_read_incomplete",
+  "candidate_comparison_incomplete",
+  "unavailable_check",
+  "cannot_verify",
+] as const;
+
+export const elfDebugLinkLimitationCodeSchema = z.enum(
+  ELF_DEBUG_LINK_LIMITATION_CODES,
+);
+export type ElfDebugLinkLimitationCode = z.infer<
+  typeof elfDebugLinkLimitationCodeSchema
+>;
+
 /** The debuglink name is not one path segment, so directory strings are omitted. */
 export const ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION =
   "The debuglink file name is not a single path segment, so directory lookup paths were not derived.";
@@ -319,6 +340,7 @@ export const elfDebugLinkSchema = z.strictObject({
     status: coverageStatusSchema,
     examined_sections: uint,
   }),
+  limitation_codes: z.array(elfDebugLinkLimitationCodeSchema),
   limitations: z.array(z.string()),
 });
 

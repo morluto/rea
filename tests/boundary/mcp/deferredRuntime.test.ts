@@ -32,10 +32,7 @@ import {
   DISCOVER_TOOLS,
   HOT_TOOL_NAMES,
 } from "../../../src/contracts/catalog/catalogDiscovery.js";
-import {
-  listedOutputJsonSchema,
-  presentAdvertisedOutputSchema,
-} from "../../../src/contracts/compactOutputSchema.js";
+import { presentAdvertisedOutputSchema } from "../../../src/contracts/compactOutputSchema.js";
 import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
 import { isRecord } from "../../../src/kernel/isRecord.js";
 import { DatabaseSync } from "node:sqlite";
@@ -177,9 +174,10 @@ it.each([
         target: "draft-2020-12",
       });
       if (!isRecord(canonical)) throw new Error("discover_tools output schema");
+      expect(canonical.type).toBe("object");
       expect(discovery.outputSchema).toEqual(
         presentAdvertisedOutputSchema(
-          listedOutputJsonSchema(canonical),
+          canonical,
           COMPACT_OUTPUT_SCHEMA_PRESENTATION,
         ),
       );
@@ -278,7 +276,7 @@ registerHooks({
     const loaded = next(url, context);
     const source = loaded.source?.toString() ?? "";
     const names = modules.filter((name) =>
-      url.endsWith("/dist/" + name) || source.includes("//#region dist/" + name + "\\n"));
+      url.endsWith("/dist/" + name) || source.includes("\\n// dist/" + name + "\\n"));
     if (url.endsWith("/scripts/rea.mjs")) names.push("entrypoint");
     for (const name of names)
       appendFileSync(${JSON.stringify(log)}, JSON.stringify(name) + "\\n");

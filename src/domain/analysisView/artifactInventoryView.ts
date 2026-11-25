@@ -217,10 +217,10 @@ const parseSource = (
   const cached = reusable ? checkedSources.get(key) : undefined;
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
-      validateArtifactInventorySubject(
-        parent.subject,
-        cached.source.inventory.manifest,
-      );
+      validateArtifactInventorySubject(parent.subject, {
+        manifest: cached.source.inventory.manifest,
+        root_digest: cached.source.inventory.rootDigest,
+      });
     } catch (cause: unknown) {
       return sourceFailure(parent.normalizedResult, cause);
     }
@@ -314,6 +314,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "godot-pck" ||
     inventory.manifest.root_format === "unityfs" ||
     inventory.manifest.root_format === "wxapkg" ||
+    inventory.manifest.root_format === "iso9660" ||
+    inventory.manifest.root_format === "tar" ||
     inventory.manifest.root_format === "pyinstaller" ||
     inventory.manifest.root_format === "node-sea" ||
     inventory.manifest.root_format === "intel-hex" ||

@@ -68,8 +68,10 @@ it("rejects extra caller arguments and admits an empty unwind inventory", () => 
       eh_frame_hdr_agreement: "unavailable",
       examined_records: 0,
     },
+    limitation_codes: ["cfa_not_evaluated"],
     limitations: ["CFA instructions are counted but not evaluated."],
   });
   expect(report.ranges).toEqual([]);
   expect(report.coverage.total_ranges).toBe(0);
+  expect(report.limitation_codes).toEqual(["cfa_not_evaluated"]);
 });

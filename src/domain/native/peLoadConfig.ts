@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -28,7 +29,9 @@ export const inspectPeLoadConfigInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   max_callbacks: z
     .number()
     .int()
@@ -404,6 +407,7 @@ export const peLoadConfigSchema = z.strictObject({
   machine: uint,
   bits: z.union([z.literal(32), z.literal(64)]),
   architecture: z.string().min(1),
+  image_base: peImageBaseSchema,
   tls: tlsSchema,
   load_config: loadConfigSchema,
   examined_callbacks: uint,
