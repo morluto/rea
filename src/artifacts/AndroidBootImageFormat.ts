@@ -13,7 +13,7 @@ import {
   unsupportedInput,
   type LimitRef,
 } from "../domain/parseFailure.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import { createBinaryReaderCache } from "../domain/binaryContainer.js";
 
 /**
  * Android boot (`ANDROID!`, versions 0-4) and vendor boot (`VNDRBOOT`,
@@ -193,27 +193,20 @@ const requireBytes = (buffer: Buffer, length: number, what: string): void => {
     );
 };
 
-const LE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
-const BE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
-
-const cachedBootReader = (buffer: Buffer, little: boolean): BinaryReader => {
-  const cache = little ? LE_BOOT_READERS : BE_BOOT_READERS;
-  let reader = cache.get(buffer);
-  if (reader === undefined) {
-    reader = new BinaryReader(buffer, little, ANDROID_BOOT_FORMAT);
-    cache.set(buffer, reader);
-  }
-  return reader;
-};
+const littleEndianBootReader = createBinaryReaderCache(
+  true,
+  ANDROID_BOOT_FORMAT,
+);
+const bigEndianBootReader = createBinaryReaderCache(false, ANDROID_BOOT_FORMAT);
 
 const u32 = (buffer: Buffer, offset: number): number => {
   requireBytes(buffer, offset + 4, "header");
-  return cachedBootReader(buffer, true).u32(offset);
+  return littleEndianBootReader(buffer).u32(offset);
 };
 
 const u64 = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = cachedBootReader(buffer, true);
+  const reader = littleEndianBootReader(buffer);
   const low = reader.u32(offset);
   const high = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -222,7 +215,7 @@ const u64 = (buffer: Buffer, offset: number, what: string): number => {
 
 const u64be = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = cachedBootReader(buffer, false);
+  const reader = bigEndianBootReader(buffer);
   const high = reader.u32(offset);
   const low = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -1235,11 +1228,12 @@ const readAvbFooter = (input: {
     formatError(
       `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
     );
+  const reader = bigEndianBootReader(tail);
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,
-    versionMajor: new BinaryReader(tail, false, ANDROID_BOOT_FORMAT).u32(4),
-    versionMinor: new BinaryReader(tail, false, ANDROID_BOOT_FORMAT).u32(8),
+    versionMajor: reader.u32(4),
+    versionMinor: reader.u32(8),
     originalImageSize,
     vbmetaOffset,
     vbmetaSize,
