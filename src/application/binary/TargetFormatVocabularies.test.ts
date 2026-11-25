@@ -126,6 +126,7 @@ const TARGETS: TargetFixtures = {
   "godot-pck": { ...archive, format: "godot-pck" },
   unityfs: { ...archive, format: "unityfs" },
   wxapkg: { ...archive, format: "wxapkg" },
+  "android-backup": { ...archive, format: "android-backup" },
   tar: { ...archive, format: "tar" },
   dds: { ...archive, format: "dds" },
   glb: { ...archive, format: "glb" },

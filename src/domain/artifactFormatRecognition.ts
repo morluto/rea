@@ -1,4 +1,5 @@
 import type { ArtifactFormatId } from "./artifactGraph.js";
+import { hasAndroidBackupMagic } from "./androidBackup.js";
 import { hasAndroidBootImageMagic } from "./androidBootImageFormat.js";
 import { hasBinaryPlistSignature } from "./apple/appleArchiveFormat.js";
 import { hasDfuSePrefix, isDfuSeFile } from "./firmware/dfuse.js";
@@ -43,6 +44,7 @@ export type RecognizedArtifactFormat = Extract<
   | "godot-pck"
   | "unityfs"
   | "wxapkg"
+  | "android-backup"
   | "tar"
   | "dds"
   | "glb"
@@ -156,6 +158,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       "wxapkg",
       (prefix) => hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix),
     ),
+    when("android-backup", hasAndroidBackupMagic),
     // A ustar or GNU header, or a gzip member whose first block is one.
     ({ prefix }) => {
       if (recognizeTarPrefix(prefix) !== undefined)

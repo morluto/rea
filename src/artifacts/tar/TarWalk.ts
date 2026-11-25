@@ -4,7 +4,9 @@ import { Budget } from "../../domain/budget.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
+  effectivePaxValue,
   parsePaxRecords,
+  parsePaxUnsignedDecimal,
   parseTarHeaderBlock,
   TAR_BLOCK_BYTES,
   TAR_TYPEFLAGS,
@@ -128,7 +130,8 @@ const skipGnuSparseExtensions = async (
 const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
   for (const key of ["size", "uid", "gid"] as const) {
     const value = records.get(key);
-    if (value !== undefined && decimal(value) === undefined) return key;
+    if (value !== undefined && parsePaxUnsignedDecimal(value) === undefined)
+      return key;
   }
   const mtime = records.get("mtime");
   return mtime !== undefined && paxSeconds(mtime) === undefined
@@ -136,17 +139,16 @@ const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
     : undefined;
 };
 
-/**
- * Mutate a retained global pax map in place after budget accounting. POSIX: an
- * empty value deletes the keyword, so the header field applies again.
- */
+/** Mutate a retained pax map after budget accounting. */
 const applyPaxInPlace = (
   target: Map<string, string>,
   records: TarPaxRecords,
 ): void => {
-  for (const [key, value] of records)
-    if (value === "") target.delete(key);
+  for (const [key, raw] of records) {
+    const value = effectivePaxValue(raw);
+    if (value === undefined) target.delete(key);
     else target.set(key, value);
+  }
 };
 
 /**
@@ -175,18 +177,16 @@ const mergedPaxBytesDelta = (
   records: TarPaxRecords,
 ): number => {
   let bytes = 0;
-  for (const [key, value] of records) {
+  for (const [key, raw] of records) {
+    const value = effectivePaxValue(raw);
     const previous = base.get(key);
-    if (value === "") {
+    if (value === undefined) {
       if (previous !== undefined) bytes -= paxRecordBytes(key, previous);
     } else if (previous === undefined) bytes += paxRecordBytes(key, value);
     else bytes += Buffer.byteLength(value) - Buffer.byteLength(previous);
   }
   return bytes;
 };
-
-const decimal = (value: string | undefined): bigint | undefined =>
-  value !== undefined && /^[0-9]+$/u.test(value) ? BigInt(value) : undefined;
 
 const typeflagText = (typeflag: number): string =>
   typeflag === 0 ? "\u0000" : String.fromCharCode(typeflag);
@@ -352,7 +352,8 @@ export const walkTar = async (
         );
         break;
       }
-      const declaredSize = decimal(records.get("size")) ?? header.size;
+      const declaredSize =
+        parsePaxUnsignedDecimal(records.get("size")) ?? header.size;
       const size = safeNumber(declaredSize);
       if (size === null || tarPaddedSize(size) > Number.MAX_SAFE_INTEGER) {
         const detail = `member size ${String(declaredSize)} is not a safe byte count`;
@@ -478,8 +479,12 @@ export const walkTar = async (
           size: role.member === "file" ? size : 0,
           typeflag: typeflagText(typeflag),
           mode: header.mode,
-          uid: safeNumber(decimal(records.get("uid")) ?? header.uid),
-          gid: safeNumber(decimal(records.get("gid")) ?? header.gid),
+          uid: safeNumber(
+            parsePaxUnsignedDecimal(records.get("uid")) ?? header.uid,
+          ),
+          gid: safeNumber(
+            parsePaxUnsignedDecimal(records.get("gid")) ?? header.gid,
+          ),
           mtime: safeNumber(paxSeconds(records.get("mtime")) ?? header.mtime),
           uname:
             records.get("uname") ??

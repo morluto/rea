@@ -18,6 +18,7 @@ import {
   ZipArtifactReader,
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
+import { AndroidBackupArtifactReader } from "./AndroidBackupArtifactReader.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
 import {
   AsarArtifactReader,
@@ -261,6 +262,20 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
   });
 
 const NON_ZIP_FORMATS = {
+  "android-backup": container("android-backup", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android backup inventory reads unencrypted versions 1-5 offline. TAR header checksums validate headers, not member content authenticity. No device restore, app execution, or decryption is performed.",
+    createReader: (path, options) =>
+      new AndroidBackupArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_backup,
+      ),
+  }),
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
     absentInventory: "root",

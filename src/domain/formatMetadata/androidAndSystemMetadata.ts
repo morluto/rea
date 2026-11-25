@@ -9,6 +9,25 @@ import {
 import { MFT_INLINE_HEADER_LIMIT } from "../windows/ntfsMft.js";
 import { offset, uint32 } from "./primitives.js";
 
+/** Envelope facts; encryption leaves member coverage unknown. */
+export const androidBackupMetadataSchema = z.strictObject({
+  kind: z.literal("android-backup"),
+  format_version: z.int().min(1).max(5),
+  compressed: z.boolean(),
+  encryption: z.string(),
+  payload_offset: offset.nullable(),
+  directory_status: z.enum(["available", "encrypted"]),
+});
+export type AndroidBackupMetadata = z.infer<typeof androidBackupMetadataSchema>;
+
+export const androidBackupEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-backup-entry"),
+  tar_header_offset: offset,
+  tar_data_offset: offset,
+  mode: offset,
+  pax: z.record(z.string(), z.string()),
+});
+
 const ntfsRecordHeaderSchema = z.strictObject({
   index: offset,
   fileOffset: offset,

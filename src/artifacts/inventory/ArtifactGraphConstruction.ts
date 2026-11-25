@@ -309,6 +309,7 @@ export const rootOccurrenceFor = (
   encrypted:
     (metadata.formatMetadata?.kind === "godot-pck" ||
       metadata.formatMetadata?.kind === "unityfs" ||
+      metadata.formatMetadata?.kind === "android-backup" ||
       metadata.formatMetadata?.kind === "wxapkg") &&
     metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",

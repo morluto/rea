@@ -36,6 +36,8 @@ import {
   uImageMetadataSchema,
 } from "./formatMetadata/firmwareMetadata.js";
 import {
+  androidBackupEntryMetadataSchema,
+  androidBackupMetadataSchema,
   androidBootImageEntryMetadataSchema,
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
@@ -89,6 +91,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitMetadataSchema,
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
+  androidBackupEntryMetadataSchema,
+  androidBackupMetadataSchema,
   androidBootImageEntryMetadataSchema,
   iso9660MetadataSchema,
   iso9660EntryMetadataSchema,
@@ -150,6 +154,13 @@ const declarationsByKind: {
   wxapkg: {
     notCompared:
       "Its fields come from the package's own bytes, which content comparison covers.",
+  },
+  "android-backup": {
+    notCompared:
+      "Envelope facts come from the carrier bytes, which content comparison covers.",
+  },
+  "android-backup-entry": {
+    declaration: (metadata) => ({ mode: metadata.mode }),
   },
   "wxapkg-entry": {
     notCompared:

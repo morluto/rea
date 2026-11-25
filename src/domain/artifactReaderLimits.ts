@@ -3,6 +3,7 @@ import { constants as bufferConstants } from "node:buffer";
 
 const bytes = z.int().min(1).max(Number.MAX_SAFE_INTEGER);
 const count = z.int().min(1).max(0x7fffffff);
+const bufferedBytes = bytes.max(bufferConstants.MAX_LENGTH);
 const representedBytes = bytes.max(bufferConstants.MAX_STRING_LENGTH);
 
 export const DEFAULT_BUN_READER_LIMITS = {
@@ -93,6 +94,20 @@ export const iso9660ReaderLimitsSchema = z.strictObject({
 });
 export type Iso9660ReaderLimits = z.output<typeof iso9660ReaderLimitsSchema>;
 
+export const DEFAULT_ANDROID_BACKUP_READER_LIMITS = {
+  encoded_bytes: 64 * 1024 * 1024,
+  expanded_bytes: 64 * 1024 * 1024,
+  directory_bytes: 8 * 1024 * 1024,
+};
+const androidBackupReaderLimitsSchema = z.strictObject({
+  encoded_bytes: bufferedBytes,
+  expanded_bytes: bufferedBytes,
+  directory_bytes: representedBytes,
+});
+export type AndroidBackupReaderLimits = z.output<
+  typeof androidBackupReaderLimitsSchema
+>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -179,6 +194,19 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `ISO 9660 admission; omitted fields use ${JSON.stringify(DEFAULT_ISO9660_READER_LIMITS)}. Descriptor count bounds the volume descriptor set; directory depth, record count, directory bytes and path bytes bound directory-tree traversal.`,
     ),
+  android_backup: z
+    .strictObject({
+      encoded_bytes:
+        androidBackupReaderLimitsSchema.shape.encoded_bytes.exactOptional(),
+      expanded_bytes:
+        androidBackupReaderLimitsSchema.shape.expanded_bytes.exactOptional(),
+      directory_bytes:
+        androidBackupReaderLimitsSchema.shape.directory_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android backup admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_BACKUP_READER_LIMITS)}. The allowances bound the encoded payload, decoded TAR bytes and retained directory representation independently.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -194,6 +222,7 @@ export const artifactReaderLimitsSchema = z.strictObject({
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
+  android_backup: androidBackupReaderLimitsSchema.exactOptional(),
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
@@ -209,6 +238,14 @@ export const resolveArtifactReaderLimits = (
   node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
+  ...(selected?.android_backup === undefined
+    ? {}
+    : {
+        android_backup: {
+          ...DEFAULT_ANDROID_BACKUP_READER_LIMITS,
+          ...selected.android_backup,
+        },
+      }),
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),
@@ -240,6 +277,10 @@ export const artifactReaderLimitMaximum = (
           "artifact_limits.bun.representation_bytes",
           "artifact_limits.dotnet_bundle.string_bytes",
           "artifact_limits.godot.directory_bytes",
+          "artifact_limits.android_backup.directory_bytes",
         ].includes(parameter)
       ? bufferConstants.MAX_STRING_LENGTH
-      : Number.MAX_SAFE_INTEGER;
+      : parameter === "artifact_limits.android_backup.encoded_bytes" ||
+          parameter === "artifact_limits.android_backup.expanded_bytes"
+        ? bufferConstants.MAX_LENGTH
+        : Number.MAX_SAFE_INTEGER;

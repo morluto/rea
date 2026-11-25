@@ -1,0 +1,369 @@
+import type { Readable } from "node:stream";
+import { inflate } from "node:zlib";
+import { setImmediate } from "node:timers/promises";
+
+import {
+  ANDROID_BACKUP_FORMAT,
+  androidBackupTarEntries,
+  parseAndroidBackupHeader,
+} from "../domain/androidBackup.js";
+import {
+  DEFAULT_ANDROID_BACKUP_READER_LIMITS,
+  type AndroidBackupReaderLimits,
+} from "../domain/artifactReaderLimits.js";
+import type { AndroidBackupMetadata } from "../domain/formatMetadata/androidAndSystemMetadata.js";
+import type { AnyParseFailureError } from "../domain/parseFailure.js";
+import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import {
+  ArtifactFileSource,
+  ArtifactPathRegistry,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  artifactParseFailure,
+  artifactReaderLimitFailure,
+  assertArtifactReadActive,
+  assertProducedEntry,
+  copyArtifactEntry,
+  malformedArtifact,
+  normalizeArtifactPath,
+  truncatedArtifact,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactTraversalOptions,
+} from "../resources/index.js";
+import { readArtifactFileBytes } from "./ArtifactFileRange.js";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
+
+const CHUNK_BYTES = 64 * 1024;
+const LABEL = "Android backup";
+type BackupMember = { readonly entry: ArtifactEntry; readonly bytes: Buffer };
+
+const backupLimitFailure = (
+  limits: AndroidBackupReaderLimits,
+  field: keyof AndroidBackupReaderLimits,
+  required?: number,
+): ArtifactReaderFailure =>
+  artifactReaderLimitFailure(
+    `artifact_limits.android_backup.${field}`,
+    limits[field],
+    "bytes",
+    required,
+    "memory",
+  );
+
+const projectBackupParseFailure = (
+  cause: AnyParseFailureError,
+  signal: AbortSignal | undefined,
+): unknown => {
+  const failure = cause.failure;
+  return failure.kind === "limit"
+    ? artifactReaderLimitFailure(
+        failure.limit.name,
+        failure.limit.maximum,
+        "bytes",
+        failure.limit.required,
+        "memory",
+      )
+    : artifactParseFailure(cause, signal);
+};
+
+const inflatePayload = (
+  payload: Buffer,
+  payloadOffset: number,
+  limits: AndroidBackupReaderLimits,
+): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    inflate(
+      payload,
+      { maxOutputLength: limits.expanded_bytes, info: true },
+      (cause, result) => {
+        if (cause !== null) {
+          const code = "code" in cause ? cause.code : undefined;
+          reject(
+            code === "ERR_BUFFER_TOO_LARGE"
+              ? backupLimitFailure(limits, "expanded_bytes")
+              : code === "Z_BUF_ERROR"
+                ? truncatedArtifact(
+                    ANDROID_BACKUP_FORMAT,
+                    "Android backup zlib payload is truncated",
+                    { cause, offset: payloadOffset, field: "zlib payload" },
+                  )
+                : malformedArtifact(
+                    ANDROID_BACKUP_FORMAT,
+                    "Android backup has an invalid zlib payload",
+                    { cause, offset: payloadOffset, field: "zlib payload" },
+                  ),
+          );
+          return;
+        }
+        // Node's info option returns the inflater's consumed input alongside bytes.
+        const decoded = result as unknown as {
+          buffer: Buffer;
+          engine: { bytesWritten: number };
+        };
+        if (decoded.engine.bytesWritten !== payload.length) {
+          reject(
+            malformedArtifact(
+              ANDROID_BACKUP_FORMAT,
+              "Android backup has trailing compressed payload bytes",
+              {
+                offset: payloadOffset + decoded.engine.bytesWritten,
+                field: "zlib payload",
+              },
+            ),
+          );
+          return;
+        }
+        resolve(decoded.buffer);
+      },
+    );
+  });
+
+/** Bounded offline envelope/TAR reader; never invokes ADB or restores content. */
+export class AndroidBackupArtifactReader implements ArtifactReader {
+  readonly format = ANDROID_BACKUP_FORMAT;
+  readonly #scope = new ArtifactResourceScope();
+  readonly #source: ArtifactFileSource;
+  readonly #preparation = new ArtifactPreparation();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    LABEL,
+    CHUNK_BYTES,
+  );
+  #prepared:
+    | {
+        readonly metadata: AndroidBackupMetadata;
+        readonly members: ReadonlyMap<string, BackupMember>;
+      }
+    | undefined;
+  #closing = false;
+
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    private readonly limits: AndroidBackupReaderLimits = DEFAULT_ANDROID_BACKUP_READER_LIMITS,
+  ) {
+    this.#source = new ArtifactFileSource(path, LABEL, admitted);
+  }
+
+  formatMetadata(): AndroidBackupMetadata | undefined {
+    const metadata = this.#prepared?.metadata;
+    return metadata === undefined ? undefined : { ...metadata };
+  }
+
+  async prepareContainer(
+    expectedSha256: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.#scope.run(async () => {
+      this.#assertOpen(signal);
+      await this.#source.bindSha256(expectedSha256, signal);
+    });
+  }
+
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
+    await this.#scope.run(async () => {
+      this.#assertOpen(signal);
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
+      await this.#source.read(signal);
+    });
+    this.#assertOpen(signal);
+    const { metadata, members } = this.#prepared!;
+    if (metadata.directory_status === "encrypted") {
+      options?.onCoverage?.({
+        status: "unknown",
+        limitations: [
+          `Android backup encryption method ${JSON.stringify(metadata.encryption)} is unsupported; member identities and contents remain unknown. No decryption was attempted.`,
+        ],
+      });
+      this.#assertOpen(signal);
+      return;
+    }
+    let index = 0;
+    for (const { entry } of members.values()) {
+      if (index++ % 256 === 0) await setImmediate();
+      this.#assertOpen(signal);
+      yield copyArtifactEntry(entry);
+    }
+    this.#assertOpen(signal);
+    options?.onCoverage?.({ status: "complete", limitations: [] });
+    this.#assertOpen(signal);
+  }
+
+  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
+    return this.#scope.run(async () => {
+      this.#assertOpen(signal);
+      const member = this.#prepared?.members.get(entry.adapterKey);
+      const produced = member?.entry;
+      assertProducedEntry(
+        entry,
+        produced,
+        "Android backup entry does not match its owning inventory",
+      );
+      await this.#source.read(signal);
+      this.#assertOpen(signal);
+      if (produced.kind !== "file")
+        throw new ArtifactReaderFailure(
+          "unavailable",
+          "Android backup directory has no file contents",
+        );
+      return this.#streams.open(signal, (active) =>
+        this.#chunks(member!.bytes, active),
+      );
+    });
+  }
+
+  async *#chunks(bytes: Buffer, signal?: AbortSignal): AsyncIterable<Buffer> {
+    for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
+      await setImmediate();
+      this.#assertOpen(signal);
+      yield Buffer.from(bytes.subarray(offset, offset + CHUNK_BYTES));
+    }
+  }
+
+  async close(): Promise<void> {
+    this.#closing = true;
+    this.#streams.close();
+    await this.#scope.close();
+    await this.#source.close();
+    this.#prepared = undefined;
+    this.#preparation.clear();
+  }
+
+  provenance(): readonly [] {
+    return [];
+  }
+
+  #assertOpen(signal?: AbortSignal): void {
+    assertArtifactReadActive(signal);
+    if (this.#closing)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Android backup reader is closed",
+      );
+  }
+
+  async #prepare(signal?: AbortSignal): Promise<void> {
+    const { handle, initial } = await this.#source.read(signal);
+    const prefix = await readArtifactFileBytes(
+      ANDROID_BACKUP_FORMAT,
+      handle,
+      0,
+      Math.min(initial.size, 1024),
+      initial.size,
+      signal,
+    );
+    const parsed = parseAndroidBackupHeader(prefix);
+    if (!parsed.ok) throw projectBackupParseFailure(parsed.error, signal);
+    const header = parsed.value;
+    const payloadOffset = header.payloadOffset;
+    const metadata: AndroidBackupMetadata = {
+      kind: "android-backup",
+      format_version: header.version,
+      compressed: header.compressed,
+      encryption: header.encryption,
+      payload_offset: payloadOffset,
+      directory_status:
+        header.encryption === "none" ? "available" : "encrypted",
+    };
+    const members = new Map<string, BackupMember>();
+    if (payloadOffset === null) {
+      this.#assertOpen(signal);
+      this.#prepared = { metadata, members };
+      return;
+    }
+    const encodedBytes = initial.size - payloadOffset;
+    if (encodedBytes > this.limits.encoded_bytes)
+      throw backupLimitFailure(this.limits, "encoded_bytes", encodedBytes);
+    if (!header.compressed && encodedBytes > this.limits.expanded_bytes)
+      throw backupLimitFailure(this.limits, "expanded_bytes", encodedBytes);
+    const encoded = await readArtifactFileBytes(
+      ANDROID_BACKUP_FORMAT,
+      handle,
+      payloadOffset,
+      encodedBytes,
+      initial.size,
+      signal,
+    );
+    const tar = header.compressed
+      ? await inflatePayload(encoded, payloadOffset, this.limits)
+      : encoded;
+    this.#assertOpen(signal);
+    const directoryLimit = this.limits.directory_bytes;
+    const pathLimit = Math.floor(directoryLimit / 512);
+    const registry = new ArtifactPathRegistry({
+      maxParts: pathLimit,
+      maxNodes: pathLimit,
+      limitFailure: (_resource, _effective, required) =>
+        backupLimitFailure(this.limits, "directory_bytes", required * 512),
+    });
+    const names = new Set<string>();
+    let directoryBytes = 0;
+    let index = 0;
+    for (const decoded of androidBackupTarEntries(
+      tar,
+      directoryLimit,
+      header.compressed ? null : payloadOffset,
+    )) {
+      if (index % 256 === 0) await setImmediate();
+      this.#assertOpen(signal);
+      if (!decoded.ok) throw projectBackupParseFailure(decoded.error, signal);
+      const member = decoded.value;
+      // Charge worst-case JSON escaping and per-entry bookkeeping before retention.
+      directoryBytes +=
+        512 + 6 * (member.path.length + JSON.stringify(member.pax).length);
+      if (directoryBytes > directoryLimit)
+        throw backupLimitFailure(
+          this.limits,
+          "directory_bytes",
+          directoryBytes,
+        );
+      const path = normalizeArtifactPath(member.path);
+      if (names.has(path))
+        throw new ArtifactReaderFailure(
+          "path",
+          `Duplicate Android backup member: ${path}`,
+        );
+      names.add(path);
+      registry.add(path, member.kind);
+      const adapterKey = `android-backup:${String(index++)}`;
+      members.set(adapterKey, {
+        bytes: tar.subarray(member.dataOffset, member.dataOffset + member.size),
+        entry: {
+          path,
+          sourcePath: member.path,
+          kind: member.kind,
+          declaredSize: member.size,
+          compressedSize: null,
+          executable: (member.mode & 0o111) !== 0,
+          encrypted: false,
+          byteOffset: header.compressed
+            ? null
+            : payloadOffset + member.dataOffset,
+          declaredIntegrity: null,
+          unpacked: false,
+          limitations: [],
+          adapterKey,
+          formatMetadata: {
+            kind: "android-backup-entry",
+            tar_header_offset: member.headerOffset,
+            tar_data_offset: member.dataOffset,
+            mode: member.mode,
+            pax: { ...member.pax },
+          },
+        },
+      });
+    }
+    await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#prepared = { metadata, members };
+  }
+}
