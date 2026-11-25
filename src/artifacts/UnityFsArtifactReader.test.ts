@@ -1,11 +1,9 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildUnityFs,
   type UnityFsMember,
@@ -14,20 +12,13 @@ import {
 import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 
-const writeBundle = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-unityfs-"),
-    "content.bundle",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
-
 const withReader = async <T>(
   bytes: Buffer,
   use: (reader: UnityFsArtifactReader) => Promise<T>,
 ): Promise<T> => {
-  const reader = new UnityFsArtifactReader(await writeBundle(bytes));
+  const reader = new UnityFsArtifactReader(
+    await createTestTempFile("rea-unityfs-", "content.bundle", bytes),
+  );
   try {
     return await use(reader);
   } finally {

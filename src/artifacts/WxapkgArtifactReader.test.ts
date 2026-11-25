@@ -1,10 +1,8 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildWxapkg,
   wxapkgEncryptedBytes,
@@ -19,14 +17,8 @@ import {
 import { hasWxapkgHeader } from "../domain/wxapkgFormat.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 
-const writePackage = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-wxapkg-"),
-    "package.wxapkg",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const writePackage = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-wxapkg-", "package.wxapkg", bytes);
 
 const list = async (
   reader: WxapkgArtifactReader,
