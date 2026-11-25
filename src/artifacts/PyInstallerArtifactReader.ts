@@ -1,3 +1,4 @@
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
@@ -93,8 +94,7 @@ const carrierPathDialect = async (
   }
   if (windowsHeader.state === "declared")
     return windowsHeader.signature === "PE" ? "windows" : "unknown";
-  if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-    return "posix";
+  if (hasElfMagic(prefix)) return "posix";
   const thinMachO = readMachoHeaderPrefixFacts(prefix);
   if (thinMachO.identity !== null) return "posix";
   if (readFatContainerHeader(prefix, fileSize).state === "parsed")
