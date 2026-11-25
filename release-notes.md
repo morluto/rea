@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **cli:** An over-budget CLI result without --evidence_output is now saved to REA's private retained-Evidence cache and reported as {summary, evidence_bundle, delivery} with delivery.retained cache-file, instead of writing nothing. Pass --no-retain, or set REA_CLI_RETAINED_EVIDENCE_BYTES=0, to write nothing as before.
 * **delivery:** When a failure's details.partial_observation does not fit delivery.agent_result_budget_bytes beside the failure's own facts and the caller omitted detail, MCP and the CLI deliver its summary record instead of the complete Evidence, with details.partial_observation_delivery naming where the complete record is. Pass detail complete (--detail complete) for it inline.
 * **views:** xrefs and inspect_nuget_nupkg with detail omitted now return their retained summary when complete Evidence exceeds delivery.agent_result_budget_bytes in a session that can page it. Pass detail "complete" (CLI --detail complete) for complete inline delivery.
 * **delivery:** An omitted detail no longer always returns complete Evidence inline on MCP or the CLI for tools with a detail selector (including inspect_managed_members, inspect_managed_artifact, inspect_byte_entropy, inspect_artifact, analyze_javascript_application, list_procedures, list_strings and the other operations listed in src/domain/agentBudgetOperations.ts). Over the budget they return the retained summary; pass detail complete (--detail complete) for complete inline delivery. inspect_managed_members type_names narrows member_refs and exported_types.
@@ -73,6 +74,7 @@
 * **browser:** size inspect_web_page delivery and page captures by section ([#14368](https://github.com/morluto/rea/issues/14368)) ([67a1e2c](https://github.com/morluto/rea/commit/67a1e2c9371131a93fb1eecb00d74bb160c6d215))
 * **cli:** add human-TTY failure rendering with CLI-only issue hint ([#14355](https://github.com/morluto/rea/issues/14355)) ([64279ef](https://github.com/morluto/rea/commit/64279efb5a01fc768d66033bd69a41a647c3e175))
 * **cli:** add list-procedures to produce function-matching inventories ([#14241](https://github.com/morluto/rea/issues/14241)) ([e2c0071](https://github.com/morluto/rea/commit/e2c00712fd421fc77f335d7b9f87ce162808a437))
+* **cli:** keep over-budget CLI results recoverable by default ([#14610](https://github.com/morluto/rea/issues/14610)) ([2bb554e](https://github.com/morluto/rea/commit/2bb554e8b05b945b1bf6cfe7d25b9b1ca0b60e5c))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
 * **delivery:** bound default results by an agent result budget ([#14252](https://github.com/morluto/rea/issues/14252)) ([123b693](https://github.com/morluto/rea/commit/123b693f0877181115b8fd7ad800ecfd566f22c0))
 * **delivery:** budget the partial observation carried by failure results ([#14607](https://github.com/morluto/rea/issues/14607)) ([73d6092](https://github.com/morluto/rea/commit/73d6092687a201940d2d454feb69ed0ccf845bd5))
