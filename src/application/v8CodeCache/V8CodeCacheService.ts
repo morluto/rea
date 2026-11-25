@@ -1,13 +1,14 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { V8CodeCachePort } from "../../ports/v8CodeCache/V8CodeCachePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectV8CodeCacheInputSchema,
   v8CodeCacheSchema,
   type V8CodeCache,
 } from "../../domain/v8/v8CodeCache.js";
 import type { Result } from "../../domain/result.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_v8_code_cache";
@@ -38,29 +39,13 @@ export class V8CodeCacheService {
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
+          observedFileEvidence(value, identity, OPERATION, parameters, [
             {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
+              kind: "file-offset-range",
+              start: value.payload.offset,
+              end: value.payload.offset + value.payload.bytes,
             },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-                {
-                  kind: "file-offset-range" as const,
-                  start: value.payload.offset,
-                  end: value.payload.offset + value.payload.bytes,
-                },
-              ],
-            },
-          ),
+          ]),
       },
       rawInput,
       options,

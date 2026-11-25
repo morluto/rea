@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   collectWebModuleImports,
   createCapturedModuleMatcher,
-  matchCapturedModules,
 } from "./webModuleImports.js";
 import { exportedWebScriptSchema } from "./webScriptExport.js";
 
@@ -169,11 +168,12 @@ describe("captured module candidates", () => {
       script(url, "scenario-response", "b".repeat(64)),
       script("https://app.test/a.js?v=2", "scenario-response"),
     ];
-    expect(matchCapturedModules(url, scripts)).toEqual([
+    const match = createCapturedModuleMatcher(scripts);
+    expect(match(url)).toEqual([
       { script_index: 2, match: "exact-reported-url", script: scripts[2] },
       { script_index: 3, match: "exact-reported-url", script: scripts[3] },
     ]);
-    expect(matchCapturedModules(`${url}#one`, scripts)).toEqual([
+    expect(match(`${url}#one`)).toEqual([
       { script_index: 0, match: "exact-reported-url", script: scripts[0] },
       {
         script_index: 2,
@@ -186,9 +186,7 @@ describe("captured module candidates", () => {
         script: scripts[3],
       },
     ]);
-    expect(matchCapturedModules("https://app.test/lazy.js", scripts)).toEqual(
-      [],
-    );
+    expect(match("https://app.test/lazy.js")).toEqual([]);
   });
   it("retains exact non-URL identities without matching response fragments", () => {
     const scripts = [
@@ -196,8 +194,9 @@ describe("captured module candidates", () => {
       script("relative/module.js#part", "scenario-response"),
       script("relative/module.js", "scenario-response"),
     ];
+    const match = createCapturedModuleMatcher(scripts);
     expect(
-      matchCapturedModules("relative/module.js#part", scripts).map((item) => [
+      match("relative/module.js#part").map((item) => [
         item.script_index,
         item.match,
       ]),
@@ -340,17 +339,7 @@ describe("keyword-indexed traversal and indexed candidate matching", () => {
         script: scripts[2],
       },
     ];
-    expect(matchCapturedModules("https://app.test/a.js#one", scripts)).toEqual(
-      expected,
-    );
-    expect(
-      matchCapturedModules(
-        "https://app.test/a.js#one",
-        Object.freeze([...scripts]),
-      ),
-    ).toEqual(expected);
-
-    const matcher = createCapturedModuleMatcher(scripts);
+    const matcher = createCapturedModuleMatcher(Object.freeze(scripts));
     // 1st call (linear) and 2nd+ calls (indexed) must return identical order.
     expect(matcher("https://app.test/a.js#one")).toEqual(expected);
     expect(matcher("https://app.test/a.js#one")).toEqual(expected);

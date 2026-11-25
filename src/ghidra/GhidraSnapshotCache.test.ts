@@ -256,7 +256,11 @@ describe("Ghidra relationship coverage replay", () => {
   it.each([
     undefined,
     { status: "complete", diagnostics: ["Resolved static references only."] },
-    { status: "unknown", reason: "Relationship inventory was unavailable." },
+    {
+      status: "unknown",
+      reason: "Relationship inventory was unavailable.",
+      limited_directions: ["callers", "callees"],
+    },
     {
       status: "partial",
       limitations: ["Missing callers."],
@@ -287,6 +291,7 @@ describe("Ghidra relationship coverage replay", () => {
       const liveCoverage: RelationshipCoverage = {
         status: "unknown",
         reason: "Current observation after import",
+        limited_directions: ["callers", "callees"],
       };
       const replay = fixture("12.2", liveCoverage);
       expect(replay.session.importAnalysisSnapshot(snapshot.value).ok).toBe(

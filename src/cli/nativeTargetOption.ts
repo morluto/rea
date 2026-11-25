@@ -8,7 +8,13 @@ const NATIVE_OPEN_HELP = {
   architecture:
     "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
   entryPoint:
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
+    "Caller-supplied code entry address (0xhex), also the load address without --base-address; required with --target-format raw-binary unless --architecture-variant is given, optional with gamecube-dol (must equal the DOL header entry)",
+  baseAddress:
+    "Address of raw file offset 0 (0xhex), separate from --entry-point; only with --architecture-variant",
+  architectureVariant:
+    "ARM M-profile variant of a raw image, decoded in Thumb state; requires --architecture arm and --base-address",
+  vectorTableAddress:
+    "Address of the M-profile vector table (0xhex) when --entry-point is omitted and the table is not at --base-address",
   provider:
     "Bind deep analysis to a provider ID or use deterministic auto selection",
   snapshot: "Load and update a local analysis snapshot",
@@ -16,7 +22,7 @@ const NATIVE_OPEN_HELP = {
 
 /**
  * A native executable opened as an MCP client opens it, with `open_binary`'s
- * format, architecture, entry point and provider fields. An operation that
+ * format, architecture, entry point, raw load and provider fields. An operation that
  * loads and updates an analysis snapshot also takes `snapshot_path`, with
  * `snapshot` as its help when it differs from the shared one.
  */
@@ -47,6 +53,18 @@ export const nativeTarget = (
       entry_point: {
         name: "entry-point",
         description: NATIVE_OPEN_HELP.entryPoint,
+      },
+      base_address: {
+        name: "base-address",
+        description: NATIVE_OPEN_HELP.baseAddress,
+      },
+      architecture_variant: {
+        name: "architecture-variant",
+        description: NATIVE_OPEN_HELP.architectureVariant,
+      },
+      vector_table_address: {
+        name: "vector-table-address",
+        description: NATIVE_OPEN_HELP.vectorTableAddress,
       },
       provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
     },

@@ -126,15 +126,21 @@ causality, process identity, absence of unrecorded traffic or current deployment
 
 One inspection is admitted at a time per provider. Concurrent calls return a
 capacity error; close drains active work before releasing resources. Captures
-are streamed into a read-only owned snapshot with a 2 GiB disk budget. Native
+are streamed into a read-only owned snapshot bounded by
+`producer_limits.input_bytes` (default 2 GiB; CLI `--producer-limits`). Native
 capture commands enforce Linux address-space ceilings of at most 1 GiB,
 300 CPU seconds, 64 MiB per file and no core dumps, preserving stricter inherited
 limits. Windows uses a 1 GiB committed-memory limit for each owned tool tree.
 These are not aggregate machine or filesystem quotas.
 
-TShark output is bounded at 8 MiB; its known five-level selected-field shape and
-128 MiB graph-expansion estimate are checked before allocation. Retained facts
-have a separate 16 MiB estimate. Capinfos output is limited to 64 KiB. Command
+Each TShark JSON pass is bounded by `producer_limits.output_bytes`, which counts its stdout and stderr together (default
+8 MiB, at most 128 MiB). Its known five-level selected-field shape and the fixed
+128 MiB graph-expansion estimate across both passes are checked before
+allocation, so raising the output budget does not raise that estimate. Retained
+facts have a separate fixed 16 MiB estimate. A refusal at either producer limit
+reports `details.limit` with `parameter: "producer_limits.<field>"`, the
+effective value, default and range; raise it on the next call. Capinfos output
+and version probes are limited to 64 KiB. Command
 wall deadlines are 300 s for dissection, 60 s for metadata and 20 s for probes.
 Native ownership preparation has its own bounded lifecycle.
 

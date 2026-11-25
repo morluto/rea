@@ -1,5 +1,5 @@
 import * as t from "@babel/types";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import {
   analyzeJavaScriptSemantics,
@@ -17,26 +17,25 @@ const ancestryReads = (
 ): number => {
   const original = WeakMap.prototype.get;
   let reads = 0;
-  const get = vi.spyOn(WeakMap.prototype, "get").mockImplementation(function (
-    this: WeakMap<object, unknown>,
-    key,
-  ) {
-    const value: unknown = original.call(this, key);
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "type" in value &&
-      typeof value.type === "string"
-    )
-      reads++;
-    return value;
-  });
+  let ir: JavaScriptSemanticIr;
   try {
-    inspect(analyzeJavaScriptSemantics(source));
-    return reads;
+    WeakMap.prototype.get = function (key) {
+      const value: unknown = original.call(this, key);
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "type" in value &&
+        typeof value.type === "string"
+      )
+        reads++;
+      return value;
+    };
+    ir = analyzeJavaScriptSemantics(source);
   } finally {
-    get.mockRestore();
+    WeakMap.prototype.get = original;
   }
+  inspect(ir);
+  return reads;
 };
 
 it.each(["const a=1;", "let a; a=1;"])(

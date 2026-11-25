@@ -132,26 +132,40 @@ export const ghidraNotInListingLimitation = (
 ): string =>
   `Ghidra's listing has no instruction or defined data at this address in this session, so no decode was attempted; this is not proof that the bytes are not code. If they are initialized code that auto-analysis did not reach, declare the address as a \`code\` seed, or a \`function\` seed for an entry point, in REA_GHIDRA_SEED_FILE for a new REA process${seedSessionRestriction[source]}; that session's seed outcome limitation counts decoded, failed and unmapped seeds.`;
 
+/**
+ * Facts every operation in one Ghidra session shares. They describe the
+ * session, not the call, so the session owner can state them once.
+ */
+export const ghidraSessionCommonLimitations = (
+  source: GhidraSessionSource = "fresh-import",
+): readonly string[] => [
+  ...ghidraHealthLimitations(source),
+  "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
+];
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
   source: GhidraSessionSource = "fresh-import",
+): readonly string[] => [
+  ...ghidraSessionCommonLimitations(source),
+  ...ghidraOperationLimitations(operation, source),
+];
+
+/** Limitation text that belongs to one operation, without the session base. */
+export const ghidraOperationLimitations = (
+  operation: string,
+  source: GhidraSessionSource = "fresh-import",
 ): readonly string[] => {
-  const common = [
-    ...ghidraHealthLimitations(source),
-    "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
-  ];
   switch (operation) {
     case "read_binary_inventory_summary":
       return [
-        ...common,
         stringInventoryLimitation,
         "Counts use the complete defined-string inventory and the same local/external function inventory as list_strings and list_procedures. They do not establish discovery of undefined strings or unidentified functions.",
         "Memory-block end addresses are exclusive; segment lengths use those observed address coordinates.",
       ];
     case "annotate_native_function":
       return [
-        ...common,
         "Names use Ghidra USER_DEFINED source. Name writes accept a leaf name or a fully qualified name within the existing namespace; readback uses the fully qualified name and can be reused without adding namespace prefixes. Edits retain the current namespace; other namespace-like text remains literal leaf-name text. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
         "Annotation text rejects NUL and unpaired Unicode surrogates before mutation, with the field and UTF-16 index in the error. Supported Unicode and line endings are preserved.",
         source === "owned-checkpoint"
@@ -161,7 +175,6 @@ export const limitationsFor = (
     case "set_address_name":
     case "set_addresses_names":
       return [
-        ...common,
         "Names use Ghidra USER_DEFINED source. A local function entry renames that function; any other mapped address receives a new or renamed primary label. Existing symbols retain their namespace and accept leaf names or qualified names within that namespace; qualified readback can be reused without adding namespace prefixes. Readback compares the primary symbol name.",
         operation === "set_address_name"
           ? "A name held by another address in the destination namespace is not moved; a false result reports its reason in raw_result.failures."
@@ -171,94 +184,79 @@ export const limitationsFor = (
           : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
-      return [...common, ghidraLoadImageVerificationNote()];
+      return [ghidraLoadImageVerificationNote()];
     case "read_bytes":
       return [
-        ...common,
         "Bytes reflect Ghidra's initialized memory, including loader fixups. Reads stop at an unmapped or uninitialized byte and report completeness explicitly.",
       ];
     case "search_bytes":
       return [
-        ...common,
         "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query; it does not pin match metadata. Procedure names and other match metadata are read live on each page, so a rename in this session between pages appears on later pages. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
-        ...common,
         "Offsets come from Ghidra source-byte mappings, not virtual-address arithmetic. Uninitialized memory, missing mappings and ambiguous mappings fail explicitly.",
       ];
     case "list_documents":
       return [
-        ...common,
         "A headless Ghidra session contains exactly one imported Program, unlike Hopper's multi-document GUI session.",
       ];
     case "list_names":
       return [
-        ...common,
         "The symbol inventory includes memory and external symbols, including dynamic symbols, but excludes variable and no-address namespace records.",
       ];
     case "list_procedures":
     case "procedure_address":
       return [
-        ...common,
         "External functions and local thunks are distinct; procedure metadata identifies both and preserves a thunk target when Ghidra resolves one.",
       ];
     case "list_strings":
       return [
-        ...common,
         stringInventoryLimitation,
         "Charset is reported, while a non-missing terminator cannot distinguish a present terminator from a fixed or Pascal layout.",
       ];
     case "resolve_containing_procedure":
       return [
-        ...common,
         "An exact external entry resolves to its observed function identity even when its body is empty. This does not establish mapped executable bytes or containment of nearby external addresses.",
       ];
     case "list_segments":
       return [
-        ...common,
         "Memory-block end addresses are exclusive; permissions come from Ghidra MemoryBlock flags rather than inference from section names.",
       ];
     case "search_procedures":
-      return [...common, searchLimitation];
+      return [searchLimitation];
     case "search_strings":
-      return [...common, stringInventoryLimitation, searchLimitation];
+      return [stringInventoryLimitation, searchLimitation];
     case "procedure_pseudo_code":
       return [
-        ...common,
         "Pseudocode is Ghidra decompiler output, not original source and not text-equivalent to Hopper output.",
         "External functions and functions without an analyzable body return null; other decompiler failures remain explicit.",
       ];
     case "read_function_instructions":
       return [
-        ...common,
         "This fast path reads only the requested function and does not invoke the decompiler or whole-program string/name inventories.",
         "Instruction text is Ghidra-specific and does not claim textual equivalence with Hopper output.",
       ];
     case "procedure_assembly":
       return [
-        ...common,
         "Assembly is Ghidra Listing text and does not claim textual equivalence with Hopper output.",
       ];
     case "procedure_callers":
     case "procedure_callees":
-      return common;
+      return [];
     case "xrefs":
       return [
-        ...common,
         "The direct address list projects exact Ghidra references to one address but does not expose their kinds; procedure_references and analyze_function preserve available kind metadata.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
       ];
     case "procedure_references":
       return [
-        ...common,
         "References cover the complete Ghidra function-body AddressSet and exact entry, including instruction-interior destinations and embedded-data sources; an enclosing address span does not establish function ownership.",
         "Reference kinds are direct Ghidra ReferenceManager observations; unresolved computed flows without a target are absent and remain unknown.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
       ];
     case "analyze_function":
       return [
-        ...common,
         "References cover the complete Ghidra function-body AddressSet and exact entry. Dossier incoming edges omit sources owned by that function; procedure_references also retains those internal edges.",
         "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
         "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
@@ -266,7 +264,7 @@ export const limitationsFor = (
         "The Java bridge serializes one function request per Program. Decompilation runs until completion or caller cancellation unless REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS sets a per-function limit. That limit stops the requested decompile without requesting session closure; caller cancellation requests session closure.",
       ];
     default:
-      return common;
+      return [];
   }
 };
 
