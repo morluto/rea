@@ -26,6 +26,11 @@ import {
   ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { measureMcpResultWithinBudget } from "./toolResultEncoding.js";
+import {
+  readRetainedEvidenceResource,
+  retainedEvidenceReadFits,
+  retainedEvidenceUri,
+} from "./retainedEvidenceResource.js";
 
 const contract = toolContract("inspect_byte_entropy");
 
@@ -79,7 +84,13 @@ it("counts the delivery facts in the frame check, at the exact boundary", async 
   );
   expect(unlimited.isError).not.toBe(true);
   expect(unlimited._meta?.[AGENT_BUDGET_DELIVERY_META]).toBeDefined();
-  const total = frameBytes(unlimited);
+  // Frames near the summary's size are far below the complete record, so
+  // they carry no resource link: measure the response without it.
+  expect(unlimited.content.at(-1)?.type).toBe("resource_link");
+  const total = frameBytes({
+    ...unlimited,
+    content: unlimited.content.slice(0, -1),
+  });
 
   // A frame budget one byte short of the complete response refuses it with
   // recovery instead of sending an oversized frame.
@@ -180,14 +191,17 @@ it("retains an inline over-budget partial observation with the request's writer,
     record:
       | ((value: Evidence) => ReturnType<EvidenceLedger["record"]>)
       | undefined,
+    seed?: string,
   ) => {
     const request = new McpToolRequest(1, contract.name);
     request.deliverySelection = { detail: undefined, pageable: true, record };
     return runMcpToolRequest(request, () =>
-      new ToolResultDelivery(64 * 1024 * 1024).toErrorToolResult(
-        failure(),
-        false,
-      ),
+      new ToolResultDelivery(
+        64 * 1024 * 1024,
+        undefined,
+        undefined,
+        seed,
+      ).toErrorToolResult(failure(), false),
     );
   };
 
@@ -204,10 +218,102 @@ it("retains an inline over-budget partial observation with the request's writer,
   // The complete partial Evidence is retained exactly, before its summary.
   expect(ledger.forAnalysis(evidence.evidence_id)).toEqual(evidence);
 
+  // A partial that fits beside the failure's own facts stays inline: the
+  // failure is measured without it, so the partial is counted once.
+  const partialBytes = Buffer.byteLength(JSON.stringify(evidence));
+  const roomy = errorOf(
+    deliverFailure(
+      (value) => new EvidenceLedger().record(value),
+      String(partialBytes + 4096),
+    ),
+  );
+  expect(roomy.details).not.toHaveProperty(PARTIAL_OBSERVATION_DELIVERY);
+  expect(roomy.details.partial_observation).toEqual(
+    JSON.parse(JSON.stringify(evidence)),
+  );
+
   // Without a session writer nothing can be retained: it stays inline.
   const inline = errorOf(deliverFailure(undefined));
   expect(inline.details.partial_observation).toEqual(
     JSON.parse(JSON.stringify(evidence)),
   );
   expect(inline.details).not.toHaveProperty(PARTIAL_OBSERVATION_DELIVERY);
+});
+
+it("links the complete record only when one read can fit the frame, and refuses a larger read with the cursor", async () => {
+  const evidence = await largeEntropyEvidence();
+  const ledger = new EvidenceLedger();
+  const uri = new URL(retainedEvidenceUri(evidence.evidence_id));
+  const completeBytes = Buffer.byteLength(JSON.stringify(evidence));
+  const linked = deliver(
+    new ToolResultDelivery(64 * 1024 * 1024),
+    evidence,
+    ledger,
+  );
+  expect(linked.content.at(-1)).toMatchObject({
+    type: "resource_link",
+    uri: uri.href,
+    size: completeBytes,
+  });
+  const lookup = (id: string) => ledger.forAnalysis(id);
+  const read = readRetainedEvidenceResource(
+    uri,
+    evidence.evidence_id,
+    lookup,
+    64 * 1024 * 1024,
+  );
+  expect((read.contents[0] as { text: string }).text).toBe(
+    JSON.stringify(evidence),
+  );
+
+  // The record's JSON fits the frame but its escaped read does not: no link
+  // is offered, since the read would refuse it.
+  const escaped = new ToolResultDelivery(completeBytes + 1024 + 2048);
+  expect(escaped.resultBudgetBytes).toBeGreaterThanOrEqual(completeBytes);
+  expect(retainedEvidenceReadFits(evidence, escaped.resultBudgetBytes)).toBe(
+    false,
+  );
+  const escapedResult = deliver(escaped, evidence, new EvidenceLedger());
+  expect(escapedResult.isError).not.toBe(true);
+  expect(escapedResult.content.map(({ type }) => type)).toEqual([
+    "text",
+    "text",
+  ]);
+  // REA's single-string limit bounds a read as well as its bytes.
+  expect(retainedEvidenceReadFits(evidence, 64 * 1024 * 1024)).toBe(true);
+  expect(
+    retainedEvidenceReadFits(evidence, 64 * 1024 * 1024, completeBytes),
+  ).toBe(false);
+
+  // A frame that holds the summary but not the complete record: the cursor
+  // alone recovers it, and a read names that cursor.
+  const narrow = new ToolResultDelivery(completeBytes);
+  const unlinked = deliver(narrow, evidence, new EvidenceLedger());
+  expect(unlinked.isError).not.toBe(true);
+  expect(unlinked.content.map(({ type }) => type)).toEqual(["text", "text"]);
+  expect(() =>
+    readRetainedEvidenceResource(
+      uri,
+      evidence.evidence_id,
+      lookup,
+      narrow.resultBudgetBytes,
+    ),
+  ).toThrow(
+    expect.objectContaining({
+      code: -32600,
+      data: expect.objectContaining({
+        reason: "response-budget",
+        next: {
+          operation: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: evidence.evidence_id,
+            },
+            view: { kind: "evidence-json", offset: 0 },
+          },
+        },
+      }),
+    }),
+  );
 });

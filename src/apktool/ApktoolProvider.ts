@@ -15,7 +15,7 @@ import {
   ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
 } from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
@@ -49,7 +49,6 @@ import {
   AnalysisProtocolError,
   cancelledBy,
   OwnerCancellation,
-  carriedReason,
   unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -717,10 +716,7 @@ export class ApktoolProvider {
           : origin === "owned-or-classified" &&
               physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
-            ? cancelledBy(
-                operation,
-                carriedReason(artifactFileCancellationCause(physical)),
-              )
+            ? artifactFileCancellationError(operation, physical)
             : new AnalysisProtocolError("Apktool resource projection failed", {
                 cause: physical,
               });

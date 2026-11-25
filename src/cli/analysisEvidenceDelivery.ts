@@ -301,6 +301,10 @@ const budgetFailurePartialEvidence = async (
 ): Promise<JsonValue> => {
   const found = failurePartialEvidence(failure);
   if (found === undefined) return failure;
+  // Controls are read from the complete partial Evidence of this operation,
+  // since its summary may replace it.
+  if (found.partial.operation === input.operation)
+    recordCliDeliveredEvidence(found.partial);
   const overBudget = budgetDelivery(
     found.partial,
     input,

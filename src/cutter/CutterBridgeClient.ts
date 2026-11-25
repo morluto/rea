@@ -11,7 +11,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   assertArtifactReadActive,
 } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -1341,9 +1341,6 @@ const discoveryFailure = (
     return analysisErrorWithCleanupDependencies(original, cleanup, operation);
   }
   if (cause.reason === "cancelled")
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(operation, cause);
   return cause;
 };

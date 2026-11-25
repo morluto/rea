@@ -7,6 +7,10 @@ import { expect, it, onTestFinished } from "vitest";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
+import {
+  cliDeliveredEvidence,
+  withCliResultControls,
+} from "../../../src/cli/cliResultControls.js";
 import { createByteEntropyService } from "../../../src/composition/binaryDiagnostics/byteEntropy.js";
 import {
   AGENT_RESULT_BUDGET_SETTING,
@@ -163,9 +167,12 @@ it("delivers an over-budget partial observation as its summary with a cursor on 
     MINIMUM_AGENT_RESULT_BUDGET_BYTES,
   );
 
-  const budgeted = parseMcpToolError(
-    await client.callTool({ name: "inspect_binary_layout", arguments: target }),
-  ).error as unknown as Failure;
+  const budgetedResult = await client.callTool({
+    name: "inspect_binary_layout",
+    arguments: target,
+  });
+  const budgeted = parseMcpToolError(budgetedResult)
+    .error as unknown as Failure;
   const summary = parseEvidence(budgeted.details.partial_observation);
   expect(summary.operation).toBe("inspect_analysis_view");
   expect(summary.normalized_result).toMatchObject({
@@ -194,6 +201,19 @@ it("delivers an over-budget partial observation as its summary with a cursor on 
     return pageText(parseEvidence(page.structuredContent));
   });
   expect(joined).toBe(completeText);
+  // The error also links the complete partial, and one read returns it.
+  const [, link] = budgetedResult.content as {
+    readonly type: string;
+    readonly uri: string;
+    readonly size: number;
+  }[];
+  expect(link).toMatchObject({
+    type: "resource_link",
+    uri: `rea://evidence/${partial.evidence_id}`,
+    size: Buffer.byteLength(completeText),
+  });
+  const read = await client.readResource({ uri: link!.uri });
+  expect((read.contents[0] as { text: string }).text).toBe(completeText);
 
   // Explicit complete detail, and a budget it fits, keep the failure as it
   // was: the session's retained reference.
@@ -256,7 +276,15 @@ it("delivers an over-budget partial observation as its summary on the CLI, with 
       },
     ) as Promise<unknown> as Promise<Failure>;
 
-  const unretained = await publish(large);
+  // The complete partial is recorded for the CLI's control hints before its
+  // summary replaces it.
+  const unretained = await withCliResultControls(async () => {
+    const output = await publish(large);
+    expect((cliDeliveredEvidence() as Evidence | undefined)?.evidence_id).toBe(
+      large.evidence_id,
+    );
+    return output;
+  });
   expect(parseEvidence(unretained.details.partial_observation).operation).toBe(
     "inspect_analysis_view",
   );
