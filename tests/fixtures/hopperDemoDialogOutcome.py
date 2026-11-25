@@ -5,6 +5,9 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+from runpy import run_path
+
+FakeX11 = run_path(str(Path(__file__).with_name("hopperX11Fixture.py")))["FakeX11"]
 
 spec = importlib.util.spec_from_file_location(
     "hopper_demo_x11", Path(__file__).resolve().parents[2] / "scripts/hopper-demo-x11.py"
@@ -42,29 +45,6 @@ class Clock:
 
     def sleep(self, seconds: float) -> None:
         self.ms += int(round(seconds * 1000))
-
-
-class FakeX11:
-    def __init__(self, titles, transients) -> None:
-        self.titles = titles
-        self.transients = transients
-
-    def XFetchName(self, _display, window, target):
-        value = self.titles.get(window)
-        if value is None:
-            return 0
-        target._obj.value = value.encode("utf-8")
-        return 1
-
-    def XGetTransientForHint(self, _display, window, target):
-        value = self.transients.get(window)
-        if value is None:
-            return 0
-        target._obj.value = value
-        return 1
-
-    def XFree(self, _value):
-        return 1
 
 
 def timeout_outcome(configured, requested=None):
