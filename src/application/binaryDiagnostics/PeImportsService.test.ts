@@ -1,10 +1,11 @@
+import { bufferByteSource } from "../../domain/byteSource.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { createHash } from "node:crypto";
 import {
   peImportImage,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
-import { parsePeImports } from "../../native/pe/PeImportParser.js";
+import { parsePeImportsFromHandle } from "../../native/pe/PeImportParser.js";
 import {
   inspectPeImportsInputSchema,
   peImportsSchema,
@@ -22,8 +23,8 @@ import {
 const identity = PE_IMPORTS_PROVIDER;
 const path = "/artifacts/app.exe";
 const bytes = peWithoutImportTableFixture();
-const report = await parsePeImports(
-  bytes,
+const report = await parsePeImportsFromHandle(
+  bufferByteSource(bytes),
   {
     path,
     sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -214,8 +215,8 @@ it("retains examined unsupported descriptors without inventing DLL rows", async 
 });
 
 const importBytes = peImportImage({ bits: 64 });
-const withImports = await parsePeImports(
-  importBytes,
+const withImports = await parsePeImportsFromHandle(
+  bufferByteSource(importBytes),
   {
     path,
     sha256: createHash("sha256").update(importBytes).digest("hex"),
