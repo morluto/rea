@@ -206,6 +206,20 @@ export const closeArtifactResources = async (
   }
 };
 
+/** Keep the primary failure and bind any descriptor cleanup to its returned error. */
+export const withArtifactCleanupFailure = (
+  cause: unknown,
+  primary: AnalysisError,
+  providerId: string,
+  operation: string,
+): AnalysisError => {
+  const cleanup = artifactCleanupFailure(cause, providerId, operation);
+  if (cleanup === undefined) return primary;
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
 /** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */
 export const projectStableArtifactFailure = (
   cause: unknown,
@@ -217,9 +231,5 @@ export const projectStableArtifactFailure = (
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);
-  const cleanup = artifactCleanupFailure(cause, providerId, operation);
-  if (cleanup === undefined) return primary;
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
-  bindArtifactFileCleanup(cause, error);
-  return error;
+  return withArtifactCleanupFailure(cause, primary, providerId, operation);
 };
