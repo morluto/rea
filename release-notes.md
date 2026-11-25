@@ -1164,6 +1164,7 @@
 * **dotnet:** consolidate managed PE and field constant contracts ([#13365](https://github.com/morluto/rea/issues/13365)) ([da6f898](https://github.com/morluto/rea/commit/da6f89808dcc9c6f528660426a54cff721cfbf03))
 * **dotnet:** prove scoped member ownership within the caller budget ([#13369](https://github.com/morluto/rea/issues/13369)) ([2e8bdfd](https://github.com/morluto/rea/commit/2e8bdfd808b3de68cbd283b3f4f5510ee728a288))
 * **dotnet:** use smaller fixtures for managed byte budgets ([#12793](https://github.com/morluto/rea/issues/12793)) ([337fd43](https://github.com/morluto/rea/commit/337fd43a0f91aa63c9697fd5dc912f7807454ba3))
+* drop detail requests the budget seed made redundant ([#14615](https://github.com/morluto/rea/issues/14615)) ([88fd8a9](https://github.com/morluto/rea/commit/88fd8a9df083568a7cb4a65012f1b9813c5b82b1))
 * **electron:** consolidate action and projection coverage ([#12959](https://github.com/morluto/rea/issues/12959)) ([32e5f5b](https://github.com/morluto/rea/commit/32e5f5bc1c26281656d6d2a17e14308c8eba05ce))
 * **electron:** consolidate capture cleanup coverage ([#12958](https://github.com/morluto/rea/issues/12958)) ([6d74dbe](https://github.com/morluto/rea/commit/6d74dbe5ccacfd423a295b696cdb1b298d64c2dc))
 * **electron:** consolidate direct IPC listener removal coverage ([#12962](https://github.com/morluto/rea/issues/12962)) ([a125d37](https://github.com/morluto/rea/commit/a125d37bfad92fc3b5e472c6c18ee71654037221))
