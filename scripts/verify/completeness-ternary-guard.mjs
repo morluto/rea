@@ -29,6 +29,9 @@ const EXPRESSION_CONTINUATIONS = new Set([
   "<=",
   ">",
   ">=",
+  "&&",
+  "||",
+  "??",
   "in",
   "instanceof",
 ]);

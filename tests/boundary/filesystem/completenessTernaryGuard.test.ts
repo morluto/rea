@@ -36,6 +36,10 @@ it.each([
     1,
   ],
   ['const s = ok ? ("complete" as const).length : "partial";', 0],
+  ['const s = ok ? "complete" as const\n && other : "partial";', 0],
+  ['const s = ok ? "complete" as const && other : "partial";', 0],
+  ['const s = ok ? "partial" : "complete" as const && other;', 0],
+  ['const s = ok ? "partial" : "complete" ?? other;', 0],
   // Templates with multiple substitutions keep bracket depth balanced.
   ['const s = skipped ? observed.get(`${prefix}:${name}`) : "complete";', 1],
   // Two separate ternaries in the same file.
