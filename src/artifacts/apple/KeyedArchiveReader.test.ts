@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { build, buildBinary, type PlistValue } from "plist";
+import { AnalysisTargetFailureError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   decodeKeyedArchiveBytes,
@@ -16,6 +18,7 @@ import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNes
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
 import {
+  binaryPlistObjectTable,
   readBinaryPlistObjectOffset,
   readBinaryPlistObjectTableLayout,
   writeBinaryPlistObjectOffset,
@@ -599,6 +602,51 @@ const dateScalar = (iso8601: string | null) => ({
 const oneUnknownDate = /\b1 date value.*could not represent.*timestamps/iu;
 const twoUnknownDates = /\b2 date value.*could not represent.*timestamps/iu;
 
+/** One binary-plist UID wider than an exact JavaScript integer. */
+const binaryPlistWithOversizedUid = (): Buffer => {
+  const width = 8;
+  let value = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+  const record = Buffer.alloc(width + 1);
+  record[0] = 0x80 | (width - 1);
+  for (let byte = width - 1; byte >= 0; byte -= 1) {
+    record[byte + 1] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  const offsetTable = 8 + record.length;
+  const bytes = Buffer.alloc(offsetTable + 1 + 32);
+  record.copy(bytes, 8);
+  return binaryPlistObjectTable(bytes, [8], offsetTable);
+};
+
+describe("binary keyed archive UID facts", () => {
+  it("keeps the reader's binary-plist UID facts on the target failure", async () => {
+    const bytes = binaryPlistWithOversizedUid();
+    const root = await createTestTempDirectory("rea-keyed-oversized-uid-");
+    await writeFile(join(root, "archive.plist"), bytes);
+    const rejected = await inspectBundleKeyedArchive({
+      bundlePath: root,
+      targetSha256: createHash("sha256").update(bytes).digest("hex"),
+      parameters: { path: "archive.plist" },
+    }).catch((cause: unknown) => cause);
+    expect(rejected).toBeInstanceOf(AnalysisTargetFailureError);
+    if (!(rejected instanceof AnalysisTargetFailureError))
+      throw new Error("expected a target failure");
+    expect(rejected.failure).toMatchObject({
+      kind: "unsupported",
+      format: "binary-plist",
+      field: "uid",
+      undecodedContent: true,
+    });
+    expect(projectAnalysisError(rejected).details).toMatchObject({
+      operation: "inspect_keyed_archive",
+      path: join(root, "archive.plist"),
+      failure_kind: "unsupported",
+      format: "binary-plist",
+      field: "uid",
+    });
+  });
+});
+
 describe("binary keyed archive dates", () => {
   const selection = { offset: 0, limit: 10 };
 
@@ -680,7 +728,7 @@ describe("binary keyed archive invalid dates", () => {
         }),
       ).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(decodeFailure.message),
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);

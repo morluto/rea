@@ -46,7 +46,7 @@ const expectPeInputFailureAcrossAdapters = async (input: {
           details: {
             operation: "inspect_pe_resources",
             path,
-            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+            failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
           },
         },
   );

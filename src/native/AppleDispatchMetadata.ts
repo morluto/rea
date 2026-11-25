@@ -34,9 +34,9 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -531,18 +531,9 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof BinaryFormatFailure)
-      return new AnalysisUnsupportedTargetError(
-        OPERATION,
-        path,
-        cause.message,
-        {
-          cause,
-          remediationAction:
-            cause.kind !== "unsupported"
-              ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
-              : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
-        },
-      );
+      return new AnalysisTargetFailureError(OPERATION, path, cause.failure, {
+        cause,
+      });
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
       return cancelledBy(
         OPERATION,

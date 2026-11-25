@@ -241,7 +241,7 @@ describe("DMG inventory reader ownership", () => {
       .catch((cause: unknown) => cause);
 
     expect(failure).toMatchObject({
-      reason: "format",
+      reason: "io",
       cleanup: {
         resources: expect.arrayContaining([
           expect.stringMatching(/^DMG attachment ownership unknown/u),
@@ -673,7 +673,7 @@ describe("native DMG artifact reader", () => {
     await expect(
       createAttachedReader("/tmp/image.dmg", process.env, undefined, host),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "io",
       cleanup: {
         resources: expect.arrayContaining([
           expect.stringMatching(
@@ -1312,8 +1312,8 @@ describe("native DMG verification resource availability", () => {
 describe("native DMG permanent verification refusals", () => {
   // hdiutil emits both English spellings depending on AppleLanguages.
   it.each([
-    ["image not recognized", "format"],
-    ["image not recognised", "format"],
+    ["image not recognized", "unsupported"],
+    ["image not recognised", "unsupported"],
     ["image data corrupted", "integrity"],
     ["Permission denied", "io"],
     ["Input/output error", "io"],
@@ -1610,7 +1610,7 @@ describe("native DMG real verification diagnostics", () => {
       // readable target stays unknown (see the localized diagnostics suite).
       expect(failure.reason).toBe(
         /verify failed - image not recogni[sz]ed/u.test(failure.message)
-          ? "format"
+          ? "unsupported"
           : "unavailable",
       );
       expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');

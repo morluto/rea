@@ -1,7 +1,7 @@
 import type { z } from "zod";
 import type { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { evidenceFileTarget, type Evidence } from "../evidence.js";
+import { evidenceLocalTarget, type Evidence } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
@@ -12,7 +12,7 @@ export const validateAnalysisViewSubject = (
   subject: Evidence["subject"] | undefined,
   artifactSha256: string | null | undefined,
 ): Result<void, EvidenceIntegrityError> => {
-  const file = evidenceFileTarget({ subject });
+  const file = evidenceLocalTarget({ subject });
   return file === undefined || file.sha256 === artifactSha256
     ? ok(undefined)
     : err(

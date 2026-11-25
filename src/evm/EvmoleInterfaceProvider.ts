@@ -51,12 +51,13 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
   type AbortedSignal,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import {
@@ -758,20 +759,25 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            "evm-bytecode",
             reply.message,
             { capturedOutput },
           );
+        // The worker rejected the selected bytecode, not the request.
         if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: "malformed",
+              format: "evm-bytecode",
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "output-limit")
           throw evmReplyBudgetFailure(
             reply.message,

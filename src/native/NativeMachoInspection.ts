@@ -6,7 +6,7 @@ import type { EvidenceLocation } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   inspectMachoSchema,
@@ -311,14 +311,14 @@ export const inspectNativeMacho = async (
     if (binary.header.fileType !== MH_DSYM)
       return err(unusableNativeCommandOutput(unbackedTextFailure));
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         "inspect_macho",
         context.target.path,
-        "The selected Mach-O is a dSYM companion whose unbacked text sections are unsupported by dyld_info inspection",
+        "macho",
+        "The selected Mach-O is a dSYM companion whose unbacked text sections are unsupported by dyld_info inspection; select the matching linked executable",
         {
+          field: "filetype",
           capturedOutput: nativeMachoCapturedOutput(unbackedTextFailure),
-          remediationAction:
-            "Select the matching linked Mach-O executable for native inspection; this operation does not inspect dSYM companions with unbacked text sections.",
         },
       ),
     );
@@ -331,14 +331,14 @@ export const inspectNativeMacho = async (
       return err(unusableNativeCommandOutput(fileTypeFailure));
     const typeName = fileType === 4 ? "CORE" : "FVMLIB";
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         "inspect_macho",
         context.target.path,
-        `dyld_info refused the selected Mach-O file type MH_${typeName} (${fileType}): ${diagnostic}`,
+        "macho",
+        `dyld_info refused the selected Mach-O file type MH_${typeName} (${fileType}); it reads linked executables and relocatable objects: ${diagnostic}`,
         {
+          field: "filetype",
           capturedOutput: nativeMachoCapturedOutput(fileTypeFailure),
-          remediationAction:
-            "Select a linked Mach-O executable or relocatable object for native inspection; dyld_info refused the selected file type.",
         },
       ),
     );

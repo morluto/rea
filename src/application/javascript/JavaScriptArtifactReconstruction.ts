@@ -20,11 +20,13 @@ import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  unsupportedArtifact,
 } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
+  unrecognizedTarget,
 } from "../../domain/analysisErrorCore.js";
 import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
@@ -132,8 +134,8 @@ export const reconstructJavaScriptArtifact = async (
       selectedPath,
     );
     if (snapshot.manifest.root_format !== format)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw unsupportedArtifact(
+        format,
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
     const reader = createReader(
@@ -176,14 +178,13 @@ export const reconstructJavaScriptArtifact = async (
           inventory: snapshot,
         });
       if (javaScriptApplicationInputPresence(files, snapshot) === "absent")
-        throw new AnalysisUnsupportedTargetError(
+        throw unrecognizedTarget(
           OPERATION,
           path,
-          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs",
+          snapshot.manifest.root_format,
+          "the complete inventory has entries but no JavaScript, HTML, package.json, source map, or nested ASAR inputs; details.diagnostics.entries_by_format lists what it holds",
           {
             diagnostics: javaScriptAbsentInputDiagnostics(files, snapshot),
-            remediationAction:
-              "Route by details.diagnostics.entries_by_format. For a native build or installation directory, call inspect_desktop_application or audit_release_exposure with the directory, or select one member file with inspect_artifact or open_binary.",
             related: { operations: [...JAVASCRIPT_ABSENT_INPUT_OPERATIONS] },
           },
         );
@@ -569,14 +570,11 @@ const resolveFormat = (
       ? "asar"
       : undefined;
   if (observed === undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       OPERATION,
       input.input_path,
-      "JavaScript application analysis accepts only a directory or an .asar file",
-      {
-        remediationAction:
-          "Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
-      },
+      "file",
+      "JavaScript application analysis accepts only a directory or an .asar file. Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
     );
   if (input.format !== "auto" && input.format !== observed)
     throw new AnalysisInputError(OPERATION, undefined, [

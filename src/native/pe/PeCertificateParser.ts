@@ -25,6 +25,7 @@ import {
   readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The format the certificate table's own parser names in its failures. */
@@ -120,12 +121,14 @@ const parsePeCertificateTable = (
 ): PeCertificates => {
   const format = image.bits === 64 ? "pe32-plus" : "pe32";
   const machine = image.pe_machine;
+  const imageBase = peImageBaseHex(image.image_base);
   const headerAnomalies = [...image.pe_header_anomalies];
   if (range === null)
     return {
       artifact,
       format,
       machine,
+      image_base: imageBase,
       table: null,
       entries: [],
       coverage: { status: "complete", examined_entries: 0, certificates: 0 },
@@ -286,6 +289,7 @@ const parsePeCertificateTable = (
     artifact,
     format,
     machine,
+    image_base: imageBase,
     table: {
       location: { offset: tableOffset, bytes: tableSize },
       data_directory_location: { offset: directoryAt, bytes: 8 },

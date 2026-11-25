@@ -129,7 +129,7 @@ it.skipIf(process.platform === "win32")(
         ok: false,
         error: {
           reason: "integrity",
-          integrityCheck: "container-identity",
+          integrityCheck: "admitted-identity",
         },
       });
       await truncate(stored, 64 * 1024 * 1024 + 1);

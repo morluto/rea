@@ -3,7 +3,7 @@ import { Budget } from "../budget.js";
 import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -207,15 +207,8 @@ export const admitHarCaptureParent = (
 ): Result<WebNetworkCapture, AnalysisError> => {
   const operation = context.operation ?? "inspect_analysis_view";
   const sourceField = context.sourceField ?? "source";
-  const unsupported = (reason: string, remediationAction?: string) =>
-    err(
-      new AnalysisUnsupportedTargetError(
-        operation,
-        parent.evidenceId,
-        reason,
-        remediationAction === undefined ? undefined : { remediationAction },
-      ),
-    );
+  const unsupported = (reason: string) =>
+    err(unsupportedTarget(operation, parent.evidenceId, "evidence", reason));
   if (parent.operation !== "inspect_web_network_capture")
     return unsupported(
       `View ${viewKind} is unsupported for parent operation ${parent.operation}; ${viewKind} requires ${viewKind === "api-surface" ? "inspect_web_network_capture" : "inspect_web_network_capture or capture_browser_scenario"}.`,
@@ -252,9 +245,14 @@ export const admitHarCaptureParent = (
     .object({ sensitive_value_count: z.number().int().nonnegative() })
     .safeParse(parent.parameters);
   if (!declarations.success || declarations.data.sensitive_value_count > 0)
-    return unsupported(
-      "sensitive_values_unretained",
-      "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+    return err(
+      unsupportedTarget(
+        operation,
+        parent.evidenceId,
+        "evidence",
+        "sensitive_values_unretained: this view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
+        { field: "sensitive_value_count" },
+      ),
     );
   return ok(parsed.value);
 };

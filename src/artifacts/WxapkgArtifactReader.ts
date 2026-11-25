@@ -270,6 +270,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
       this.#reserveMemberRead();
       const length = Math.min(CHUNK_BYTES, offset + size - position);
       const chunk = await readArtifactFileBytes(
+        "wxapkg",
         handle,
         position,
         length,

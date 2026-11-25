@@ -18,6 +18,7 @@ import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
 import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
+import { webPageViewRequestSchema } from "./webPageView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
@@ -98,6 +99,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   elfDependenciesViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,
+  webPageViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,

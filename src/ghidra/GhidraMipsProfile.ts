@@ -1,9 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import {
-  isRecordlessLegacyMips32Header,
-  MIPS_SECTION_TABLE_TRUNCATION_PREFIX,
+  isRecordlessLegacyMipsExecHeader,
+  mipsLimitationMessages,
   type BinaryTarget,
+  type MipsElfLimitation,
   type MipsElfMetadata,
 } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -52,16 +53,18 @@ export const ghidraMipsLanguageOverride = (
     : undefined;
 
 /**
- * A carved firmware image keeps its original section header table offset while
- * the captured file ends before it. The optional section table is the only
- * table this inspection records as a limitation; the required program header
- * table must be read whole or the inspection fails outright. Every program
- * header therefore has been checked and none declares PT_MIPS_ABIFLAGS, so the
- * unread section headers can only hold declarations that stay unknown — the
- * same o32-assumption footing as a complete recordless header.
+ * Whether every recorded inspection limitation is a truncated section header
+ * table. Recordless legacy ELF32 MIPS ET_EXEC images may omit trailing section
+ * tables when carved from firmware; any other incomplete declaration stays
+ * fail-closed.
  */
-const isCarvedSectionTableLimitation = (limitation: string): boolean =>
-  limitation.startsWith(MIPS_SECTION_TABLE_TRUNCATION_PREFIX);
+const isOnlyTruncatedSectionTable = (
+  limitations?: readonly MipsElfLimitation[],
+): boolean =>
+  limitations === undefined ||
+  limitations.every(
+    (limitation) => limitation.kind === "truncated_section_table",
+  );
 
 /**
  * Recordless legacy ELF32 MIPS admission: the header declares no ABI field and
@@ -79,18 +82,15 @@ const hasLegacyMipsHeaderShape = (target: BinaryTarget): boolean => {
     target.mips === undefined
   )
     return false;
-  const { abiFlags, limitations } = target.mips;
   return (
     // The lane and its verification cover executable firmware images only;
     // recordless relocatable objects stay outside the inferred-o32 assumption.
-    isRecordlessLegacyMips32Header(target.mips) &&
+    isRecordlessLegacyMipsExecHeader(target.mips) &&
     // Undefined means the record was not inspected; only an inspected
-    // absence establishes the recordless legacy admission. An inspection
-    // that could not examine every declaration source stays unknown, except
-    // for the carved section table whose limitation names exactly that table.
-    abiFlags === null &&
-    (limitations === undefined ||
-      limitations.every(isCarvedSectionTableLimitation))
+    // absence establishes the recordless legacy admission. Only a truncated
+    // section header table may remain unexamined in this legacy lane.
+    target.mips.abiFlags === null &&
+    isOnlyTruncatedSectionTable(target.mips.limitations)
   );
 };
 
@@ -105,7 +105,7 @@ export const ghidraMipsIncompleteDeclarationsReason = (
   (metadata.limitations?.length ?? 0) > 0
     ? [
         "MIPS ABI declaration inspection is incomplete; unsupported attributes or conflicting declaration sources may remain unknown.",
-        ...(metadata.limitations ?? []),
+        ...mipsLimitationMessages(metadata.limitations),
       ].join(" ")
     : null;
 
@@ -188,7 +188,7 @@ export const ghidraMipsUnsupportedReason = (
     // recordless admission is not established for this header.
     return [
       "This recordless legacy admission requires a complete ABI-record inspection; ABI declarations in unavailable headers remain unknown.",
-      ...(metadata.limitations ?? []),
+      ...mipsLimitationMessages(metadata.limitations),
     ].join(" ");
   }
   if (
@@ -234,7 +234,7 @@ export const ghidraMipsUnsupportedReason = (
   if (abi === undefined || abi === null)
     return [
       "This Ghidra MIPS lane requires an inspected ABI flags record; header flags alone do not establish the floating-point ABI.",
-      ...(metadata.limitations ?? []),
+      ...mipsLimitationMessages(metadata.limitations),
     ].join(" ");
   if (abi.version !== 0)
     return "This Ghidra MIPS lane requires ABI flags version 0; newer record semantics are unsupported.";
@@ -451,7 +451,11 @@ export const ghidraMipsProfileParameters = (
       flags: target.mips.flags,
       ...(target.mips.limitations === undefined
         ? {}
-        : { abi_flags_limitations: [...target.mips.limitations] }),
+        : {
+            abi_flags_limitations: target.mips.limitations.map(
+              (limitation) => ({ ...limitation }),
+            ),
+          }),
       abi_flags:
         abi === undefined || abi === null
           ? null

@@ -22,8 +22,8 @@ mcpTest(
       client.callTool({ name: "inspect_artifact", arguments: {} });
     const refused = await inspect();
     expect(parseMcpToolError(refused).error).toMatchObject({
-      code: "truncated",
-      category: "truncated",
+      code: "partial",
+      category: "partial",
       details: {
         admission: "asar-listing",
         limit: { setting: "asar.max_listing_bytes", unit: "bytes" },

@@ -490,13 +490,13 @@ describe("native export encoding and failures", () => {
       });
     // Malformed bytes are a target refusal, not a request-field error.
     expect(await failure({ path: malformed })).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_native_exports",
       path: malformed,
     });
     expect(await failure({ path: macho })).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("inspect_macho"),
+      _tag: "AnalysisTargetFailureError",
+      failure: { detail: expect.stringContaining("inspect_macho") },
     });
     expect(await failure({ path, max_file_bytes: 64 })).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
