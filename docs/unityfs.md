@@ -32,7 +32,8 @@ streams before releasing its descriptor.
 
 Data blocks compressed with none, LZ4, LZ4HC or LZMA are supported. LZMA data
 blocks use the output length declared in the block table and a cancellable,
-bounded decoder. LZMA-compressed blocks-info tables remain unsupported; their
+bounded decoder. The reader joins the worker and retains failed termination
+for cleanup retry through its artifact resource scope. LZMA-compressed blocks-info tables remain unsupported; their
 header facts are retained with unknown directory coverage
 ([#14176](https://github.com/morluto/rea/issues/14176)).
 
@@ -83,6 +84,11 @@ rea extract-artifact assets/hotfix.bundle --json
 Detection is byte-based on the `UnityFS\0` signature, so `.bundle`, `.ab`,
 `assets_*` YooAsset bundles and extensionless files all classify as `unityfs`
 containers.
+
+LZMA workers request a fixed 256 MiB V8 old-generation heap, matching the UEFI
+LZMA worker budget. The encoded input, dictionary and decoded output have
+separate byte admission; the heap request is not an aggregate process memory
+limit and Node launch heap flags can override it.
 
 ## Verification scope
 

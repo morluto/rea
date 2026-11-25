@@ -2,6 +2,7 @@ import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
+  type ArtifactResourceScope,
   malformedArtifact,
   truncatedArtifact,
   assertArtifactReadActive,
@@ -205,6 +206,7 @@ export const readUnityFsHeader = async (
 const decodeBlocksInfoTable = async (
   header: UnityFsHeader,
   compressed: Buffer,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   const compression = header.compression;
@@ -223,6 +225,7 @@ const decodeBlocksInfoTable = async (
       compression,
       compressed,
       header.uncompressedBlocksInfoSize,
+      resources,
       signal,
     );
   throw new ArtifactReaderFailure(
@@ -236,17 +239,35 @@ export const decodeUnityFsBlock = async (
   compression: number,
   encoded: Buffer,
   expected: number,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   const lzma = compression === UNITYFS_COMPRESSION_LZMA;
   const codec = lzma ? "LZMA" : "LZ4";
-  try {
-    return await (lzma ? decodeLzmaBlock : decodeLz4Block)(
-      encoded,
-      expected,
-      MAX_BLOCK_UNCOMPRESSED_BYTES,
-      signal,
+  if (
+    !lzma &&
+    compression !== UNITYFS_COMPRESSION_LZ4 &&
+    compression !== UNITYFS_COMPRESSION_LZ4HC
+  )
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `UnityFS block compression ${String(compression)} is unsupported`,
     );
+  try {
+    return lzma
+      ? await decodeLzmaBlock(
+          encoded,
+          expected,
+          MAX_BLOCK_UNCOMPRESSED_BYTES,
+          resources,
+          signal,
+        )
+      : await decodeLz4Block(
+          encoded,
+          expected,
+          MAX_BLOCK_UNCOMPRESSED_BYTES,
+          signal,
+        );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof BinaryResourceFailure)
@@ -410,6 +431,7 @@ const parseNodes = async (
 export const readUnityFsBlocksInfo = async (
   handle: FileHandle,
   header: UnityFsHeader,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<UnityFsBlocksInfo> => {
   const layout = header.layout;
@@ -447,7 +469,7 @@ export const readUnityFsBlocksInfo = async (
     signal,
   );
   const table = new BinaryReader(
-    await decodeBlocksInfoTable(header, compressed, signal),
+    await decodeBlocksInfoTable(header, compressed, resources, signal),
     false,
     "unityfs",
   );

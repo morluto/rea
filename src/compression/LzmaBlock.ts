@@ -6,13 +6,20 @@ import {
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
 import {
+  AnalysisCleanupLease,
   ArtifactReaderFailure,
+  type ArtifactResourceScope,
   assertArtifactReadActive,
+  malformedArtifact,
 } from "../resources/index.js";
 
 const PROPERTIES_BYTES = 5;
 const RANGE_CODER_BYTES = 5;
 const MIN_DICTIONARY_BYTES = 4096;
+// Match the UEFI LZMA worker's fixed V8 heap request. It bounds codec JS
+// objects; input, output and dictionary buffers have separate byte admission.
+// This is not a process-wide memory ceiling (launch heap flags can override it).
+const WORKER_HEAP_MIB = 256;
 
 // This is trusted, fixed worker code, not source derived from the target.
 // A synchronous codec must not block cancellation on the service thread.
@@ -30,6 +37,7 @@ let read = 0;
 let written = 0;
 const output = new Uint8Array(expected);
 try {
+  parentPort.postMessage("started");
   codec.decompressFile({
     readByte() {
       if (read < header.length) return header[read++];
@@ -59,6 +67,7 @@ export const decodeLzmaBlock = async (
   encoded: Buffer,
   expected: number,
   maximumBytes: number,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   assertArtifactReadActive(signal);
@@ -98,13 +107,50 @@ export const decodeLzmaBlock = async (
       execArgv: [],
       workerData: { input, expected, dictionary, codecPath },
       transferList: [input.buffer],
-      resourceLimits: { maxOldGenerationSizeMb: 256 },
+      resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_MIB },
     },
   );
-  let onAbort: (() => void) | undefined;
-  let bytes: Buffer;
+  const resource = `UnityFS LZMA worker ${String(worker.threadId)}`;
+  const owner = {
+    kind: "lease",
+    resource,
+    lease: new AnalysisCleanupLease(async () => {
+      await worker.terminate();
+    }, [resource]),
+  } as const;
+  let outcome:
+    | { readonly kind: "completed"; readonly bytes: Buffer }
+    | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    bytes = await new Promise<Buffer>((resolve, reject) => {
+    const bytes = await waitForLzmaWorker(worker, expected, signal);
+    outcome = { kind: "completed", bytes };
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
+  }
+  // The same resource scope that owns the member stream retains the exact
+  // worker on failed cleanup and retries it before releasing the reader.
+  const released = await resources.release(owner);
+  if (outcome.kind === "completed") {
+    try {
+      assertArtifactReadActive(signal);
+    } catch (cause: unknown) {
+      outcome = { kind: "failed", cause };
+    }
+  }
+  if (released.kind === "failed")
+    throw resources.cleanupFailure(outcome, [released]);
+  if (outcome.kind === "failed") throw outcome.cause;
+  return outcome.bytes;
+};
+
+const waitForLzmaWorker = async (
+  worker: Worker,
+  expected: number,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<Buffer>((resolve, reject) => {
       onAbort = () => {
         try {
           assertArtifactReadActive(signal);
@@ -112,12 +158,15 @@ export const decodeLzmaBlock = async (
           reject(cause);
         }
       };
-      worker.once("message", (message: unknown) => {
+      worker.on("message", (message: unknown) => {
+        // The start acknowledgement distinguishes worker startup from codec work.
+        if (message === "started") return;
         if (message === "malformed") {
           reject(
-            new BinaryFormatFailure(
-              "malformed",
-              "Invalid or incomplete LZMA stream",
+            malformedArtifact(
+              "unityfs",
+              "UnityFS is malformed: LZMA block does not decode to its declared size",
+              { field: "block" },
             ),
           );
         } else if (
@@ -156,9 +205,5 @@ export const decodeLzmaBlock = async (
     });
   } finally {
     if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
-    // Join the exact worker even if the caller cancels or the codec fails.
-    await worker.terminate();
   }
-  assertArtifactReadActive(signal);
-  return bytes;
 };
