@@ -444,6 +444,13 @@ it.each([
     `${tscEnum}\n(function (Channel) { Channel["Other"] = "app:other"; })(Channel || (Channel = {}));`,
   ],
   ["a computed key", tscEnum.replace(`Channel["Ping"]`, "Channel[key]")],
+  [
+    "a fixed key whose expression writes a member",
+    tscEnum.replace(
+      `] = "Retries";`,
+      `] = "Retries";\n    Channel[void (Channel.Ping = "app:other")] = "ignored";`,
+    ),
+  ],
   ["a computed value", babelEnum.replace(`"app:ping"`, `prefix + "ping"`)],
   [
     "another body statement",

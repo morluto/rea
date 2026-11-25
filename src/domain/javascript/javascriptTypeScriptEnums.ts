@@ -184,9 +184,17 @@ const enumObject = (
       target.computed && t.isAssignmentExpression(property)
         ? reverse && typeof value === "string" && assign(property, false)
         : undefined;
+    // Any other computed key must be a literal: an expression that only
+    // evaluates to a fixed key, such as `void (E.A = "b")`, may still write.
+    const literalKey =
+      !target.computed ||
+      t.isStringLiteral(property) ||
+      t.isNumericLiteral(property);
     const key =
       forward === undefined
-        ? semanticStaticPropertyKey(target.property, target.computed)
+        ? literalKey
+          ? semanticStaticPropertyKey(target.property, target.computed)
+          : null
         : typeof forward === "number"
           ? String(forward)
           : null;
