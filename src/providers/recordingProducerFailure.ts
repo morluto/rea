@@ -62,7 +62,6 @@ export const recordingProducerFailureDialect = (
     context.limits,
     context.effectiveLimits,
     operation,
-    "producer_limits",
   );
   if (phase === "integrity")
     return artifactResourceDialect(resources, {
