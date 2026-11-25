@@ -239,6 +239,46 @@ describe.each([
   });
 });
 
+describe.each([
+  ["stored", tarFixture],
+  ["gzip", gzipTarFixture],
+] as const)("%s tar header-only members", (_name, build) => {
+  it("reads the next header after header-only members that declare a size", async () => {
+    // Skipped as data, the directory size would hide hidden.sh and the
+    // other sizes would misalign every later header.
+    const result = await read(
+      build([
+        { name: "dir/", type: "5", mode: 0o755, size: 1024 },
+        { name: "dir/hidden.sh", data: "hidden", mode: 0o755 },
+        { name: "dir/latest", type: "2", linkname: "hidden.sh", size: 512 },
+        { name: "dir/pipe", type: "6", size: 512 },
+        { name: "dir/tty", type: "3", size: 512 },
+        { name: "dir/a.txt", data: "a" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "dir/", kind: "directory" },
+      { path: "dir/hidden.sh", kind: "file" },
+      { path: "dir/latest", kind: "symlink" },
+      { path: "dir/a.txt", kind: "file" },
+    ]);
+    expect(result.contents).toEqual(
+      new Map([
+        ["dir/hidden.sh", "hidden"],
+        ["dir/a.txt", "a"],
+      ]),
+    );
+    expect(result.omissions).toEqual([
+      { path: "dir/pipe", kind: "fifo" },
+      { path: "dir/tty", kind: "character-device" },
+    ]);
+    expect(result.metadata).toMatchObject({
+      member_count: 4,
+      end_state: "end-marker",
+    });
+  });
+});
+
 describe("truncated tar", () => {
   it("drops a stored member whose data the file does not hold", async () => {
     const bytes = tarFixture([
