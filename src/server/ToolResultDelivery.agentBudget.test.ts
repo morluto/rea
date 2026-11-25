@@ -22,6 +22,10 @@ import {
   ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { measureMcpResultWithinBudget } from "./toolResultEncoding.js";
+import {
+  readRetainedEvidenceResource,
+  retainedEvidenceUri,
+} from "./retainedEvidenceResource.js";
 
 const contract = toolContract("inspect_byte_entropy");
 
@@ -75,7 +79,13 @@ it("counts the delivery facts in the frame check, at the exact boundary", async 
   );
   expect(unlimited.isError).not.toBe(true);
   expect(unlimited._meta?.[AGENT_BUDGET_DELIVERY_META]).toBeDefined();
-  const total = frameBytes(unlimited);
+  // Frames near the summary's size are far below the complete record, so
+  // they carry no resource link: measure the response without it.
+  expect(unlimited.content.at(-1)?.type).toBe("resource_link");
+  const total = frameBytes({
+    ...unlimited,
+    content: unlimited.content.slice(0, -1),
+  });
 
   // A frame budget one byte short of the complete response refuses it with
   // recovery instead of sending an oversized frame.
@@ -154,4 +164,63 @@ it("reads the budget seed from the environment the server captured, not the proc
       delete process.env[AGENT_RESULT_BUDGET_ENVIRONMENT];
     else process.env[AGENT_RESULT_BUDGET_ENVIRONMENT] = previous;
   }
+});
+
+it("links the complete record only when one read can fit the frame, and refuses a larger read with the cursor", async () => {
+  const evidence = await largeEntropyEvidence();
+  const ledger = new EvidenceLedger();
+  const uri = new URL(retainedEvidenceUri(evidence.evidence_id));
+  const completeBytes = Buffer.byteLength(JSON.stringify(evidence));
+  const linked = deliver(
+    new ToolResultDelivery(64 * 1024 * 1024),
+    evidence,
+    ledger,
+  );
+  expect(linked.content.at(-1)).toMatchObject({
+    type: "resource_link",
+    uri: uri.href,
+    size: completeBytes,
+  });
+  const lookup = (id: string) => ledger.forAnalysis(id);
+  const read = readRetainedEvidenceResource(
+    uri,
+    evidence.evidence_id,
+    lookup,
+    64 * 1024 * 1024,
+  );
+  expect((read.contents[0] as { text: string }).text).toBe(
+    JSON.stringify(evidence),
+  );
+
+  // A frame that holds the summary but not the complete record: the cursor
+  // alone recovers it, and a read names that cursor.
+  const narrow = new ToolResultDelivery(completeBytes);
+  const unlinked = deliver(narrow, evidence, new EvidenceLedger());
+  expect(unlinked.isError).not.toBe(true);
+  expect(unlinked.content.map(({ type }) => type)).toEqual(["text", "text"]);
+  expect(() =>
+    readRetainedEvidenceResource(
+      uri,
+      evidence.evidence_id,
+      lookup,
+      narrow.resultBudgetBytes,
+    ),
+  ).toThrow(
+    expect.objectContaining({
+      code: -32600,
+      data: expect.objectContaining({
+        reason: "response-budget",
+        next: {
+          operation: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: evidence.evidence_id,
+            },
+            view: { kind: "evidence-json", offset: 0 },
+          },
+        },
+      }),
+    }),
+  );
 });

@@ -328,12 +328,27 @@ not, the work is never refused or truncated:
   complete record) and a `note` with the recovery.
 - `inspect_analysis_view` with view
   `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
-  retained record in UTF-16 code units. Joining every page in offset order
+  retained record in UTF-16 code units. It is the recovery every client can
+  follow. Joining every page in offset order
   reproduces it exactly, and no page splits a surrogate pair. With `limit`
   omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
   its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
   up to 1,048,576. The producer's own views (`managed-members`, `inventory`
   and so on) select facts more cheaply.
+- For clients that read MCP resources, the summary also carries a
+  `resource_link` to `rea://evidence/<evidence_id>`, named
+  `complete-evidence`, whose `size` is the complete record's UTF-8 JSON
+  bytes. `resources/read` returns the record's exact JSON in one read, the
+  same text the cursor pages. The `rea://evidence/{evidence_id}` template
+  appears in `resources/templates/list`, not `resources/list`, and reads any
+  record the session retains. An ID the session does not retain (unknown,
+  from another session, or cleared by `reset_investigation`) is refused with
+  `-32602`. A record too large for one response on the connection
+  (`REA_MCP_MAX_RESPONSE_BYTES`) gets no link, and a read of it is refused
+  with `-32600` and `data.next`, the cursor. Claude Code 2.1 shows the link
+  to the model as one line, about 70 tokens, and never reads it by itself;
+  when the model reads it, Claude Code saves a large read to a file and
+  shows a preview.
 - The CLI with `--evidence_output` prints
   `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
   the bundle as an `evidence-file` source. Without it, the one-shot CLI

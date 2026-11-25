@@ -48,6 +48,8 @@ import {
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
 import { isRecord } from "../kernel/isRecord.js";
 import { RETAINED_SUMMARY_VIEW_TOOL } from "./retainedSummaryDelivery.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import { registerRetainedEvidenceResource } from "./retainedEvidenceResource.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
@@ -266,6 +268,25 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   override sendToolListChanged(): void {
     if (this.catalogChangeDepth > 0) this.catalogChanged = true;
     else super.sendToolListChanged();
+  }
+
+  private evidenceLookup: EvidenceLookup | undefined;
+  private servesRetainedEvidence = false;
+
+  /**
+   * Serve `rea://evidence/{evidence_id}` from the session ledger. The
+   * template is registered once, before connecting, so the resource
+   * capability is advertised; a deferred server registers it before its
+   * runtime, and its ledger lookup attaches with the runtime.
+   */
+  serveRetainedEvidence(lookup: EvidenceLookup | undefined): void {
+    if (lookup !== undefined) this.evidenceLookup = lookup;
+    if (this.servesRetainedEvidence) return;
+    this.servesRetainedEvidence = true;
+    registerRetainedEvidenceResource(this, () => ({
+      lookup: this.evidenceLookup,
+      budgetBytes: this.delivery.resultBudgetBytes,
+    }));
   }
 
   /** Attach the process-owned session only after lazy runtime construction. */
