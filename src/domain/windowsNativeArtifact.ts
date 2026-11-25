@@ -214,20 +214,20 @@ export const validateWindowsNativeDelayImports = (
     return fail("has an unmapped delay-import directory");
   const start = owner.offset + directory.address - owner.virtual_address;
   const reader = new BinaryReader(bytes, true, "pe");
+  const isNullDescriptor = (offset: number) =>
+    bytes
+      .subarray(offset, offset + DELAY_DESCRIPTOR_BYTES)
+      .every((byte) => byte === 0);
+  const end = start + directory.size;
   for (
     let descriptor = start;
-    descriptor < start + directory.size;
+    descriptor < end;
     descriptor += DELAY_DESCRIPTOR_BYTES
   ) {
     const attributes = reader.u32(descriptor);
     const nameRva = reader.u32(descriptor + 4);
     const iatRva = reader.u32(descriptor + 12);
-    if (
-      descriptor > start &&
-      bytes
-        .subarray(descriptor, descriptor + DELAY_DESCRIPTOR_BYTES)
-        .every((byte) => byte === 0)
-    )
+    if (descriptor > start && isNullDescriptor(descriptor))
       return ok(undefined);
     if (attributes !== 1 || nameRva === 0 || iatRva === 0)
       return fail("has an invalid RVA-based delay-import descriptor");
@@ -237,6 +237,14 @@ export const validateWindowsNativeDelayImports = (
         "has a delay-import address table outside writable PE data; check the MinGW linker",
       );
   }
+  // GNU ld places the null descriptor immediately after the advertised size.
+  // Require the complete descriptor to remain mapped in the same section.
+  if (
+    locate(directory.address, directory.size + DELAY_DESCRIPTOR_BYTES) ===
+      owner &&
+    isNullDescriptor(end)
+  )
+    return ok(undefined);
   return fail("has an unterminated delay-import directory");
 };
 

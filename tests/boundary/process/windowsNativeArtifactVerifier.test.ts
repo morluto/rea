@@ -74,7 +74,7 @@ const delayImportFixture = () => {
   bytes.writeUInt32LE(1, descriptors);
   bytes.writeUInt32LE(0x1050, descriptors + 4);
   bytes.writeUInt32LE(0x1040, descriptors + 12);
-  return { bytes, manifest, directory, section };
+  return { bytes, manifest, directory, section, descriptors };
 };
 
 for (const mode of ["preinstall source", "packed source-free"]) {
@@ -114,7 +114,8 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       );
       const artifactRoot = join(root, "native/windows/build");
       await mkdir(artifactRoot, { recursive: true });
-      const { bytes, manifest, directory, section } = delayImportFixture();
+      const { bytes, manifest, directory, section, descriptors } =
+        delayImportFixture();
       const manifestPath = join(artifactRoot, "manifest.json");
       const writeArtifact = async () => {
         manifest.artifactSha256 = createHash("sha256")
@@ -139,11 +140,16 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       });
       bytes.writeUInt32LE(32, directory + 4);
       await writeArtifact();
+      expect((await run()).exitCode).toBe(0);
+
+      bytes.writeUInt32LE(1, descriptors + 32);
+      await writeArtifact();
       const unterminated = await run();
       expect(unterminated.exitCode).not.toBe(0);
       expect(unterminated.stderr).toContain(
         "unterminated delay-import directory",
       );
+      bytes.writeUInt32LE(0, descriptors + 32);
       bytes.writeUInt32LE(64, directory + 4);
 
       bytes.writeUInt32LE(0x4000_0040, section + 36);
