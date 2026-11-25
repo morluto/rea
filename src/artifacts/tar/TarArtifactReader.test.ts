@@ -21,6 +21,7 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
+import { TAR_RETAINED_METADATA_BYTES } from "./TarWalk.js";
 import { GzipTarStream } from "./TarByteStream.js";
 import {
   gzipTarFixture,
@@ -462,6 +463,43 @@ describe("tar header edge cases", () => {
       await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
     } finally {
       stream.close();
+    }
+  });
+
+  it("refuses repeated global pax headers at the retained metadata allowance", async () => {
+    const value = "x".repeat(800_000);
+    const pieces: Buffer[] = [];
+    const perRecord = Buffer.byteLength("k000") + value.length + 64;
+    const count = Math.floor(TAR_RETAINED_METADATA_BYTES / perRecord) + 2;
+    for (let index = 0; index < count; index += 1) {
+      const key = `k${String(index).padStart(3, "0")}`;
+      const body = ` ${key}=${value}\n`;
+      let length = Buffer.byteLength(body) + 1;
+      while (String(length).length + Buffer.byteLength(body) !== length)
+        length = String(length).length + Buffer.byteLength(body);
+      const pax = Buffer.from(`${String(length)}${body}`);
+      pieces.push(
+        tarHeader({ name: "PaxHeader", type: "g" }, pax.length),
+        pax,
+        Buffer.alloc((512 - (pax.length % 512)) % 512),
+      );
+    }
+    const reader = new TarArtifactReader(
+      await write("global-pax-budget.tar", Buffer.concat(pieces)),
+    );
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries()) void entry;
+      }).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "memory",
+        fixedAllowance: {
+          limit: TAR_RETAINED_METADATA_BYTES,
+          unit: "bytes",
+        },
+      });
+    } finally {
+      await reader.close();
     }
   });
 

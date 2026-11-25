@@ -115,10 +115,13 @@ it.each([
     expect(result).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         path,
-        reason: expect.stringContaining(fileType === 10 ? "dSYM" : diagnostic),
-        remediationAction: expect.stringContaining("linked Mach-O"),
+        failure: {
+          detail: expect.stringContaining(
+            fileType === 10 ? "dSYM" : diagnostic,
+          ),
+        },
         capturedOutput: {
           stdout: dyldDiagnosticOutput(path, diagnostic),
           exit_code: 1,

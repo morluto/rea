@@ -327,7 +327,7 @@ it.each(["cpu-type", "cpu-subtype"] as const)(
     });
     const wrong = universalMacho([conflicting]);
     await expect(locate(wrong.bytes)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("CPU type/subtype disagrees"),
     });
     const unrelated = {
@@ -446,7 +446,7 @@ it.each([
     const handle = await open(await writeCarrier("macho-backing", bytes), "r");
     try {
       await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(reason),
       });
     } finally {
@@ -493,7 +493,7 @@ it.each(["thin", "universal"] as const)(
     };
     await expect(locate(valid)).rejects.toMatchObject({ reason: "limit" });
     await expect(locate(malformed)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("segment range is outside the file"),
     });
   },
@@ -785,24 +785,28 @@ it("isolates malformed located SEA blobs to outer native inventory while direct 
       bytes: nodeSeaElf({ blob: Buffer.from([0x20, 0xda, 0x43]) }),
       outerFormat: "elf" as const,
       pattern: /Node SEA.*truncated/iu,
+      reason: "truncated",
     },
     {
       name: "bad-magic",
       bytes: nodeSeaMachO({ blob: Buffer.alloc(16) }),
       outerFormat: "mach-o" as const,
       pattern: /magic.*not.*0x143da20/iu,
+      reason: "malformed",
     },
     {
       name: "unknown-flags",
       bytes: nodeSeaPe({ blob: unknown }),
       outerFormat: "pe" as const,
       pattern: /flags.*unknown bits/iu,
+      reason: "malformed",
     },
     {
       name: "trailing-bytes",
       bytes: nodeSeaElf({ blob: trailing }),
       outerFormat: "elf" as const,
       pattern: /trailing bytes/iu,
+      reason: "malformed",
     },
   ];
   for (const item of cases) {
@@ -820,7 +824,7 @@ it("isolates malformed located SEA blobs to outer native inventory while direct 
     const reader = new NodeSeaArtifactReader(path);
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: item.reason,
         message: expect.stringMatching(item.pattern),
       });
     } finally {
@@ -905,7 +909,7 @@ it("fails closed when two different blobs are declared", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/Node SEA blob.*declared more than once/iu),
   });
   await expect(
@@ -918,7 +922,7 @@ it("fails closed when two different blobs are declared", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/Node SEA blob.*declared more than once/iu),
   });
 });
@@ -1054,7 +1058,7 @@ it("reads repeated PT_NOTE declarations at most once per note the file holds", a
       await writeCarrier("repeated-sea-notes", confirmed),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(
       /ELF note tables.*more notes than the file holds/iu,
     ),
@@ -1239,7 +1243,7 @@ it("rejects missing Mach-O load commands after a confirmed SEA section", async (
   const handle = await open(path, "r");
   try {
     await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
     });
   } finally {
@@ -1596,7 +1600,7 @@ it.each([
         for await (const _entry of reader.entries()) {
           /* consume */
         }
-      }).rejects.toMatchObject({ reason: "format" });
+      }).rejects.toMatchObject({ reason: "truncated" });
     } finally {
       await reader.close();
     }

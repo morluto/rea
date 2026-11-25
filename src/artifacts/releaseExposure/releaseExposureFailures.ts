@@ -12,6 +12,7 @@ import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
@@ -123,7 +124,14 @@ const releaseExposureFailurePrimary = (
   ) {
     if (cause.reason === "limit")
       return releaseExposureLimitFailure(cause, maxFileBytes);
-    if (cause.reason === "path" || cause.reason === "format")
+    if (cause.parseFailure !== undefined)
+      return new AnalysisTargetFailureError(
+        RELEASE_EXPOSURE_AUDIT_OPERATION,
+        path,
+        cause.parseFailure,
+        { cause },
+      );
+    if (cause.reason === "path")
       return new AnalysisInputError(
         RELEASE_EXPOSURE_AUDIT_OPERATION,
         { cause },

@@ -33,7 +33,7 @@ const replySchema = z.discriminatedUnion("ok", [
     z.strictObject({
       ok: z.literal(false),
       reason: z.enum([
-        "format",
+        "malformed",
         "unsupported",
         "input-limit",
         "expanded-limit",

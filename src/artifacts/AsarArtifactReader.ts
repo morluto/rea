@@ -28,6 +28,9 @@ import { Readable } from "node:stream";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
+  artifactFormatFailure,
+  malformedArtifact,
+  truncatedArtifact,
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
@@ -112,12 +115,18 @@ export class AsarArtifactReader implements ArtifactReader {
           );
         } catch (cause: unknown) {
           // Listing names members relative to this archive; keep which archive.
-          if (
-            cause instanceof ArtifactReaderFailure &&
-            (cause.reason === "format" || cause.reason === "path")
-          )
+          if (!(cause instanceof ArtifactReaderFailure)) throw cause;
+          if (cause.parseFailure !== undefined)
+            throw artifactFormatFailure(
+              {
+                ...cause.parseFailure,
+                detail: `${cause.parseFailure.detail} in ${this.path}`,
+              },
+              { cause },
+            );
+          if (cause.reason === "path")
             throw new ArtifactReaderFailure(
-              cause.reason,
+              "path",
               `${cause.message} in ${this.path}`,
               { cause },
             );
@@ -274,16 +283,28 @@ export class AsarArtifactReader implements ArtifactReader {
           false,
         ),
       );
+    // An absent, negative, padded or unsafe offset declaration is malformed;
+    // only a valid range that runs past the archive is truncated.
     if (
       archiveSize === undefined ||
       start === undefined ||
-      !Number.isSafeInteger(start) ||
-      start > archiveSize ||
-      facts.size > archiveSize - start
+      !Number.isSafeInteger(start)
     )
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "asar",
+        `ASAR entry declares an invalid offset: ${producedEntry.path}`,
+        { field: "offset" },
+      );
+    if (start > archiveSize || facts.size > archiveSize - start)
+      throw truncatedArtifact(
+        "asar",
         `ASAR entry range is outside its container: ${producedEntry.path}`,
+        {
+          offset: start,
+          field: "offset",
+          availableBytes: Math.max(0, archiveSize - start),
+          requiredBytes: facts.size,
+        },
       );
     const snapshotPath = this.#snapshotPath();
     if (facts.size === 0) return Readable.from([]);

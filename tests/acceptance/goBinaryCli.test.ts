@@ -73,7 +73,7 @@ cliTest(
           code: "unsupported_target",
           details: {
             operation: "inspect_go_binary",
-            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+            failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
           },
         };
         expect(result.exitCode).toBe(1);
@@ -173,7 +173,7 @@ cliTest(
                   },
                 }
               : {
-                  format_failure: expect.stringMatching(
+                  failure_kind: expect.stringMatching(
                     /^(?:malformed|truncated)$/u,
                   ),
                 }),
@@ -192,7 +192,7 @@ cliTest(
                   },
                 }
               : {
-                  format_failure: expect.stringMatching(
+                  failure_kind: expect.stringMatching(
                     /^(?:malformed|truncated)$/u,
                   ),
                 }),
@@ -366,7 +366,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_go_binary",
-        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     };
 

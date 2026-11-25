@@ -280,7 +280,7 @@ cliTest("reports a wrong CLSID as a malformed target", async ({ cli }) => {
     details: {
       operation: "inspect_windows_shortcut",
       path,
-      format_failure: "malformed",
+      failure_kind: "malformed",
     },
   });
 });

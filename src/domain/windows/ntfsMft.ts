@@ -173,7 +173,7 @@ const failure = (
   message: string,
   boundary?: RegionDecodeFailure["boundary"],
 ): RegionDecodeFailure => ({
-  kind: "format",
+  kind: "malformed",
   message,
   ...(boundary === undefined ? {} : { boundary }),
 });

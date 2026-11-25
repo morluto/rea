@@ -433,7 +433,11 @@ it("binds initial mixed cleanup to only its unresolved owners", async () => {
       throw new Error("Expected owned cleanup failures");
     const initial = scope.cleanupFailure({ kind: "completed" }, [a, b]);
     expect(initial.cleanupLeases).toEqual([a.lease, b.lease]);
-    const error = translateArtifactFailure("inventory_artifact", initial);
+    const error = translateArtifactFailure(
+      "inventory_artifact",
+      "/selected/artifact",
+      initial,
+    );
     denyFirst = false;
     const retry = await scope.retryCleanup().catch((cause: unknown) => cause);
     expect(retry).toBeInstanceOf(ArtifactResourceRetryFailure);
@@ -478,7 +482,11 @@ it.each(["owned-close", "independent-primary"] as const)(
           ? { kind: "completed" as const }
           : { kind: "failed" as const, cause: unknown };
       const initial = scope.cleanupFailure(outcome, [attempt]);
-      const error = translateArtifactFailure("inventory_artifact", initial);
+      const error = translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        initial,
+      );
       expect(error.cleanupIncomplete).toBe(true);
       denied = false;
       await scope.close();
@@ -521,7 +529,11 @@ it.each([undefined, null, { reason: "opaque reason" }])(
       ]);
       expect(initial.reason).toBe("cancelled");
       expect(initial.cancellation?.reason).toBe(reason);
-      const error = translateArtifactFailure("inventory_artifact", initial);
+      const error = translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        initial,
+      );
       expect(error.cause).toBe(reason);
       denied = false;
       await scope.close();
@@ -555,7 +567,11 @@ it("does not clear independent domain cleanup when a new scope owner releases", 
     const initial = scope.cleanupFailure({ kind: "failed", cause: primary }, [
       attempt,
     ]);
-    const error = translateArtifactFailure("inventory_artifact", initial);
+    const error = translateArtifactFailure(
+      "inventory_artifact",
+      "/selected/artifact",
+      initial,
+    );
     denied = false;
     await scope.close();
     expect(attempt.lease.released).toBe(true);
@@ -606,7 +622,11 @@ it.each(["completed", "failed"] as const)(
       ).catch((cause: unknown) => cause);
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected physical file failure");
-      const error = translateArtifactFailure("inventory_artifact", failure);
+      const error = translateArtifactFailure(
+        "inventory_artifact",
+        "/selected/artifact",
+        failure,
+      );
       expect(error.cleanupIncomplete).toBe(true);
       denied = false;
       await scope.close();
@@ -649,6 +669,7 @@ it.each(["artifact", "domain"] as const)(
         throw new Error("Expected retained children");
       const error = translateArtifactFailure(
         "inventory_artifact",
+        "/selected/artifact",
         scope.cleanupFailure({ kind: "completed" }, [attempt]),
       );
       expect(error.cleanupResources).toEqual(children);

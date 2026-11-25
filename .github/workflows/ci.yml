@@ -54,7 +54,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      CHECKOUT_TEST_SOURCES: ${{ github.event_name == 'pull_request' && inputs.source_sha == '' }}
+      PR_CLASSIFIER_INPUTS: |
+        /tests/
+        **/*.test.ts
+        **/*.fixture*.ts
+        /.github/
+        /.husky/
     permissions:
       contents: read
       actions: read
@@ -122,8 +127,12 @@ jobs:
           # qualification and warm main pushes use only HEAD.
           # Keep the nonzero branch first: numeric 0 is falsy in Actions expressions.
           fetch-depth: ${{ (inputs.source_sha != '' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.REA_CI_FULL_ON_PUSH != 'true') || (github.event_name == 'schedule' && github.event.schedule != '23 1,5,7,11,13,17,19,23 * * *')) && 1 || 0 }}
-          sparse-checkout: ${{ env.CHECKOUT_TEST_SOURCES != 'true' && 'scripts' || '' }}
-          filter: ${{ env.CHECKOUT_TEST_SOURCES == 'true' && 'blob:none' || '' }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/*/
+            /scripts/
+            ${{ github.event_name == 'pull_request' && inputs.source_sha == '' && env.PR_CLASSIFIER_INPUTS || '' }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           package-manager-cache: false
