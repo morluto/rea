@@ -43,11 +43,7 @@ import {
   readElfImageCooperative,
   readElfImageFromReader,
 } from "../../domain/native/elfImage.js";
-import {
-  readElfBuildIds,
-  readElfBuildIdsCooperative,
-  readElfBuildIdsFromHandle,
-} from "./ElfNoteParser.js";
+import { readElfBuildIds, readElfBuildIdsFromHandle } from "./ElfNoteParser.js";
 import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import {
   sharedElfSectionNameDecoder,
@@ -56,9 +52,10 @@ import {
 } from "../../domain/native/elfSectionNameTable.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
-import type {
-  ByteSource,
-  PrefixedByteSource,
+import {
+  bufferByteSource,
+  type ByteSource,
+  type PrefixedByteSource,
 } from "../../domain/byteSource.js";
 
 type PreparedCandidateImage = Result<ReturnType<typeof readElfImage>, unknown>;
@@ -909,7 +906,7 @@ const debugLinkPause = (signal?: AbortSignal) => () =>
   yieldArtifactRead(signal);
 
 const prepareBuildIdNotes = async (
-  bytes: Buffer,
+  source: PrefixedByteSource,
   input: InspectElfDebugLinkInput,
   decode: CooperativeElfSectionNameDecoder,
   signal: AbortSignal | undefined,
@@ -917,8 +914,8 @@ const prepareBuildIdNotes = async (
   assertArtifactReadActive(signal);
   try {
     return ok(
-      await readElfBuildIdsCooperative(
-        bytes,
+      await readElfBuildIdsFromHandle(
+        source,
         input,
         MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
         decode,
@@ -960,21 +957,7 @@ export const parseElfDebugLinkFromHandle = async (
         ? Promise.resolve(sectionNames.raw)
         : source.readRange(offset, length),
   };
-  let notes: PreparedNotes;
-  assertArtifactReadActive(signal);
-  try {
-    notes = ok(
-      await readElfBuildIdsFromHandle(
-        noteSource,
-        input,
-        MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
-        decode,
-      ),
-    );
-  } catch (cause) {
-    assertArtifactReadActive(signal);
-    notes = err(cause);
-  }
+  const notes = await prepareBuildIdNotes(noteSource, input, decode, signal);
   assertArtifactReadActive(signal);
   const sections = image.sections.filter(
     (section): section is ElfSection => section.format === "elf",
@@ -1059,7 +1042,7 @@ export const verifyElfDebugCandidateCooperative = async (
   )
     return verifyElfDebugCandidate(report, candidate, input, preparedImage);
   const notes = await prepareBuildIdNotes(
-    candidate.prefix,
+    bufferByteSource(candidate.prefix),
     input,
     decode,
     signal,
