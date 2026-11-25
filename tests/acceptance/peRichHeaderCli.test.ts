@@ -69,6 +69,19 @@ cliTest("fails closed at the entry budget", async ({ cli }) => {
   expect(result.json).toMatchObject({
     code: "resource_constraint",
     retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_entries",
+        cli_flag: "--max-entries",
+        effective_value: 2,
+        unit: "count",
+        minimum: 1,
+        maximum: 65536,
+        default_value: 1024,
+        applies_at: "next_call",
+      },
+    },
     remediation: {
       action: expect.stringContaining("Raise max_entries above 2"),
     },

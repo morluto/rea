@@ -12,13 +12,16 @@ import {
 import type { PeRichHeaderPort } from "../../ports/binaryDiagnostics/PeRichHeaderPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   fixedAllowanceOptions,
   type FixedCeilingFacts,
 } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES,
   MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
   MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
+  MIN_INSPECT_PE_RICH_HEADER_ENTRIES,
   type InspectPeRichHeaderInput,
   type PeRichHeader,
 } from "../../domain/native/peRichHeader.js";
@@ -119,14 +122,31 @@ const entryRemediation = (input: InspectPeRichHeaderInput): string =>
     ? `The image exceeds the ${String(MAX_INSPECT_PE_RICH_HEADER_ENTRIES)}-entry Rich header ceiling this operation accepts; select a smaller artifact.`
     : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected Rich header entry budget.`;
 
+const entryLimit = (
+  input: InspectPeRichHeaderInput,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_entries",
+  effective_value: input.max_entries,
+  unit: "count",
+  minimum: MIN_INSPECT_PE_RICH_HEADER_ENTRIES,
+  maximum: MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
+  default_value: DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES,
+  applies_at: "next_call",
+});
+
 /** Recovery for the caller's entry budget, or for the shared PE decoding allowance. */
 const limitRecovery = (
   limit: typeof PE_RICH_HEADER_ENTRY_ALLOWANCE | null,
   input: InspectPeRichHeaderInput,
   ceiling: FixedCeilingFacts,
-): ResourceConstraintRecovery =>
+): ResourceConstraintRecovery & { readonly limit?: AnalysisParameterLimit } =>
   limit === PE_RICH_HEADER_ENTRY_ALLOWANCE
-    ? { retryable: false, remediationAction: entryRemediation(input) }
+    ? {
+        retryable: false,
+        limit: entryLimit(input),
+        remediationAction: entryRemediation(input),
+      }
     : fixedAllowanceOptions(
         "The PE structural decoding allowance",
         "parser",

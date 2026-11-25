@@ -10,6 +10,10 @@ const range = z.strictObject({ offset: uint, bytes: uint });
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES = 536870912;
+/** Minimum caller-selected Rich header entry budget. */
+export const MIN_INSPECT_PE_RICH_HEADER_ENTRIES = 1;
+/** Default caller-selected Rich header entry budget. */
+export const DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES = 1024;
 /** Hard ceiling on decoded Rich header entries. */
 export const MAX_INSPECT_PE_RICH_HEADER_ENTRIES = 65536;
 
@@ -37,9 +41,9 @@ export const inspectPeRichHeaderInputSchema = z.strictObject({
   max_entries: z
     .number()
     .int()
-    .min(1)
+    .min(MIN_INSPECT_PE_RICH_HEADER_ENTRIES)
     .max(MAX_INSPECT_PE_RICH_HEADER_ENTRIES)
-    .default(1024)
+    .default(DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES)
     .describe(
       "Maximum Rich header entries to decode; exceeding the budget fails without partial success",
     ),

@@ -50,6 +50,16 @@ describe("PE Rich header provider failures after a completed read", () => {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource,
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_entries",
+            effective_value: maxEntries,
+            unit: "count",
+            minimum: 1,
+            maximum: 65536,
+            default_value: 1024,
+            applies_at: "next_call",
+          },
         });
       expect(result.error.partialObservation).toEqual(
         fileIdentity(path, bytes),

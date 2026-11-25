@@ -10,6 +10,7 @@ import type {
   AnalysisError,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
+import type { AnalysisLimit } from "../../domain/analysisSettings.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import {
   BinaryResourceFailure,
@@ -34,7 +35,7 @@ interface PeBinaryFailureOptions<Limit extends string> {
   readonly limitRecovery: (
     limit: Limit | null,
     ceiling: FixedCeilingFacts,
-  ) => ResourceConstraintRecovery;
+  ) => ResourceConstraintRecovery & { readonly limit?: AnalysisLimit };
   /** A verified report the failure keeps, such as one completed before final cleanup failed. */
   readonly completed?: AnalysisPartialObservation;
 }
