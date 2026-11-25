@@ -10,7 +10,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "../../lib/mcp-verifier-results.mjs";
-import { hashAndroidFile } from "./digest.mjs";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 
 const operation = "trace_android_references";
 const className = "android.app.NotificationManager";
@@ -94,7 +94,7 @@ const cli = async (options, path, index, selector = input(path, index)) => {
 };
 
 const verifyApk = async (options, path, dexEntry) => {
-  const digest = await hashAndroidFile(path);
+  const digest = await sha256File(path);
   const cliResults = [];
   for (const index of [0, 1])
     cliResults.push(
@@ -172,7 +172,7 @@ const verifyApk = async (options, path, dexEntry) => {
     assert.deepEqual(replay.normalized_result, cliResults[0].normalized_result);
   }, [() => client.close(), () => transport.close()]);
   assert.equal(
-    await hashAndroidFile(path),
+    await sha256File(path),
     digest,
     "Static references changed APK bytes",
   );
@@ -187,7 +187,7 @@ const verifyLimit = async (
   stage = "caller_inventory",
   selector,
 ) => {
-  const digest = await hashAndroidFile(path);
+  const digest = await sha256File(path);
   try {
     await cli(options, path, 0, selector);
     assert.fail("Oversized external reference inventory was accepted");
@@ -198,7 +198,7 @@ const verifyLimit = async (
     assert.equal(failure.details.reported_limits.stage, stage);
     assert.equal(failure.retryable, false);
   }
-  assert.equal(await hashAndroidFile(path), digest);
+  assert.equal(await sha256File(path), digest);
   console.log(
     `PASS real external ${stage} representation refusal retains typed resource constraint and immutable APK`,
   );
@@ -247,7 +247,7 @@ const checkSiteBudget = (value, digest) => {
 
 /** Optional instruction positions cannot displace the complete caller inventory. */
 const verifySiteBudget = async (options, path, control) => {
-  const digest = await hashAndroidFile(path);
+  const digest = await sha256File(path);
   const first = checkSiteBudget(await cli(options, path, 0), digest);
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -298,7 +298,7 @@ const verifySiteBudget = async (options, path, control) => {
     );
     check(
       requireMcpOutput(await call(input(control, 0)), operation),
-      await hashAndroidFile(control),
+      await sha256File(control),
       0,
       "classes.dex",
     );
@@ -308,7 +308,7 @@ const verifySiteBudget = async (options, path, control) => {
     );
     assert.deepEqual(replay.normalized_result, first.normalized_result);
   }, [() => client.close(), () => transport.close()]);
-  assert.equal(await hashAndroidFile(path), digest);
+  assert.equal(await sha256File(path), digest);
   console.log(
     "PASS site-heavy CLI/MCP complete11 callers, partial positions, bounded output, target replacement/recovery and awaited cleanup",
   );
