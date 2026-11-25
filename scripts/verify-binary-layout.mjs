@@ -31,6 +31,10 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
@@ -68,7 +72,9 @@ const limitedEnvironment = (option) => ({
   REA_VERIFY_LIMITED_PYTHON: python,
   REA_VERIFY_LIMIT_OPTION: option,
 });
-const client = new Client({ name: "binary-layout-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "binary-layout-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -1163,10 +1169,12 @@ try {
     ["--fsize=33554432", '"file_size_bytes": 33554432'],
   ]) {
     const selectedEnvironment = limitedEnvironment(option);
-    const limitedClient = new Client({
-      name: "limited-layout-verifier",
-      version: "1",
-    });
+    const limitedClient = completeEvidenceClient(
+      new Client({
+        name: "limited-layout-verifier",
+        version: "1",
+      }),
+    );
     const limitedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1242,10 +1250,12 @@ try {
   // Resource limits are result-affecting inputs: upstream PLT emulation may be
   // incomplete under this address-space budget. Compare adapters at that budget.
   const memoryEnvironment = limitedEnvironment("--as=100663296");
-  const memoryClient = new Client({
-    name: "memory-layout-verifier",
-    version: "1",
-  });
+  const memoryClient = completeEvidenceClient(
+    new Client({
+      name: "memory-layout-verifier",
+      version: "1",
+    }),
+  );
   const memoryTransport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -1311,7 +1321,9 @@ try {
   const cpuHeavyPath = join(root.path, "cpu-section-heavy.o");
   await writeFile(cpuHeavyPath, cpuHeavy);
   const cpuEnvironment = limitedEnvironment("--cpu=1:");
-  const cpuClient = new Client({ name: "cpu-layout-verifier", version: "1" });
+  const cpuClient = completeEvidenceClient(
+    new Client({ name: "cpu-layout-verifier", version: "1" }),
+  );
   const cpuTransport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -1344,10 +1356,12 @@ try {
   }
   for (const limit of [1024, 1]) {
     const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
-    const fileClient = new Client({
-      name: "file-size-layout-verifier",
-      version: "1",
-    });
+    const fileClient = completeEvidenceClient(
+      new Client({
+        name: "file-size-layout-verifier",
+        version: "1",
+      }),
+    );
     const fileTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1461,10 +1475,12 @@ try {
       ...environment,
       REA_PWNTOOLS_PYTHON: configuredPython,
     };
-    const selectedClient = new Client({
-      name: "unavailable-layout-verifier",
-      version: "1",
-    });
+    const selectedClient = completeEvidenceClient(
+      new Client({
+        name: "unavailable-layout-verifier",
+        version: "1",
+      }),
+    );
     const selectedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
@@ -1520,9 +1536,11 @@ try {
         trace,
         process.execPath,
         entrypoint,
-        "inspect-binary-layout",
-        join(root.path, name),
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-binary-layout",
+          join(root.path, name),
+          "--json",
+        ])),
       ],
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
@@ -1639,7 +1657,7 @@ async function inspect(
     const response = await selectedClient.callTool(
       {
         name: "inspect_binary_layout",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       },
       { timeout: 300_000 },
     );
@@ -1654,7 +1672,14 @@ async function inspect(
     try {
       response = await commands.exec(
         process.execPath,
-        [entrypoint, "inspect-binary-layout", path, "--json"],
+        [
+          entrypoint,
+          ...(await completeEvidenceCliArguments([
+            "inspect-binary-layout",
+            path,
+            "--json",
+          ])),
+        ],
         {
           env: selectedEnvironment,
           timeout: 40_000,

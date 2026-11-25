@@ -231,7 +231,7 @@ it.skipIf(process.platform === "win32")(
 
       const failed = (await client.callTool({
         name: "inspect_with_objdump",
-        arguments: { operation: "architectures" },
+        arguments: { detail: "complete", operation: "architectures" },
       })) as CallToolResult;
       expect(failed.isError).toBe(true);
       const parsedFailure = parseMcpToolError(failed);
@@ -266,7 +266,7 @@ it.skipIf(process.platform === "win32")(
 
       const retried = await client.callTool({
         name: "inspect_with_objdump",
-        arguments: { operation: "architectures" },
+        arguments: { detail: "complete", operation: "architectures" },
       });
       expect(retried.isError).not.toBe(true);
 

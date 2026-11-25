@@ -9,6 +9,26 @@ interface ArtifactRangeCarrier {
   readonly signal: AbortSignal | undefined;
 }
 
+export interface ArtifactCarrierRange {
+  readonly offset: number;
+  readonly length: number;
+}
+
+/** Keep the first declaration of each byte range, including its format-specific metadata. */
+export const uniqueArtifactRanges = <Range extends ArtifactCarrierRange>(
+  ranges: readonly Range[],
+): Range[] => {
+  const unique: Range[] = [];
+  const seen = new Set<string>();
+  for (const range of ranges) {
+    const key = `${String(range.offset)}:${String(range.length)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(range);
+  }
+  return unique;
+};
+
 /**
  * Read exactly one bounded carrier range. A range outside the measured file
  * returns undefined: the format declared bytes the file does not have, so the

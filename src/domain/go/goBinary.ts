@@ -193,9 +193,9 @@ export const inspectGoBinaryInputSchema = z
     ...goResourceBudgetFields,
     detail: z
       .enum(["complete", "summary"])
-      .default("complete")
+      .optional()
       .describe(
-        "complete returns all metadata inline; summary retains complete Evidence and returns build identity and counts for subsequent retained Go views.",
+        "Omitted: complete when it fits the agent result budget, otherwise the retained summary. complete returns all metadata inline; summary retains complete Evidence and returns build identity and counts for subsequent retained Go views.",
       ),
   })
   .superRefine((input, context) => {

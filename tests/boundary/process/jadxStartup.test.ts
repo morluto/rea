@@ -300,7 +300,7 @@ it("returns terminal startup diagnostics and partial identity through the MCP co
     await client.connect(local);
     const pending = client.callTool({
       name: "inspect_android_package",
-      arguments: { path: f.apk },
+      arguments: { detail: "complete", path: f.apk },
     });
     await f.request;
     f.process.exit();

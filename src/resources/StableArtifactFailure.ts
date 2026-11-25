@@ -5,6 +5,10 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "../domain/artifactOperationError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   artifactFileCancellationCause,
@@ -26,21 +30,42 @@ import {
 } from "../domain/analysisErrorCore.js";
 
 /**
- * A reader's integrity failure as a selected-artifact change, keeping the
- * check it named. `options` replaces the default cause (the failure itself),
- * for example with a cleanup wrapper around it.
+ * A reader's integrity failure, keeping the check it named. Only a check whose
+ * failure means the target changed during the read is a selected-artifact
+ * change, which an unchanged retry can clear. Any other check, such as a
+ * session target that no longer matches its admitted identity, fails the same
+ * way on every unchanged retry and keeps the reader's own recovery. `options`
+ * replaces the default cause (the failure itself), for example with a cleanup
+ * wrapper around it.
  */
 export const readerIntegrityFailure = (
   operation: string,
   path: string,
   failure: ArtifactReaderFailure,
   options: AnalysisErrorOptions = {},
-): AnalysisArtifactChangedError =>
-  new AnalysisArtifactChangedError(operation, path, failure.message, {
-    cause: failure,
-    ...options,
-    integrityCheck: failure.integrityCheck,
-  });
+): AnalysisArtifactChangedError | ArtifactOperationError =>
+  integrityCheckMeansChanged(failure.integrityCheck)
+    ? new AnalysisArtifactChangedError(operation, path, failure.message, {
+        cause: failure,
+        ...options,
+        integrityCheck: failure.integrityCheck,
+      })
+    : new ArtifactOperationError(
+        operation,
+        "integrity",
+        failure.details,
+        failure.message,
+        {
+          cause: failure,
+          ...options,
+          ...(failure.userMessage === undefined
+            ? {}
+            : { userMessage: failure.userMessage }),
+          ...(failure.integrityCheck === undefined
+            ? {}
+            : { integrityCheck: failure.integrityCheck }),
+        },
+      );
 
 /** Preserve ownership classification for stable-file identity and cancellation. */
 export const projectOwnedArtifactIdentityFailure = (

@@ -275,19 +275,37 @@ const mergeSiblings = (
   ];
 };
 
-/** Merge groups that differ in exactly one identifier-like segment at index two or later. */
-const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
+const mergeSiblingPositions = (
+  groups: readonly ToolGroup[],
+  width: 1 | 2,
+  keyFor: (group: ToolGroup, position: number) => string | undefined,
+  mergeBucket: (bucket: readonly ToolGroup[], position: number) => ToolGroup[],
+): ToolGroup[] => {
   let current = [...groups];
   const longest = Math.max(0, ...current.map((group) => group.parts.length));
-  for (let position = 2; position < longest; position += 1) {
+  for (let position = 2; position + width <= longest; position += 1) {
     const buckets = new Map<string, ToolGroup[]>();
     const output: ToolGroup[] = [];
     for (const group of current) {
-      if (position >= group.parts.length) {
-        output.push(group);
-        continue;
-      }
-      const key = compositeKey([
+      const key = keyFor(group, position);
+      if (key === undefined) output.push(group);
+      else appendToMapList(buckets, key, group);
+    }
+    for (const bucket of buckets.values())
+      appendAll(output, mergeBucket(bucket, position));
+    current = output;
+  }
+  return current;
+};
+
+/** Merge groups that differ in exactly one identifier-like segment at index two or later. */
+const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] =>
+  mergeSiblingPositions(
+    groups,
+    1,
+    (group, position) => {
+      if (position >= group.parts.length) return undefined;
+      return compositeKey([
         group.method,
         group.origin,
         group.parts.length,
@@ -295,14 +313,9 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
           index === position ? null : partKey(part),
         ),
       ]);
-      appendToMapList(buckets, key, group);
-    }
-    for (const bucket of buckets.values())
-      appendAll(output, mergeSiblings(bucket, position));
-    current = output;
-  }
-  return current;
-};
+    },
+    mergeSiblings,
+  );
 
 /** Fewest distinct literal pairs that make two adjacent positions one templated pair. */
 export const SIBLING_PAIR_MINIMUM = 3;
@@ -368,18 +381,13 @@ const mergePairBucket = (
 };
 
 /** Merge groups that differ in two adjacent literals after a plural literal, such as `/repos/{owner}/{repo}/…`. */
-const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
-  let current = [...groups];
-  const longest = Math.max(0, ...current.map((group) => group.parts.length));
-  for (let position = 2; position + 1 < longest; position += 1) {
-    const buckets = new Map<string, ToolGroup[]>();
-    const output: ToolGroup[] = [];
-    for (const group of current) {
-      if (!pairCandidate(group, position)) {
-        output.push(group);
-        continue;
-      }
-      const key = compositeKey([
+const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] =>
+  mergeSiblingPositions(
+    groups,
+    2,
+    (group, position) => {
+      if (!pairCandidate(group, position)) return undefined;
+      return compositeKey([
         group.method,
         group.origin,
         group.parts.length,
@@ -387,14 +395,9 @@ const mergeSiblingPairs = (groups: readonly ToolGroup[]): ToolGroup[] => {
           index === position || index === position + 1 ? null : partKey(part),
         ),
       ]);
-      appendToMapList(buckets, key, group);
-    }
-    for (const bucket of buckets.values())
-      appendAll(output, mergePairBucket(bucket, position));
-    current = output;
-  }
-  return current;
-};
+    },
+    mergePairBucket,
+  );
 
 /** A part by the rule that names it: a prefix-variance parameter keys as the parameter it shares. */
 const nameKey = (part: RoutePart): unknown =>

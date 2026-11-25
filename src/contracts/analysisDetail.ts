@@ -5,34 +5,10 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 /** Caller-selected delivery of completed analysis Evidence that supports retained views. */
 export const analysisDetailSchema = z
   .enum(["complete", "summary"])
-  .default("complete")
-  .describe(
-    "complete returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id.",
-  );
-
-/**
- * Largest complete Evidence, in UTF-8 JSON bytes, that an omitted size-aware
- * detail delivers inline. Claude Code moves MCP results above about 25,000
- * tokens out of context into a file, and a 120-row inventory page of 73K
- * characters already crossed that line; 32 KiB stays well inside it.
- */
-export const SIZE_AWARE_INLINE_EVIDENCE_BYTES = 32 * 1024;
-
-/**
- * Delivery for operations whose complete Evidence grows with the target, such
- * as whole-binary inventories. Omitted, the result size selects the shape.
- */
-export const analysisDetailSizeAwareSchema = z
-  .enum(["complete", "summary"])
   .optional()
   .describe(
-    "Omitted: the complete analysis Evidence inline when its JSON is at most 32 KiB, otherwise this session retains it and returns its inspect_analysis_view summary. complete always returns it inline; summary always retains it and returns the summary. Page a summary through normalized_result.parent_evidence_id.",
+    "Omitted: complete Evidence inline when its JSON fits the agent result budget (delivery.agent_result_budget_bytes, default 32768 bytes) and this session can page a summary; otherwise the retained summary, with delivery facts naming the budget and the inspect_analysis_view recovery. complete always returns the complete analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; inspect pages, items or facets through normalized_result.parent_evidence_id.",
   );
-
-/** A contract opts into size-aware delivery by declaring that detail schema. */
-export const declaresSizeAwareDetail = (inputSchema: z.ZodType): boolean =>
-  inputSchema instanceof z.ZodObject &&
-  inputSchema.shape.detail === analysisDetailSizeAwareSchema;
 
 /**
  * analyze_function delivery. Defaults to the token-frugal summary because a

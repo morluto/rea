@@ -74,7 +74,7 @@ it.each([false, true])(
     expect(selected.isError).not.toBe(true);
     const inspected = await harness.client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(

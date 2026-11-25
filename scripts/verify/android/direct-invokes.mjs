@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { sha256File } from "../../lib/verifier-file-sha256.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 /** The public result keeps one using node and exposes its two raw DEX invokes. */
 export const verifyAndroidDirectInvokes = async ({
@@ -73,10 +74,12 @@ export const verifyAndroidDirectInvokes = async ({
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const client = new Client({
-    name: "rea-real-android-direct-invokes",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-android-direct-invokes",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport, { timeout: 30_000 });
     const response = await client.callTool(

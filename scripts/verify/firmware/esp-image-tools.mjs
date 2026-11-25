@@ -215,7 +215,15 @@ export const imageInfo = async (file, chip) => {
 const inspectArtifact = (file, flags) =>
   execute(
     process.execPath,
-    [entrypoint, "inspect-artifact", file, ...flags, "--json"],
+    [
+      entrypoint,
+      "inspect-artifact",
+      "--detail",
+      "complete",
+      file,
+      ...flags,
+      "--json",
+    ],
     { ...options, env: { ...process.env, REA_LOG_LEVEL: "silent" } },
   );
 

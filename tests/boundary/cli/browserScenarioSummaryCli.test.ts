@@ -15,6 +15,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import { controlledCleanup } from "../../support/lifecycleHarness.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const identity = { id: "fixture", name: "Fixture", version: "1" };
 const capture = scenarioCaptureFixture();
@@ -35,6 +36,7 @@ const runCli = async (
   await cli.serve(
     [
       "capture-browser-scenario",
+      ...COMPLETE_DETAIL,
       JSON.stringify({
         browser: { mode: "launch", executable_path: process.execPath },
         start_url: { url: "http://127.0.0.1:3101/" },
