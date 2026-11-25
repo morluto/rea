@@ -108,7 +108,7 @@ cliTest(
     });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: true,
       details: {
         reader_limit: {
