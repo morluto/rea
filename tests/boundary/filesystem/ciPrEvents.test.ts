@@ -132,6 +132,8 @@ it("checks out test sources only for fast PRs and history only for revision comp
     expect(Number(expand(depth))).toBe(expectedDepth);
     const patterns = expand(sparse).trim().split("\n");
     expect(patterns).toContain("/.nvmrc");
+    expect(patterns).toContain("/scripts/ci/");
+    expect(patterns).toContain("/scripts/lib/");
     expect(patterns.includes("/scripts/")).toBe(traceTests);
     expect(patterns.includes("/tests/")).toBe(traceTests);
   }
