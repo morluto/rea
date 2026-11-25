@@ -16,11 +16,13 @@ import {
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
+import { parseAttemptJobs } from "./job-timings.mjs";
 import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-failures");
 const BATCH_DIRECTORY = join(".cache", "ci-job-timings");
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const JOB_PAGE_SIZE = 100;
 const MAX_FAILED_RUNS = 20;
 const MAX_MAIN_CANDIDATES = 5;
 const MAX_MAIN_RUN_LOOKUPS = 100;
@@ -340,6 +342,7 @@ export function createGitHubApi({
   token = process.env.GH_TOKEN,
   fetchImpl = fetch,
   apiRequest = createGhApiRequest(),
+  collectedJobsDirectory,
 } = {}) {
   if (!token) throw new Error("GH_TOKEN is required");
   const budget = { requests: 0, startedAt: Date.now(), limitMs: 60_000 };
@@ -356,10 +359,33 @@ export function createGitHubApi({
       );
     },
     async getJobs(repository, id, attempt) {
+      const runId = positiveId(id);
+      const runAttempt = positiveId(attempt);
+      if (collectedJobsDirectory) {
+        const path = join(
+          collectedJobsDirectory,
+          `${runId}-${runAttempt}`,
+          "jobs.json",
+        );
+        try {
+          const jobs = parseAttemptJobs(
+            await readBoundedFile(path),
+            { runId: Number(runId), runAttempt: Number(runAttempt) },
+            { requireTotalCount: true },
+          );
+          if (
+            jobs.length < JOB_PAGE_SIZE &&
+            jobs.every((job) => job.status === "completed")
+          )
+            return jobs;
+        } catch {
+          // Missing or invalid collector output falls back to the live attempt.
+        }
+      }
       const page = await request(
-        `repos/${repository}/actions/runs/${positiveId(id)}/attempts/${positiveId(attempt)}/jobs?per_page=100&page=1`,
+        `repos/${repository}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=${JOB_PAGE_SIZE}&page=1`,
       );
-      if (!Array.isArray(page.jobs) || page.jobs.length >= 100)
+      if (!Array.isArray(page.jobs) || page.jobs.length >= JOB_PAGE_SIZE)
         throw new Error("job_list_incomplete_or_malformed");
       return page.jobs;
     },
@@ -510,7 +536,9 @@ async function main() {
     process.env.CI_TIMING_MANIFEST ??
     join(BATCH_DIRECTORY, "batch-manifest.json");
   const batchManifest = JSON.parse(await readBoundedFile(batchPath));
-  const api = createGitHubApi();
+  const api = createGitHubApi({
+    collectedJobsDirectory: process.env.CI_COLLECTED_JOBS_DIRECTORY,
+  });
   await reportCiFailures({
     repository,
     defaultBranch,
