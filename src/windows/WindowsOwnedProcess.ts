@@ -81,36 +81,6 @@ const WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS = new Set([
   "Owned Windows process requires an absolute executable path",
 ]);
 
-const WINDOWS_CONTROL_SPAWN_CONSTRAINTS = [
-  "Wrong native process launch argument count",
-  "Job memory limit must be a positive safe integer",
-  "Job memory limit must be a whole number of pages",
-  "Create owned Job Object failed",
-  "Apply kill-on-owner-close Job Object policy failed",
-  "Read Job Object policy failed",
-  "Job Object policy permits unexpected breakaway",
-  "Job Object memory limit was not applied exactly",
-  "Create owned Job Object notification port failed",
-  "Associate owned Job Object notification port failed",
-  "Create owned process output pipe failed",
-  "Protect parent process pipe handle inheritance failed",
-  "Open owned process null input failed",
-  "Initialize process attributes failed",
-  "Windows atomic process attribute is unavailable",
-  "Invalid child environment name",
-  "Empty child environment entry",
-  "Compare Windows environment names failed",
-  "Open suspended process default-owner token failed",
-  "Read suspended process user identity failed",
-  "Set suspended process file owner failed",
-  "Read caller process affinity failed",
-  "Preserve caller process affinity failed",
-  "Caller CPU affinity cannot bound an owned process in another processor group",
-  "Preserve caller process priority failed",
-  "Suspended process has no owned Job Object membership",
-  "Resume job-owned process failed",
-] as const;
-
 const WINDOWS_SPAWN_CONTROL_REMEDIATION =
   "Inspect the preserved Windows native process launch control error. Ensure the host permits owned Job Object assignment, token normalization, pipe inheritance, and caller CPU affinity/priority preservation across processor groups, then retry.";
 
@@ -146,25 +116,11 @@ export class WindowsNativeSpawnControlError extends RuntimeControlUnavailableErr
 export const isWindowsExecutableLaunchFailure = (cause: unknown): boolean => {
   if (!(cause instanceof Error)) return false;
   const constraint = Reflect.get(cause, "constraint");
-  if (typeof constraint === "string" && constraint.length > 0) {
-    return WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS.has(constraint);
-  }
-  if (
-    [...WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS].some((prefix) =>
-      cause.message.startsWith(prefix),
-    )
-  ) {
-    return true;
-  }
-  if (
-    WINDOWS_CONTROL_SPAWN_CONSTRAINTS.some((prefix) =>
-      cause.message.startsWith(prefix),
-    )
-  ) {
-    return false;
-  }
-  const code = Reflect.get(cause, "code");
-  return typeof code === "string" && code !== "ERR_REA_WINDOWS_NATIVE";
+  return (
+    typeof constraint === "string" &&
+    constraint.length > 0 &&
+    WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS.has(constraint)
+  );
 };
 
 /**
@@ -198,11 +154,7 @@ export const windowsNativeSpawnControlError = (
       ? undefined
       : new WindowsNativeSpawnControlError(cause);
   }
-  if (
-    WINDOWS_CONTROL_SPAWN_CONSTRAINTS.some((prefix) =>
-      cause.message.startsWith(prefix),
-    )
-  ) {
+  if (Reflect.get(cause, "code") === "ERR_REA_WINDOWS_NATIVE") {
     return new WindowsNativeSpawnControlError(cause);
   }
   return undefined;
@@ -535,9 +487,13 @@ export class WindowsOwnedProcess extends EventEmitter {
         state = pollSchema.parse(observed);
       else {
         const limited = limitedPollSchema.parse(observed);
-        // Recorded before exit is emitted, so exit listeners observe it.
-        this.#memoryLimitReached ||= limited.memoryLimitReached;
         this.#peakJobMemoryBytes = limited.peakJobMemoryBytes;
+        // Publish the first allocation refusal even if the job stays alive
+        // and the poll contains no output.
+        if (!this.#memoryLimitReached && limited.memoryLimitReached) {
+          this.#memoryLimitReached = true;
+          this.emit("memory-limit");
+        }
         state = limited;
       }
       this.#failure = undefined;

@@ -17,6 +17,10 @@ export interface RecordedMcpCatalog {
   readonly identity: ReturnType<typeof createCatalogIdentity>;
   /** Private result-codec projections; binary_session retains its schema for doctor. */
   readonly tools: readonly Tool[];
+  /** Bounded compact output advertisements recorded at build time, by tool name. */
+  readonly compactOutputSchemas?: Readonly<
+    Record<string, Record<string, unknown>>
+  >;
   readonly toolFamilies: Readonly<Record<string, ToolFamilyId>>;
   readonly promptRequirements: Readonly<Record<string, readonly string[]>>;
   /** Tool names derived from canonical Evidence-input declarations at build time. */

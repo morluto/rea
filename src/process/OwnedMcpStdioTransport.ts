@@ -408,6 +408,13 @@ export class OwnedMcpStdioTransport implements Transport {
           );
           return;
         }
+        if (this.#frameLength === 0 && newline !== -1) {
+          // Preserve a leading BOM so the JSON-RPC parser can reject it.
+          const line = decodeStrictUtf8(fragment, "preserve");
+          this.onmessage?.(deserializeMessage(line));
+          offset = newline + 1;
+          continue;
+        }
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;
         // Preserve a leading BOM so the JSON-RPC parser can reject it.

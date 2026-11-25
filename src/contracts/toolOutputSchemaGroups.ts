@@ -364,13 +364,29 @@ export const enhancedOutputSchemas = {
       z.object({
         status: z.literal("resolved"),
         name: z.string(),
+        resolved_name: z
+          .string()
+          .optional()
+          .describe(
+            "The provider's name for the resolved symbol when it differs from name, such as the library-qualified import KERNEL32.DLL::VirtualAlloc for VirtualAlloc.",
+          ),
         address: z.string(),
         xrefs: nativeAddressListSchema,
+        observed_xrefs: z.int().nonnegative().optional(),
+        total_xrefs: z.int().nonnegative().nullable().optional(),
+        provider_truncated: z.boolean().nullable().optional(),
+        truncated: z.boolean().nullable().optional(),
       }),
       z.object({
         status: z.literal("unresolved"),
         name: z.string(),
         reason: z.literal("name_not_found"),
+        candidates: z
+          .array(z.object({ address: z.string(), name: z.string() }))
+          .optional()
+          .describe(
+            "Observed names equal to the imported name of a library-qualified name whose library the provider does not report. None is selected.",
+          ),
       }),
     ]),
   ),

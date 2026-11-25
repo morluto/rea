@@ -6,6 +6,7 @@ import {
   environmentEntityKey,
 } from "./environmentStateIdentity.js";
 import {
+  succeeded,
   ownMember,
   at,
   decodedSegment,
@@ -180,10 +181,16 @@ export class SimulatedState {
         key,
         fields: first.get(key) ?? this.#entities.get(key)!.fields,
       }));
-    for (const [index, { target: key, before: prior }] of ours.entries()) {
-      const fields =
-        ours.slice(index + 1).find((later) => later.target === key)?.before ??
-        this.#entities.get(key)!.fields;
+    const nextBefore: (JsonObject | null | undefined)[] = Array(ours.length);
+    const seenLater = new Map<string, JsonObject | null>();
+    for (let index = ours.length - 1; index >= 0; index -= 1) {
+      const write = ours[index]!;
+      nextBefore[index] = seenLater.get(write.target);
+      seenLater.set(write.target, write.before);
+    }
+    for (let index = 0; index < ours.length; index += 1) {
+      const { target: key, before: prior } = ours[index]!;
+      const fields = nextBefore[index] ?? this.#entities.get(key)!.fields;
       const at = order.findIndex((member) => member.key === key);
       if ((prior === null) !== at < 0) continue;
       if (at >= 0) order.splice(at, 1);
@@ -326,10 +333,6 @@ export class SimulatedState {
 /** An item read status that says the entity does not exist: 400, 404 or 410, as applications answer a missing id. */
 export const isAbsence = (status: number | null): boolean =>
   status === 400 || status === 404 || status === 410;
-
-/** A 2xx record: the only status whose response shows what a request did. */
-export const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /** Hand a base recording's body and a read's body to `use` together, parsing a recording once when both are the same. */
 export const withBodies = <T>(

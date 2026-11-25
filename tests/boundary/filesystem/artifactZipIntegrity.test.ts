@@ -110,9 +110,12 @@ it("does not publish a method-93 member with an incomplete final frame magic", a
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "ArtifactOperationError",
-      reason: "format",
-      detail: "ZIP archive is malformed: Invalid compressed data",
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        kind: "malformed",
+        format: "zip",
+        detail: "ZIP archive is malformed: Invalid compressed data",
+      },
     },
   });
   expect(await readdir(root)).toEqual(["method93.zip"]);
@@ -355,7 +358,7 @@ it("rejects malformed UTF-8 in flagged ZIP member names", async () => {
 
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     name: "ArtifactReaderFailure",
-    reason: "format",
+    reason: "malformed",
     message: "ZIP filename is not valid UTF-8",
   });
 });
@@ -371,7 +374,7 @@ it("rejects malformed UTF-8 in a CRC-valid Unicode Path extra field", async () =
 
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     name: "ArtifactReaderFailure",
-    reason: "format",
+    reason: "malformed",
     message: "ZIP Unicode Path extra field is not valid UTF-8",
   });
 });
@@ -615,7 +618,7 @@ it("rejects overlapping ZIP member data ranges through artifact inventory", asyn
 
   await expectInventoryFailure(
     path,
-    "format",
+    "malformed",
     "ZIP archive is malformed: Overlapping entry found",
   );
 });
@@ -654,8 +657,12 @@ it("preserves encrypted-member and malformed-compression observations", async ()
   expect(extraction).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("Archive entry secret.txt is encrypted"),
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: expect.stringContaining(
+          "Archive entry secret.txt is encrypted",
+        ),
+      },
     },
   });
   await expect(readFile(extractionRoot)).rejects.toMatchObject({
@@ -664,26 +671,31 @@ it("preserves encrypted-member and malformed-compression observations", async ()
 
   const corruptPath = join(root, "corrupt-compression.zip");
   const corruptWriter = new ZipWriter(new Uint8ArrayWriter());
-  await corruptWriter.add("data.txt", new TextReader("evidence\n"));
+  await corruptWriter.add("data.txt", new TextReader("evidence\n".repeat(64)), {
+    compressionMethod: 8,
+  });
   await writeFile(corruptPath, await corruptWriter.close());
   const bytes = await readFile(corruptPath);
   const localFileHeaderSignature = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
   const localHeader = bytes.indexOf(localFileHeaderSignature);
   if (localHeader < 0) throw new Error("Expected a ZIP local-file header");
+  expect(bytes.readUInt16LE(localHeader + 8)).toBe(8);
   const dataOffset =
     localHeader +
     30 +
     bytes.readUInt16LE(localHeader + 26) +
     bytes.readUInt16LE(localHeader + 28);
-  const firstByte = bytes[dataOffset];
-  if (firstByte === undefined) throw new Error("Expected ZIP member bytes");
-  bytes[dataOffset] = firstByte ^ 1;
+  // DEFLATE reserves block type 3. Flipping only the final-block bit can
+  // still produce valid compressed data and test the CRC instead.
+  bytes[dataOffset] = 0xff;
   await writeFile(corruptPath, bytes);
 
   await expectInventoryFailure(
     corruptPath,
-    "format",
-    "ZIP archive is malformed: Invalid compressed data",
+    "malformed",
+    // With CRC verification enabled, the native inflater can report the
+    // checksum fault before surfacing the compressed-data fault.
+    /^ZIP archive is malformed: Invalid (?:compressed data|CRC32)$/u,
   );
 });
 
@@ -707,7 +719,7 @@ it("rejects a stored ZIP member whose payload disagrees with its CRC", async () 
   await writeFile(path, bytes);
   await expectInventoryFailure(
     path,
-    "format",
+    "malformed",
     "ZIP archive is malformed: Invalid CRC32",
   );
 });
@@ -723,7 +735,7 @@ it.each([0x04034b50, 0x06064b50])(
 
     await expectInventoryFailure(
       path,
-      "format",
+      "malformed",
       "ZIP archive is malformed: File format is not recognized",
     );
   },
@@ -778,11 +790,11 @@ it("reports a member with an unsupported compression method as unavailable and k
   });
 });
 
-/** Inventory one archive through the provider and expect a typed failure. */
+/** Inventory one archive through the provider and expect the ZIP owner's target failure. */
 const expectInventoryFailure = async (
   path: string,
-  reason: string,
-  detail: string,
+  kind: "malformed" | "truncated",
+  detail: string | RegExp,
 ): Promise<void> => {
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
@@ -791,7 +803,15 @@ const expectInventoryFailure = async (
   );
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "ArtifactOperationError", reason, detail },
+    error: {
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        kind,
+        format: "zip",
+        detail:
+          typeof detail === "string" ? detail : expect.stringMatching(detail),
+      },
+    },
   });
 };
 

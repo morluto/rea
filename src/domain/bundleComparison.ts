@@ -29,7 +29,7 @@ export const bundleComparisonInputSchema = z.strictObject({
   right_bundle_path: localPathStringSchema,
   record_pairs: z
     .array(
-      z.object({
+      z.strictObject({
         left_evidence_id: evidenceIdSchema,
         right_evidence_id: evidenceIdSchema,
       }),

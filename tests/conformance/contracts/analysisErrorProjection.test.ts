@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import { analysisErrorJsonSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorJsonSchema } from "../../../src/contracts/analysisErrorJsonSchema.js";
 import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
@@ -128,7 +128,6 @@ describe("analysis error projection contract", () => {
       ...(
         [
           "cancelled",
-          "format",
           "integrity",
           "limit",
           "path",

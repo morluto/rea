@@ -25,7 +25,7 @@ import type {
   ClientFeatureAvailability,
   ToolAvailability,
 } from "../contracts/toolOutputSchemaPrimitives.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../process/ServerIdentity.js";
 import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
@@ -130,7 +130,9 @@ export const readSessionStatus = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     return err(cause);
   }
-  const statusObject = jsonObjectSchema.parse(status);
+  const statusObject = status as unknown as Readonly<
+    Record<string, import("../domain/jsonValue.js").JsonValue>
+  >;
   // Availability is derived from the complete provider facts: an
   // advertised composed tool still depends on direct operations the
   // registration hides. Advertisement narrows only the public report.
@@ -199,7 +201,7 @@ const projectSessionStatus = (options: {
   readonly serverIdentity: ReturnType<typeof createServerIdentity>;
   readonly clientFeatures: ClientFeatureAvailability;
 }) =>
-  jsonObjectSchema.parse({
+  ownedJsonObjectSchema.parse({
     ...options.status,
     detail: options.detail,
     ...(options.detail === "summary"

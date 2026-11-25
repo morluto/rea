@@ -5,6 +5,7 @@ import {
   assertArtifactReadActive,
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
+  malformedArtifact,
   type ArtifactResourceScope,
   hashStableRootArtifactHandle,
   targetDigestChangedFailure,
@@ -113,8 +114,8 @@ export const withNativeMachoSource = <T>(
             sliceOffset > initial.size - sliceSize ||
             offset > sliceSize - length
           )
-            throw new ArtifactReaderFailure(
-              "format",
+            throw malformedArtifact(
+              "macho",
               "Mach-O read exceeds the selected slice.",
             );
           const bytes = await readFileHandleRange(

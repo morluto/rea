@@ -17,8 +17,38 @@ const candidateFailure: { current: unknown } = { current: undefined };
 
 vi.mock(import("../../resources/index.js"), async (original) => ({
   ...(await original()),
-  readStableArtifact: vi.fn(() =>
-    Promise.resolve({ bytes: imageBytes.current, sha256: "ab".repeat(32) }),
+  withStableArtifactHandle: vi.fn(
+    async (
+      _path: string,
+      _maxBytes: number,
+      options: {
+        readonly retainBytes?: (size: number) => number;
+        readonly onIdentity?: (identity: {
+          readonly sha256: string;
+          readonly bytes: number;
+        }) => void;
+      },
+      useFile: (handle: {
+        readonly size: number;
+        readonly sha256: string;
+        readonly prefix: Buffer;
+        readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+      }) => Promise<unknown>,
+    ) => {
+      const bytes = imageBytes.current;
+      const sha256 = "ab".repeat(32);
+      options.onIdentity?.({ sha256, bytes: bytes.length });
+      const retained = options.retainBytes?.(bytes.length) ?? 0;
+      return useFile({
+        size: bytes.length,
+        sha256,
+        prefix: bytes.subarray(0, Math.min(retained, bytes.length)),
+        readRange: (offset, length) =>
+          Promise.resolve(
+            bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+          ),
+      });
+    },
   ) as never,
   streamStableArtifact: vi.fn(() =>
     Promise.reject(candidateFailure.current),

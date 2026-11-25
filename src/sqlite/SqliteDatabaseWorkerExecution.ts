@@ -22,6 +22,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -94,7 +95,6 @@ interface SqliteWorkerInspection {
 
 // Each input rejection names the caller argument that requires correction.
 const rejectedArgument = {
-  format: "path",
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
@@ -187,6 +187,15 @@ const rejectedReply = (
         retryable: false,
         remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
       },
+    );
+  // SQLite established that the selected snapshot's bytes are not a valid
+  // database: a target refusal at the caller's path, not a bad argument.
+  if (reply.reason === "malformed")
+    return new AnalysisTargetFailureError(
+      operation,
+      selectedPath,
+      { kind: "malformed", format: "sqlite", detail: reply.message },
+      { capturedOutput },
     );
   const argument = rejectedArgument[reply.reason];
   return new AnalysisInputError(operation, { capturedOutput }, [

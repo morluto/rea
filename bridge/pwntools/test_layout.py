@@ -170,6 +170,20 @@ class LayoutStorageTests(unittest.TestCase):
         self.assertEqual(self.plt_warnings, ["Could not populate PLT: Cannot allocate 1GB memory to run Unicorn Engine"])
         self.assertIs(self.upstream_elf.emulate_plt_instructions, emulate)
 
+    def test_short_header_is_truncated_not_malformed(self):
+        cases = {
+            "identification": b"\x7fELF\x02\x01",
+            "ELF64 header": b"\x7fELF\x02\x01\x01" + bytes(20),
+        }
+        for name, content in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                snapshot = Path(directory) / "object.snapshot"
+                snapshot.write_bytes(content)
+                with patch.object(importlib.metadata, "version", side_effect=layout["PACKAGES"].__getitem__):
+                    with self.assertRaises(layout["LayoutFailure"]) as raised:
+                        layout["inspect_elf"](snapshot, Path(directory) / "cache")
+                self.assertEqual(raised.exception.reason, "truncated")
+
     def test_short_section_header_stride_refuses_before_raw_header_scan(self):
         for stride in (0, 1, 63):
             with self.subTest(stride=stride):

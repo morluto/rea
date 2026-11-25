@@ -1,5 +1,5 @@
+import { selectViewRows } from "./selectViewRows.js";
 import type { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   retainedBrowserScenarioCaptureSchema,
   type RetainedBrowserScenarioCapture as BrowserScenarioCapture,
@@ -7,7 +7,10 @@ import {
 import type { BrowserScenarioStep as Step } from "../browserScenarioCaptureValues.js";
 import { compareAsciiStrings } from "../canonicalOrdering.js";
 import { err, ok } from "../result.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -43,16 +46,6 @@ const OPERATION = "capture_browser_scenario" as const;
 const readCapture = createAnalysisViewResultReader(
   retainedBrowserScenarioCaptureSchema,
 );
-
-const unsupportedView = (): AnalysisError =>
-  analysisViewInputError([
-    {
-      path: ["view"],
-      reason: "invalid_value",
-      message:
-        'Parent Evidence operation "capture_browser_scenario" supports summary and browser-scenario views, plus compatible environment views.',
-    },
-  ]);
 
 const sameUrl = (
   left: Step["after_url"] | undefined,
@@ -195,14 +188,7 @@ const selectedPage = <Input, Row>(
   matches: (item: Input, index: number) => boolean,
   project: (item: Input, index: number) => Row,
 ): { rows: Row[]; coverage: AnalysisViewCoverage } => {
-  const rows: Row[] = [];
-  let total = 0;
-  for (const [index, item] of source.entries()) {
-    if (!matches(item, index)) continue;
-    if (total >= view.offset && rows.length < view.limit)
-      rows.push(project(item, index));
-    total += 1;
-  }
+  const { rows, total } = selectViewRows(source, view, matches, project);
   return { rows, coverage: pageViewCoverage(view.offset, rows.length, total) };
 };
 
@@ -324,7 +310,9 @@ export const projectBrowserScenarioView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "browser-scenario")
-    return err(unsupportedView());
+    return invalidAnalysisView(
+      'Parent Evidence operation "capture_browser_scenario" supports summary and browser-scenario views, plus compatible environment views.',
+    );
   assertOwnedView<SummaryAnalysisView | BrowserScenarioViewRequest>(
     view,
     "summary",

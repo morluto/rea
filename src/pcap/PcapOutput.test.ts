@@ -594,3 +594,55 @@ it("handles unique HTTP request targets beyond the cache limit without dropping 
   expect(result.httpRequestUriCount).toBe(1100);
   expect(result.partial).toBe(true);
 });
+
+it("reports hasDnsProtocol only when base dissection sees DNS, mDNS, or LLMNR traffic or fields", async () => {
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([{ "frame.protocols": ["eth:ethertype:ip:tcp:tls"] }]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(false);
+  for (const stack of [
+    "eth:ethertype:ip:udp:dns",
+    "eth:ethertype:ip:udp:mdns",
+    "eth:ethertype:ip:udp:llmnr",
+  ]) {
+    expect(
+      (await prepareTsharkBaseOutput(capture([{ "frame.protocols": [stack] }])))
+        .hasDnsProtocol,
+    ).toBe(true);
+  }
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([
+          {
+            "frame.protocols": ["eth:ethertype:ip:udp"],
+            "dns.qry.name": ["example.com"],
+          },
+        ]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(true);
+});
+
+it("refuses tshark JSON above producer_limits.output_bytes and admits it when raised", async () => {
+  const text = capture([{ "ip.src": ["192.0.2.1"] }]);
+  await expect(
+    parseTsharkJsonOutput(text, undefined, undefined, text.length - 1),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: undefined,
+    limit: {
+      control_kind: "parameter",
+      parameter: "producer_limits.output_bytes",
+      effective_value: text.length - 1,
+      maximum: 128 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
+    },
+  });
+  await expect(
+    parseTsharkJsonOutput(text, undefined, undefined, text.length),
+  ).resolves.toMatchObject({ endpointCount: 1 });
+});

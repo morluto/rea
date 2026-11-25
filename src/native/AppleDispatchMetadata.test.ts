@@ -1138,15 +1138,21 @@ describe("Apple dispatch pointer fixup metadata", () => {
       name: "oversized addend whose tail resembles DO_BIND",
       operand: [0x60, ...Array<number>(10).fill(0x80), 0x90, 0x00],
     },
+    {
+      name: "a located bind with no selected symbol",
+      operand: [0x51, 0x70, 0x80, 0x1d, 0x90, 0],
+      missingTarget: true,
+    },
   ])(
     "keeps decoded bindings when an independent stream has $name",
-    ({ operand }) => {
+    ({ operand, missingTarget }) => {
       const bytes = fixture();
       bytes.writeUInt32LE(2, 16);
       bytes.writeUInt32LE(200, 20);
       bytes.writeUInt32LE(0x80000022, 184);
       bytes.writeUInt32LE(48, 188);
       const bindings = Buffer.from([
+        0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
         0x40,
         ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
         0x51, // SET_TYPE_IMM pointer
@@ -1157,7 +1163,10 @@ describe("Apple dispatch pointer fixup metadata", () => {
         0x00,
       ]);
       bindings.copy(bytes, 0xc00);
-      const invalid = Buffer.from([...bindings.subarray(0, -2), ...operand]);
+      const invalid = Buffer.from([
+        ...(missingTarget ? [] : bindings.subarray(0, -2)),
+        ...operand,
+      ]);
       invalid.copy(bytes, 0xc80);
       bytes.writeUInt32LE(0xc00, 200);
       bytes.writeUInt32LE(bindings.length, 204);
@@ -1171,7 +1180,16 @@ describe("Apple dispatch pointer fixup metadata", () => {
       });
       expect(
         result.coverage.find(({ facet }) => facet === "pointer_fixups"),
-      ).toMatchObject({ status: "partial", examined: 2, decoded: 1 });
+      ).toMatchObject({
+        status: "partial",
+        examined: 2,
+        decoded: missingTarget ? 2 : 1,
+        reason: expect.stringContaining(
+          missingTarget
+            ? "bind_target_unresolved at 0x100000e80: Legacy bind has no selected symbol"
+            : "bind_stream_decode_failed",
+        ),
+      });
     },
   );
 
@@ -1530,6 +1548,7 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(0x80000022, 264);
     bytes.writeUInt32LE(48, 268);
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_$s4Main3FooCN\0"),
       0x51, // SET_TYPE_IMM pointer
@@ -2130,21 +2149,31 @@ describe("universal Apple dispatch metadata", () => {
 });
 
 describe("FAT64 dispatch slice validation", () => {
-  it("does not select from a table that extends past the file", () => {
+  it("refuses a table that extends past the file as truncated", () => {
     const { bytes, admitted } = wrapDispatchSlice(true);
-    // Generic admission reads such a table as not universal, so the bytes
-    // are read whole and refused as an unsupported header.
+    // A FAT64 header cannot be a JVM class, so a table past the file's end
+    // is a cut-off universal file, measured against the file's size.
     expect(() =>
       decodeAppleDispatchMetadata(bytes.subarray(0, 32), 100, provenance),
     ).toThrow(
       expect.objectContaining({
-        kind: "unsupported",
-        message: "Only little-endian 64-bit Mach-O metadata is supported",
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
       }),
     );
-    expect(
-      refusalOf(() => decodeAdmitted(bytes.subarray(0, 32), admitted)),
-    ).toMatchObject({ refusal: "admitted_slice_mismatch" });
+    // Admitted selection reads the same container, so the cut-off file's
+    // own truncation wins over an admission mismatch.
+    expect(() => decodeAdmitted(bytes.subarray(0, 32), admitted)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
+      }),
+    );
   });
 
   it.each([16, 24])(
@@ -2199,7 +2228,15 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     const { bytes } = wrapDispatchSlice(false, true);
     expect(() =>
       decodeAppleDispatchMetadata(bytes.subarray(0, 6), 100, provenance),
-    ).toThrow("FAT header is truncated");
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 6, requiredBytes: 8 },
+        }),
+      }),
+    );
   });
 
   it("reads the selected thin slice's CPU identity in its own byte order", () => {
@@ -2966,6 +3003,7 @@ describe("Objective-C category class property applicability", () => {
   it("reports a class property list bound to another image as not decoded", () => {
     const bytes = withLegacyFixups(categoryImage(0x40, 0));
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_external_list\0"),
       0x51, // SET_TYPE_IMM pointer

@@ -17,10 +17,8 @@ import {
 } from "../resources/index.js";
 import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  WxapkgMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { WxapkgMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   readWxapkgFileTable,
@@ -272,6 +270,7 @@ export class WxapkgArtifactReader implements ArtifactReader {
       this.#reserveMemberRead();
       const length = Math.min(CHUNK_BYTES, offset + size - position);
       const chunk = await readArtifactFileBytes(
+        "wxapkg",
         handle,
         position,
         length,

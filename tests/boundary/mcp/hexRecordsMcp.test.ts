@@ -1,13 +1,15 @@
 import { readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  inspectInventorySummary,
+  inspectRetainedOccurrences,
+} from "../../fixtures/artifactInventoryMcp.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 it("retains and extracts a high-address S28 region and projects a reserved-record error through MCP", async () => {
   const root = await createTestTempDirectory("rea-s28-mcp-");
@@ -17,14 +19,7 @@ it("retains and extracts a high-address S28 region and projects a reserved-recor
   const { call } = await connectLocalToolsMcp({});
   const opened = await call("open_binary", { path });
   expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-  const inspected = await call("inspect_artifact", { detail: "summary" });
-  expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-  const { parent_evidence_id, summary } = z
-    .object({
-      parent_evidence_id: z.string(),
-      summary: z.object({ root_format_metadata: z.unknown() }),
-    })
-    .parse(parseEvidence(inspected.structuredContent).normalized_result);
+  const { parent_evidence_id, summary } = await inspectInventorySummary(call);
   expect(summary.root_format_metadata).toMatchObject({
     kind: "hex-records",
     encoding: "srec",
@@ -50,19 +45,10 @@ it("retains and extracts a high-address S28 region and projects a reserved-recor
     expect((await readFile(path)).equals(bytes)).toBe(true);
     await unlink(path);
 
-    const retained = await call("inspect_analysis_view", {
-      source: { kind: "retained-evidence", evidence_id: parent_evidence_id },
-      view: {
-        kind: "inventory",
-        collection: "occurrences",
-        logical_paths: [region],
-        fields: ["logical_path", "format_metadata"],
-      },
+    const view = await inspectRetainedOccurrences(call, parent_evidence_id, {
+      logical_paths: [region],
+      fields: ["logical_path", "format_metadata"],
     });
-    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-    const view = analysisViewResultSchema.parse(
-      parseEvidence(retained.structuredContent).normalized_result,
-    );
     expect(view).toMatchObject({
       kind: "inventory",
       items: [
@@ -84,8 +70,13 @@ it("retains and extracts a high-address S28 region and projects a reserved-recor
     expect(invalidTarget.isError, JSON.stringify(invalidTarget)).not.toBe(true);
     const invalid = parseMcpToolError(await call("inspect_artifact", {}));
     expect(invalid.error).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { operation: "inspect_artifact", reason: "format" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_artifact",
+        path: invalidPath,
+        reason: expect.stringContaining("line 2: reserved record type S4"),
+        failure_kind: "malformed",
+      },
     });
     expect(JSON.stringify(invalid)).toContain(
       "line 2: reserved record type S4",
