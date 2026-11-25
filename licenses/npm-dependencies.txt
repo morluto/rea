@@ -1805,11 +1805,11 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@ungap/structured-clone/v/1.4.0
   Archive: https://registry.npmjs.org/@ungap/structured-clone/-/structured-clone-1.4.0.tgz
   Integrity: sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ==
-@vitest/coverage-v8@5.1.0 | development | MIT
+@vitest/coverage-v8@5.1.1 | development | MIT
   Lockfile path: node_modules/@vitest/coverage-v8
-  Package: https://www.npmjs.com/package/@vitest/coverage-v8/v/5.1.0
-  Archive: https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-5.1.0.tgz
-  Integrity: sha512-OY9aShBQG5KOIw2zCo9fDoCHI9RHliNHJ//nM7m6jGg41Hyke9JOGWmeMlK74xYErsxMoK8mIB3gAeEyFVA7LA==
+  Package: https://www.npmjs.com/package/@vitest/coverage-v8/v/5.1.1
+  Archive: https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-5.1.1.tgz
+  Integrity: sha512-xL4NkbVx/UqqDHaXSOyvB8qsSoLQ+dVNGR9H2Bh/4ggQtmaPFNPUC9gZQwKZePLOQ6WDcgwXVnPulFW9eCHt0w==
 @vitest/istanbul-lib-coverage@2.1.0 | development | MIT
   Lockfile path: node_modules/@vitest/istanbul-lib-coverage
   Package: https://www.npmjs.com/package/@vitest/istanbul-lib-coverage/v/2.1.0
@@ -1820,16 +1820,16 @@ minimatch@11.0.9 | development | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/@vitest/istanbul-lib-report/v/2.1.0
   Archive: https://registry.npmjs.org/@vitest/istanbul-lib-report/-/istanbul-lib-report-2.1.0.tgz
   Integrity: sha512-+ZFta25nWtGCOBG9/IET8w1RO5Oawsd6H8Uf6AJ9EA/StFuKVtKAEJEJ6uRt84OH+T4YkI0ASmIHAhRA+0KVxw==
-@vitest/mocker@5.1.0 | development | MIT
+@vitest/mocker@5.1.1 | development | MIT
   Lockfile path: node_modules/@vitest/mocker
-  Package: https://www.npmjs.com/package/@vitest/mocker/v/5.1.0
-  Archive: https://registry.npmjs.org/@vitest/mocker/-/mocker-5.1.0.tgz
-  Integrity: sha512-5umB9/jlWcqVS6fsrFmv5Gdnpu6wAUio/lEOwAmvB7v+lFo/IW2B9FhAD0p19GCULTgMzLCdUmuCDCnAzWgppQ==
-@vitest/spy@5.1.0 | development | MIT
+  Package: https://www.npmjs.com/package/@vitest/mocker/v/5.1.1
+  Archive: https://registry.npmjs.org/@vitest/mocker/-/mocker-5.1.1.tgz
+  Integrity: sha512-b2OgTB4+3ImWIVafXKazJXwLKwQxUNnix6b3xUvUTMh7RyXlrtzoxfZr8aEz9zkHOMAS4K5lu3TvFWoiVeVTQg==
+@vitest/spy@5.1.1 | development | MIT
   Lockfile path: node_modules/@vitest/spy
-  Package: https://www.npmjs.com/package/@vitest/spy/v/5.1.0
-  Archive: https://registry.npmjs.org/@vitest/spy/-/spy-5.1.0.tgz
-  Integrity: sha512-2DPO5OMHWKrBngC+fCmTQqemNF0gidRhp3lxbBmRhW+M1XJrfgPpqNqWVevXtn2f2ufD5ZaR1B6B641aAlcX5A==
+  Package: https://www.npmjs.com/package/@vitest/spy/v/5.1.1
+  Archive: https://registry.npmjs.org/@vitest/spy/-/spy-5.1.1.tgz
+  Integrity: sha512-6K8C6alQG1/Yc8/ZI22iJS7JEsxPdVzqtqDq+/xM4Z0mGVykemMVjLhqMy/q6/IHYG3kKD8hKSwRen/ZdyI9vQ==
 @vue/compiler-core@3.5.43 | development | MIT
   Lockfile path: node_modules/@vue/compiler-core
   Package: https://www.npmjs.com/package/@vue/compiler-core/v/3.5.43
@@ -4530,11 +4530,11 @@ vite@6.4.5 | development | MIT
   Package: https://www.npmjs.com/package/vite/v/6.4.5
   Archive: https://registry.npmjs.org/vite/-/vite-6.4.5.tgz
   Integrity: sha512-4enwjFfi4IwtEh0w+jPzpLVOFQiPHmmzPxcHXQOyEur47o6u0jE573DmGpjA+7irXoMLYRZD5ZaFUEneS3abPg==
-vitest@5.1.0 | development | MIT
+vitest@5.1.1 | development | MIT
   Lockfile path: node_modules/vitest
-  Package: https://www.npmjs.com/package/vitest/v/5.1.0
-  Archive: https://registry.npmjs.org/vitest/-/vitest-5.1.0.tgz
-  Integrity: sha512-MzmNFnrwa8v8lF1bLxw3UJ4EREwVOVb75VqJZmUDRjJ6EluK/x9th7qTbaeDk41WxE1GxWqmTXcdsfobfH5sOA==
+  Package: https://www.npmjs.com/package/vitest/v/5.1.1
+  Archive: https://registry.npmjs.org/vitest/-/vitest-5.1.1.tgz
+  Integrity: sha512-trVmzUFOSraCZcI3uZIMD5FqBh4atFkC/XuJP/IU7qtyQay0FCs3Ia+0QiQ2JJwGyWG/xrcBoJNel2+O7kEZ0g==
 vue@3.5.43 | development | MIT
   Lockfile path: node_modules/vue
   Package: https://www.npmjs.com/package/vue/v/3.5.43

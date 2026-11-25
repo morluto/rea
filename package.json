@@ -441,7 +441,7 @@
     "@types/semver": "7.8.0",
     "@types/write-file-atomic": "4.0.3",
     "@types/ws": "8.18.2",
-    "@vitest/coverage-v8": "5.1.0",
+    "@vitest/coverage-v8": "5.1.1",
     "husky": "9.1.7",
     "jscpd": "5.4.3",
     "knip": "6.45.1",
@@ -459,7 +459,7 @@
     "typescript-termux": "npm:typescript@5.9.3",
     "typescript6": "npm:typescript@6.0.3",
     "vitepress": "1.6.4",
-    "vitest": "5.1.0"
+    "vitest": "5.1.1"
   },
   "optionalDependencies": {
     "frida": "17.23.2"
