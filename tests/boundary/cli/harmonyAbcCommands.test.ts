@@ -43,3 +43,14 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "keeps the graph format distinct from the output format",
+  async ({ cli }) => {
+    const result = await cli.run({
+      arguments: ["build-harmony-abc-call-graph", "--help"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("--graph-format <json|mermaid>");
+  },
+);

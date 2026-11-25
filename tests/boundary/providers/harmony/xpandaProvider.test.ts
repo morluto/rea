@@ -498,6 +498,27 @@ it("publishes exports from the private root and refuses escaped files", async ()
   });
 });
 
+it("keeps completed load facts when a later tool fails", async () => {
+  const fixture = await xpandaFixture({ abc_list_classes: "error" });
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  const failure = await fixture.provider
+    .execute({
+      operation: "list_harmony_abc_classes",
+      input: {
+        path: fixture.targetPath,
+        filter: "_GLOBAL",
+        offset: 0,
+        limit: 50,
+      },
+    })
+    .then((result) => (result.ok ? undefined : result.error));
+  expect(failure).toBeInstanceOf(AnalysisError);
+  expect((failure as AnalysisError).partialObservation).toMatchObject({
+    kind: "harmony-abc",
+    provenance: { load: { fileId: "md5-5411df7" } },
+  });
+});
+
 it("refuses a non-regular selected path before starting the producer", async () => {
   const fixture = await xpandaFixture();
   onTestFinished(() => fixture.provider.close().catch(() => undefined));

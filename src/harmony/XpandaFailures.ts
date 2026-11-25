@@ -22,6 +22,8 @@ interface FailureContext {
   readonly timeout: AbortSignal;
   readonly timeoutMs: number;
   readonly signal: AbortSignal | undefined;
+  /** The provider owner's shutdown, which also cancels staged publication. */
+  readonly shutdown?: AbortSignal;
   readonly bridge: XpandaBridge | undefined;
   readonly partial?: HarmonyAbcPartialObservation;
 }
@@ -66,7 +68,8 @@ export const captureXpandaFailure = (
 const observeXpandaFailure = (
   context: FailureContext,
 ): AnalysisError | DiagnosticFailure => {
-  const { cause, request, timeout, timeoutMs, signal, bridge } = context;
+  const { cause, request, timeout, timeoutMs, signal, shutdown, bridge } =
+    context;
   const observed = bridge?.transport.observedFailure();
   const diagnostic = {
     operation: request.operation,
@@ -85,6 +88,8 @@ const observeXpandaFailure = (
   const interruptionFailure = (reason: unknown): DiagnosticFailure => {
     if (timeout.aborted && reason === timeout.reason)
       return { ...diagnostic, cause: reason, kind: "timeout", timeoutMs };
+    if (shutdown?.aborted === true && reason === shutdown.reason)
+      return { ...diagnostic, cause: reason, kind: "cancelled" };
     if (signal?.aborted === true && reason === signal.reason)
       return { ...diagnostic, cause: reason, kind: "cancelled" };
     return physicalFailure(reason);
@@ -94,6 +99,8 @@ const observeXpandaFailure = (
   // physical failure keeps precedence over a later abort using the same object.
   if (observed?.kind === "interrupted" && cause === observed.reason)
     return interruptionFailure(observed.reason);
+  if (shutdown?.aborted === true && cause === shutdown.reason)
+    return { ...diagnostic, cause, kind: "cancelled" };
   if (cause instanceof StableFileHashFailure)
     return new ProviderAdapterError("xpanda", request.operation, {
       cause: cause.cause,

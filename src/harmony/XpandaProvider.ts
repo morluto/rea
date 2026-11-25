@@ -35,6 +35,7 @@ import {
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import type { OwnedMcpLauncher } from "../process/OwnedMcpStdioTransport.js";
 import { XpandaBridge } from "./XpandaBridge.js";
@@ -147,8 +148,14 @@ const publishStagedExport = async (options: {
   readonly operation: string;
   /** Files the producer claims it wrote; a mismatch publishes nothing. */
   readonly expectedWritten: number;
+  /** Cancels publication; output is removed before the reason is rethrown. */
+  readonly signal: AbortSignal;
 }): Promise<readonly string[]> => {
-  const { source, destination, operation, expectedWritten } = options;
+  const { source, destination, operation, expectedWritten, signal } = options;
+  const stop = (): void => {
+    if (signal.aborted) throw signal.reason ?? new Error("aborted");
+  };
+  stop();
   try {
     // The producer created parents recursively; keep that behavior while
     // claiming the destination itself exclusively.
@@ -177,6 +184,7 @@ const publishStagedExport = async (options: {
         withFileTypes: true,
       });
       for (const entry of entries) {
+        stop();
         const relativePath =
           directory.length === 0 ? entry.name : `${directory}/${entry.name}`;
         if (entry.isSymbolicLink())
@@ -208,6 +216,7 @@ const publishStagedExport = async (options: {
         published.push(relativePath);
       }
     }
+    stop();
     if (published.length !== expectedWritten)
       throw new AnalysisOutputError(
         operation,
@@ -215,8 +224,11 @@ const publishStagedExport = async (options: {
       );
     return published;
   } catch (cause: unknown) {
-    const primary =
-      cause instanceof AnalysisError
+    // Cancellation or the deadline wins over a publication failure observed
+    // in the same window; either way the partial tree is removed first.
+    const primary: unknown = signal.aborted
+      ? (signal.reason ?? new Error("aborted"))
+      : cause instanceof AnalysisError
         ? cause
         : new AnalysisOutputError(
             operation,
@@ -230,9 +242,11 @@ const publishStagedExport = async (options: {
         XPANDA_PROVIDER_ID,
         [destination],
         { reason: errorMessage(cleanupCause) },
-        { operation, cause: cleanupCause },
+        { operation, cause: new AggregateError([primary, cleanupCause]) },
       );
-      throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
+      if (primary instanceof AnalysisError)
+        throw analysisErrorWithCleanupDependencies(primary, cleanup, operation);
+      throw cleanup;
     }
     throw primary;
   }
@@ -464,6 +478,15 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       ...(options?.signal === undefined ? [] : [options.signal]),
     ]);
     let staged: StagedInput | undefined;
+    let loadCompleted: XpandaSession | undefined;
+    let lastResult: unknown;
+    let engineFacts:
+      | {
+          readonly root: string;
+          readonly sha256: string;
+          readonly version: string;
+        }
+      | undefined;
     // Producer coherence errors keep the bridge; transport and deadline
     // failures poison a serialized single-threaded producer and retire it.
     let bridgeFatal = true;
@@ -543,6 +566,12 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
         { path: staged.stagedPath },
         callContext,
       );
+      loadCompleted = load;
+      engineFacts = {
+        root: configuration.value.root,
+        sha256: retained.engineSha256,
+        version: retained.version,
+      };
       const result = await this.#dispatch(
         request,
         bridge,
@@ -557,6 +586,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           ? join(staged.rootPath, "export")
           : undefined,
       );
+      lastResult = result;
       let normalized = result;
       if (request.operation === "decompile_harmony_abc") {
         const exported =
@@ -566,6 +596,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           destination: request.input.output_directory,
           operation: request.operation,
           expectedWritten: exported.written,
+          signal,
         });
         normalized = {
           ...exported,
@@ -646,13 +677,40 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
             );
     } catch (cause: unknown) {
       if (cause instanceof AnalysisInputError) bridgeFatal = false;
+      const bridge = this.#retained?.bridge;
+      // Completed producer stages stay with the failure: load facts, the last
+      // tool reply, the staged identity and the calls observed so far.
+      const partial: HarmonyAbcPartialObservation | undefined =
+        loadCompleted === undefined
+          ? undefined
+          : {
+              kind: "harmony-abc",
+              result: ownedJsonValueSchema.parse(
+                lastResult === undefined ? loadCompleted : lastResult,
+              ),
+              provenance: ownedJsonValueSchema.parse({
+                ...(staged === undefined
+                  ? {}
+                  : {
+                      staged_input: {
+                        bytes: staged.size,
+                        sha256: staged.sha256,
+                      },
+                    }),
+                load: loadCompleted,
+                ...(engineFacts === undefined ? {} : { engine: engineFacts }),
+                calls: bridge?.observedCalls() ?? [],
+              }),
+            };
       const failure = captureXpandaFailure({
         cause,
         request,
         timeout,
         timeoutMs,
         signal: options?.signal,
-        bridge: this.#retained?.bridge,
+        shutdown: this.#shutdown.signal,
+        ...(partial === undefined ? {} : { partial }),
+        bridge,
       });
       if (bridgeFatal) {
         const retired = await this.#retire();
@@ -774,8 +832,10 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       try {
         await copyFile(request.input.path, stagedPath);
       } catch (cause: unknown) {
+        if (signal.aborted) throw signal.reason;
         throw copyFailed(cause);
       }
+      if (signal.aborted) throw signal.reason;
       const staged = await stat(stagedPath).catch((cause: unknown) => {
         throw copyFailed(cause);
       });
@@ -834,6 +894,9 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       } catch (cause: unknown) {
         if (cause instanceof RegularFileChangedError)
           throw inputChanged(request.input.path);
+        // The reader owns cancellation facts; let failure selection map the
+        // caller abort or timeout instead of claiming the input was bad.
+        if (regularFileCancellation(cause) !== undefined) throw cause;
         throw copyFailed(cause);
       }
       let stagedSha256: string;
@@ -847,6 +910,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       } catch (cause: unknown) {
         if (cause instanceof RegularFileChangedError)
           throw inputChanged(stagedPath);
+        if (regularFileCancellation(cause) !== undefined) throw cause;
         throw copyFailed(cause);
       }
       if (stagedSha256 !== sourceSha256) throw inputChanged(request.input.path);

@@ -75,7 +75,7 @@ rea search-harmony-abc-strings app.abc "https://" --limit 50
 rea search-harmony-abc-symbols app.abc --query onCreate --kind method
 rea search-harmony-abc-code app.abc "https://" --class-filter com.example
 rea trace-harmony-abc-references app.abc --target-type method --target onCreate --owner-class com.example.EntryAbility --source
-rea build-harmony-abc-call-graph app.abc com.example.EntryAbility onCreate --format mermaid
+rea build-harmony-abc-call-graph app.abc com.example.EntryAbility onCreate --graph-format mermaid
 rea inspect-harmony-hap-abc app.hap --entry ets/modules.abc
 rea inspect-harmony-hap-resources app.hap --name app_name --type string
 ```

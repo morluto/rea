@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+import { createVerifierCommands } from "../../lib/verify-commands.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -62,9 +61,10 @@ const hap = await sampleFrom(
 const entrypoint =
   process.env.REA_XPANDA_ENTRYPOINT ?? resolve(repository, "scripts/rea.mjs");
 const environment = { ...process.env, REA_XPANDA_ROOT: xpandaRoot };
-const execute = promisify(execFile);
+/** Every CLI and MCP process runs under one owned command tree. */
+const commands = await createVerifierCommands();
 const run = async (arguments_) => {
-  const response = await execute(
+  const { stdout } = await commands.exec(
     process.execPath,
     [entrypoint, ...arguments_],
     {
@@ -74,9 +74,10 @@ const run = async (arguments_) => {
       maxBuffer: 64 * 1024 * 1024,
     },
   );
-  return JSON.parse(response.stdout);
+  return JSON.parse(stdout);
 };
 const fixture = await VerifierFixture.open({ prefix: "rea-xpanda-verify-" });
+fixture.releaseAfter(() => commands.close());
 const workspace = fixture.path;
 
 await withVerifierFixture(fixture, async () => {
@@ -97,6 +98,11 @@ await withVerifierFixture(fixture, async () => {
   );
   assert.ok(header.class_count >= 1, "the sample must contain classes");
   assert.match(header.bytecode_version, /^\d+\.\d+\.\d+\.\d+$/u);
+  const major = Number.parseInt(
+    inspection.provider.version.match(/^\d+/u)?.[0] ?? "",
+    10,
+  );
+  const modern = major >= 3;
   console.log(
     `PASS CLI inspect_harmony_abc ${String(header.class_count)} classes, bytecode ${header.bytecode_version}, xpanda ${inspection.provider.version}`,
   );
@@ -201,7 +207,7 @@ await withVerifierFixture(fixture, async () => {
     `PASS CLI decompile_harmony_abc written=${String(export_.written)} skipped=${String(export_.skipped)} failed=${String(export_.failed)} coverage=${export_.coverage}`,
   );
 
-  if (target !== undefined) {
+  if (modern && target !== undefined) {
     const metadata = harmonyAbcResultSchemas.inspect_harmony_abc_class.parse(
       parseEvidence(
         await run([
@@ -331,7 +337,7 @@ await withVerifierFixture(fixture, async () => {
     }
   }
 
-  if (hap !== undefined) {
+  if (modern && hap !== undefined) {
     const packageEntry = harmonyAbcResultSchemas.inspect_harmony_hap_abc.parse(
       parseEvidence(
         await run(["inspect-harmony-hap-abc", hap, "--format", "json"]),
@@ -379,22 +385,27 @@ await withVerifierFixture(fixture, async () => {
   try {
     await client.connect(transport, { timeout: 30_000 });
     const tools = await client.listTools();
-    for (const name of [
+    const requiredTools = [
       "inspect_harmony_abc",
       "list_harmony_abc_classes",
       "decompile_harmony_abc_class",
       "decompile_harmony_abc",
       "disassemble_harmony_abc_method",
       "search_harmony_abc_strings",
-      "inspect_harmony_abc_class",
-      "decompile_harmony_abc_method",
-      "search_harmony_abc_symbols",
-      "search_harmony_abc_code",
-      "trace_harmony_abc_references",
-      "build_harmony_abc_call_graph",
-      "inspect_harmony_hap_abc",
-      "inspect_harmony_hap_resources",
-    ])
+      ...(modern
+        ? [
+            "inspect_harmony_abc_class",
+            "decompile_harmony_abc_method",
+            "search_harmony_abc_symbols",
+            "search_harmony_abc_code",
+            "trace_harmony_abc_references",
+            "build_harmony_abc_call_graph",
+            "inspect_harmony_hap_abc",
+            "inspect_harmony_hap_resources",
+          ]
+        : []),
+    ];
+    for (const name of requiredTools)
       assert.ok(
         tools.tools.some((tool) => tool.name === name),
         `MCP must advertise ${name}`,
@@ -432,24 +443,36 @@ await withVerifierFixture(fixture, async () => {
       { timeout: 300_000 },
     );
     assert.equal(rejected.isError, true, "absent classes must fail typed");
-    const mcpSymbols = await client.callTool(
-      {
-        name: "search_harmony_abc_symbols",
-        arguments: { path: abc, query: "", kind: "class", limit: 5 },
-      },
-      { timeout: 300_000 },
-    );
-    assert.notEqual(mcpSymbols.isError, true, JSON.stringify(mcpSymbols));
-    const mcpSymbolEvidence = parseEvidence(mcpSymbols.structuredContent);
-    const mcpSymbolResult =
-      harmonyAbcResultSchemas.search_harmony_abc_symbols.parse(
-        mcpSymbolEvidence.normalized_result,
+    if (modern) {
+      const mcpSymbols = await client.callTool(
+        {
+          name: "search_harmony_abc_symbols",
+          arguments: { path: abc, query: "", kind: "class", limit: 5 },
+        },
+        { timeout: 300_000 },
       );
-    assert.ok(mcpSymbolResult.returned >= 1);
+      assert.notEqual(mcpSymbols.isError, true, JSON.stringify(mcpSymbols));
+      const mcpSymbolEvidence = parseEvidence(mcpSymbols.structuredContent);
+      const mcpSymbolResult =
+        harmonyAbcResultSchemas.search_harmony_abc_symbols.parse(
+          mcpSymbolEvidence.normalized_result,
+        );
+      assert.ok(mcpSymbolResult.returned >= 1);
+    }
     console.log("PASS MCP/CLI parity and absent-class error");
   } finally {
-    await client.close().catch(() => undefined);
-    await transport.close().catch(() => undefined);
+    const closeFailures = [];
+    try {
+      await client.close();
+    } catch (cause) {
+      closeFailures.push(cause);
+    }
+    try {
+      await transport.close();
+    } catch (cause) {
+      closeFailures.push(cause);
+    }
+    assert.deepEqual(closeFailures, [], "MCP client and transport must close");
     assert.equal(
       stderr.includes("Unhandled") || stderr.includes("uncaught"),
       false,

@@ -220,6 +220,12 @@ export const registerHarmonyAbcCommands = (
         path: ABC_PATH,
         class_name: CLASS_NAME,
         method_name: { description: 'Root method name, or "constructor"' },
+        // `--format` is the global output format; this field selects the graph.
+        format: {
+          name: "graphFormat",
+          description:
+            "Graph representation: json, optionally with a Mermaid rendering",
+        },
       },
     },
     run("build_harmony_abc_call_graph"),
