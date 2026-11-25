@@ -439,6 +439,7 @@ it("projects a session digest mismatch as admitted identity, not a retryable cha
   const projected = projectAnalysisError(
     translateArtifactFailure(
       "inspect_keyed_archive",
+      "/selected/archive",
       targetDigestChangedFailure("archive", "a".repeat(64), "b".repeat(64)),
     ),
   );
