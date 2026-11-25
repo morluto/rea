@@ -18,7 +18,10 @@ import {
   harmonyAbcResultSchemas,
   DEFAULT_HARMONY_ABC_ANALYSIS_TIMEOUT_MS,
 } from "../domain/harmony/harmonyAbcAnalysis.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -88,14 +91,28 @@ const interruptionError = (context: {
   readonly timeoutMs: number;
   readonly callerSignal: AbortSignal | undefined;
   readonly shutdown: AbortSignal;
+  /** Producer diagnostics observed when the interruption stopped the work. */
+  readonly capturedOutput?: () => AnalysisCapturedOutput | undefined;
 }): AnalysisError => {
-  if (context.timeout.aborted)
-    return xpandaTimeoutError(context.operation, context.timeoutMs);
-  if (context.shutdown.aborted)
-    return cancelledBy(context.operation, context.shutdown);
-  if (context.callerSignal?.aborted === true)
-    return cancelledBy(context.operation, context.callerSignal);
-  return cancelledBy(context.operation, carriedReason(context.signal.reason));
+  const reason = context.signal.reason;
+  const output = context.capturedOutput?.();
+  const options = output === undefined ? {} : { capturedOutput: output };
+  // Match the combined signal's first abort reason instead of current flags:
+  // a later deadline must not replace the caller's earlier cancellation.
+  if (context.timeout.aborted && reason === context.timeout.reason)
+    return xpandaTimeoutError(context.operation, context.timeoutMs, options);
+  if (context.shutdown.aborted && reason === context.shutdown.reason)
+    return cancelledBy(context.operation, context.shutdown, options);
+  if (
+    context.callerSignal?.aborted === true &&
+    reason === context.callerSignal.reason
+  )
+    return cancelledBy(context.operation, context.callerSignal, options);
+  return cancelledBy(
+    context.operation,
+    carriedReason(context.signal.reason),
+    options,
+  );
 };
 
 /** How long a caller waits behind the provider's serialized request tail. */
@@ -630,6 +647,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
               timeoutMs,
               callerSignal: options?.signal,
               shutdown: this.#shutdown.signal,
+              capturedOutput: () => bridge.transport.diagnostics(),
             }),
         });
         normalized = {
