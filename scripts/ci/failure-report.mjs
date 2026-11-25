@@ -12,6 +12,7 @@ import {
   safeSha,
   selectStaticCheckArtifact,
   STATIC_EVIDENCE_ARTIFACTS,
+  staticCheckArtifactName,
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
@@ -364,9 +365,13 @@ export function createGitHubApi({
     },
     async getStaticEvidence(repository, run, job) {
       const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
-      if (!artifactName) return null;
+      const attemptName = staticCheckArtifactName(
+        artifactName,
+        run.run_attempt,
+      );
+      if (attemptName === null) return null;
       const page = await request(
-        `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
+        `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=1&name=${encodeURIComponent(attemptName)}`,
       );
       const artifact = selectStaticCheckArtifact(
         page,

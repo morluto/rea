@@ -54,7 +54,11 @@ import {
   type MachoSliceHeader,
   type ReadAt,
 } from "../../domain/apple/machoLoadCommandReader.js";
-import type { ByteSource } from "../../domain/byteSource.js";
+import {
+  bufferByteSource,
+  readByteSourceSlice,
+  type ByteSource,
+} from "../../domain/byteSource.js";
 
 const STREAM_WINDOW_BYTES = 65536;
 
@@ -107,13 +111,7 @@ export const readMachoHardening = async (
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage[]> => {
   assertArtifactReadActive(signal);
-  const readAt: ReadAt = async (offset, length) => {
-    assertArtifactReadActive(signal);
-    if (offset < 0 || length < 0 || offset > bytes.length)
-      return Buffer.alloc(0);
-    return bytes.subarray(offset, Math.min(bytes.length, offset + length));
-  };
-  return readMachoHardeningFromReader(readAt, bytes.length, signal);
+  return readMachoHardeningFromHandle(bufferByteSource(bytes), signal);
 };
 
 /** Same Mach-O hardening read over a random-access handle without buffering the full image. */
@@ -124,21 +122,10 @@ export const readMachoHardeningFromHandle = async (
   assertArtifactReadActive(signal);
   const readAt: ReadAt = async (offset, length) => {
     assertArtifactReadActive(signal);
-    if (offset < 0 || length <= 0 || offset >= source.size)
-      return Buffer.alloc(0);
-    const clamped = Math.min(length, source.size - offset);
-    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return source.prefix.subarray(offset, offset + clamped);
-    return source.readRange(offset, clamped);
+    if (offset < 0) return Buffer.alloc(0);
+    return readByteSourceSlice(source, offset, length);
   };
-  return readMachoHardeningFromReader(readAt, source.size, signal);
-};
-
-const readMachoHardeningFromReader = async (
-  readAt: ReadAt,
-  fileSize: number,
-  signal?: AbortSignal,
-): Promise<BinaryHardeningImage[]> => {
+  const fileSize = source.size;
   const container = await readMachoContainer(readAt, fileSize);
   if (container.kind === "not-mach-o")
     throw new BinaryFormatFailure(

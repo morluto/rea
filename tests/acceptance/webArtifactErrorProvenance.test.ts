@@ -4,7 +4,10 @@ import { dirname, join } from "node:path";
 import { expect } from "vitest";
 
 import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -166,7 +169,11 @@ cliTest(
     expect(missing.json).not.toHaveProperty("normalized_result");
     const missingMcp = await call(location.operation, location.input);
     expect(missingMcp.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(missingMcp).error).toEqual(missing.json);
+    expectAdapterErrorParity(
+      parseMcpToolError(missingMcp).error,
+      missing.json,
+      location.operation,
+    );
 
     const invalidBytes = Buffer.from([255, 254]);
     await writeFile(mapPath, invalidBytes);

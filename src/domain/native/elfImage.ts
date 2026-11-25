@@ -18,6 +18,31 @@ import {
 } from "./nativeSectionDirectory.js";
 import { bufferByteSource, type ByteSource } from "../byteSource.js";
 
+type ElfSection = Extract<ImageSection, { format: "elf" }>;
+
+export const elfSectionFitsFile = (
+  section: ElfSection,
+  fileLength: number,
+): boolean => {
+  const { offset, size } = section.declared_range;
+  return (
+    offset >= 0n &&
+    size >= 0n &&
+    offset <= BigInt(fileLength) &&
+    size <= BigInt(fileLength) - offset
+  );
+};
+
+export const elfSectionLocation = (
+  section: ElfSection,
+): { offset: number; bytes: number } | null => {
+  if (!elfSectionFitsFile(section, Number.MAX_SAFE_INTEGER)) return null;
+  return {
+    offset: Number(section.declared_range.offset),
+    bytes: Number(section.declared_range.size),
+  };
+};
+
 const requireElfFileRange = (
   fileSize: number,
   offset: bigint,

@@ -5,6 +5,7 @@ import {
 } from "../../domain/portableBundleName.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
+import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -32,9 +33,9 @@ const BUNDLE_ALLOWED_HOSTS = "127.0.0.1,localhost";
 const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
 
 /** Where the Dockerfile installs the CLI from. */
-export type EnvironmentPackageSource =
-  | { readonly kind: "registry"; readonly specifier: string }
-  | { readonly kind: "tarball"; readonly path: string };
+export type EnvironmentPackageSource = Readonly<
+  EnvironmentBuildReport["package_source"]
+>;
 
 /** One text file of the bundle, relative to the bundle root. */
 export interface EnvironmentBundleFile {
@@ -72,16 +73,10 @@ export interface EnvironmentBundlePlan {
 export interface EnvironmentBundleOptions {
   /** Folder and env id; defaults to the manifest's kebab-case name. */
   readonly name?: string | undefined;
-  readonly packageSource: EnvironmentPackageSource;
+  readonly packageTarball?: string | undefined;
   /** Prepares the state the bundle's server serves under the checked bundle name, as that server prepares it. */
   readonly served: (name: string) => PreparedState;
 }
-
-/** The registry source pinning the exact version of this build. */
-export const registryPackageSource = (): EnvironmentPackageSource => ({
-  kind: "registry",
-  specifier: PRODUCT_IDENTITY.registrationPackageSpecifier,
-});
 
 const nameError = (name: string): AnalysisInputError =>
   new AnalysisInputError(
@@ -378,9 +373,16 @@ export const planEnvironmentBundle = (
     ),
   );
   const envFolder = `envs/${name}`;
+  const packageSource: EnvironmentPackageSource =
+    options.packageTarball === undefined
+      ? {
+          kind: "registry",
+          specifier: PRODUCT_IDENTITY.registrationPackageSpecifier,
+        }
+      : { kind: "tarball", path: options.packageTarball };
   const base = {
     name,
-    packageSource: options.packageSource,
+    packageSource,
     toolCount: catalog.value.tools.length,
     check,
     state: report,
@@ -395,7 +397,7 @@ export const planEnvironmentBundle = (
       },
       {
         path: `${envFolder}/Dockerfile`,
-        content: bundleDockerfile(options.packageSource, name),
+        content: bundleDockerfile(packageSource, name),
       },
       {
         path: `artifacts/check_${name}/verify.py`,
@@ -407,7 +409,7 @@ export const planEnvironmentBundle = (
       manifest: `${envFolder}/manifest.json`,
       evidence: `${envFolder}/evidence.json`,
       tarball:
-        options.packageSource.kind === "tarball"
+        packageSource.kind === "tarball"
           ? `${envFolder}/${BUNDLE_TARBALL_NAME}`
           : null,
     },

@@ -10,6 +10,11 @@ import {
   type TargetFailureRecoveryFacts,
   type TargetFailureSpelling,
 } from "../domain/targetFailure.js";
+import {
+  MCP_INPUT_SCHEMA_SPELLING,
+  renderInputSchemaRemediation,
+  type InputSchemaRemediationSpelling,
+} from "../domain/analysisErrorPresentation.js";
 import type { Result } from "../domain/result.js";
 import {
   cliCommandForOperation,
@@ -167,7 +172,9 @@ const projectErrorRecord = (
     details.secondary_failures,
     context,
   );
-  const remediation = cliTargetFailureRemediation(error, details, context);
+  const remediation =
+    cliTargetFailureRemediation(error, details, context) ??
+    cliInputSchemaRemediation(error, details, context);
   if (
     limit === undefined &&
     relatedFlags === undefined &&
@@ -334,6 +341,51 @@ const cliTargetFailureRemediation = (
     : {
         ...remediation,
         action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
+};
+
+/**
+ * An input refusal's recovery in CLI spelling. Presentation renders the MCP
+ * sentence from the same facts; this replaces that rendering with the command
+ * and drops the catalog-refresh clause. A prefixed argument hint stays ahead
+ * of the sentence.
+ */
+const cliInputSchemaRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    typeof details.operation !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const operation = details.operation;
+  const mcp = renderInputSchemaRemediation(
+    operation,
+    MCP_INPUT_SCHEMA_SPELLING,
+  );
+  const index = remediation.action.indexOf(mcp);
+  if (index < 0) return undefined;
+  const command = cliCommandForOperation(
+    operation,
+    context.commands,
+    context.cliName ?? "rea",
+    context.recordedCommands,
+  );
+  if (command === undefined) return undefined;
+  const spelling: InputSchemaRemediationSpelling = {
+    subject: () => command,
+    includeCatalogRefresh: false,
+  };
+  const cli = renderInputSchemaRemediation(operation, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${remediation.action.slice(0, index)}${cli}${remediation.action.slice(index + mcp.length)}`,
       };
 };
 

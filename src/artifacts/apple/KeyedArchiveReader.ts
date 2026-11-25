@@ -35,7 +35,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
-  unsupportedTarget,
+  AnalysisTargetFailureError,
   unrecognizedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
@@ -480,11 +480,10 @@ const decodeSelectedArchive = (
     )
       throw cause;
     if (cause instanceof UnsupportedBinaryPlistUidError)
-      throw unsupportedTarget(
+      throw new AnalysisTargetFailureError(
         "inspect_keyed_archive",
         input.artifactPath,
-        "bplist",
-        cause.message,
+        cause.failure,
         { cause },
       );
     // An intact file of another kind is not a damaged archive.

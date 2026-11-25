@@ -142,26 +142,23 @@ it("merges available failed-shard diagnostics and skips unavailable shard report
 // into a separate test implementation of the collection policy.
 function conditionValue(
   condition: string | undefined,
-  needs: Record<string, unknown>,
-  canceled: boolean,
-  timingReportExists = false,
-  shardResult = "",
+  context: Record<string, unknown>,
 ) {
   if (!condition) throw new Error("Missing report collection condition");
+  const expression = condition.startsWith("${{")
+    ? condition.slice(3, -2)
+    : condition;
   return runInNewContext(
-    condition.replaceAll("needs.test-source", 'needs["test-source"]'),
-    {
-      needs,
-      env: { SHARD_RESULT: shardResult },
-      cancelled: () => canceled,
-      hashFiles: () => (timingReportExists ? "timing-report" : ""),
-    },
+    expression.replaceAll("needs.test-source", 'needs["test-source"]'),
+    context,
     { timeout: 1_000 },
   );
 }
 
 it("collects either fast test group while keeping full reports tied to full shards", async () => {
   const steps = (await workflow()).test.steps;
+  const inputs = steps[0];
+  expect(inputs?.name).toBe("Require portable test inputs");
   const download = steps.find(
     (step) => step.with?.pattern === "vitest-report-*",
   );
@@ -196,15 +193,25 @@ it("collects either fast test group while keeping full reports tied to full shar
                 full: tier === "full" && builtAvailable,
               }
             : { download: false, fast: false, full: false };
-          expect(
-            conditionValue(download?.if, needs, canceled, false, shard),
-          ).toBe(expected.download);
-          expect(conditionValue(fast?.if, needs, canceled, false, shard)).toBe(
-            expected.fast,
+          const context = {
+            needs,
+            env: { SHARD_RESULT: shard },
+            cancelled: () => canceled,
+          };
+          const hasReports = conditionValue(
+            inputs?.env?.REPORTS_EXPECTED,
+            context,
           );
-          expect(conditionValue(full?.if, needs, canceled, false, shard)).toBe(
-            expected.full,
+          expect(hasReports).toBe(code === "true" && available);
+          const reportContext = {
+            ...context,
+            steps: { inputs: { outcome: hasReports ? "success" : "failure" } },
+          };
+          expect(conditionValue(download?.if, reportContext)).toBe(
+            expected.download,
           );
+          expect(conditionValue(fast?.if, reportContext)).toBe(expected.fast);
+          expect(conditionValue(full?.if, reportContext)).toBe(expected.full);
         }
       }
     }
@@ -222,23 +229,39 @@ it("collects either fast test group while keeping full reports tied to full shar
   );
 });
 
+it("fails before setup when classification fails or no portable test group ran", async () => {
+  const [inputs] = (await workflow()).test.steps;
+  if (!inputs?.run) throw new Error("Missing portable test input check");
+  for (const [classification, reportsExpected, passes] of [
+    ["success", "true", true],
+    ["success", "false", false],
+    ["failure", "true", false],
+  ] as const) {
+    const check = execute("bash", ["-c", inputs.run], {
+      env: {
+        CHANGES_RESULT: classification,
+        REPORTS_EXPECTED: reportsExpected,
+      },
+    });
+    if (passes) await expect(check).resolves.toMatchObject({ stderr: "" });
+    else await expect(check).rejects.toMatchObject({ code: 1 });
+  }
+});
+
 it("requires portable report validation even when the timing report is missing", async () => {
   const summary = (await workflow()).test.steps.find((step) =>
     step.run?.includes("scripts/ci/test-report.mjs"),
   );
-  for (const tier of ["fast", "full"]) {
+  for (const outcome of ["success", "failure"]) {
     for (const timingReportExists of [false, true]) {
-      for (const code of ["true", "false"]) {
-        for (const canceled of [false, true]) {
-          expect(
-            conditionValue(
-              summary?.if,
-              { changes: { outputs: { code, tier } } },
-              canceled,
-              timingReportExists,
-            ),
-          ).toBe(code === "true" && !canceled);
-        }
+      for (const canceled of [false, true]) {
+        expect(
+          conditionValue(summary?.if, {
+            steps: { inputs: { outcome } },
+            cancelled: () => canceled,
+            hashFiles: () => (timingReportExists ? "timing-report" : ""),
+          }),
+        ).toBe(outcome === "success" && !canceled);
       }
     }
   }

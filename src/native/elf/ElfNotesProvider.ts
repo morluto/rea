@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   yieldArtifactRead,
   artifactFilePrimaryFacts,
@@ -44,16 +44,12 @@ export class ElfNotesProvider implements ElfNotesPort {
   readonly identity = ELF_NOTES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_NOTES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_NOTES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
@@ -79,11 +75,7 @@ export class ElfNotesProvider implements ElfNotesPort {
           },
           (handle) =>
             parseElfNotesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,

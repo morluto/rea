@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { androidResultSchemas } from "../android/androidAnalysis.js";
 import {
@@ -24,8 +23,10 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
   analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
@@ -36,7 +37,6 @@ import { evidenceSubjectTarget } from "../evidence.js";
 
 const packageSchema = androidResultSchemas.inspect_android_package;
 const readReport = createAnalysisViewResultReader(packageSchema);
-const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
 
@@ -127,15 +127,8 @@ export const projectAndroidPackageView = (
   // The engine digest identifies the JAR, never the authenticated APK subject.
   const subject = evidenceSubjectTarget(parent.subject);
   if (subject === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Android package views require the recorded APK subject identity.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Android package views require the recorded APK subject identity.",
     );
   const report = parsed.value;
   const shared = {
@@ -217,18 +210,10 @@ export const projectAndroidPackageView = (
     ),
   };
   const tooLarge = (): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The Android component view exceeds the analysis-view byte budget; select fewer fields or a smaller page. Complete parent Evidence remains retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          facet: view.facet,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The Android component view exceeds the analysis-view byte budget; select fewer fields or a smaller page. Complete parent Evidence remains retained.",
+      { facet: view.facet },
     );
   // Admit caller selections and provenance before building filter indexes or output rows.
   if (

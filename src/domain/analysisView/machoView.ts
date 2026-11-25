@@ -1,5 +1,5 @@
 import {
-  analysisViewInputError,
+  invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { z } from "zod";
@@ -8,7 +8,7 @@ import { uniqueSorted } from "../canonicalOrdering.js";
 import { isMachOFormat } from "../binaryTargetTypes.js";
 import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -105,15 +105,8 @@ const parseMachoReport = (
   if (!parsed.ok) return parsed;
   const file = evidenceFileTarget(parent);
   if (file !== undefined && !isMachOFormat(file.format))
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Mach-O parent Evidence subject must identify a thin or universal Mach-O.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Mach-O parent Evidence subject must identify a thin or universal Mach-O.",
     );
   return ok(parsed.value);
 };

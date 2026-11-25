@@ -183,9 +183,6 @@ export const addMemberNodes = (
   if (memberInput === null) return;
   const members = memberInput.result;
   const { types, methods, fields } = members;
-  const typeCoverage = managedSourceCoverage(members.coverage.state);
-  const methodCoverage = managedSourceCoverage(members.coverage.state);
-  const fieldCoverage = managedSourceCoverage(members.coverage.state);
   const sourceEvidence = sourceManagedEvidence(
     state,
     memberInput.evidence,
@@ -197,33 +194,67 @@ export const addMemberNodes = (
     state.typeNodes.set(type.token, node);
     addContainsEdge(state, artifactNode, node, {
       kind: "declares-managed-type",
-      coverage: typeCoverage,
+      coverage: sourceEvidence.coverage,
     });
   }
-  for (const method of methods) {
-    const node = methodNode(state, method, sourceEvidence);
+  const addMember = (
+    kind: "managed-method" | "managed-field",
+    member: ManagedMethod | ManagedField,
+    details: ApplicationNode["observations"][number]["properties"],
+  ): void => {
+    const node = createJavaScriptApplicationNode({
+      kind,
+      identity: artifactLocalIdentity(
+        state.artifactSha256,
+        `${kind}-token`,
+        member.token,
+      ),
+      observations: [
+        {
+          label: metadataLabel(
+            member.declaring_type === null
+              ? member.name
+              : `${member.declaring_type}.${member.name}`,
+          ),
+          properties: {
+            token: member.token,
+            declaring_type_token: member.declaring_type_token,
+            declaring_type: member.declaring_type,
+            name: member.name,
+            ...details,
+          },
+          evidence: sourceEvidence,
+        },
+      ],
+    });
     state.nodes.push(node);
-    state.methodNodes.set(method.token, node);
+    const nodes =
+      kind === "managed-method" ? state.methodNodes : state.fieldNodes;
+    nodes.set(member.token, node);
     const owner =
-      method.declaring_type_token === null
+      member.declaring_type_token === null
         ? artifactNode
-        : (state.typeNodes.get(method.declaring_type_token) ?? artifactNode);
+        : (state.typeNodes.get(member.declaring_type_token) ?? artifactNode);
     addContainsEdge(state, owner, node, {
-      kind: "declares-managed-method",
-      coverage: methodCoverage,
+      kind: `declares-${kind}`,
+      coverage: sourceEvidence.coverage,
+    });
+  };
+  for (const method of methods) {
+    addMember("managed-method", method, {
+      rva: method.rva,
+      signature_sha256: method.signature.raw_sha256,
+      signature_status: method.signature.parse_status,
+      body_status: method.body.status,
+      normalized_il_sha256: method.body.normalized_il_sha256,
+      il_size: method.body.il_size,
     });
   }
   for (const field of fields) {
-    const node = fieldNode(state, field, sourceEvidence);
-    state.nodes.push(node);
-    state.fieldNodes.set(field.token, node);
-    const owner =
-      field.declaring_type_token === null
-        ? artifactNode
-        : (state.typeNodes.get(field.declaring_type_token) ?? artifactNode);
-    addContainsEdge(state, owner, node, {
-      kind: "declares-managed-field",
-      coverage: fieldCoverage,
+    addMember("managed-field", field, {
+      flags: field.flags,
+      signature_sha256: field.signature.raw_sha256,
+      signature_status: field.signature.parse_status,
     });
   }
 };
@@ -251,77 +282,6 @@ const typeNode = (
           full_name: type.full_name,
           flags: type.flags,
           extends_token: type.extends_token,
-        },
-        evidence,
-      },
-    ],
-  });
-
-/** Build a managed method application node. */
-const methodNode = (
-  state: GraphBuildState,
-  method: ManagedMethod,
-  evidence: ApplicationGraphEvidence,
-): ApplicationNode =>
-  createJavaScriptApplicationNode({
-    kind: "managed-method",
-    identity: artifactLocalIdentity(
-      state.artifactSha256,
-      "managed-method-token",
-      method.token,
-    ),
-    observations: [
-      {
-        label: metadataLabel(
-          method.declaring_type === null
-            ? method.name
-            : `${method.declaring_type}.${method.name}`,
-        ),
-        properties: {
-          token: method.token,
-          declaring_type_token: method.declaring_type_token,
-          declaring_type: method.declaring_type,
-          name: method.name,
-          rva: method.rva,
-          signature_sha256: method.signature.raw_sha256,
-          signature_status: method.signature.parse_status,
-          body_status: method.body.status,
-          normalized_il_sha256: method.body.normalized_il_sha256,
-          il_size: method.body.il_size,
-        },
-        evidence,
-      },
-    ],
-  });
-
-/** Build a managed field application node. */
-const fieldNode = (
-  state: GraphBuildState,
-  field: ManagedField,
-  evidence: ApplicationGraphEvidence,
-): ApplicationNode =>
-  createJavaScriptApplicationNode({
-    kind: "managed-field",
-    identity: artifactLocalIdentity(
-      state.artifactSha256,
-      "managed-field-token",
-      field.token,
-    ),
-    observations: [
-      {
-        label: metadataLabel(
-          field.declaring_type === null
-            ? field.name
-            : `${field.declaring_type}.${field.name}`,
-        ),
-        properties: {
-          token: field.token,
-          declaring_type_token: field.declaring_type_token,
-          declaring_type: field.declaring_type,
-          name: field.name,
-          flags: field.flags,
-          signature_sha256: field.signature.raw_sha256,
-          signature_status: field.signature.parse_status,
         },
         evidence,
       },

@@ -2,13 +2,13 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
   type PeLoadConfig,
 } from "../../domain/native/peLoadConfig.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
@@ -38,13 +38,8 @@ export class PeLoadConfigService {
         validateReport: (report, parameters) =>
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
-        buildEvidence: (value, identity, parameters) => {
-          const architecture = peSubjectArchitecture(
-            value.machine,
-            value.format,
-          );
-          const locations = [
-            { kind: "artifact-path" as const, path: value.artifact.path },
+        buildEvidence: (value, identity, parameters) =>
+          observedPeEvidence(value, identity, OPERATION, parameters, [
             ...fileRange(value.tls?.directory ?? null),
             ...fileRange(value.load_config?.directory ?? null),
             ...structureRange(value.load_config),
@@ -56,25 +51,7 @@ export class PeLoadConfigService {
                 end: offset + bytes,
               }),
             ),
-          ];
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "pe",
-              sha256: value.artifact.sha256,
-              ...(architecture === undefined ? {} : { architecture }),
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations,
-            },
-          );
-        },
+          ]),
       },
       rawInput,
       options,

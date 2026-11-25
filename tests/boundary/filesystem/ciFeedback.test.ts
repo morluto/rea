@@ -74,6 +74,67 @@ const evaluateCondition = (
       ),
     );
 
+it("fetches historical durations when portable tests can use them", async () => {
+  const steps = (await workflow()).build!.steps!;
+  const condition = z
+    .string()
+    .parse(steps.find((step) => step.id === "history")?.if);
+  for (const [code, tier, mode, files, expected] of [
+    ["true", "fast", "selected", ["a.test.ts"], false],
+    ["true", "fast", "selected", ["a.test.ts", "b.test.ts"], true],
+    ["true", "fast", "full", [], true],
+    ["true", "full", "full", [], true],
+    ["true", "warm", "full", [], false],
+    ["false", "fast", "full", [], false],
+  ] as const) {
+    const selection = mode === "selected" ? { mode, files } : { mode };
+    const outputs = {
+      code,
+      tier,
+      test_mode: mode,
+      test_selection: JSON.stringify(selection),
+    };
+    expect(
+      evaluateCondition(condition, {
+        needs: { changes: { outputs } },
+        fromJSON: JSON.parse,
+      }),
+    ).toBe(expected);
+  }
+});
+
+it("looks up a baseline only when main selection can use it", async () => {
+  const steps = (await workflow()).changes!.steps!;
+  const qualification = steps.findIndex((step) => step.id === "qualification");
+  const baseline = steps.findIndex((step) => step.id === "baseline");
+  const plan = steps.findIndex((step) => step.id === "plan");
+  expect(qualification).toBeGreaterThanOrEqual(0);
+  expect(baseline).toBeGreaterThan(qualification);
+  expect(plan).toBeGreaterThan(baseline);
+  const condition = z.string().parse(steps[baseline]?.if);
+  const fast = "23 1,5,7,11,13,17,19,23 * * *";
+  const full = "23 3 * * *";
+  for (const [event, schedule, runFull, fullOnPush, sourceSha, expected] of [
+    ["schedule", fast, "false", "", "", false],
+    ["schedule", fast, "true", "", "", true],
+    ["schedule", fast, "", "", "", true],
+    ["schedule", full, "true", "", "", false],
+    ["push", "", "", "true", "", true],
+    ["push", "", "", "", "", false],
+    ["push", "", "", "true", "caller-sha", false],
+    ["pull_request", "", "", "", "", false],
+  ] as const) {
+    expect(
+      evaluateCondition(condition, {
+        github: { event_name: event, event: { schedule } },
+        inputs: { source_sha: sourceSha },
+        steps: { qualification: { outputs: { run_full: runFull } } },
+        vars: { REA_CI_FULL_ON_PUSH: fullOnPush },
+      }),
+    ).toBe(expected);
+  }
+});
+
 it.each(["fast", "full"] as const)(
   "requires coverage and both actual mutation preflights in %s qualification",
   async (tier) => {

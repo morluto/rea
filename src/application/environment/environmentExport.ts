@@ -41,7 +41,6 @@ import {
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
-  registryPackageSource,
   type EnvironmentPackageSource,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
@@ -90,7 +89,7 @@ export interface EnvironmentExportResult {
   readonly manifest_evidence_id: string;
   /** Whether the bundle serves from the state the export derived, as `environment-serve` reports it. */
   readonly state: PreparedState["report"];
-  readonly package_source: JsonValue;
+  readonly package_source: EnvironmentPackageSource;
   readonly files: readonly WrittenBundleFile[];
 }
 
@@ -383,11 +382,6 @@ export const readEnvironmentExportInputs = async (
   return ok({ manifest: manifest.value, evidence: evidence.value });
 };
 
-const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
-  source.kind === "registry"
-    ? { kind: "registry", specifier: source.specifier }
-    : { kind: "tarball", path: source.path };
-
 /** A reader failure as an output refusal that keeps an unconfirmed cleanup bound to its owner. */
 const readerFailureError = (
   cause: ArtifactReaderFailure,
@@ -458,14 +452,10 @@ export const packageTarballBytes = async (
 export const exportEnvironmentBundle = async (
   input: EnvironmentExportInput,
 ): Promise<Result<EnvironmentExportResult, AnalysisError>> => {
-  const packageSource: EnvironmentPackageSource =
-    input.packageTarball === undefined
-      ? registryPackageSource()
-      : { kind: "tarball", path: input.packageTarball };
   // The bundle's server prepares the state at startup; preparing it here, once the name is checked, predicts what it serves.
   const plan = planEnvironmentBundle(input.source, {
     name: input.name,
-    packageSource,
+    packageTarball: input.packageTarball,
     served: (name) =>
       input.served ??
       prepareServedState(input.source, input.evidence.value, {
@@ -517,7 +507,7 @@ export const exportEnvironmentBundle = async (
     evidence_id: input.source.evidenceId,
     manifest_evidence_id: input.source.manifestEvidenceId,
     state: plan.value.state,
-    package_source: packageSourceValue(plan.value.packageSource),
+    package_source: plan.value.packageSource,
     files,
   });
 };

@@ -89,6 +89,7 @@ cliTest(
       details: { operation: "inspect_binary_hardening" },
     });
     const response = await call("inspect_binary_hardening", { path: foreign });
+    expect(response.isError).toBe(true);
     expectAdapterErrorParity(
       parseMcpToolError(response).error,
       rejected.json,

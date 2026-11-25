@@ -3,7 +3,7 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   translateArtifactFailure,
   withStableArtifactHandle,
@@ -145,16 +145,12 @@ export class NugetNupkgProvider {
   readonly identity = NUGET_NUPKG_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NUGET_NUPKG_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NUGET_NUPKG_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(

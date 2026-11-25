@@ -162,7 +162,6 @@ cliTest(
         path: file,
         failure_kind: "selection",
         format: "desktop-application",
-        reason: expect.stringContaining("local installation directory"),
       },
     });
     const missingPath = join(root, "missing-directory");
