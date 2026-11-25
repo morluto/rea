@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import type { z } from "zod";
-import type { functionBodySchema } from "../hopperValues.js";
+import type { functionBodySchema } from "../native/functionBody.js";
 import type { nativeByteReadSchema } from "./nativeByteRead.js";
 import { addressCoordinate } from "./addressCoordinate.js";
-import { parseNativeAddress } from "./nativeAddress.js";
+import { invariantViolation } from "../internalInvariant.js";
 
 export type NativeMatchingCheckpoint = (bytes?: number) => Promise<void>;
 interface Interval {
@@ -90,11 +90,11 @@ export class FunctionByteCoverage {
     evidenceId: string,
   ): Promise<void> {
     if (this.#prepared)
-      throw new TypeError(
+      throw invariantViolation(
         "Cannot append byte observations after fingerprinting",
       );
     if (read.returned_bytes === 0) return;
-    const coordinate = addressCoordinate(parseNativeAddress(read.address))!;
+    const coordinate = addressCoordinate(read.address)!;
     let group = this.#pieces.get(coordinate.space);
     if (group === undefined) this.#pieces.set(coordinate.space, (group = []));
     await this.checkpoint(192 + read.bytes_hex.length * 2);
@@ -162,8 +162,8 @@ export class FunctionByteCoverage {
       lengths: string[] = [],
       links = new Set<string>();
     for (const range of body.ranges) {
-      const start = addressCoordinate(parseNativeAddress(range.start))!,
-        end = addressCoordinate(parseNativeAddress(range.end))!;
+      const start = addressCoordinate(range.start)!,
+        end = addressCoordinate(range.end)!;
       const pieces = this.#pieces.get(start.space) ?? [];
       lengths.push(String(end.offset - start.offset + 1n));
       let index = firstOverlapping(pieces, start.offset),

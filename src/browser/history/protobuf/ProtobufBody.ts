@@ -3,7 +3,7 @@ import {
   prepareProtobufBody,
   type PreparedProtobufBody,
 } from "./ProtobufFraming.js";
-import { CaptureFormatError } from "../CaptureFormatError.js";
+import { parseGrpcWebTrailers } from "./ProtobufTrailers.js";
 import type {
   ProtobufDecoding,
   ProtobufFrame,
@@ -47,7 +47,7 @@ export const decodeProtobufBody = async (
     framing,
     offset_basis:
       framing === "grpc-web-text" ? "base64-decoded-body" : "retained-body",
-    decoded_bytes: body.length,
+    decoded_bytes: 0,
     status: "complete",
     examined_bytes: 0,
     frames: [],
@@ -155,33 +155,21 @@ export const decodeProtobufBody = async (
         };
       } else {
         budget.charge(length * 8);
-        try {
-          const text = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(data.subarray(at + 5, at + 5 + length));
-          frame.trailers = [];
-          for (const line of text.split("\r\n")) {
-            if (line === "") continue;
-            const colon = line.indexOf(":");
-            if (
-              colon <= 0 ||
-              !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(line.slice(0, colon))
-            )
-              throw new Error("Malformed trailer header");
-            budget.charge(512);
-            frame.trailers.push({
-              name: redact(line.slice(0, colon)),
-              value: redact(line.slice(colon + 1).replace(/^[ \t]+/, "")),
-            });
-          }
-          frame.examined_bytes = length;
-        } catch (cause) {
-          if (cause instanceof CaptureFormatError) throw cause;
+        const parsed = parseGrpcWebTrailers(
+          data.subarray(at + 5, at + 5 + length),
+          budget,
+        );
+        const facts = parsed.ok ? parsed.value : parsed.error;
+        frame.examined_bytes = facts.examined_bytes;
+        frame.trailers = facts.trailers.map(({ name, value }) => ({
+          name: redact(name),
+          value: redact(value),
+        }));
+        if (!parsed.ok) {
           frame.status = "partial";
           frame.error = {
             offset: at + 5,
-            reason: "Invalid gRPC-web trailer header block",
+            reason: parsed.error.reason,
           };
         }
       }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashAndroidFile } from "./digest.mjs";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 
 /** The public result keeps one using node and exposes its two raw DEX invokes. */
 export const verifyAndroidDirectInvokes = async ({
@@ -13,10 +13,10 @@ export const verifyAndroidDirectInvokes = async ({
   environment,
   execute,
 }) => {
-  const digest = await hashAndroidFile(apk);
+  const digest = await sha256File(apk);
   const check = (value) => {
     const evidence = parseEvidence(value);
-    assert.equal(evidence.subject.digest.sha256, digest);
+    assert.equal(evidence.subject.identity.sha256, digest);
     assert.equal(evidence.operation, "trace_android_references");
     const result = evidence.normalized_result;
     assert.equal(result.class_name, "fixture.Target");
@@ -102,7 +102,7 @@ export const verifyAndroidDirectInvokes = async ({
     await client.close();
   }
   assert.equal(
-    await hashAndroidFile(apk),
+    await sha256File(apk),
     digest,
     "Static inspection changed fixture bytes",
   );

@@ -11,6 +11,8 @@ import {
   readStaticCheckArtifact,
   safeSha,
   selectStaticCheckArtifact,
+  STATIC_EVIDENCE_ARTIFACTS,
+  staticCheckArtifactName,
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
@@ -24,8 +26,6 @@ const MAX_MAIN_CANDIDATES = 5;
 const MAX_MAIN_RUN_LOOKUPS = 100;
 const MAX_PATHS_PER_COMPARISON = 50;
 const MAX_API_REQUESTS = 250;
-
-export { classifyFailure } from "./artifacts.mjs";
 
 /** Uses only failed CI candidates present in the supplied bounded timing manifest. */
 export async function reportCiFailures({
@@ -155,13 +155,11 @@ async function analyzeFailedRun({
   for (const job of failedJobs) {
     let classification;
     try {
-      const evidence = await api.getStaticEvidence(repository, run, job);
       classification = await attributeToMain({
         repository,
         defaultBranch,
         run,
         job,
-        evidence,
         mainCandidates,
         api,
       });
@@ -186,14 +184,14 @@ async function attributeToMain({
   defaultBranch,
   run,
   job,
-  evidence,
   mainCandidates,
   api,
 }) {
   const baseSha = pullRequestBaseSha(run, repository);
-  if (baseSha === null || evidence === null)
-    return outcome("unknown", "no_matching_verified_main_failure");
   let result = outcome("unknown", "no_matching_verified_main_failure");
+  if (baseSha === null || mainCandidates.length === 0) return result;
+  const evidence = await api.getStaticEvidence(repository, run, job);
+  if (evidence === null) return result;
   const candidateFailures = [];
   for (const candidate of mainCandidates) {
     try {
@@ -366,12 +364,21 @@ export function createGitHubApi({
       return page.jobs;
     },
     async getStaticEvidence(repository, run, job) {
-      if (job.name !== "Static checks") return null;
-      if (run.run_attempt !== 1) return null;
-      const page = await request(
-        `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
+      const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
+      const attemptName = staticCheckArtifactName(
+        artifactName,
+        run.run_attempt,
       );
-      const artifact = selectStaticCheckArtifact(page, run, run.run_attempt);
+      if (attemptName === null) return null;
+      const page = await request(
+        `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=1&name=${encodeURIComponent(attemptName)}`,
+      );
+      const artifact = selectStaticCheckArtifact(
+        page,
+        run,
+        run.run_attempt,
+        artifactName,
+      );
       if (!artifact) return null;
       return await readStaticCheckArtifact({
         repository,
@@ -462,7 +469,7 @@ function errorCode(error) {
   return error instanceof Error ? error.message.slice(0, 160) : "unknown_error";
 }
 
-export async function writeFailureReport(
+async function writeFailureReport(
   report,
   outputDirectory = OUTPUT_DIRECTORY,
   summaryPath,

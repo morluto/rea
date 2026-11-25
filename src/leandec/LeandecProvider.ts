@@ -8,7 +8,7 @@ import type {
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
@@ -105,7 +105,7 @@ export class LeandecProvider implements AnalysisProviderCandidate {
     options: AnalysisProfileResolutionOptions = {},
   ): Promise<Result<AnalysisProfileResolution, AnalysisError>> {
     if (options.signal?.aborted === true) return ok({ profile: null });
-    if (!this.#resolution.ok) return ok({ profile: null });
+    if (!this.#resolution.ok || this.inspectAvailability().status !== "available") return ok({ profile: null });
     const profile = createAnalysisProfile(
       {
         id: LEANDEC_PROVIDER_IDENTITY.id,

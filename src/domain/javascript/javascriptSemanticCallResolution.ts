@@ -1,4 +1,6 @@
+import { javascriptSourceRangeContains } from "./javascriptSourceCoordinates.js";
 import * as t from "@babel/types";
+import { bindingAssignmentMayPrecede } from "./javascriptSemanticEffectLog.js";
 
 import type {
   JavaScriptSemanticArgumentFlow,
@@ -6,17 +8,13 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   unwrapJavaScriptExpression,
   runtimeFunctionParameters,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticInitializer,
@@ -104,11 +102,7 @@ const resolveIdentifier = (
       complete: false,
       reason: `Unresolved call target ${node.name}.`,
     };
-  const read = semanticBindingAtRead(
-    binding,
-    node,
-    context.state.parentsByNode,
-  );
+  const read = semanticBindingAtRead(binding, node, context.state);
   // A full read re-enters the same candidate set wherever the chain returns
   // to this binding. Close that cycle at the binding; position-narrowed reads
   // keep their per-initializer cycle handling.
@@ -132,9 +126,7 @@ const resolveIdentifier = (
   );
   // Knowing every local candidate does not prove that any write replaced the
   // incoming value, or that a write in another activation precedes this read.
-  const covered =
-    read.hasDefiniteInitializer ||
-    semanticStableInitializer(binding, context.state) !== undefined;
+  const covered = read.hasDefiniteInitializer;
   const resolution =
     candidates.complete && !covered
       ? {
@@ -209,11 +201,8 @@ const resolveBindingCallables = (
   // replacement. Until projected callable resolution is supported here,
   // preserve known candidates without claiming they cover every target.
   const complete =
-    !binding.referenceInitializers.some(
-      (initializer) =>
-        initializer.assignment &&
-        semanticEffectTiming(site, initializer.node, context.state) !== "after",
-    ) && candidates.every(({ complete }) => complete);
+    !bindingAssignmentMayPrecede(context.state, binding, site) &&
+    candidates.every(({ complete }) => complete);
   const resolution = {
     callableIds,
     complete,
@@ -273,7 +262,7 @@ const parameterAcceptsArgument = (
   if (!t.isFunction(node)) return false;
   const parameters = runtimeFunctionParameters(node);
   const parameterIndex = parameters.findIndex((parameter) =>
-    rangeContains(range(parameter), location),
+    javascriptSourceRangeContains(range(parameter), location),
   );
   if (parameterIndex === argumentIndex) return true;
   return (
@@ -282,17 +271,6 @@ const parameterAcceptsArgument = (
     t.isRestElement(parameters[parameterIndex])
   );
 };
-
-const rangeContains = (
-  outer: JavaScriptSemanticArgumentFlow["parameterLocation"],
-  inner: JavaScriptSemanticArgumentFlow["parameterLocation"],
-): boolean =>
-  (outer.start.line < inner.start.line ||
-    (outer.start.line === inner.start.line &&
-      outer.start.column <= inner.start.column)) &&
-  (outer.end.line > inner.end.line ||
-    (outer.end.line === inner.end.line &&
-      outer.end.column >= inner.end.column));
 
 const uniqueCallableIds = (values: readonly string[]): string[] =>
   [...new Set(values)].sort(compareUnicodeCodePoints);

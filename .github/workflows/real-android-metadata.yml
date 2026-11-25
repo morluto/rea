@@ -1,0 +1,50 @@
+name: Real Android metadata bridge
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  android-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version-file: .nvmrc
+      - name: Fetch checksum-pinned engine and public APK fixture
+        run: node scripts/fixtures/android/fetch.mjs "$RUNNER_TEMP/rea-android"
+      - name: Compile and exercise the real metadata bridge
+        shell: bash
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          android_root="$RUNNER_TEMP/rea-android"
+          classes="$android_root/classes"
+          # Derive the fixture's file name from the pinned release identity so an
+          # engine upgrade cannot leave this workflow pointing at a stale path.
+          jar="$android_root/$(node --input-type=module -e 'import { JADX_RELEASE } from "./src/android/JadxRelease.ts"; console.log(`jadx-headless-mcp-${JADX_RELEASE.version}-all.jar`);')"
+          mkdir -p "$classes"
+          "$JAVA_HOME/bin/javac" -J-Xmx512m -J-XX:ActiveProcessorCount=2 \
+            -classpath "$jar" -d "$classes" \
+            bridge/android/ReaJadxBridge.java \
+            tests/conformance/android/ReaJadxMetadataRegression.java \
+            tests/conformance/android/ReaJadxExternalReferencesRegression.java
+          "$JAVA_HOME/bin/java" -Xmx512m -XX:ActiveProcessorCount=2 \
+            -classpath "$classes:$jar" ReaJadxMetadataRegression \
+            "$android_root/ApiDemos-debug.apk" \
+            "$GITHUB_WORKSPACE/tests/fixtures/android/static-initializers" \
+            "$classes" "$GITHUB_WORKSPACE/tests/fixtures/android/direct-invokes" \
+            | tee "$android_root/metadata.log"
+          grep -F 'RAW_CLASS_SELECTOR_REGRESSION_PASS nested=true metadata=true references=true' \
+            "$android_root/metadata.log"
+          "$JAVA_HOME/bin/java" -Xmx512m -XX:ActiveProcessorCount=2 \
+            -classpath "$classes:$jar" ReaJadxExternalReferencesRegression \
+            "$GITHUB_WORKSPACE/tests/fixtures/android/external-invokes" "$classes" \
+            | tee "$android_root/external-references.log"
+          grep -F 'EXTERNAL_REFERENCE_REGRESSION_PASS prototypes=2 using_nodes=3 sites=4' \
+            "$android_root/external-references.log"

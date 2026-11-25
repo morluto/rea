@@ -2,8 +2,8 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+} from "../ports/AnalysisProvider.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { REGEX_MATCHING_LIMITATION } from "../process/RegexMatcher.js";
 
 /** Public identity committed by every Leandec-backed observation. */

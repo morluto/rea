@@ -1,29 +1,30 @@
 import { desktopPathConventions } from "../domain/nativeConvention.js";
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import {
-  DirectoryArtifactReader,
-  DirectoryArtifactTraversalLimit,
-  type DirectoryArtifactEntry,
-} from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import {
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
-} from "./ArtifactFileOperation.js";
-import {
+  ArtifactReaderFailure,
+  artifactFileCompletion,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+  abortIfNeeded,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+  DirectoryArtifactTraversalLimit,
+  type DirectoryArtifactEntry,
+  translateArtifactFailure,
+} from "../resources/index.js";
+import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
   inspectDesktopFile,
+  RETAINED_FACT_BYTES,
+  retainedFactReferenceBytes,
+  retainedTextBytes,
   type DesktopReadBudget,
 } from "./DesktopFileInspection.js";
-import type { DesktopApplicationPort } from "../application/artifacts/DesktopApplicationPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { DesktopApplicationPort } from "../ports/artifacts/DesktopApplicationPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   DesktopApplication,
+  DesktopFact,
   DesktopFile,
   DesktopOmission,
   InspectDesktopApplicationInput,
@@ -32,10 +33,28 @@ import { projectDesktopApplication } from "../domain/desktopApplicationProjectio
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { err, ok } from "../domain/result.js";
 import { createDesktopApplicationEvidence } from "../domain/desktopApplicationEvidence.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
+import {
+  AnalysisResourceConstraintError,
+  AnalysisTargetFailureError,
+} from "../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
 
 const RETAINED_METADATA_BYTES = 32 * 1024 * 1024;
+/**
+ * Upper bound for one file row besides its texts, facts and ranges: the row
+ * and identity objects, file_id, identity strings, arrays, candidate and
+ * component basis IDs and short constant issues. Whole rows, paths included,
+ * measured 800–940 heap and 490–640 JSON bytes on real app bundles (64-bit
+ * Node; #8104).
+ */
+const RETAINED_ROW_BYTES = 1024;
+const RETAINED_OMISSION_BYTES = 512;
+const RETAINED_ISSUE_BYTES = 64;
 
 /** Stop traversal without discarding the preceding bounded observations. */
 class DesktopRepresentationLimit extends ArtifactReaderFailure {
@@ -84,6 +103,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
     } catch (cause: unknown) {
       const error = translateArtifactFailure(
         "inspect_desktop_application",
+        input.path,
         cause,
       );
       return err(error);
@@ -141,6 +161,8 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
       throw this.#resources.cleanupFailure(outcome, [closed], partial);
     if (outcome.kind === "failed") {
       const cause = outcome.cause;
+      if (cause instanceof DirectoryArtifactRootFailure)
+        throw selectedRootFailure(input.path, cause, partial);
       if (!(cause instanceof ArtifactReaderFailure) || partial === undefined)
         throw cause;
       throw new ArtifactReaderFailure(
@@ -152,7 +174,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
           cleanup: cause.cleanup,
           cleanupLeases: cause.cleanupLeases,
           partialObservation: partial,
-          ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
+          ...cause.primaryFacts(),
         },
         cause.details,
       );
@@ -166,6 +188,33 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
     return outcome.value;
   }
 }
+
+/**
+ * The root is the caller's selection: a path that is not a directory is a
+ * selection failure, and host failures keep the shared
+ * target-unavailable/access-denied classification instead of becoming
+ * artifact I/O faults.
+ */
+const selectedRootFailure = (
+  path: string,
+  failure: DirectoryArtifactRootFailure,
+  partialObservation: AnalysisPartialObservation | undefined,
+): AnalysisError =>
+  failure.reason === "path"
+    ? new AnalysisTargetFailureError(
+        "inspect_desktop_application",
+        path,
+        {
+          kind: "selection",
+          format: "desktop-application",
+          detail: `${failure.message}. Select the application's local installation directory, such as a macOS .app bundle or the directory containing its executable.`,
+        },
+        { cause: failure, partialObservation },
+      )
+    : new BinaryTargetError(path, failure.message, {
+        cause: failure.cause,
+        partialObservation,
+      });
 
 const scanDirectory = async (
   reader: DirectoryArtifactReader,
@@ -187,16 +236,24 @@ const scanDirectory = async (
   const files: DesktopFile[] = [];
   const omissions: DesktopOmission[] = [];
   const unityWitnessRoots = new Set<string>();
+  const rootName = basename(root.canonical_path);
   const budget: DesktopReadBudget = {
     bytes: 0,
     maximum: input.max_probe_bytes,
-    retainedBytes: 1024 + (input.path.length + root.canonical_path.length) * 24,
+    retainedBytes:
+      RETAINED_ROW_BYTES +
+      retainedTextBytes(input.path) +
+      retainedTextBytes(root.canonical_path),
     maximumRetainedBytes: RETAINED_METADATA_BYTES,
   };
-  const reserve = (bytes: number) => {
+  const fits = (bytes: number): boolean => {
     if (bytes > budget.maximumRetainedBytes - budget.retainedBytes)
-      throw new DesktopRepresentationLimit();
+      return false;
     budget.retainedBytes += bytes;
+    return true;
+  };
+  const reserve = (bytes: number) => {
+    if (!fits(bytes)) throw new DesktopRepresentationLimit();
   };
   let entries = 0;
   let probed = 0;
@@ -213,7 +270,7 @@ const scanDirectory = async (
     "Unity reference decoding stops after a witness in each Data/Managed directory; other assemblies' references are unexamined. Header facts remain per-file.",
   ];
   try {
-    for await (const entry of reader.entries(signal, {
+    for await (const entry of declaredArtifactEntries(reader, signal, {
       maximumEntries: input.max_entries,
       onOmission: (omission) => {
         if (omission.kind !== "directory-descendants") {
@@ -221,7 +278,7 @@ const scanDirectory = async (
           entries++;
         }
         partial = true;
-        reserve(512 + omission.path.length * 24);
+        reserve(RETAINED_OMISSION_BYTES + retainedTextBytes(omission.path));
         const semantic = {
           root_namespace_id: namespaceId,
           path: omission.path,
@@ -233,21 +290,40 @@ const scanDirectory = async (
           kind: omission.kind,
         });
       },
+      onCoverage: (coverage) => {
+        if (coverage.examinedEntries !== undefined)
+          entries = coverage.examinedEntries;
+        if (coverage.status !== "complete") partial = true;
+        limitations.push(...coverage.limitations);
+      },
     })) {
       entries++;
       abortIfNeeded(signal);
-      // Reserve a conservative representation estimate before retaining path-dependent objects.
-      const reservation =
-        1024 + (entry.path.length + entry.adapterKey.length) * 24;
-      reserve(reservation);
+      const conventions =
+        entry.kind === "file"
+          ? pathConventions(entry.path, rootName)
+          : undefined;
+      // Reserve the row and every repeated path before retaining them: each
+      // convention fact copies at most the path and its probes copy the
+      // local path.
+      reserve(
+        RETAINED_ROW_BYTES +
+          retainedTextBytes(entry.path) +
+          retainedTextBytes(entry.adapterKey) +
+          (conventions?.facts.length ?? 0) *
+            (RETAINED_FACT_BYTES +
+              retainedTextBytes(entry.path) +
+              retainedFactReferenceBytes(entry.adapterKey)),
+      );
       const row = fileRow(entry, namespaceId);
       files.push(row);
       if (entry.kind === "symlink") {
         symlinks++;
         continue;
       }
-      if (entry.kind !== "file") continue;
-      const managedRoot = addPathFacts(row);
+      if (conventions === undefined) continue;
+      row.facts.push(...conventions.facts);
+      const managedRoot = conventions.unityManagedDirectory;
       if (!probeSelected(entry)) continue;
       if (budget.bytes >= budget.maximum) {
         row.read_status = "unavailable";
@@ -284,12 +360,13 @@ const scanDirectory = async (
         if (!(cause instanceof ArtifactReaderFailure)) throw cause;
         const probeIssueCount = row.issues.length;
         row.read_status = "unavailable";
-        row.issues.push(cause.message);
+        // Host failures name the absolute path; charge that copy too.
+        const issueRetained = fits(
+          RETAINED_ISSUE_BYTES + retainedTextBytes(cause.message),
+        );
+        if (issueRetained) row.issues.push(cause.message);
         partial = true;
-        const completedRead =
-          cause instanceof ArtifactFileCancelled ||
-          (cause instanceof ArtifactFileCleanupFailure &&
-            cause.fileCleanupFailure.outcome.kind === "completed");
+        const completedRead = artifactFileCompletion(cause) !== undefined;
         if (completedRead)
           row.read_status = probeIssueCount === 0 ? "examined" : "partial";
         if (
@@ -303,6 +380,7 @@ const scanDirectory = async (
         }
         if (cause.cleanup !== undefined || cause.reason === "cancelled")
           throw cause;
+        if (!issueRetained) throw new DesktopRepresentationLimit();
       }
     }
   } catch (cause: unknown) {
@@ -413,31 +491,46 @@ const fileRow = (
   };
 };
 
-const addPathFacts = (row: DesktopFile): string | null => {
-  const conventions = desktopPathConventions(row.path);
-  if (conventions.electronArchive)
-    row.facts.push({
-      kind: "electron-asar-convention",
+/** Path-convention facts of one file; each value repeats at most the path. */
+const pathConventions = (path: string, rootName: string) => {
+  const conventions = desktopPathConventions(path, rootName);
+  const facts: DesktopFact[] = [];
+  if (
+    conventions.unityIl2cppBackupAssembly &&
+    conventions.unityIl2cppBackupDirectory !== null
+  )
+    facts.push({
+      kind: "unity-il2cpp-backup-convention",
       offset: null,
-      value: row.path,
+      value: { backup_directory: conventions.unityIl2cppBackupDirectory },
     });
+  if (conventions.electronArchive)
+    facts.push({ kind: "electron-asar-convention", offset: null, value: path });
   if (conventions.unrealContainer)
-    row.facts.push({
+    facts.push({
       kind: "unreal-container-convention",
       offset: null,
-      value: row.path,
+      value: path,
     });
   if (conventions.il2cppLibrary)
-    row.facts.push({
+    facts.push({
       kind: "il2cpp-library-convention",
       offset: null,
-      value: row.path,
+      value: path,
     });
-  return conventions.unityManagedDirectory;
+  return {
+    facts,
+    unityManagedDirectory: conventions.unityManagedDirectory,
+  };
 };
 
+/**
+ * Files whose headers are read. Besides host executable marking, which
+ * Windows cannot apply to ELF or Mach-O files, a bundle's `Contents/MacOS/`
+ * entries and extensionless files at the root name conventional Unix mains.
+ */
 const probeSelected = (entry: DirectoryArtifactEntry): boolean =>
   entry.executable ||
-  /(?:\.(?:exe|dll|so|dylib|pck|utoc)|(?:^|\/)global-metadata\.dat|(?:^|\/)data\.win)$/iu.test(
+  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios))|(?:^|\/)Contents\/MacOS\/[^/]+|^[^/.]+)$/iu.test(
     entry.path,
   );

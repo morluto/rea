@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { hashAndroidFile } from "./digest.mjs";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 
 const initializers = [
   {
@@ -98,10 +98,10 @@ export const verifyAndroidMethodBodies = async ({
   environment,
   execute,
 }) => {
-  const digest = await hashAndroidFile(apk);
+  const digest = await sha256File(apk);
   const check = (value, scenario) => {
     const evidence = parseEvidence(value);
-    assert.equal(evidence.subject.digest.sha256, digest);
+    assert.equal(evidence.subject.identity.sha256, digest);
     const result = evidence.normalized_result;
     assert.equal(result.class_name, scenario.class_name);
     assert.equal(result.method.name, scenario.method_name);
@@ -198,7 +198,7 @@ export const verifyAndroidMethodBodies = async ({
     await client.close();
   }
   assert.equal(
-    await hashAndroidFile(apk),
+    await sha256File(apk),
     digest,
     "Static inspection changed fixture bytes",
   );

@@ -1,7 +1,12 @@
+import {
+  transportReplyContracts,
+  HopperFixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
@@ -10,7 +15,7 @@ import type {
   BridgeSession,
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 class ObservedProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -55,48 +60,45 @@ class LifecycleLauncher implements BridgeLauncher {
 
 const start = async (owned: boolean) => {
   const launcher = new LifecycleLauncher(owned);
-  const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  const client = new HopperClient({
+    replyContracts: transportReplyContracts,
+    launcher,
+    startupTimeoutMs: 10_000,
+  });
   onTestFinished(async () => {
     await client.close();
     for (const child of launcher.fixture.processes) child.kill();
-  }, 45_000);
+  });
   expect((await client.start()).ok).toBe(true);
   return { client, launcher };
 };
 
 it("reports launch work until the first authenticated handshake completes", async () => {
   const fixture = new HopperFixtureLauncher(undefined, "quiet", "gated");
-  let enterLaunch: (() => void) | undefined;
-  let releaseLaunch: (() => void) | undefined;
-  const entered = new Promise<void>((resolve) => {
-    enterLaunch = resolve;
-  });
-  const release = new Promise<void>((resolve) => {
-    releaseLaunch = resolve;
-  });
+  const hopperLaunch = phaseGate();
   const client = new HopperClient({
+    replyContracts: transportReplyContracts,
     startupTimeoutMs: 10_000,
     launcher: {
       async launch(session) {
-        enterLaunch?.();
-        await release;
+        await hopperLaunch.hold();
         return fixture.launch(session);
       },
     },
   });
   onTestFinished(async () => {
-    releaseLaunch?.();
+    hopperLaunch.release();
     await client.close();
   });
   const starting = client.callTool("current_document");
-  await entered;
+  await hopperLaunch.reached(starting, "Hopper launch");
   expect(client.requestActivity()).toBeNull();
   expect(client.operationHealth()).toMatchObject({
     state: "busy",
     stage: "launch",
     retryAction: "wait",
   });
-  releaseLaunch?.();
+  hopperLaunch.release();
   const handshake = await fixture.waitForRequest("health");
   expect(client.operationHealth()).toMatchObject({
     state: "busy",
@@ -120,7 +122,7 @@ describe("Hopper provider lifecycle health", () => {
     const pending = client.callTool("hang");
     await launcher.fixture.waitForRequest("hang");
     launcher.fixture.processes.at(-1)?.send({ disconnect: true });
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.operationHealth().state).toBe("unreachable"),
     );
     expect(await pending).toMatchObject({
@@ -203,7 +205,7 @@ describe("Hopper provider lifecycle health", () => {
         },
       },
     );
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(client.requestActivity()?.queuedRequests).toBe(1),
     );
     await launcher.fixture.release(request);
@@ -227,9 +229,7 @@ it("preserves an owned signal exit and diagnostics for active, queued and later 
   const active = client.callTool("hang");
   const request = await launcher.fixture.waitForRequest("hang");
   const queued = client.callTool("echo");
-  await vi.waitFor(() =>
-    expect(client.requestActivity()?.queuedRequests).toBe(1),
-  );
+  await waitFor(() => expect(client.requestActivity()?.queuedRequests).toBe(1));
   const token = launcher.fixture.tokens[0];
   launcher.observed.stderr.write(`API_KEY=local-evidence-kept ${token}\n`);
   launcher.observed.exit(null, "SIGTERM");

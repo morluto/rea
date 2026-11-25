@@ -1,7 +1,7 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, resolve } from "node:path";
 
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 
 /** Resolved Leandec connection; every field comes from the caller's environment. */
 export interface LeandecSettings {
@@ -75,18 +75,20 @@ export const resolveLeandecSettings = (
       reason: `LEANDEC_MCP_SERVER does not name a readable file: ${server}`,
     };
   }
-  const python = environment.LEANDEC_PYTHON?.trim() || "python3";
-  if (python.includes("/")) {
+  const requestedPython = environment.LEANDEC_PYTHON?.trim() || "python3";
+  const candidates = requestedPython.includes("/") || isAbsolute(requestedPython)
+    ? [resolve(dirname(server), requestedPython)]
+    : (environment.PATH ?? "/usr/local/bin:/usr/bin:/bin").split(delimiter)
+      .filter(Boolean).map(directory => resolve(directory, requestedPython));
+  const python = candidates.find(candidate => {
     try {
-      accessSync(python, constants.X_OK);
-    } catch {
-      return {
-        ok: false,
-        code: "runtime_missing",
-        reason: `LEANDEC_PYTHON is missing or not executable: ${python}`,
-      };
-    }
-  }
+      if (!statSync(candidate).isFile()) return false;
+      accessSync(candidate, constants.X_OK);
+      return true;
+    } catch { return false; }
+  });
+  if (python === undefined)
+    return { ok: false, code: "runtime_missing", reason: `Python interpreter is not executable: ${requestedPython}` };
   return {
     ok: true,
     settings: {
@@ -126,6 +128,7 @@ export const leandecAvailability = (
       status: "unavailable",
       code: resolution.code,
       reason: resolution.reason,
+      remediation: "Configure a readable LEANDEC_MCP_SERVER and executable LEANDEC_PYTHON.",
       diagnostics: { platform },
     };
   if (platform === "win32")
@@ -134,6 +137,7 @@ export const leandecAvailability = (
       code: "unsupported_host",
       reason:
         "Leandec's MCP server is developed and tested on macOS and Linux; Windows is not supported by this adapter.",
+      remediation: "Use a supported macOS or Linux host.",
       diagnostics: { platform, server: resolution.settings.server },
     };
   return {

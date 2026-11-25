@@ -13,6 +13,7 @@ No Hopper installation is involved. Leandec is not bundled, downloaded or modifi
 export LEANDEC_MCP_SERVER=/absolute/path/to/leandec/mcp_server.py
 export REA_ANALYSIS_PROVIDER=leandec          # select it explicitly
 export LEANDEC_PYTHON=python3                 # optional, default python3
+rea doctor --provider leandec
 ```
 
 Select it with `--provider leandec`, MCP's `open_binary.provider_id: "leandec"`, or
@@ -33,7 +34,7 @@ request.
 Leandec owns the Ghidra heap and worker limits (`LEANDEC_MAXMEM`, `LEANDEC_CPUS`) because it
 starts the analysis process itself.
 
-The provider is optional. The dedicated `rea doctor --provider leandec` selector is not yet implemented; use a real `open_binary` request followed by `list_procedures` to check the configured server.
+The doctor check inspects configuration and the interpreter without launching Ghidra. For a real-provider smoke check, open a known ELF or Mach-O fixture with MCP `open_binary` and `provider_id: leandec`, then run `list_procedures`, `search_strings`, `procedure_pseudo_code`, `read_bytes`, and `close_binary`. Confirm the returned Evidence digest matches the selected file, and reopen the same fixture to confirm cache reuse. This smoke check requires a working local Leandec/Ghidra installation.
 
 ## What Leandec answers
 
@@ -63,6 +64,7 @@ provider, or Leandec's MCP server directly, for those operations.
 - A different path whose bytes match an existing target reuses that target's key: Leandec's
   import is idempotent for identical content, records the new path as an alias and never
   re-imports into the existing project.
+- Automatic imports copy the selected verified bytes to the private, content-addressed `rea-inputs` directory inside `LEANDEC_HOME` (or Leandec's default cache). Those copies are durable because Leandec's registry refers to them. They are not removed on session close; remove them only with their corresponding Leandec projects. Temporary staging is removed separately.
 - REA declares `cachePolicy: "live"`: Leandec's cache is the durable boundary, so REA does
   not replay its own snapshot and always reflects newly cached text.
 

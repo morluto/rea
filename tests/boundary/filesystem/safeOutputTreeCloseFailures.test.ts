@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { access, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  readFile,
+  rm,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -8,10 +14,14 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const injectedFilesystemFailures = vi.hoisted(() => ({
   closeNext: false,
+  observeClose: undefined as
+    | ((handle: FileHandle, close: () => Promise<void>) => void)
+    | undefined,
   blockCloseRetries: false,
   chmodNext: false,
-  syncAbortAfter: undefined as AbortController | undefined,
-  syncCount: 0,
+  parentSync: undefined as
+    | { path: string; controller: AbortController; handle?: FileHandle }
+    | undefined,
   rootIdentityPath: undefined as string | undefined,
 }));
 
@@ -37,6 +47,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (injectedFilesystemFailures.closeNext) {
         injectedFilesystemFailures.closeNext = false;
         const close = handle.close.bind(handle);
+        injectedFilesystemFailures.observeClose?.(handle, close);
         let attempted = false;
         handle.close = async () => {
           if (!attempted || injectedFilesystemFailures.blockCloseRetries) {
@@ -46,13 +57,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           await close();
         };
       }
-      if (injectedFilesystemFailures.syncAbortAfter !== undefined) {
+      const parentSync = injectedFilesystemFailures.parentSync;
+      if (parentSync !== undefined && args[0] === parentSync.path) {
         const sync = handle.sync.bind(handle);
         handle.sync = async () => {
           await sync();
-          injectedFilesystemFailures.syncCount += 1;
-          if (injectedFilesystemFailures.syncCount === 2)
-            injectedFilesystemFailures.syncAbortAfter?.abort();
+          parentSync.handle = handle;
+          parentSync.controller.abort();
         };
       }
       return handle;
@@ -61,8 +72,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("safe artifact output close failures", () => {
@@ -77,24 +88,44 @@ describe("safe artifact output close failures", () => {
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.byteLength,
       });
+      let failedHandle: FileHandle | undefined;
+      let recover: (() => Promise<void>) | undefined;
+      injectedFilesystemFailures.observeClose = (handle, close) => {
+        failedHandle = handle;
+        recover = close;
+      };
       injectedFilesystemFailures.closeNext = true;
-
-      await expect(tree.commit()).rejects.toMatchObject({
-        cleanup: { resources: [output] },
-      });
-      expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-        "durable output",
-      );
-      expect(await tree.rollback()).toEqual({ status: "not-required" });
-      expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-        "durable output",
-      );
-      await rm(parent, { recursive: true, force: true });
+      try {
+        await expect(tree.commit()).rejects.toMatchObject({
+          cleanup: { resources: [output] },
+        });
+        expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
+          "durable output",
+        );
+        if (failedHandle === undefined)
+          throw new Error("Expected the failed commit handle");
+        expect(failedHandle.fd).toBeGreaterThanOrEqual(0);
+        expect(await tree.rollback()).toEqual({ status: "not-required" });
+        expect(failedHandle.fd).toBe(-1);
+        expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
+          "durable output",
+        );
+      } finally {
+        injectedFilesystemFailures.observeClose = undefined;
+        injectedFilesystemFailures.closeNext = false;
+        try {
+          await tree.rollback();
+        } finally {
+          if (failedHandle !== undefined && failedHandle.fd !== -1)
+            await recover?.();
+          await rm(parent, { recursive: true, force: true });
+        }
+      }
     },
   );
 
   it.skipIf(process.platform === "win32")(
-    "keeps the tree unpublished when cancellation arrives during commit durability",
+    "closes the parent descriptor and keeps output unpublished after cancellation during durability",
     async () => {
       const parent = await createTestTempDirectory("rea-safe-output-cancel-");
       const output = join(parent, "unpublished");
@@ -104,19 +135,23 @@ describe("safe artifact output close failures", () => {
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.byteLength,
       });
-      const controller = new AbortController();
-      injectedFilesystemFailures.syncCount = 0;
-      injectedFilesystemFailures.syncAbortAfter = controller;
+      const parentSync: NonNullable<
+        typeof injectedFilesystemFailures.parentSync
+      > = { path: parent, controller: new AbortController() };
+      injectedFilesystemFailures.parentSync = parentSync;
       try {
-        await expect(tree.commit(controller.signal)).rejects.toMatchObject({
+        await expect(
+          tree.commit(parentSync.controller.signal),
+        ).rejects.toMatchObject({
           reason: "cancelled",
         });
+        expect(parentSync.handle?.fd).toBe(-1);
         expect(tree.published).toBe(false);
       } finally {
-        injectedFilesystemFailures.syncAbortAfter = undefined;
-        injectedFilesystemFailures.syncCount = 0;
+        injectedFilesystemFailures.parentSync = undefined;
+        await tree.rollback();
       }
-      expect(await tree.rollback()).toMatchObject({ status: "complete" });
+      expect(tree.cleanup).toMatchObject({ status: "complete" });
       await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
@@ -184,11 +219,12 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const output = join(root, "published");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("payload.txt", new TextReader("committed bytes"));
-    await writeFile(source, await writer.close());
+    const bytes = await writer.close();
+    await writeFile(source, bytes);
     const client = new ArtifactProvider(process.env).createClient({
       path: source,
       sourcePath: source,
-      sha256: "0".repeat(64),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
       kind: "archive",
       format: "zip",
     });

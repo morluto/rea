@@ -10,17 +10,26 @@ import { join } from "node:path";
 
 import { expect, it as test } from "vitest";
 
+import { runWithAnalysisOperationSnapshot } from "../../../../src/domain/analysisOperationSnapshot.js";
+
 import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallation.js";
-import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
-import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaFileCloseOwner.js";
+import {
+  readKunaConfiguration,
+  kunaFunctionDeadline,
+  kunaProjectDeadline,
+} from "../../../../src/kuna/KunaConfiguration.js";
+import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
+import { makeLauncher, ownedGroupCleanup } from "./kunaVersionProbeProcess.js";
 
 const it = test.skipIf(process.platform === "win32");
 
 it("identifies a caller-selected kuna by version and digest", async () => {
   const root = await createTestTempDirectory("rea-kuna-install-");
-  const kuna = await writeFakeKuna(root);
+  const kuna = await writeFakeKuna(root, {
+    version: { stdout: "kuna 1.1000\n" },
+  });
   const link = join(root, "current-kuna");
   await symlink(kuna, link);
 
@@ -34,7 +43,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
     value: {
       configuration: { command: link, cacheRoot: join(root, "cache") },
       executable: await realpath(kuna),
-      version: "1.833",
+      version: "1.1000",
       verified: true,
       // A `#!` launcher reports its interpreter; ownership checks must not expect the path.
       script: true,
@@ -56,17 +65,59 @@ it("identifies a caller-selected kuna by version and digest", async () => {
   ]);
 });
 
+it("refuses to pair version output with executable bytes replaced during the probe", async () => {
+  const root = await createTestTempDirectory(
+    "rea-kuna-replaced-during-version-",
+  );
+  const kuna = join(root, "kuna");
+  const replacement = `#!${process.execPath}\nconsole.log("kuna 1.900");\n`;
+  const source = `#!${process.execPath}
+const fs = require("node:fs");
+const replacement = ${JSON.stringify(replacement)};
+console.log("kuna 1.833");
+fs.writeFileSync(process.argv[1] + ".new", replacement, { mode: 0o700 });
+fs.renameSync(process.argv[1] + ".new", process.argv[1]);
+`;
+  await writeFile(kuna, source, { mode: 0o700 });
+  await chmod(kuna, 0o700);
+  const before = await readFile(kuna);
+
+  const result = await inspectKunaInstallation({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(root, "cache"),
+  });
+  const after = await readFile(kuna);
+
+  expect(createHash("sha256").update(after).digest("hex")).not.toBe(
+    createHash("sha256").update(before).digest("hex"),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: "version_unresolved",
+      diagnostics: {
+        installation_identity_changed: true,
+        version: "1.833",
+        before_sha256: createHash("sha256").update(before).digest("hex"),
+        after_sha256: createHash("sha256").update(after).digest("hex"),
+        before_bytes: before.length,
+        after_bytes: after.length,
+      },
+    },
+  });
+});
+
 it("accepts another release but reports it as unverified", async () => {
   const root = await createTestTempDirectory("rea-kuna-unverified-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.900\n" },
+    version: { stdout: "kuna 1.989\n" },
   });
 
   const result = await inspectKunaInstallation({ REA_KUNA_COMMAND: kuna });
 
   expect(result).toMatchObject({
     ok: true,
-    value: { version: "1.900", verified: false },
+    value: { version: "1.989", verified: false },
   });
 });
 
@@ -98,7 +149,7 @@ it("reports a failed version probe with its exit status", async () => {
     error: {
       code: "version_unresolved",
       reason: expect.stringContaining("version probe failed"),
-      diagnostics: { exit_code: 3, killed: false },
+      diagnostics: { exit_code: 3, probe_failure_reason: "process" },
     },
   });
 });
@@ -201,37 +252,96 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
       ok: false,
       error: { code: "open_options_invalid", setting },
     });
+  const overridden = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "kuna.project_timeout_ms": 4000,
+        "kuna.function_timeout_ms": 250,
+      },
+    },
+    () => {
+      const parsed = readKunaConfiguration(
+        {
+          ...environment,
+          REA_KUNA_PROJECT_TIMEOUT_MS: "0",
+          REA_KUNA_TIMEOUT_MS: "-1",
+        },
+        "linux",
+      );
+      if (!parsed.ok) throw new Error(parsed.error.reason);
+      return {
+        project: kunaProjectDeadline(parsed.value),
+        function: kunaFunctionDeadline(parsed.value),
+      };
+    },
+  );
+  expect(overridden).toMatchObject({
+    project: { ms: 4000, source: "runtime" },
+    function: { ms: 250, source: "runtime" },
+  });
+  expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "kuna.function_timeout_ms": 250 } },
+      () =>
+        readKunaConfiguration({ ...environment, REA_KUNA_JOBS: "33" }, "linux"),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: { setting: "REA_KUNA_JOBS" },
+  });
 });
 
 it("stops a version probe that ignores SIGTERM instead of waiting on it", async () => {
   const root = await createTestTempDirectory("rea-kuna-probe-term-");
   const kuna = await writeFakeKuna(root, { version: { ignoreTerm: true } });
-  const started = Date.now();
 
   const result = await inspectKunaInstallation(
     { REA_KUNA_COMMAND: kuna },
-    // Long enough for Node to start the fake and install its SIGTERM handler.
-    { probeTimeoutMs: 1500 },
+    // Allow owned-process identity preparation, then exercise the stopped child.
+    { probeTimeoutMs: 4_000 },
   );
 
   expect(result).toMatchObject({
     ok: false,
     error: {
       code: "version_unresolved",
-      diagnostics: { killed: true, deadline_ms: 1500 },
+      diagnostics: {
+        probe_failure_reason: "timeout",
+        deadline_ms: 4_000,
+        signal: "SIGKILL",
+      },
     },
   });
-  // The deadline plus ExecFileOutput's bounded kill grace, never an open-ended wait.
-  expect(Date.now() - started).toBeLessThan(15_000);
+  // The stop escalated past the ignored SIGTERM; waiting on the probe instead
+  // would hang until the test deadline names it.
   const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
   expect(() => process.kill(pid, 0)).toThrow();
-}, 20_000);
+});
 
 it("keeps a version deadline ahead of cancellation during its joined stop", async () => {
   const root = await createTestTempDirectory("rea-kuna-deadline-first-");
   const command = join(root, "probe.cjs");
   const stopped = join(root, "stopped");
   const release = join(root, "release");
+  const launcher = makeLauncher(async (_child, pid) => {
+    process.kill(-pid, "SIGTERM");
+    const waitFor = async (path: string) => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        try {
+          await readFile(path);
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      throw new Error(`Timed out waiting for ${path}`);
+    };
+    await waitFor(stopped);
+    await waitFor(release);
+    return ownedGroupCleanup(pid);
+  });
   await (
     await import("node:fs/promises")
   ).writeFile(
@@ -252,7 +362,11 @@ setTimeout(() => process.exit(9), 10000).unref();
       REA_KUNA_COMMAND: command,
       REA_KUNA_CACHE_DIR: join(root, "cache"),
     },
-    { signal: controller.signal, probeTimeoutMs: 1000 },
+    {
+      signal: controller.signal,
+      probeTimeoutMs: 1_000,
+      processLauncher: launcher.launcher,
+    },
   );
   const outcome = pending.then(
     (value) => ({ kind: "result" as const, value }),
@@ -260,13 +374,11 @@ setTimeout(() => process.exit(9), 10000).unref();
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(stopped).then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 5000 },
+      .poll(() =>
+        readFile(stopped).then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort({ request: "late doctor cancellation" });
@@ -277,7 +389,10 @@ setTimeout(() => process.exit(9), 10000).unref();
         ok: false,
         error: {
           code: "version_unresolved",
-          diagnostics: { deadline_ms: 1000, killed: true },
+          diagnostics: {
+            deadline_ms: 1000,
+            probe_failure_reason: "timeout",
+          },
         },
       },
     });
@@ -329,3 +444,29 @@ it("preserves an already-cancelled caller before admitting a lookup", async () =
   );
   expect(kunaInstallationCancellation(cause)?.reason).toBe(reason);
 });
+
+it.each(["darwin", "linux"] as const)(
+  "preserves native traversal in default cache roots on %s",
+  (platform) => {
+    const home = "/workspace/alias/../home";
+    const environment = { REA_KUNA_COMMAND: "/tools/kuna", HOME: home };
+    const configured = readKunaConfiguration(environment, platform);
+    expect(configured).toMatchObject({
+      value: {
+        cacheRoot:
+          platform === "darwin"
+            ? `${home}/Library/Caches/rea/kuna`
+            : `${home}/.cache/rea/kuna`,
+      },
+    });
+    if (platform === "linux")
+      expect(
+        readKunaConfiguration(
+          { ...environment, XDG_CACHE_HOME: "/workspace/alias/../cache" },
+          platform,
+        ),
+      ).toMatchObject({
+        value: { cacheRoot: "/workspace/alias/../cache/rea/kuna" },
+      });
+  },
+);

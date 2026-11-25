@@ -1,21 +1,24 @@
 import { z } from "zod";
-import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/il2cppMetadataSummarySchema.js";
 import {
   il2cppMetadataSchema,
   inspectIl2cppMetadataInputSchema,
 } from "../../domain/il2cpp/il2cppMetadata.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static IL2CPP metadata is independent of native-analysis providers and Unity installations. */
 export const IL2CPP_TOOL_CONTRACTS = [
   {
     name: "inspect_il2cpp_metadata",
-    ...toolContractMetadata("inspect_il2cpp_metadata"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_il2cpp_metadata", evidenceEffects),
     kind: "artifact-provider",
+    requiresActiveTarget: true,
     description:
-      "Inspect a local Unity IL2CPP global-metadata.dat (versions 29, 31 and 39). Default summary retains complete Evidence and returns artifact identity, version and counts and parent_evidence_id. Query inspect_analysis_view kind il2cpp-metadata, collection sections/images/types/methods, with exact indices or names, fields and pagination. Types also accept image_indices, namespaces and declaring_types; methods accept declaring_types. Filters intersect and empty arrays select none. Each row always keeps index, scoped to its artifact SHA-256 and collection; page offsets count matching rows in metadata order. Explicit detail complete returns all rows. Reads existing files, with 256 MiB input and 64 MiB encoded-report guards and one active inspection per reader. Unsupported versions and malformed metadata return reasons. Type declaring_type is derived from nestedTypes; native code addresses and runtime behavior remain unknown.",
+      "Inspect Unity IL2CPP metadata versions 24/27/29/31/39, optionally linking a selected 64-bit little-endian Mach-O/PE/ELF binary without execution. Returns metadata tables and derived native method links; shared addresses retain every method, zero slots mean no-body, and unknown ownership/relocations stay unknown. Default summary retains complete Evidence for inspect_analysis_view kind il2cpp-metadata using parent_evidence_id, named collections, original indices, fields and pages. Unrequested native counts are null; version27 names may be unknown. generic_instances adds supported static registration-table matches for versions 27/29/31. Executable-byte fallback is inferred and does not verify instruction boundaries. Full detail remains available; static agreement proves neither same-build pairing nor runtime behavior. Resource/unsupported-layout failures name their reasons.",
     inputSchema: inspectIl2cppMetadataInputSchema,
     outputSchema: evidenceResultOf(
       z.union([il2cppMetadataSchema, il2cppMetadataSummaryViewResultSchema]),
@@ -26,6 +29,15 @@ export const IL2CPP_TOOL_CONTRACTS = [
         input: {
           path: "/artifacts/Data/Managed/Metadata/global-metadata.dat",
           detail: "summary",
+        },
+      },
+      {
+        title: "Link method addresses from a universal macOS binary",
+        input: {
+          path: "/artifacts/Game.app/Contents/Resources/Data/il2cpp_data/Metadata/global-metadata.dat",
+          binary_path:
+            "/artifacts/Game.app/Contents/Frameworks/GameAssembly.dylib",
+          binary_architecture: "arm64",
         },
       },
     ],

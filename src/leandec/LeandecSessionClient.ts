@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { open } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, link, lstat, mkdir, open } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   createAnalysisExecution,
@@ -9,7 +10,7 @@ import {
   type AnalysisExecution,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -633,8 +634,15 @@ export class LeandecSessionClient implements AnalysisClient {
     const address = canonicalAddress(wanted);
     if (address === undefined)
       throw new AnalysisInputError(operation, { userMessage: `No exact procedure named ${wanted}.` });
-    const resolved = record(await this.#call("resolve", { target: key, selector: address }, options));
+    const direct = record(await this.#call("sql", { target: key, limit: 1,
+      query: "SELECT addr, name, COALESCE(ns, ''), size FROM functions WHERE kind != 'external' AND addr = '" + address + "'",
+    }, options));
+    const row = list(direct.rows)[0];
+    if (row !== undefined) return inventoryEntry(row);
+    const resolved = record(await this.#call("resolve", { target: key, selector: "0x" + address }, options));
     const entryAddress = canonicalAddress(requiredText(resolved.address)) ?? invalidReply("invalid resolved address");
+    if (entryAddress !== address && canonicalAddress(resolved.inside_address) !== address)
+      throw new AnalysisInputError(operation, { userMessage: INTERIOR_ONLY });
     const name = requiredText(resolved.name);
     return { address: entryAddress, name, qualified: name, size: requiredCount(resolved.size) };
   }
@@ -656,7 +664,8 @@ export class LeandecSessionClient implements AnalysisClient {
     if (cached !== undefined) return cached;
     if (!this.#settings.autoAnalyze)
       throw this.#unavailable("open_binary", "No matching Leandec target is cached. Import the verified target or enable LEANDEC_AUTO_ANALYZE.");
-    await this.#importTarget(input.path, options);
+    const durablePath = await this.#persistInput(input.path, input.digest, options);
+    await this.#importTarget(durablePath, options);
     const imported = await this.#findByDigest(input.digest, options);
     if (imported === undefined)
       throw new AnalysisOutputError("open_binary", "Leandec import did not produce the verified slice");
@@ -700,16 +709,68 @@ export class LeandecSessionClient implements AnalysisClient {
     return { path, digest: selected.digest("hex") };
   }
 
+  async #hashInput(path: string, options: ExecutionOptions): Promise<string> {
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(path, { highWaterMark: 64 * 1024, signal: options.signal })) {
+      options.signal?.throwIfAborted();
+      hash.update(chunk);
+    }
+    return hash.digest("hex");
+  }
+
+  // Leandec retains its imported slice path for subsequent byte reads.
+  // Publish a verified content-addressed file in its explicitly selected cache.
+  async #persistInput(path: string, digest: string, options: ExecutionOptions): Promise<string> {
+    const environment = this.#settings.environment;
+    const state = resolve(this.#settings.cwd, environment.LEANDEC_HOME ??
+      join(environment.HOME ?? homedir(), "Library", "Caches", "leandec"));
+    const directory = join(state, "rea-inputs");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const metadata = await lstat(directory);
+    if (!metadata.isDirectory() || (metadata.mode & 0o077) !== 0 ||
+      (process.getuid !== undefined && metadata.uid !== process.getuid()))
+      throw new AnalysisOutputError("open_binary", "Leandec input cache is not a private owner-controlled directory");
+    const destination = join(directory, digest);
+    const staging = await PrivateRuntimeRoot.create({ parent: directory, prefix: "rea-stage-" });
+    try {
+      const temporary = join(staging.path, "input");
+      await copyFile(path, temporary);
+      if (await this.#hashInput(temporary, options) !== digest)
+        throw new AnalysisOutputError("open_binary", "Leandec staged input digest differs");
+      try { await link(temporary, destination); }
+      catch (cause: unknown) {
+        if (!(cause instanceof Error) || !("code" in cause) || cause.code !== "EEXIST") throw cause;
+      }
+      const stored = await lstat(destination);
+      if (!stored.isFile() || (stored.mode & 0o077) !== 0 ||
+        (process.getuid !== undefined && stored.uid !== process.getuid()) ||
+        await this.#hashInput(destination, options) !== digest)
+        throw new AnalysisOutputError("open_binary", "Leandec durable input does not match verified bytes");
+      return destination;
+    } finally {
+      await staging.close();
+    }
+  }
+
+  #architectureMatches(value: JsonValue | undefined): boolean {
+    const normalize = (arch: unknown): unknown =>
+      arch === "aarch64" ? "arm64" : arch === "amd64" ? "x86_64" : arch;
+    return normalize(value) === this.#target.architecture;
+  }
+
   async #findByDigest(digest: string, options: ExecutionOptions): Promise<string | undefined> {
     const response = await this.#call("targets", {}, options);
     const targets = typeof response === "string" && response.startsWith("no targets yet:") ? [] : list(response);
-    const match = targets.map(record).find(item => item.slice_sha256 === digest && item.arch === this.#target.architecture);
+    const match = targets.map(record).find(item => item.slice_sha256 === digest && this.#architectureMatches(item.arch));
     if (match === undefined) return undefined;
     const key = requiredText(match.key);
     const overview = record(await this.#call("overview", { target: key }, options));
-    if (overview.key !== key || overview.slice_sha256 !== digest || overview.arch !== this.#target.architecture)
+    if (overview.key !== key || overview.slice_sha256 !== digest || !this.#architectureMatches(overview.arch))
       throw new AnalysisOutputError("open_binary", "Leandec cache identity does not match the selected bytes and architecture");
     requiredCount(overview.functions);
+    const slice = requiredText(overview.slice);
+    if (await this.#hashInput(slice, options) !== digest)
+      throw new AnalysisOutputError("open_binary", "Leandec cached slice bytes do not match the verified digest");
     return key;
   }
 
@@ -719,6 +780,7 @@ export class LeandecSessionClient implements AnalysisClient {
         "analyze",
         {
           path,
+          arch: this.#target.architecture ?? "native",
         },
         options,
         this.#settings.importTimeoutMs,

@@ -1,26 +1,22 @@
 #!/usr/bin/env node
 
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
-import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
-import { pathToFileURL } from "node:url";
-import { realpathSync } from "node:fs";
+import { HOST_PLATFORM } from "./platform/HostPlatform.js";
+import {
+  CURRENT_ENTRYPOINT_PATH,
+  isDirectEntrypoint,
+} from "./process/CurrentEntrypointPath.js";
 
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config/parseConfig.js";
-import { createBinarySession } from "./composition/binary.js";
-import { createLogger } from "./logger.js";
+import type { McpHttpCommand } from "./cliBuiltinArguments.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
-import { SERVER_START_FAILED } from "./main/messages.js";
-import { openInitialTarget } from "./main/startup.js";
-import { startMcpTransport } from "./main/transport.js";
-import {
-  createOptionalObservationFactories,
-  loadOptionalObservationProviders,
-} from "./composition/optionalObservationProviders.js";
-import { createToolResultDelivery } from "./server/toolResult.js";
-import { createShutdown } from "./main/shutdown.js";
+import { runDeferred } from "./main/deferredRuntime.js";
+import { RECORDED_MCP_CATALOG_SHA256 } from "./recordedMcpCatalog.js";
+import { SERVER_START_FAILED } from "./server/serverStartFailure.js";
+
 import {
   createExitStatus,
   latchSignalShutdown,
@@ -36,6 +32,7 @@ import {
 
 const runtimeDependencies = (): RuntimeDependencies => ({
   env: process.env,
+  stdin: process.stdin,
   serve: serveStdio,
   writeStderr: (text) => process.stderr.write(text),
   setExitCode: (code) => {
@@ -53,6 +50,7 @@ const httpRuntimeDependencies = (
   const base = runtimeDependencies();
   return {
     ...base,
+    transport: "http",
     setExitCode: exit.set,
     serve: async (factory, options) => {
       // Loaded here so the default stdio entry never loads the HTTP listener.
@@ -90,58 +88,64 @@ const httpRuntimeDependencies = (
   };
 };
 
-/**
- * Start the long-lived MCP adapter and install idempotent shutdown handlers.
- * The adapter owns its BinarySession for the process lifetime; stdin EOF on
- * the stdio transport and process signals on either transport close bridge
- * resources without assuming ownership of the Hopper app.
- */
+/** Start discovery without constructing unused analysis validators. */
 export const run = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
 ): Promise<number> => {
-  const environment = snapshotEnvironment(dependencies.env);
+  const environment = snapshotEnvironment(
+    dependencies.env,
+    HOST_PLATFORM.platform,
+  );
   const config = parseConfig(environment);
   if (!config.ok) {
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const logger = createLogger("mcp", config.value.logLevel);
-  const serverLogger = logger.child({ layer: "server" });
-  const session = createBinarySession(config.value, logger, environment);
-  const opened = await openInitialTarget(
-    session,
+  // The deferred server serves build-recorded output advertisements for
+  // both profiles (omitted, or compact when recorded at build time).
+  const recordedOutputCatalog = true;
+  // Progressive discovery needs scoped identity before the first analysis.
+  // Ordinary tool listings can defer that identity to the canonical runtime.
+  const scopedProgressiveCatalog =
+    config.value.mcpToolFamilies !== undefined &&
+    config.value.mcpToolCatalogProfile === "hot-cold";
+  if (
+    RECORDED_MCP_CATALOG_SHA256 !== undefined &&
+    dependencies.transport !== "http" &&
+    config.value.hopperTargetPath === undefined &&
+    recordedOutputCatalog &&
+    !scopedProgressiveCatalog &&
+    dependencies.createServer === undefined &&
+    dependencies.loadOptionalProviders === undefined
+  ) {
+    return runDeferred({ ...dependencies, env: environment }, config.value);
+  }
+  return (await import("./main/eagerRuntime.js")).runEager(
+    { ...dependencies, env: environment },
     config.value,
-    serverLogger,
-    dependencies.writeStderr,
   );
-  if (!opened.ok) return opened.exitCode;
-  const transport = await startMcpTransport(dependencies, session, {
-    logger,
-    serverLogger,
-    environment,
-    delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
-    loadOptionalProviders:
-      dependencies.loadOptionalProviders ??
-      (() =>
-        loadOptionalObservationProviders(
-          createOptionalObservationFactories(environment),
-        )),
-  });
-  if (!transport.ok) return 1;
-  createShutdown({
-    handle: transport.handle,
-    closeAndroid: transport.closeAndroid,
-    closeOptionalProviders: transport.closeOptionalProviders,
-    session,
-    dependencies,
-    serverLogger,
-  });
-  return 0;
+};
+
+/** Only the production entrypoints read the account's configuration file. */
+const runWithUserConfiguration = async (
+  dependencies: RuntimeDependencies,
+): Promise<number> => {
+  const { loadUserConfiguration } =
+    await import("./application/UserConfigurationStore.js");
+  const configuration = await loadUserConfiguration(
+    snapshotEnvironment(dependencies.env, HOST_PLATFORM.platform),
+  );
+  if (!configuration.ok) {
+    dependencies.writeStderr(`${configuration.error.message}\n`);
+    return 1;
+  }
+  return run({ ...dependencies, env: configuration.value.environment });
 };
 
 /** Run the executable boundary without exposing an unexpected startup cause. */
 export const runEntrypoint = async (
-  start: () => Promise<number> = () => run(),
+  start: () => Promise<number> = () =>
+    runWithUserConfiguration(runtimeDependencies()),
   writeStderr: (text: string) => void = (text) => process.stderr.write(text),
   setExitCode: (code: number) => void = (code) => {
     process.exitCode = code;
@@ -173,14 +177,14 @@ const processIo: EntrypointIo = {
   },
 };
 
-/** Run `rea mcp --http`: parse its flags, resolve MCP_HOST/MCP_PORT, then serve over HTTP. */
+/** Validate the selected HTTP command, resolve MCP_HOST/MCP_PORT, then serve over HTTP. */
 export const runMcpHttpEntrypoint = async (
-  arguments_: readonly string[],
+  command: McpHttpCommand,
   io: EntrypointIo = processIo,
 ): Promise<void> => {
-  const { parseMcpHttpArguments, renderMcpHttpHelp } =
+  const { validateMcpHttpCommand, renderMcpHttpHelp } =
     await import("./main/mcpHttpArguments.js");
-  const parsed = parseMcpHttpArguments(arguments_);
+  const parsed = validateMcpHttpCommand(command);
   if (!parsed.ok) {
     if (parsed.help) {
       io.writeStdout(`${renderMcpHttpHelp()}\n`);
@@ -191,10 +195,16 @@ export const runMcpHttpEntrypoint = async (
     io.setExitCode(1);
     return;
   }
-  const endpoint = parseMcpHttpEndpoint(snapshotEnvironment(process.env), {
-    ...(parsed.host === undefined ? {} : { host: parsed.host }),
-    ...(parsed.port === undefined ? {} : { port: parsed.port }),
-  });
+  const endpoint = parseMcpHttpEndpoint(
+    snapshotEnvironment(process.env, HOST_PLATFORM.platform),
+    {
+      ...(parsed.host === undefined ? {} : { host: parsed.host }),
+      ...(parsed.port === undefined ? {} : { port: parsed.port }),
+      ...(parsed.allowedHosts === undefined
+        ? {}
+        : { allowedHosts: [...parsed.allowedHosts] }),
+    },
+  );
   if (!endpoint.ok) {
     io.writeStderr(`${projectAnalysisError(endpoint.error).message}\n`);
     io.setExitCode(1);
@@ -205,25 +215,15 @@ export const runMcpHttpEntrypoint = async (
   const exit = createExitStatus(io.setExitCode);
   try {
     await runEntrypoint(
-      () => run(httpRuntimeDependencies(endpoint.value, latch, exit)),
+      () =>
+        runWithUserConfiguration(
+          httpRuntimeDependencies(endpoint.value, latch, exit),
+        ),
       io.writeStderr,
       exit.set,
     );
   } finally {
     latch.release();
-  }
-};
-
-/** Return false when the runtime's argv path is synthetic or no longer exists. */
-const isDirectEntrypoint = (
-  entryPath: string | undefined,
-  moduleUrl: string,
-): boolean => {
-  if (entryPath === undefined) return false;
-  try {
-    return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
-  } catch {
-    return false;
   }
 };
 

@@ -1,3 +1,5 @@
+import { createEmptyIl2cppMetadataFixture } from "../../domain/il2cpp/il2cppMetadata.fixture.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { expect, it } from "vitest";
 import { Il2cppMetadataService } from "./Il2cppMetadataService.js";
 import {
@@ -6,46 +8,49 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import {
-  IL2CPP_METADATA_SECTION_NAMES,
-  type Il2cppMetadata,
-} from "../../domain/il2cpp/il2cppMetadata.js";
-import { ok } from "../../domain/result.js";
+import type { Il2cppMetadata } from "../../domain/il2cpp/il2cppMetadata.js";
+import { err, ok } from "../../domain/result.js";
+import { EvidenceFileError } from "../../domain/evidenceErrors.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import type { Il2cppSeedWriterPort } from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
+import { toolContract } from "../../contracts/toolContracts.js";
+import { z } from "zod";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity = {
   id: "fixture-il2cpp",
   name: "Source-owned IL2CPP reader seam",
   version: "1",
 };
-const report: Il2cppMetadata = {
-  artifact: {
-    path: "/artifacts/global-metadata.dat",
-    sha256: "a".repeat(64),
-    bytes: 1024,
+const report = createEmptyIl2cppMetadataFixture();
+
+it.each([{ binary_architecture: "arm64" }, { generic_instances: true }])(
+  "binds binary-dependent selectors in the named input contract: %j",
+  (selection) => {
+    const schema = toolContract("inspect_il2cpp_metadata").inputSchema;
+    const validate = new Ajv2020({ strict: false }).compile(
+      z.toJSONSchema(schema, { io: "input" }),
+    );
+    const missingBinary = { path: report.artifact.path, ...selection };
+    const selectedBinary = {
+      ...missingBinary,
+      binary_path: "/artifacts/GameAssembly.dll",
+    };
+    expect(schema.safeParse(missingBinary).success).toBe(false);
+    expect(validate(missingBinary)).toBe(false);
+    expect(schema.safeParse(selectedBinary).success).toBe(true);
+    expect(validate(selectedBinary)).toBe(true);
+    expect(
+      schema.safeParse({ path: report.artifact.path, generic_instances: false })
+        .success,
+    ).toBe(true);
   },
-  magic: 0xfab11baf,
-  metadata_version: 39,
-  index_widths: {
-    type_definition: 1,
-    generic_container: 1,
-    parameter: 1,
-    type: 1,
-    type_width_source: "interface-offsets-record",
-  },
-  sections: IL2CPP_METADATA_SECTION_NAMES.map((name) => ({
-    name,
-    offset: 380,
-    size: 0,
-    count: 0,
-  })),
-  images: [],
-  types: [],
-  methods: [],
-  limitations: [],
-};
+);
 
 const serviceReturning = (value: Il2cppMetadata, calls = { count: 0 }) =>
   new Il2cppMetadataService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls.count += 1;
@@ -63,8 +68,10 @@ it("rejects invalid paths and extra arguments before invoking the reader", async
     { path: report.artifact.path, detail: "rows" },
   ]) {
     const result = await service.inspect(input);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.any(AnalysisInputError),
+    });
   }
   expect(calls.count).toBe(0);
 });
@@ -93,9 +100,8 @@ it("returns explicit complete artifact-bound Evidence without retention", async 
   expect(result.value.parameters).toEqual({ path: report.artifact.path });
   expect(result.value.normalized_result).toEqual(report);
   expect(result.value.subject).toMatchObject({
-    format: "file",
     local_path: report.artifact.path,
-    digest: { sha256: report.artifact.sha256 },
+    identity: { format: "file", sha256: report.artifact.sha256 },
   });
 });
 
@@ -125,6 +131,7 @@ it("reports cancellation before and after reading", async () => {
 
   const during = new AbortController();
   const service = new Il2cppMetadataService({
+    close: async () => {},
     identity,
     inspect: () => {
       during.abort();
@@ -145,3 +152,160 @@ it("reports cancellation before and after reading", async () => {
     });
   }
 });
+
+const linkedReport = (): Il2cppMetadata => ({
+  ...report,
+  binary: {
+    artifact: {
+      path: "/artifacts/GameAssembly.dll",
+      sha256: "b".repeat(64),
+      bytes: 4096,
+    },
+    format: "pe",
+    architecture: "amd64",
+    image_base: "0x1000",
+    code_gen_modules_field: "0x1100",
+    code_gen_modules_array: "0x1200",
+    code_gen_modules: [],
+    types_field: "0x1300",
+    types_count: 0,
+    generic_methods: null,
+  },
+});
+const seedWriter = (
+  write: Il2cppSeedWriterPort["write"],
+  close: () => Promise<void> = async () => {},
+): Il2cppSeedWriterPort => ({ check: async () => ok(undefined), write, close });
+const selectedPair = {
+  path: report.artifact.path,
+  binary_path: "/artifacts/GameAssembly.dll",
+  detail: "complete",
+} as const;
+it("preserves source Evidence and requested output choices when publication fails", async () => {
+  const failure = new EvidenceFileError("write", "io", {
+    path: "/output/seeds.tsv",
+  });
+  const service = new Il2cppMetadataService(
+    {
+      close: async () => {},
+      identity,
+      inspect: async () => ok(linkedReport()),
+    },
+    seedWriter(async () => err(failure)),
+  );
+  const result = await service.inspectWithGhidraSeeds(selectedPair, {
+    path: "/output/seeds.tsv",
+    base: "0x2000",
+  });
+  if (result.ok) throw new Error("Failed publication accepted");
+  expect(result.error).toBe(failure);
+  expect(result.error.partialObservation).toMatchObject({
+    operation: "inspect_il2cpp_metadata",
+    parameters: {
+      path: selectedPair.path,
+      binary_path: selectedPair.binary_path,
+      ghidra_seeds: "/output/seeds.tsv",
+      seed_base: "0x2000",
+    },
+  });
+  await service.close();
+});
+it("retains a published seed receipt if cancellation arrives after the atomic write", async () => {
+  const controller = new AbortController(),
+    reason = new Error("cancel after publication");
+  const receipt = {
+    path: "/output/seeds.tsv",
+    bytes: 200,
+    functions: 0,
+    folded: 0,
+    no_body: 0,
+    unknown: 0,
+    generic_instances: null,
+  };
+  const service = new Il2cppMetadataService(
+    {
+      close: async () => {},
+      identity,
+      inspect: async () => ok(linkedReport()),
+    },
+    seedWriter(async () => {
+      controller.abort(reason);
+      return ok(receipt);
+    }),
+  );
+  const result = await service.inspectWithGhidraSeeds(
+    selectedPair,
+    { path: receipt.path },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Cancellation ignored");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.diagnostics).toMatchObject({
+    published_seed_output: receipt,
+  });
+  await service.close();
+});
+it("closes both ports and keeps combined cleanup incomplete until both owners resolve", async () => {
+  const metadata = new ProviderCleanupError(
+      identity.id,
+      ["metadata-reader"],
+      {},
+    ),
+    output = new ProviderCleanupError(identity.id, ["seed-output"], {});
+  let metadataCloses = 0,
+    seedCloses = 0;
+  const service = new Il2cppMetadataService(
+    {
+      identity,
+      inspect: async () => ok(report),
+      close: async () => {
+        metadataCloses++;
+        throw metadata;
+      },
+    },
+    seedWriter(
+      async () => {
+        throw new Error("not used");
+      },
+      async () => {
+        seedCloses++;
+        throw output;
+      },
+    ),
+  );
+  let combined;
+  try {
+    await service.close();
+  } catch (cause) {
+    combined = cause;
+  }
+  expect(metadataCloses).toBe(1);
+  expect(seedCloses).toBe(1);
+  expect(combined).toBeInstanceOf(AnalysisError);
+  if (!(combined instanceof AnalysisError))
+    throw new Error("Missing cleanup failure");
+  const failure = combined;
+  expect([...failure.cleanupResources].sort()).toEqual([
+    "metadata-reader",
+    "seed-output",
+  ]);
+  releaseOwnedCleanup(output);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(metadata);
+  expect(failure.cleanupIncomplete).toBe(false);
+});
+it.each([
+  ["static", null, "derived"],
+  ["module array", "code_gen_modules_field", "inferred"],
+  ["type table", "types_field", "inferred"],
+] as const)(
+  "classifies native association confidence (%s)",
+  async (_, inferred, confidence) => {
+    const value = linkedReport();
+    if (inferred !== null) value.binary![inferred] = null;
+    const result = await serviceReturning(value).inspect(selectedPair);
+    if (!result.ok) throw result.error;
+    expect(result.value.confidence).toBe(confidence);
+  },
+);

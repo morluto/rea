@@ -1,6 +1,10 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
 
@@ -8,14 +12,17 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -27,16 +34,14 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
+  return connectFixtureClient(
+    server,
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    resources,
+  );
 };
 
 const structured = (result: CallToolResult): Record<string, unknown> => {
@@ -110,15 +115,14 @@ it("advertises the complete currently available inventory with a session", async
       }) satisfies AnalysisClient,
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+  const client = await connectFixtureClient(
+    server,
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    resources,
+  );
 
   const listed = await client.listTools();
   const names = listed.tools.map((t) => t.name);
@@ -127,12 +131,12 @@ it("advertises the complete currently available inventory with a session", async
   );
   if (sessionTool === undefined)
     throw new Error("Missing advertised binary_session tool");
-  // Validate this reply with its current advertised schema. The SDK otherwise
+  // Validate this reply with its canonical output schema. The SDK otherwise
   // builds output validators for the entire catalog on the first cached call.
   const status = structured(
     await client.callTool(
       { name: "binary_session", arguments: {} },
-      { toolDefinition: sessionTool },
+      { toolDefinition: withCanonicalOutputSchema(sessionTool) },
     ),
   );
   const inventory = expandToolAvailability(
@@ -163,9 +167,20 @@ it("advertises the complete currently available inventory with a session", async
     const contract = contracts.get(tool.name);
     expect(contract, tool.name).toBeDefined();
     expect(tool.title, tool.name).toBe(contract?.title);
-    expect(tool.description, tool.name).toBe(contract?.description);
+    // The default compact input profile moves input guidance from the schema
+    // to the end of the contract description.
+    if (contract === undefined) continue;
+    expect(tool.description, tool.name).toBe(
+      advertiseTool(
+        {
+          description: contract.description,
+          inputSchema: advertisedInputJsonSchema(contract),
+        },
+        advertisedToolPresentation("off"),
+      ).description,
+    );
     expect(tool.annotations, tool.name).toEqual(contract?.annotations);
     expect(tool.inputSchema, tool.name).toBeDefined();
-    expect(tool.outputSchema, tool.name).toBeDefined();
+    expect(canonicalOutputSchema(tool.name), tool.name).toBeDefined();
   }
-}, 10_000);
+});

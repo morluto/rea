@@ -1,19 +1,15 @@
-import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
   failures: new Map<string, string>(),
   abortErrors: new Set<string>(),
-  reads: [] as string[],
   tasks: new Map<number, readonly string[]>(),
   children: new Map<string, string>(),
   holdPath: undefined as string | undefined,
-  holdStarted: false,
   holdStartedResolve: undefined as (() => void) | undefined,
-  abortObserved: false,
   abortObservedResolve: undefined as (() => void) | undefined,
   holdReaddirPath: undefined as string | undefined,
   readdirGate: undefined as Promise<void> | undefined,
-  readdirStarted: false,
   readdirStartedResolve: undefined as (() => void) | undefined,
   readdirCount: 0,
   psFailure: undefined as string | undefined,
@@ -36,92 +32,21 @@ const fixture = vi.hoisted(() => ({
   >(),
   runId: "fixture-run-token",
   runIdFailure: undefined as string | undefined,
+  runIdCause: undefined as unknown,
+  runIdAvailability: undefined as "absent" | "unavailable" | undefined,
   runIdReads: 0,
+  runIdReadResolve: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...filesystem,
-    readFile: async (...args: Parameters<typeof filesystem.readFile>) => {
-      const [path, options] = args;
-      const filename = String(path);
-      if (!filename.startsWith("/proc/")) return filesystem.readFile(...args);
-      fixture.reads.push(filename);
-      const code = fixture.failures.get(filename);
-      if (code !== undefined) throw Object.assign(new Error(code), { code });
-      if (fixture.abortErrors.has(filename)) {
-        const error = new Error("unexpected abort-shaped filesystem error");
-        error.name = "AbortError";
-        throw error;
-      }
-      if (filename === fixture.holdPath) {
-        fixture.holdStarted = true;
-        fixture.holdStartedResolve?.();
-        const signal =
-          typeof options === "object" && options !== null && "signal" in options
-            ? options.signal
-            : undefined;
-        await new Promise<never>((_resolve, reject) => {
-          if (signal?.aborted) {
-            const error = Object.assign(new Error("sampling cancelled"), {
-              cause: signal.reason,
-            });
-            error.name = "AbortError";
-            reject(error);
-            return;
-          }
-          signal?.addEventListener(
-            "abort",
-            () => {
-              fixture.abortObserved = true;
-              fixture.abortObservedResolve?.();
-              const error = Object.assign(new Error("sampling cancelled"), {
-                cause: signal?.reason,
-              });
-              error.name = "AbortError";
-              reject(error);
-            },
-            { once: true },
-          );
-        });
-      }
-      const statMatch = /^\/proc\/(\d+)\/stat$/u.exec(filename);
-      let value: string | Buffer;
-      if (statMatch !== null) {
-        const pid = Number(statMatch[1]);
-        const reads = (fixture.statReads.get(pid) ?? 0) + 1;
-        fixture.statReads.set(pid, reads);
-        if (pid === fixture.statWaitPid && reads >= fixture.statWaitCount)
-          fixture.statWaitResolve?.();
-        value = statLine(pid, reads);
-      } else {
-        const childMatch = /^\/proc\/(\d+)\/task\/(\d+)\/children$/u.exec(
-          filename,
-        );
-        if (childMatch !== null)
-          value =
-            fixture.children.get(`${childMatch[1]}:${childMatch[2]}`) ?? "";
-        else if (/^\/proc\/\d+\/cmdline$/u.test(filename))
-          value = Buffer.from(`fixture-command-${filename.split("/")[2]}\0`);
-        else throw new Error(`Unexpected proc fixture read: ${filename}`);
-      }
-      if (
-        typeof options === "object" &&
-        options !== null &&
-        "encoding" in options &&
-        options.encoding === "utf8"
-      )
-        return typeof value === "string" ? value : value.toString("utf8");
-      return Buffer.isBuffer(value) ? value : Buffer.from(value);
-    },
     readdir: async (...args: Parameters<typeof filesystem.readdir>) => {
       const [path] = args;
       const filename = String(path);
       if (!filename.startsWith("/proc/")) return filesystem.readdir(...args);
-      fixture.reads.push(filename);
       if (filename === fixture.holdReaddirPath) {
-        fixture.readdirStarted = true;
         fixture.readdirCount += 1;
         fixture.readdirStartedResolve?.();
         await fixture.readdirGate;
@@ -144,9 +69,75 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../ProcessOwnership.js", () => ({
+vi.mock("../ProcessInspectionFile.js", () => ({
+  readProcessInspectionFile: async (filename: string, signal?: AbortSignal) => {
+    if (!filename.startsWith("/proc/"))
+      throw new Error(`Unexpected inspection fixture path: ${filename}`);
+    const code = fixture.failures.get(filename);
+    if (code !== undefined) throw Object.assign(new Error(code), { code });
+    if (fixture.abortErrors.has(filename)) {
+      const error = new Error("unexpected abort-shaped filesystem error");
+      error.name = "AbortError";
+      throw error;
+    }
+    if (filename === fixture.holdPath) {
+      fixture.holdStartedResolve?.();
+      await new Promise<never>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new ProcessOwnershipInspectionCancelled(signal.reason));
+          return;
+        }
+        signal?.addEventListener(
+          "abort",
+          () => {
+            fixture.abortObservedResolve?.();
+            reject(new ProcessOwnershipInspectionCancelled(signal?.reason));
+          },
+          { once: true },
+        );
+      });
+    }
+    const statMatch = /^\/proc\/(\d+)\/stat$/u.exec(filename);
+    let value: string | Buffer;
+    if (statMatch !== null) {
+      const pid = Number(statMatch[1]);
+      const reads = (fixture.statReads.get(pid) ?? 0) + 1;
+      fixture.statReads.set(pid, reads);
+      if (pid === fixture.statWaitPid && reads >= fixture.statWaitCount)
+        fixture.statWaitResolve?.();
+      value = statLine(pid, reads);
+    } else {
+      const childMatch = /^\/proc\/(\d+)\/task\/(\d+)\/children$/u.exec(
+        filename,
+      );
+      if (childMatch !== null)
+        value = fixture.children.get(`${childMatch[1]}:${childMatch[2]}`) ?? "";
+      else if (/^\/proc\/\d+\/cmdline$/u.test(filename))
+        value = Buffer.from(`fixture-command-${filename.split("/")[2]}\0`);
+      else throw new Error(`Unexpected proc fixture read: ${filename}`);
+    }
+    return value.toString();
+  },
+}));
+
+vi.mock("../ProcessOwnership.js", async (original) => ({
+  ...(await original<typeof import("../ProcessOwnership.js")>()),
+  cleanupOwnedProcessGroup: async () => {
+    throw new Error("Unexpected native process cleanup");
+  },
   readProcessRunId: async () => {
     fixture.runIdReads += 1;
+    fixture.runIdReadResolve?.();
+    if (fixture.runIdCause !== undefined) throw fixture.runIdCause;
+    if (
+      fixture.runIdFailure !== undefined &&
+      fixture.runIdAvailability !== undefined
+    )
+      throw new ProcessRunTokenReadError(
+        100,
+        fixture.runIdAvailability,
+        fixture.runIdFailure,
+      );
     if (fixture.runIdFailure !== undefined)
       throw Object.assign(new Error(fixture.runIdFailure), {
         code: fixture.runIdFailure,
@@ -155,7 +146,8 @@ vi.mock("../ProcessOwnership.js", () => ({
   },
 }));
 
-vi.mock("../ExecFileOutput.js", () => ({
+vi.mock("../ExecFileOutput.js", async (original) => ({
+  ...(await original<typeof import("../ExecFileOutput.js")>()),
   execFileOutput: async () => {
     fixture.psReads += 1;
     if (fixture.psFailure !== undefined)
@@ -166,21 +158,18 @@ vi.mock("../ExecFileOutput.js", () => ({
   },
 }));
 
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
+import { ProcessCaptureInspectionFailure } from "./ProcessCaptureError.js";
+import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
+import { ProcessOwnershipInspectionCancelled } from "../ProcessInspectionCancellation.js";
+import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
 import type { ProcessSample } from "../../domain/process/processCapture.js";
 
-const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
-beforeAll(() => {
-  Object.defineProperty(process, "platform", {
-    configurable: true,
-    value: "linux",
-  });
-});
-afterAll(() => {
-  if (platformDescriptor !== undefined)
-    Object.defineProperty(process, "platform", platformDescriptor);
-});
+/** The sampled host; one Darwin case selects ps-only admission. */
+let platform: NodeJS.Platform = "linux";
 
 const processRows = [
   { pid: 100, parent: 1, start: 1100 },
@@ -209,28 +198,24 @@ const statLine = (pid: number, read: number): string => {
   return `${String(reportedPid)} (fixture-${String(pid)}) ${fields.join(" ")}`;
 };
 
-const psFixture = (): string =>
+const psFixture = (commandPrefix = "fixture-command"): string =>
   processRows
     .map(
       ({ pid, parent }) =>
-        `${String(pid)} ${String(parent)} 100 100 fixture-command-${String(pid)}`,
+        `${String(pid)} ${String(parent)} 100 100 ${commandPrefix}-${String(pid)}`,
     )
     .join("\n");
 
 const setUpFixture = (): void => {
   fixture.failures.clear();
   fixture.abortErrors.clear();
-  fixture.reads.length = 0;
   fixture.tasks.clear();
   fixture.children.clear();
   fixture.holdPath = undefined;
-  fixture.holdStarted = false;
   fixture.holdStartedResolve = undefined;
-  fixture.abortObserved = false;
   fixture.abortObservedResolve = undefined;
   fixture.holdReaddirPath = undefined;
   fixture.readdirGate = undefined;
-  fixture.readdirStarted = false;
   fixture.readdirStartedResolve = undefined;
   fixture.readdirCount = 0;
   fixture.psFailure = undefined;
@@ -242,23 +227,34 @@ const setUpFixture = (): void => {
   fixture.statReads.clear();
   fixture.statMutations.clear();
   fixture.runIdFailure = undefined;
+  fixture.runIdCause = undefined;
+  fixture.runIdAvailability = undefined;
   fixture.runIdReads = 0;
+  fixture.runIdReadResolve = undefined;
   for (const pid of [100, 200, 300, 400]) fixture.tasks.set(pid, [String(pid)]);
   fixture.children.set("100:100", "200 400");
   fixture.children.set("200:200", "300");
 };
 
-const start = () => {
+const start = (
+  runId = fixture.runId,
+  onSample?: (sample: ProcessSample) => void,
+) => {
   const samples: ProcessSample[] = [];
+  const resourceScope = new ProcessCaptureResourceScope();
   const stop = startProcessSampler({
+    platform,
     rootPid: 100,
-    runId: fixture.runId,
+    runId,
     started: 0,
     limit: 20,
     samples,
+    resourceScope,
+    recordEvent: (_channel, index) => onSample?.(samples[index]!),
   });
   onTestFinished(async () => {
     await stop();
+    await resourceScope.close();
   });
   return { samples, stop };
 };
@@ -272,7 +268,7 @@ const waitFor = async (condition: () => boolean): Promise<void> => {
   }
 };
 
-it("rejects a mismatched stat PID and zero process-group/session IDs at sampling admission", async () => {
+it("rejects a mismatched stat PID at sampling admission", async () => {
   setUpFixture();
   fixture.statMutations.set(100, { read: 1, pid: 200 });
   const wrongPid = await readLinuxProcessStat(
@@ -280,19 +276,29 @@ it("rejects a mismatched stat PID and zero process-group/session IDs at sampling
     new AbortController().signal,
   );
   expect(wrongPid.value).toBeUndefined();
-
-  setUpFixture();
-  fixture.statMutations.set(100, {
-    read: 1,
-    processGroupId: 0,
-    sessionId: 0,
+  expect(wrongPid.diagnostics).toMatchObject({
+    count: 1,
+    first: "/proc/100/stat: malformed process identity",
   });
-  const zeroGroups = await readLinuxProcessStat(
-    100,
-    new AbortController().signal,
-  );
-  expect(zeroGroups.value).toBeUndefined();
 });
+
+it.each([0, -1])(
+  "does not classify native unavailable relations (%s) as malformed identity",
+  async (relation) => {
+    setUpFixture();
+    fixture.statMutations.set(100, {
+      read: 1,
+      processGroupId: relation,
+      sessionId: relation,
+    });
+    const observed = await readLinuxProcessStat(
+      100,
+      new AbortController().signal,
+    );
+    expect(observed.value).toBeUndefined();
+    expect(observed.diagnostics).toMatchObject({ count: 0, first: null });
+  },
+);
 
 const flushImmediateProcPass = async (): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -307,6 +313,17 @@ const deferred = (): { readonly promise: Promise<void>; resolve(): void } => {
   return { promise, resolve };
 };
 
+const sampleThrough = async (pids: readonly number[]) => {
+  const remaining = new Set(pids);
+  const published = deferred();
+  const sampling = start(fixture.runId, ({ pid }) => {
+    remaining.delete(pid);
+    if (remaining.size === 0) published.resolve();
+  });
+  await published.promise;
+  return sampling;
+};
+
 const expectPartialFailure = async (
   path: string,
   code: string,
@@ -314,9 +331,7 @@ const expectPartialFailure = async (
 ): Promise<void> => {
   setUpFixture();
   fixture.failures.set(path, code);
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes(path));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough(expectedPids);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([...expectedPids]),
@@ -331,7 +346,7 @@ it.each([
   ["/proc/200/stat", "EACCES", [100, 400]],
   ["/proc/200/stat", "EIO", [100, 400]],
   ["/proc/200/cmdline", "EPERM", [100, 200, 300, 400]],
-  ["/proc/100/task", "EIO", [100]],
+  ["/proc/100/task", "EIO", [100, 200, 300, 400]],
   ["/proc/100/task/100/children", "EACCES", [100, 200, 300, 400]],
   ["/proc/200/task/200/children", "EPERM", [100, 200, 400]],
 ] as const)(
@@ -370,20 +385,11 @@ it("retains only the stable procfs root if it changes during ps fallback discove
   setUpFixture();
   fixture.failures.set("/proc/100/task/100/children", "EACCES");
   fixture.statMutations.set(100, { read: 5, start: 9999 });
-  fixture.psOutput = [
-    "100 1 100 100 ps-root-command",
-    "200 100 100 100 discovery-only-child-command",
-    "300 200 100 100 discovery-only-grandchild-command",
-    "400 100 100 100 discovery-only-sibling-command",
-  ].join("\n");
-  const { samples, stop } = start();
-  await waitFor(() => fixture.psReads > 0);
-  await waitFor(
-    () =>
-      fixture.statReads.get(100) === 5 &&
-      samples.some((sample) => sample.pid === 100),
-  );
+  fixture.psOutput = psFixture("discovery-only-command");
+  const { samples, stop } = await sampleThrough([100]);
   const result = await stop();
+  expect(fixture.psReads).toBeGreaterThan(0);
+  expect(fixture.statReads.get(100)).toBe(5);
   expect(samples.map(({ pid }) => pid)).toEqual([100]);
   expect(samples[0]?.command).toBe("fixture-command-100");
   expect(result.partial).toBe(true);
@@ -394,18 +400,8 @@ it("rejects a ps child edge when procfs reports a different parent", async () =>
   setUpFixture();
   fixture.failures.set("/proc/100/task/100/children", "EACCES");
   fixture.statMutations.set(200, { read: 1, parent: 201 });
-  fixture.psOutput = [
-    "100 1 100 100 ps-root-command",
-    "200 100 100 100 discovery-only-child-command",
-    "300 200 100 100 discovery-only-grandchild-command",
-    "400 100 100 100 discovery-only-sibling-command",
-  ].join("\n");
-  const { samples, stop } = start();
-  await waitFor(
-    () =>
-      samples.some((sample) => sample.pid === 100) &&
-      samples.some((sample) => sample.pid === 400),
-  );
+  fixture.psOutput = psFixture("discovery-only-command");
+  const { samples, stop } = await sampleThrough([100, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual([100, 400]);
   expect(samples.map(({ command }) => command)).toEqual([
@@ -418,11 +414,9 @@ it("rejects a ps child edge when procfs reports a different parent", async () =>
 it("retains children from readable threads while reporting another thread's EIO", async () => {
   setUpFixture();
   fixture.tasks.set(100, ["100", "101"]);
-  fixture.children.set("100:101", "");
   fixture.failures.set("/proc/100/task/101/children", "EIO");
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/100/task/101/children"));
-  await flushImmediateProcPass();
+  fixture.psOutput = "";
+  const { samples, stop } = await sampleThrough([100, 200, 300, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([100, 200, 300, 400]),
@@ -439,8 +433,7 @@ it.each(["ENOENT", "ESRCH"] as const)(
   async (code) => {
     setUpFixture();
     fixture.failures.set("/proc/200/stat", code);
-    const { samples, stop } = start();
-    await waitFor(() => samples.some((row) => row.pid === 400));
+    const { samples, stop } = await sampleThrough([100, 400]);
     const result = await stop();
     expect(samples.map(({ pid }) => pid)).toEqual(
       expect.arrayContaining([100, 400]),
@@ -471,9 +464,7 @@ it.each(["EACCES", "EIO"] as const)(
 it("does not swallow an unrelated filesystem AbortError as sampler cancellation", async () => {
   setUpFixture();
   fixture.abortErrors.add("/proc/200/stat");
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/200/stat"));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough([100, 400]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toEqual(
     expect.arrayContaining([100, 400]),
@@ -485,10 +476,13 @@ it("does not swallow an unrelated filesystem AbortError as sampler cancellation"
 });
 
 it("does not report sampler shutdown cancellation as a proc-read failure", async () => {
+  const readStarted = phaseArrival();
+  const published = deferred();
   setUpFixture();
   fixture.holdPath = "/proc/100/task/100/children";
-  const { stop } = start();
-  await waitFor(() => fixture.holdStarted);
+  fixture.holdStartedResolve = readStarted.arrive;
+  const { stop } = start(fixture.runId, published.resolve);
+  await readStarted.reached(published.promise, "held procfs child read");
   const result = await stop();
   expect(result.partial).toBe(true);
   expect(result.coverage.sampling_failures).toBe(1);
@@ -549,9 +543,7 @@ it("retains a stable root row when child enumeration and its ps fallback both fa
   fixture.failures.set("/proc/100/task/100/children", "EACCES");
   fixture.failures.set("/proc/100/task/101/children", "EIO");
   fixture.psFailure = "EIO";
-  const { samples, stop } = start();
-  await waitFor(() => fixture.reads.includes("/proc/100/task/101/children"));
-  await flushImmediateProcPass();
+  const { samples, stop } = await sampleThrough([100]);
   const result = await stop();
   expect(samples.map(({ pid }) => pid)).toContain(100);
   expect(result.partial).toBe(true);
@@ -565,6 +557,8 @@ it.each([
   { description: "PID", mutation: { read: 2, pid: 101 } },
   { description: "start time", mutation: { read: 2, start: 9999 } },
   { description: "parent", mutation: { read: 2, parent: 2 } },
+  { description: "process group", mutation: { read: 2, processGroupId: 10 } },
+  { description: "session", mutation: { read: 2, sessionId: 10 } },
 ] as const)(
   "does not attribute a root whose initialized identity changes by $description",
   async ({ mutation }) => {
@@ -578,16 +572,153 @@ it.each([
   },
 );
 
+it.each([{ processGroupId: 10 }, { sessionId: 10 }])(
+  "does not inspect the token before PTY initialization: %o",
+  async (mutation) => {
+    setUpFixture();
+    fixture.statMutations.set(100, {
+      read: 1,
+      ...mutation,
+    });
+    const { samples, stop } = start();
+    await waitFor(() => (fixture.statReads.get(100) ?? 0) > 0);
+    await flushImmediateProcPass();
+    await stop();
+    expect(fixture.runIdReads).toBe(0);
+    expect(samples).toEqual([]);
+  },
+);
+
+it("does not attribute a root bearing a different run token", async () => {
+  setUpFixture();
+  const { samples, stop } = start("another-run-token");
+  await waitFor(() => fixture.runIdReads > 0);
+  await flushImmediateProcPass();
+  await stop();
+  expect(samples).toEqual([]);
+});
+
+it("admits a stable Darwin PTY root when ps does not report a session ID", async () => {
+  setUpFixture();
+  platform = "darwin";
+  fixture.psOutput = "100 1 100 0 fixture-command\n";
+  try {
+    const { samples, stop } = start();
+    await waitFor(() => samples.some(({ pid }) => pid === 100));
+    await stop();
+    expect(samples[0]).toMatchObject({ pid: 100, session_id: null });
+  } finally {
+    platform = "linux";
+  }
+});
+
+it.each([0, -1])(
+  "keeps completed samples without false failures when root relations disappear (%s)",
+  async (relation) => {
+    setUpFixture();
+    fixture.children.set("100:100", "");
+    // Reads 1/2 establish PTY readiness; 3/4 bracket the retained root sample.
+    // The next pass sees a valid kernel record whose relations are unavailable.
+    fixture.statMutations.set(100, {
+      read: 5,
+      processGroupId: relation,
+      sessionId: relation,
+    });
+    const { samples, stop } = start();
+    await waitFor(() => (fixture.statReads.get(100) ?? 0) >= 5);
+    await flushImmediateProcPass();
+    const result = await stop();
+    expect(samples.map(({ pid }) => pid)).toEqual([100]);
+    expect(result.coverage).toMatchObject({
+      sampling_failures: 0,
+      first_sampling_failure: null,
+    });
+    expect(result.partial).toBe(false);
+  },
+);
+
 it("marks a completed clean pass as neither partial nor interrupted", async () => {
   setUpFixture();
-  const { samples, stop } = start();
-  await waitFor(() =>
-    [100, 200, 300, 400].every((pid) =>
-      samples.some((sample) => sample.pid === pid),
-    ),
-  );
+  const { stop } = await sampleThrough([100, 200, 300, 400]);
   const result = await stop();
   expect(result.partial).toBe(false);
   expect(result.coverage.sampling_failures).toBe(0);
   expect(result.coverage.first_sampling_failure).toBeNull();
+});
+
+it.each(["absent", "unavailable"] as const)(
+  "classifies native token availability during Darwin sampler initialization: %s",
+  async (availability) => {
+    setUpFixture();
+    platform = "darwin";
+    fixture.runIdAvailability = availability;
+    fixture.runIdFailure =
+      availability === "absent"
+        ? "process_not_in_snapshot"
+        : "permission_denied";
+    try {
+      const { samples, stop } = start();
+      await waitFor(() => fixture.runIdReads > 0);
+      await flushImmediateProcPass();
+      const result = await stop();
+      expect(samples).toEqual([]);
+      expect(result.partial).toBe(availability !== "absent");
+      if (availability === "absent") {
+        expect(result.coverage.sampling_failures).toBe(0);
+        expect(result.coverage.first_sampling_failure).toBeNull();
+      } else {
+        expect(result.coverage.sampling_failures).toBeGreaterThan(0);
+        expect(result.coverage.first_sampling_failure).toContain(
+          "permission_denied",
+        );
+      }
+    } finally {
+      platform = "linux";
+    }
+  },
+);
+
+it("adopts the failed run-token descriptor into the actual capture scope before stopping future samples", async () => {
+  setUpFixture();
+  const file = await failedInspectionDescriptor();
+  const resourceScope = new ProcessCaptureResourceScope();
+  fixture.runIdCause = file.failure;
+  vi.useFakeTimers();
+  const attempted = new Promise<void>((resolve) => {
+    fixture.runIdReadResolve = resolve;
+  });
+  const stop = startProcessSampler({
+    platform,
+    rootPid: 100,
+    runId: fixture.runId,
+    resourceScope,
+    started: 0,
+    limit: 20,
+    samples: [],
+  });
+  onTestFinished(async () => {
+    file.allow();
+    await resourceScope.close();
+    await stop().catch((cause: unknown) => {
+      if (!(cause instanceof ProcessCaptureInspectionFailure)) throw cause;
+    });
+    vi.useRealTimers();
+  });
+  await attempted;
+  await vi.advanceTimersByTimeAsync(200);
+  expect(fixture.runIdReads).toBe(1);
+  const failure: unknown = await stop().catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessCaptureInspectionFailure);
+  if (!(failure instanceof ProcessCaptureInspectionFailure))
+    throw new Error("Expected exact retained inspection failure");
+  expect(failure.inspectionFailure).toBe(file.failure);
+  expect(failure.cleanupIncomplete).toBe(true);
+  await expect(resourceScope.retryCleanup()).rejects.toBeDefined();
+  expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+  file.allow();
+  await resourceScope.retryCleanup();
+  expect(file.handle.fd).toBe(-1);
+  expect(failure.cleanupIncomplete).toBe(false);
+  await expect(stop()).rejects.toBe(failure);
+  expect(failure.inspectionFailure).toBe(file.failure);
 });

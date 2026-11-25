@@ -8,49 +8,61 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "repeated client flags plan and configure each selected client once",
+  "deduplicates explicit clients, joins detected clients and applies setup once",
   async ({ cli }) => {
-    const directory = await createTestTempDirectory("rea-repeated-clients-");
-    const arguments_ = [
-      "setup",
-      "--client",
-      "cursor",
-      "--client",
-      "codex",
-      "--client",
-      "cursor",
-      "--skill=false",
-      "--json",
-    ];
-    const run = (mode: string) =>
+    const home = await createTestTempDirectory(
+      "rea-explicit-detected-clients-",
+    );
+    await mkdir(join(home, ".codex"));
+    await mkdir(join(home, ".grokbot"));
+    const run = (selection: readonly string[], mode: string) =>
       cli.run({
-        arguments: [...arguments_, mode],
-        cwd: directory,
+        arguments: ["setup", ...selection, "--skill=false", "--json", mode],
+        cwd: home,
         environment: {
-          HOME: directory,
-          USERPROFILE: directory,
-          TMPDIR: directory,
+          HOME: home,
+          USERPROFILE: home,
+          TMPDIR: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local", "state"),
         },
       });
     const configurations = [
-      join(directory, ".cursor/mcp.json"),
-      join(directory, ".codex/config.toml"),
+      join(home, ".cursor", "mcp.json"),
+      join(home, ".codex", "config.toml"),
     ];
-
-    const preview = await run("--dry-run");
-    expect(preview.exitCode, preview.stdout).toBe(0);
-    expect(preview.json).toMatchObject({
-      status: "planned",
-      plannedActions: [
-        { id: "configure_client:cursor" },
-        { id: "configure_client:codex" },
+    const combined = [
+      "--client",
+      "cursor",
+      "--client",
+      "cursor",
+      "--all-detected",
+    ];
+    for (const [selection, expected] of [
+      [["--client", "cursor"], ["cursor"]],
+      [
+        ["--client", "cursor", "--client", "codex", "--client", "cursor"],
+        ["cursor", "codex"],
       ],
-      appliedActions: [],
-    });
-    for (const path of configurations)
-      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+      [["--all-detected"], ["codex"]],
+      [combined, ["cursor", "codex"]],
+    ] as const) {
+      const preview = await run(selection, "--dry-run");
+      expect(preview.exitCode, preview.stdout).toBe(0);
+      expect(preview.json).toMatchObject({
+        status: "planned",
+        plannedActions: expected.map((id) => ({
+          id: `configure_client:${id}`,
+        })),
+        appliedActions: [],
+      });
+      for (const path of configurations)
+        await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    }
 
-    const applied = await run("--yes");
+    const applied = await run(combined, "--yes");
     expect(applied.exitCode, applied.stdout).toBe(0);
     expect(applied.json).toMatchObject({
       status: "ready",
@@ -63,21 +75,28 @@ cliTest(
         cursor: { status: "configured" },
         codex: { status: "configured" },
       },
+      doctor: {
+        healthy: true,
+        scope: {
+          mode: "explicit",
+          clients: ["codex", "cursor"],
+          providers: [],
+          skill: false,
+        },
+      },
     });
-    const configured = await Promise.all(
-      configurations.map((path) => readFile(path, "utf8")),
-    );
-
-    const repeated = await run("--yes");
+    const readConfigurations = () =>
+      Promise.all(configurations.map((path) => readFile(path, "utf8")));
+    const configured = await readConfigurations();
+    for (const contents of configured) expect(contents).toContain("rea");
+    const repeated = await run(combined, "--yes");
     expect(repeated.exitCode, repeated.stdout).toBe(0);
     expect(repeated.json).toMatchObject({
       status: "ready",
       plannedActions: [],
       appliedActions: [],
     });
-    expect(
-      await Promise.all(configurations.map((path) => readFile(path, "utf8"))),
-    ).toEqual(configured);
+    expect(await readConfigurations()).toEqual(configured);
   },
 );
 
