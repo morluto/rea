@@ -36,7 +36,13 @@ try {
   # Native stderr is diagnostic output; the child's exit status decides failure.
   $ErrorActionPreference = 'Continue'
   $global:LASTEXITCODE = 1
-  & $reaNode @reaArguments
+  if ($MyInvocation.ExpectingInput) {
+    # The documented pipeline form reads the request from stdin; forward the
+    # caller's input instead of leaving the child on the console.
+    $input | & $reaNode @reaArguments
+  } else {
+    & $reaNode @reaArguments
+  }
   $reaExitCode = $LASTEXITCODE
 } finally {
   [Console]::OutputEncoding = $reaOriginalEncoding

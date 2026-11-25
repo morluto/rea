@@ -312,6 +312,13 @@ if ($Mode -eq 'argv') {
   [Console]::Out.WriteLine(($captured | ConvertFrom-Json | ConvertTo-Json -Compress))
   exit 0
 }
+if ($Mode -eq 'stdin') {
+  # The documented pipeline form must deliver the request to the CLI's stdin.
+  $request = '{ "view": "summary" }'
+  $pipedRequest = $request | & $Launcher inspect-analysis-view -
+  [Console]::Out.WriteLine((@{ exit = $LASTEXITCODE; output = (($pipedRequest | Out-String).Trim()) } | ConvertTo-Json -Compress))
+  exit 0
+}
 Set-Location -LiteralPath $Sample
 if ($Mode -eq 'relative') {
   & $Launcher analyze-javascript-application . --json
@@ -373,6 +380,18 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
     captured: true,
     piped: true,
   });
+  reportStage("PowerShell pipeline input forwarding");
+  const pipedRequest = JSON.parse((await sessionPowerShell("stdin")).stdout);
+  assert.equal(
+    typeof pipedRequest.exit,
+    "number",
+    "A piped request must reach the CLI instead of waiting for console input",
+  );
+  assert.match(
+    pipedRequest.output,
+    /view|evidence|document|json/iu,
+    "The CLI must answer the piped request",
+  );
   for (const invocation of [
     { command: node, args: [entry, "mcp"] },
     ...["mcp", "--mcp"].map((mode) => ({
