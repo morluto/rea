@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 280" role="img" aria-labelledby="title desc">
+  <title id="title">Browser extension inspection workflow</title>
+  <desc id="desc">A CRX, XPI, or manifest.json is read into a declared surface. Code and runtime observation stay separate.</desc>
+  <style>
+    text { font-family: "Segoe UI", sans-serif; fill: #1c1917; }
+    .box { fill: #faf7f2; stroke: #1c1917; stroke-width: 1.5; }
+    .quiet { fill: #44403c; font-size: 13px; }
+    .label { font-size: 15px; font-weight: 650; }
+  </style>
+  <rect class="box" x="24" y="96" width="180" height="72" rx="8"/>
+  <text class="label" x="40" y="126">Package</text>
+  <text class="quiet" x="40" y="148">CRX / XPI / manifest</text>
+  <path d="M212 132 H268" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+  <path d="M260 124 L272 132 L260 140" fill="#1c1917"/>
+  <rect class="box" x="276" y="84" width="220" height="96" rx="8"/>
+  <text class="label" x="292" y="118">inspect_browser_extension</text>
+  <text class="quiet" x="292" y="140">read file, skip signature</text>
+  <text class="quiet" x="292" y="158">no browser, no store</text>
+  <path d="M504 132 H560" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+  <path d="M552 124 L564 132 L552 140" fill="#1c1917"/>
+  <rect class="box" x="568" y="36" width="324" height="72" rx="8"/>
+  <text class="label" x="584" y="66">Declared surface</text>
+  <text class="quiet" x="584" y="88">permissions, matches, background, Gecko id</text>
+  <rect class="box" x="568" y="156" width="324" height="72" rx="8"/>
+  <text class="label" x="584" y="186">Still unknown</text>
+  <text class="quiet" x="584" y="208">code, locales, runtime, signature trust</text>
+  <path d="M730 108 V148" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+  <path d="M722 140 L730 152 L738 140" fill="#1c1917"/>
+</svg>

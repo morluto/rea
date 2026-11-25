@@ -265,6 +265,10 @@ explicit path or endpoint and do not need it.
     ([pyc](https://github.com/morluto/rea/blob/main/docs/python-pyc.md),
     [BEAM](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md),
     [NuGet](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md)).
+  - CRX, XPI, ZIP, or unpacked `manifest.json`: `inspect_browser_extension`;
+    reads the declared manifest surface only. The extension is not loaded,
+    a CRX signature is not verified, and extension code is not parsed
+    ([browser extension guide](https://github.com/morluto/rea/blob/main/docs/browser-extension-analysis.md)).
   - SQLite snapshot: `inspect_sqlite_database`; read the schema first and
     supply a quiescent snapshot rather than a live database/WAL pair
     ([SQLite guide](https://github.com/morluto/rea/blob/main/docs/guides/data/sqlite-databases.md)).

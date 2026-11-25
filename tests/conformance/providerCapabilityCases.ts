@@ -40,6 +40,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   binaryHardening: { cases: ["tests/acceptance/binaryHardeningCli.test.ts"] },
   binaryLayout: { cases: ["tests/boundary/mcp/binaryDiagnosticsMcp.test.ts"] },
+  browserExtension: {
+    cases: ["tests/acceptance/browserExtensionCli.test.ts"],
+  },
   browserObservation: {
     cases: ["tests/acceptance/browser/observationDurationCli.test.ts"],
   },

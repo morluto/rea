@@ -54,6 +54,7 @@ export const UNIT_LAYERS = Object.freeze(
       "apktool",
       "artifacts",
       "browser",
+      "browserExtension",
       "captures",
       "cutter",
       "desktop",
@@ -258,6 +259,10 @@ export const ENTRY_FILES = Object.freeze(
         "modules/NativeModuleResolver.ts",
         "modules/WebModuleArtifacts.ts",
         "providerIdentities.ts",
+      ],
+      browserExtension: [
+        "BrowserExtensionProvider.ts",
+        "BrowserExtensionProviderIdentity.ts",
       ],
       captures: ["TsharkCaptureProvider.ts", "TsharkProviderIdentity.ts"],
       cutter: [

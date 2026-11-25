@@ -37,6 +37,7 @@ import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
 import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
 import * as sqliteModule from "./cli/sqliteCommands.js";
+import * as browserExtensionModule from "./cli/browserExtensionCommands.js";
 import * as artifactModule from "./cli/artifactCommands.js";
 import * as managedModule from "./cli/managedCommands.js";
 import * as firmwareModule from "./cli/firmwareCommands.js";
@@ -99,6 +100,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   v8CodeCache: v8CodeCacheModule,
   mavenGradleMetadata: mavenGradleMetadataModule,
   sqlite: sqliteModule,
+  browserExtension: browserExtensionModule,
   artifact: artifactModule,
   managed: managedModule,
   firmware: firmwareModule,

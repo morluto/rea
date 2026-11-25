@@ -160,6 +160,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     (module, context) =>
       module.registerPythonPycCommands(context.cli, context.logger),
   ),
+  browserExtension: plain(
+    () => import("./browserExtensionCommands.js"),
+    (module, context) =>
+      module.registerBrowserExtensionCommands(context.cli, context.logger),
+  ),
   nugetNupkg: plain(
     () => import("./nugetNupkgCommands.js"),
     (module, context) =>
@@ -486,6 +491,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "v8CodeCache",
     "mavenGradleMetadata",
     "sqlite",
+    "browserExtension",
     "artifact",
   ],
   managed: ["managed"],

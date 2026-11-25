@@ -170,4 +170,5 @@ export {
   zipEntryPath,
   zipListingCoverage,
   typedZipFailure,
+  zipArchiveFaultKind,
 } from "./ZipArtifactReader.js";

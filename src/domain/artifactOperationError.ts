@@ -115,6 +115,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_artifact"
       | "inspect_desktop_application"
       | "inspect_pe_resources"
+      | "inspect_browser_extension"
       | "inspect_pe_certificates"
       | "inspect_elf_notes"
       | "inspect_dwarf_units"

@@ -70,6 +70,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Browser and captured websites
 
 - [Website observation with CDP](guides/web/browser-observation.md)
+- [Browser extension packages](browser-extension-analysis.md)
 - [Browser scenario contract](guides/web/browser-scenario-contract.md)
 - [Website runtime source attribution](guides/web/web-runtime.md)
 - [Historical web network captures](guides/web/web-network-captures.md)

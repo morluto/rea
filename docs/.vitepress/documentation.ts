@@ -279,6 +279,11 @@ export const documentationSections = [
         route: "/browser-observation",
       },
       {
+        text: "Browser extension packages",
+        source: "browser-extension-analysis.md",
+        route: "/browser-extension-analysis",
+      },
+      {
         text: "Browser scenario contract",
         source: "guides/web/browser-scenario-contract.md",
         route: "/browser-scenario-contract",

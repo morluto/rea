@@ -694,6 +694,17 @@ dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
+Inspect a CRX, XPI, ZIP, or unpacked `manifest.json` without loading the extension:
+
+```bash
+rea inspect-browser-extension /absolute/path/to/extension.crx --json
+```
+
+The workflow reports the declared manifest surface: permissions, host
+permissions, content-script matches, background entry, and Gecko id. CRX
+signatures are not verified and extension code is not parsed. See
+[browser extensions](../browser-extension-analysis.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.

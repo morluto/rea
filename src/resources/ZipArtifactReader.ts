@@ -632,6 +632,14 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "malformed" | "unavailable"> =
     ].map((message) => [message, "unavailable"] as const),
   ]);
 
+/** Classify a plain zip.js archive fault without wrapping it. */
+export const zipArchiveFaultKind = (
+  cause: unknown,
+): "format" | "unavailable" | undefined =>
+  cause instanceof Error && !(cause instanceof ArtifactReaderFailure)
+    ? ZIP_FAILURE_REASONS.get(cause.message)
+    : undefined;
+
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
 export const typedZipFailure = (
   cause: unknown,
