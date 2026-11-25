@@ -1,4 +1,8 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { pcapResultSchemas } from "../pcap/pcapAnalysis.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -133,14 +137,8 @@ const parseParent = (
   if (!parsed.ok) return parsed;
   const subject = evidenceFileTarget(parent);
   if (subject == null || subject.sha256 !== parsed.value.target.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message: "Packet parent subject must identify the report's SHA-256.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Packet parent subject must identify the report's SHA-256.",
     );
   return ok(parsed.value);
 };
@@ -320,15 +318,8 @@ export const projectPcapCaptureView = (
     SummaryAnalysisView | z.output<typeof pcapViewRequestSchema>
   >(admitted, "summary", "pcap");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Packet summary parents support summary and pcap fact pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Packet summary parents support summary and pcap fact pages.",
     );
   const parsed = parseParent(parent);
   if (!parsed.ok) return parsed;

@@ -60,10 +60,6 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-raw-proof-",
 });
 const workspace = workspaceFixture.path;
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -671,7 +667,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     cleanupFailure = cause;
   }
   if (cleanupFailure !== undefined || primaryFailure !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `Raw-binary verification failed; retained workspace: ${workspace}`,
       {
         cause:
@@ -687,7 +683,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
   const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
-    throw retainWorkspace(
+    throw workspaceFixture.retainedError(
       `Raw-binary verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );

@@ -1,4 +1,3 @@
-import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { decode, Tokenizer, Type, type Token } from "cborg";
 import type {
@@ -9,7 +8,6 @@ import { errorMessage } from "../kernel/errorMessage.js";
 
 const PROFILE = "terminal-cbor-scalars-v1";
 const MAX_DEPTH = 64;
-const utf8 = strictUtf8Decoder("preserve");
 const decodeOptions = {
   useMaps: true,
   allowBigInt: true,
@@ -18,7 +16,7 @@ const decodeOptions = {
   allowInfinity: false,
   allowNaN: false,
   rejectDuplicateMapKeys: false,
-  retainStringBytes: false,
+  rejectInvalidUtf8: true,
 } as const;
 
 const uint8ArrayToHex = (bytes: Uint8Array): string =>
@@ -27,35 +25,6 @@ const uint8ArrayToHex = (bytes: Uint8Array): string =>
     : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
         "hex",
       );
-
-const stringPrefixBytes = (minor: number): number => {
-  if (minor < 24) return 1;
-  if (minor === 24) return 2;
-  if (minor === 25) return 3;
-  if (minor === 26) return 5;
-  if (minor === 27) return 9;
-  return -1;
-};
-
-const decodeStrictTokenText = (
-  data: Uint8Array,
-  startPos: number,
-  token: Token,
-): void => {
-  const encodedLength = token.encodedLength;
-  const prefix =
-    startPos < data.length ? stringPrefixBytes(data[startPos]! & 31) : -1;
-  if (encodedLength === undefined || prefix < 0)
-    throw new EvmAdmissionError("text_bytes_unavailable");
-  const byteLength = encodedLength - prefix;
-  const text = token.value as string;
-  // cborg uses non-fatal TextDecoder and may strip BOM; pure ASCII is exact
-  // whenever byte length matches UTF-16 length and has no U+FFFD.
-  if (byteLength !== text.length || text.includes("\uFFFD"))
-    token.value = utf8.decode(
-      data.subarray(startPos + prefix, startPos + encodedLength),
-    );
-};
 
 const fastScalarKey = (value: unknown): string => {
   if (typeof value === "string") return `s:${value}`;
@@ -86,13 +55,10 @@ class BoundedMetadataTokenizer extends Tokenizer {
       this.remaining.pop();
       this.#mapKeys.pop();
     }
-    const startPos = this.pos();
     const token = super.next();
     const type = token.type;
     if (Type.equals(type, Type.tag) || Type.equals(type, Type.float))
       throw new EvmAdmissionError("tag_or_float");
-    if (Type.equals(type, Type.string))
-      decodeStrictTokenText(this.data, startPos, token);
     const isMap = Type.equals(type, Type.map);
     const isArray = !isMap && Type.equals(type, Type.array);
     this.#trackMapKey(token, isMap, isArray);

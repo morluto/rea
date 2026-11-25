@@ -6,7 +6,7 @@ import { readPngHeaderDimensions } from "./pngHeader.js";
 import { comparePngScreenshots, isOneColourPng } from "./pngVisualDiff.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "./analysisErrorCore.js";
 import {
   compareWebScreenshotsInputSchema,
@@ -385,7 +385,7 @@ describe("PNG chunk integrity", () => {
           after: grayscale,
         }),
       ),
-    ).toThrow(AnalysisUnsupportedTargetError);
+    ).toThrow(AnalysisTargetFailureError);
   });
 });
 

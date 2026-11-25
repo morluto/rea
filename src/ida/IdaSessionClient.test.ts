@@ -2225,8 +2225,33 @@ describe("headless IDA literal string predicate pushdown", () => {
       await client.execute("list_strings", {});
       expect(lastFindRegexPattern()).toBe("(?s).*");
 
+      const regexMatch = await client.execute("search_strings", {
+        pattern: "^warfare/storage/.+$",
+        mode: "regex",
+      });
+      if (!regexMatch.ok) throw regexMatch.error;
+      expect(regexMatch.value.result).toEqual([
+        { address: "0x5002", value: "Warfare/Storage/Read-Write" },
+        { address: "0x5003", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const pushedRegexPattern = lastFindRegexPattern();
+      expect(pushedRegexPattern).not.toBe("(?s).*");
+      expect(pushedRegexPattern).toContain("(?:[sS]|\u017f)");
+
       await client.execute("search_strings", {
-        pattern: "Storage",
+        pattern: "Storage|Other",
+        mode: "regex",
+      });
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      await client.execute("search_strings", {
+        pattern: "[0-9]+",
+        mode: "regex",
+      });
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      await client.execute("search_strings", {
+        pattern: "İ.*",
         mode: "regex",
       });
       expect(lastFindRegexPattern()).toBe("(?s).*");

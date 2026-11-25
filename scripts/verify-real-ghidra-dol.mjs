@@ -70,11 +70,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const baseEnv = {
@@ -288,7 +283,7 @@ try {
       fixture,
     );
     const resolved = await parseBinaryTarget(fixture.path, {
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     if (!resolved.ok) throw resolved.error;
     assert.equal(resolved.value.format, "gamecube-dol");
@@ -333,7 +328,7 @@ try {
     },
   ]);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `GameCube DOL verification failed; retained workspace: ${workspace}`,
     { cause },
   );

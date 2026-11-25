@@ -1,3 +1,4 @@
+import { clientProjectConfigurationPaths } from "./SupportedClientLocations.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
@@ -36,7 +37,6 @@ import {
 import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
-  clientProjectConfigurationPaths,
   manualRegistrationRemediation,
   resolveSupportedClients,
 } from "./SupportedClients.js";
@@ -115,11 +115,6 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
         readonly remediation: string;
       }
   );
-
-export type UnhealthyClientRegistrationStatus = Exclude<
-  ClientRegistrationStatus,
-  { readonly state: "aligned" }
->;
 
 interface ClientRegistrationReadOptions {
   readonly platform: NodeJS.Platform;

@@ -91,7 +91,7 @@ it("keeps a budget-limited Bun layout unresolved through MCP", async () => {
     });
     expect(reply.isError).toBe(true);
     expect(parseMcpToolError(reply).error).toMatchObject({
-      code: moduleCount < 13 ? "truncated" : "artifact_operation_failed",
+      code: moduleCount < 13 ? "partial" : "artifact_operation_failed",
       retryable: moduleCount < 13,
       details:
         moduleCount < 13

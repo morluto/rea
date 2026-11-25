@@ -1,4 +1,4 @@
-import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
+import { createJebAnalysisService } from "../application/ProviderOperationServices.js";
 import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JEB_TOOL_CONTRACTS } from "../contracts/jeb/jebToolContracts.js";
@@ -6,11 +6,11 @@ import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
@@ -21,7 +21,7 @@ export const registerJebCommands = (
   environment: Readonly<Record<string, string | undefined>>,
   provider: JebAnalysisPort = createJebAnalysisProvider(environment),
 ): void => {
-  const service = new JebAnalysisService(provider);
+  const service = createJebAnalysisService(provider);
   const run = (operation: JebOperation) => (): EvidenceInspectionService => ({
     inspect: (input, { signal }) =>
       service.execute(operation, input, { signal }),

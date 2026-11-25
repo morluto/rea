@@ -130,7 +130,12 @@ it("keeps Android parser refusal kinds and recovers through compiled MCP", async
       expect(error).toMatchObject({
         code: fixture.code,
         category: fixture.category,
-        details: { operation: "inspect_artifact", reason: fixture.kind },
+        details: {
+          operation: "inspect_artifact",
+          path,
+          failure_kind: fixture.kind,
+          format: fixture.format,
+        },
       });
       expect((await readFile(path)).equals(fixture.bytes)).toBe(true);
       expect((await call("close_binary", {})).isError).not.toBe(true);

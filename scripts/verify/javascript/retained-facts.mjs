@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -111,10 +111,7 @@ const resourceSnapshot = async () => {
 
 await withVerifierCleanup(async () => {
   const start = performance.now();
-  const artifactHash = createHash("sha256");
-  for await (const chunk of createReadStream(values.artifact))
-    artifactHash.update(chunk);
-  const artifactSha256 = artifactHash.digest("hex");
+  const artifactSha256 = await sha256File(values.artifact);
   temporary = await VerifierFixture.open({
     prefix: "rea-retained-facts-verifier-",
   });

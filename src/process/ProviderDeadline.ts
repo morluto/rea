@@ -1,3 +1,4 @@
+import type { Result } from "../domain/result.js";
 import { Deadline } from "../domain/deadline.js";
 
 /** Result of an abort-aware interval wait. */
@@ -123,6 +124,16 @@ export class ProviderStartupDeadline {
       });
     };
     return poll();
+  }
+
+  /** Settle readiness under this deadline while leaving failed startup primary. */
+  async finishStartup<Value, Failure>(
+    start: () => Promise<Result<Value, Failure>>,
+    interrupt: () => Promise<Result<never, Failure>>,
+  ): Promise<Result<Value, Failure>> {
+    const outcome = await start();
+    if (!outcome.ok) return outcome;
+    return this.interruption === undefined ? outcome : interrupt();
   }
 
   /**

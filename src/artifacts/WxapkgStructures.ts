@@ -3,6 +3,8 @@ import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactFixedLimitFailure,
   assertArtifactReadActive,
 } from "../resources/index.js";
@@ -31,7 +33,10 @@ const HEADER_PREFIX_BYTES = 64;
 const UTF8 = strictUtf8Decoder("preserve");
 
 export const wxapkgFormatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", `wxapkg is malformed: ${detail}`);
+  malformedArtifact("wxapkg", `wxapkg is malformed: ${detail}`);
+
+const wxapkgTruncatedFailure = (detail: string): ArtifactReaderFailure =>
+  truncatedArtifact("wxapkg", `wxapkg is malformed: ${detail}`);
 
 /** Buffers, JS rows and escaped name projections, reserved before allocating. */
 const directoryLimit = (): Error =>
@@ -78,6 +83,7 @@ export const readWxapkgHeader = async (
   signal?: AbortSignal,
 ): Promise<WxapkgHeader | undefined> => {
   const prefix = await readArtifactFileBytes(
+    "wxapkg",
     handle,
     0,
     Math.min(size, HEADER_PREFIX_BYTES),
@@ -105,7 +111,7 @@ export const readWxapkgHeader = async (
 const wxapkgIndexLayoutFailure = (
   failure: WxapkgIndexLayoutFailure,
 ): ArtifactReaderFailure =>
-  wxapkgFormatFailure(
+  wxapkgTruncatedFailure(
     failure._tag === "DataRegionExceedsFile"
       ? "declared data region exceeds the file"
       : "declared member table exceeds the file",
@@ -131,7 +137,7 @@ export const readWxapkgFileTable = async (
     if (indexLayout.tableBytes > readBytes) readBytes = indexLayout.tableBytes;
   }
   if (tableStart === undefined)
-    throw wxapkgFormatFailure("declared member table exceeds the file");
+    throw wxapkgTruncatedFailure("declared member table exceeds the file");
   if (readBytes > MAX_TABLE_BYTES)
     throw artifactFixedLimitFailure(
       {
@@ -145,6 +151,7 @@ export const readWxapkgFileTable = async (
   const budget = new Budget(DIRECTORY_BUDGET_BYTES);
   budget.charge(readBytes, directoryLimit);
   const table = await readArtifactFileBytes(
+    "wxapkg",
     handle,
     tableStart,
     readBytes,
@@ -153,7 +160,7 @@ export const readWxapkgFileTable = async (
   );
   // Loose lower bound already checked in facts; precise rows are checked here.
   if (table.length < header.fileCount * WXAPKG_MIN_ROW_BYTES)
-    throw wxapkgFormatFailure("member table is truncated");
+    throw wxapkgTruncatedFailure("member table is truncated");
   const reader = new BinaryReader(table, false, "wxapkg");
   const members: WxapkgMember[] = [];
   let cursor = 0;
@@ -161,7 +168,7 @@ export const readWxapkgFileTable = async (
     if (index % 256 === 0) await setImmediate();
     assertArtifactReadActive(signal);
     if (cursor + 4 > table.length)
-      throw wxapkgFormatFailure("member row is truncated");
+      throw wxapkgTruncatedFailure("member row is truncated");
     const nameLength = reader.u32(cursor);
     cursor += 4;
     if (
@@ -176,11 +183,12 @@ export const readWxapkgFileTable = async (
     try {
       declaredPath = UTF8.decode(table.subarray(cursor, cursor + nameLength));
     } catch (cause: unknown) {
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "wxapkg",
         "wxapkg member path is not valid UTF-8",
         {
           cause,
+          field: "member-path",
         },
       );
     }
@@ -201,7 +209,7 @@ export const readWxapkgFileTable = async (
   if (!admitted.ok) {
     switch (admitted.error._tag) {
       case "TruncatedRows":
-        throw wxapkgFormatFailure("member table is truncated");
+        throw wxapkgTruncatedFailure("member table is truncated");
       case "MemberOutsideDataRegion":
         throw wxapkgFormatFailure(
           `member exceeds the data region: ${admitted.error.member.path}`,

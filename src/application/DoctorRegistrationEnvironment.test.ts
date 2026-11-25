@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
+import {
+  createDoctorHostFixture as host,
+  scopeChecksOf,
+} from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 
 const inspection = (
@@ -78,7 +81,7 @@ it.each([
     recordingHost(selectedProviders).host,
     scope,
   );
-  const inScope = report.scope_checks.some(({ name }) => name === CHECK);
+  const inScope = scopeChecksOf(report).some(({ name }) => name === CHECK);
   expect(inScope).toBe(selected);
   expect(report.informational_checks.some(({ name }) => name === CHECK)).toBe(
     !selected,

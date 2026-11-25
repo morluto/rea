@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { addAbortListener } from "node:events";
 import { isAbortOf } from "../process/SignalAbort.js";
 import type { Readable } from "node:stream";
@@ -38,6 +39,7 @@ import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
 } from "../application/Utf8JsonInput.js";
+import { reportedSystemCode } from "../kernel/reportedSystemCode.js";
 
 /**
  * Scopes of JSON-input files whose close still failed after their owner's
@@ -108,19 +110,30 @@ export const parseCliJsonInput = async (
             resources,
             options?.snapshot ?? false,
           );
-    if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
-    return parsed.ok
-      ? { ok: true, value: parsed.value }
+    const finalized = finalizedResult(
+      await runOwned(async () => parsed, {
+        providerId: "rea",
+        operation,
+        signal,
+        diagnostics: () => undefined,
+      }),
+    );
+    return finalized.ok
+      ? { ok: true, value: finalized.value }
       : {
           ok: false,
           error: {
             error: "Application workflow failed",
-            ...projectAnalysisError(parsed.error),
-            input_path: value,
-            input_reason:
-              parsed.error._tag === "AnalysisInputError"
-                ? "invalid-json"
-                : "too-large",
+            ...projectAnalysisError(finalized.error),
+            ...(parsed.ok
+              ? {}
+              : {
+                  input_path: value,
+                  input_reason:
+                    parsed.error._tag === "AnalysisInputError"
+                      ? "invalid-json"
+                      : "too-large",
+                }),
           },
         };
   } catch (cause: unknown) {
@@ -463,19 +476,14 @@ const jsonFileReadError = (
 
 /** Preserve file-selection and system failures alongside the requested path. */
 const readFailureIssue = (path: string, cause: unknown) => {
-  const code =
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    typeof cause.code === "string"
-      ? ` (${cause.code})`
-      : "";
+  const code = reportedSystemCode(cause);
+  const suffix = code === undefined ? "" : ` (${code})`;
   return {
     path: [],
     reason: "invalid_value" as const,
     message:
-      cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
-        ? `The JSON input must be a regular file${code}: ${path}`
-        : `The JSON input file could not be read${code}: ${path}`,
+      cause instanceof NonRegularFileReadError && code === "ENOTFILE"
+        ? `The JSON input must be a regular file${suffix}: ${path}`
+        : `The JSON input file could not be read${suffix}: ${path}`,
   };
 };

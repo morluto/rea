@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
-import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
+import {
+  createDoctorHostFixture as host,
+  scopeChecksOf,
+  ubuntu2404Distribution,
+} from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
@@ -120,11 +124,11 @@ describe("doctor Hopper startup timeout", () => {
             checks: [
               {
                 name: "configuration",
-                ok: true,
+                ok: true as const,
                 code: null,
                 detail: "/tools/ghidra",
                 remediation: null,
-                classification: "config_drift" as const,
+                classification: "healthy" as const,
               },
             ],
           },
@@ -134,7 +138,7 @@ describe("doctor Hopper startup timeout", () => {
       providers: ["ghidra"],
     });
     expect(blocked.healthy).toBe(false);
-    expect(blocked.scope_checks).toContainEqual(
+    expect(scopeChecksOf(blocked)).toContainEqual(
       expect.objectContaining({
         name: "hopper-startup-timeout",
         ok: false,
@@ -142,7 +146,7 @@ describe("doctor Hopper startup timeout", () => {
       }),
     );
     expect(
-      blocked.scope_checks.filter(
+      scopeChecksOf(blocked).filter(
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toHaveLength(1);
@@ -183,7 +187,7 @@ describe("doctor native analysis configuration", () => {
 
       expect(result.healthy).toBe(false);
       expect(result.environment_healthy).toBe(false);
-      expect(result.scope_checks).toContainEqual(
+      expect(scopeChecksOf(result)).toContainEqual(
         expect.objectContaining({
           name: `runtime-configuration:${setting}`,
           ok: false,
@@ -216,14 +220,14 @@ describe("doctor native analysis configuration", () => {
         { providers: ["hopper"] },
       );
       expect(result.healthy).toBe(false);
-      expect(result.scope_checks).toContainEqual(
+      expect(scopeChecksOf(result)).toContainEqual(
         expect.objectContaining({
           name: "hopper-startup-timeout",
           ok: true,
           detail: "REA_HOPPER_STARTUP_TIMEOUT_MS=120001",
         }),
       );
-      expect(result.scope_checks).toContainEqual(
+      expect(scopeChecksOf(result)).toContainEqual(
         expect.objectContaining({
           name: `runtime-configuration:${setting}`,
           ok: false,
@@ -242,7 +246,7 @@ describe("doctor native analysis configuration", () => {
       { providers: ["hopper"] },
     );
     expect(result.healthy).toBe(false);
-    expect(result.scope_checks).toContainEqual(
+    expect(scopeChecksOf(result)).toContainEqual(
       expect.objectContaining({
         name: "hopper-startup-timeout",
         ok: false,
@@ -251,7 +255,7 @@ describe("doctor native analysis configuration", () => {
         ),
       }),
     );
-    expect(result.scope_checks).toContainEqual(
+    expect(scopeChecksOf(result)).toContainEqual(
       expect.objectContaining({
         name: "runtime-configuration:CALLER_SETTING",
         ok: false,
@@ -259,7 +263,7 @@ describe("doctor native analysis configuration", () => {
       }),
     );
     expect(
-      result.scope_checks.filter(
+      scopeChecksOf(result).filter(
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toHaveLength(1);
@@ -290,7 +294,7 @@ describe("doctor native analysis configuration", () => {
 
     expect(result.healthy).toBe(true);
     expect(result.environment_healthy).toBe(false);
-    expect(result.scope_checks.map(({ name }) => name)).not.toContain(
+    expect(scopeChecksOf(result).map(({ name }) => name)).not.toContain(
       "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
     );
     expect(result.informational_checks).toContainEqual(
@@ -391,10 +395,10 @@ describe("doctor MCP startup readiness", () => {
           .map(({ name }) => name);
 
       expect(result.healthy).toBe(required.length === 0);
-      expect(startupFailures(result.scope_checks)).toEqual(required);
+      expect(startupFailures(scopeChecksOf(result))).toEqual(required);
       expect(startupFailures(result.informational_checks)).toEqual(advisory);
       if (scope.clients !== undefined)
-        expect(result.scope_checks).toContainEqual(
+        expect(scopeChecksOf(result)).toContainEqual(
           expect.objectContaining({ name: "registration:codex", ok: true }),
         );
     },
@@ -819,7 +823,7 @@ describe("doctor scoped readiness", () => {
       skill: true,
     });
     expect(result.healthy).toBe(false);
-    expect(result.scope_checks.map(({ name }) => name)).toEqual([
+    expect(scopeChecksOf(result).map(({ name }) => name)).toEqual([
       "node",
       "skill:identity",
     ]);
@@ -905,7 +909,7 @@ it("reports project-scoped client registrations in doctor identity and check det
       ],
     },
   });
-  expect(report.scope_checks).toContainEqual(
+  expect(scopeChecksOf(report)).toContainEqual(
     expect.objectContaining({
       name: "registration:pi",
       ok: true,
@@ -937,7 +941,7 @@ it("keeps a caller-selected short timeout healthy and reports its advisory as in
   );
 
   expect(result.healthy).toBe(true);
-  expect(result.scope_checks).toContainEqual(
+  expect(scopeChecksOf(result)).toContainEqual(
     expect.objectContaining({ name: "registration:kimi", ok: true }),
   );
   expect(result.informational_checks).toContainEqual(
@@ -1031,7 +1035,7 @@ describe("doctor scoped readiness", () => {
       environment_healthy: false,
       scope: { mode: "explicit", clients: ["codex"], providers: [] },
     });
-    expect(result.scope_checks.map(({ name }) => name)).toEqual([
+    expect(scopeChecksOf(result).map(({ name }) => name)).toEqual([
       "node",
       "registration:codex",
     ]);
@@ -1075,11 +1079,11 @@ describe("doctor scoped readiness", () => {
       checks: [
         {
           name: "configuration",
-          ok: true,
+          ok: true as const,
           code: null,
           detail: "/tools/ghidra",
           remediation: null,
-          classification: "config_drift" as const,
+          classification: "healthy" as const,
         },
       ],
     };
@@ -1111,13 +1115,7 @@ describe("doctor Linux and Hopper discovery", () => {
       host({
         platform: "linux",
         macosVersion: () => Promise.resolve(undefined),
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
+        linuxDistribution: ubuntu2404Distribution,
         configuredHopperPath: path,
         executable: (candidate) => Promise.resolve(candidate === path),
       }),
@@ -1184,13 +1182,7 @@ describe("doctor Linux and Hopper discovery", () => {
       host({
         platform: "linux",
         macosVersion: () => Promise.resolve(undefined),
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
+        linuxDistribution: ubuntu2404Distribution,
         linuxDemoRuntimeCheck: () =>
           Promise.resolve({
             name: "hopper-demo-runtime",
@@ -1216,13 +1208,7 @@ describe("doctor Linux and Hopper discovery", () => {
       host({
         platform: "linux",
         configuredHopperPath: path,
-        linuxDistribution: () =>
-          Promise.resolve({
-            id: "ubuntu",
-            versionId: "24.04",
-            packageFamily: "deb",
-            hopperSetupSupported: true,
-          }),
+        linuxDistribution: ubuntu2404Distribution,
         executable: (candidate) => Promise.resolve(candidate === path),
         inspectLinuxHopper: () =>
           Promise.resolve(
@@ -1368,13 +1354,7 @@ describe("doctor standard Linux Hopper paths", () => {
         host({
           platform: "linux",
           macosVersion: () => Promise.resolve(undefined),
-          linuxDistribution: () =>
-            Promise.resolve({
-              id: "ubuntu",
-              versionId: "24.04",
-              packageFamily: "deb",
-              hopperSetupSupported: true,
-            }),
+          linuxDistribution: ubuntu2404Distribution,
           executable: (candidate) => Promise.resolve(candidate === path),
         }),
       );

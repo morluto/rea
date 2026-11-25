@@ -76,7 +76,11 @@ it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
       failure = cause;
     }
     const projected = projectAnalysisError(
-      translateArtifactFailure("inspect_artifact", failure),
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        failure,
+      ),
     );
     expect(projected).toMatchObject({
       category: "unavailable",

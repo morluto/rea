@@ -32,6 +32,7 @@ import {
   type PhaseArrival,
 } from "../../../support/lifecycleHarness.js";
 import { testWaitDeadline } from "../../../support/testWait.js";
+import { stopProviderProcessFixture } from "../../../fixtures/providerProcess.js";
 
 class RetryCleanupLauncher implements BridgeLauncher {
   readonly sessions: BridgeSession[] = [];
@@ -40,7 +41,8 @@ class RetryCleanupLauncher implements BridgeLauncher {
 
   constructor(readonly externalDocument = false) {
     onTestFinished(async () => {
-      for (const process of this.processes) await stopFixture(process);
+      for (const process of this.processes)
+        await stopProviderProcessFixture(process);
       for (const session of this.sessions)
         await rm(session.directory, { recursive: true, force: true });
     });
@@ -76,22 +78,13 @@ class RetryCleanupLauncher implements BridgeLauncher {
                 cleaned: false,
                 reason: "fixture transient cleanup denial",
               };
-            await stopFixture(child);
+            await stopProviderProcessFixture(child);
             return { cleaned: true, signaled: true };
           },
         };
     return ok(launch);
   }
 }
-
-const stopFixture = async (child: ChildProcess): Promise<void> => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) =>
-    child.once("exit", () => resolve()),
-  );
-  child.kill("SIGKILL");
-  await exited;
-};
 
 const expectStoppedFixture = (
   child: Pick<ChildProcess, "exitCode" | "signalCode">,
