@@ -259,7 +259,7 @@ const projectPrimarySessionError = (
       default:
         recovery =
           (entryHint === undefined ? "" : `${entryHint} `) +
-          "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
+          "Choose an observed name or address from the current Ghidra inventory with search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
             : "");

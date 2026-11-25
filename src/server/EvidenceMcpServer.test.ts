@@ -122,6 +122,51 @@ describe("MCP request bookkeeping", () => {
   });
 });
 
+it("names the nearest advertised tool for an unknown tool call", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "unknown-tool-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  for (const name of ["search_procedures", "list_names", "find_xrefs_to_name"])
+    server.registerTool(name, {}, async () => ({
+      content: [{ type: "text", text: "ok" }],
+    }));
+  server.enableProgressiveCatalog();
+  const client = new Client(
+    { name: "unknown-tool-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    await expect(
+      client.callTool({ name: "search_procedure", arguments: {} }),
+    ).rejects.toThrow(
+      /Did you mean search_procedures\? If a suggested tool is not loaded, call discover_tools with its name to load it\./u,
+    );
+    // An exact cold-tool name is "not found" until discovery loads it; the
+    // recovery names the tool itself rather than a guess.
+    await expect(
+      client.callTool({ name: "find_xrefs_to_name", arguments: {} }),
+    ).rejects.toThrow(
+      /The requested MCP tool is registered but not loaded by this REA server\. Did you mean find_xrefs_to_name\? If a suggested tool is not loaded, call discover_tools with its name to load it\./u,
+    );
+    await expect(
+      client.callTool({ name: "totally_unknown_tool", arguments: {} }),
+    ).rejects.toThrow(/Call discover_tools with a query to find the tool/u);
+    await expect(
+      client.callTool({ name: "totally_unknown_tool", arguments: {} }),
+    ).rejects.not.toThrow(/Did you mean/u);
+  } finally {
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
 it("passes the owned cancellation signal to a tool without an input schema", async () => {
   const records = new InvestigationRecords();
   const server = new EvidenceMcpServer(

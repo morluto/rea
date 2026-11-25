@@ -115,6 +115,20 @@ export const prepareSessionExecution = (
               (isOperationAdvertised?.(alternative) ?? true),
           )
         : undefined;
+    // A declared-but-unavailable capability carries no authored recovery;
+    // without one the presentation falls back to echoing the message, so
+    // name the provider switch the caller can actually make. Alternatives
+    // stay an undeclared-operation recovery; a declared operation keeps
+    // its own unavailability reason.
+    const declaredRecovery =
+      capability?.remediation !== undefined
+        ? { remediationAction: capability.remediation }
+        : {
+            remediationAction: undeclaredOperationGuidance(
+              operation,
+              entryCommentAvailable,
+            ),
+          };
     return err(
       new AnalysisCapabilityUnavailableError(
         active.route.binding?.identity.id ?? active.route.identity.id,
@@ -125,9 +139,7 @@ export const prepareSessionExecution = (
               ...(capability?.userMessage === undefined
                 ? {}
                 : { userMessage: capability.userMessage }),
-              ...(capability?.remediation === undefined
-                ? {}
-                : { remediationAction: capability.remediation }),
+              ...declaredRecovery,
             }
           : {
               userMessage: `The selected provider does not declare ${operation}.`,

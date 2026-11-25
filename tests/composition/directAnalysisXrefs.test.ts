@@ -219,9 +219,17 @@ describe("direct CLI cross-reference name resolution", () => {
     expect(missing).toMatchObject({
       code: "invalid_request",
       remediation: {
-        action: expect.stringContaining("search_procedures or list_names"),
+        action: expect.stringContaining("find_xrefs_to_name"),
       },
-      details: { operation: "xrefs", issues: [{ path: ["address"] }] },
+      details: {
+        operation: "xrefs",
+        issues: [{ path: ["address"] }],
+        related_operations: [
+          "find_xrefs_to_name",
+          "search_procedures",
+          "list_names",
+        ],
+      },
     });
     expect(missing).not.toHaveProperty("recovery");
     expect(JSON.stringify(missing)).toContain("missing_symbol");

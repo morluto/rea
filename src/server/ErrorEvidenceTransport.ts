@@ -51,6 +51,10 @@ import {
   runMcpToolRequest,
 } from "./McpToolRequest.js";
 import { isRecord } from "../kernel/isRecord.js";
+import {
+  formatSuggestedToolNames,
+  suggestToolNames,
+} from "./toolNameSuggestions.js";
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
 
@@ -237,6 +241,12 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     private readonly outputPresentation: AdvertisedToolPresentation["output"],
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly currentToolNameGuidance: () => {
+      /** In-scope names the caller could use, including cold catalog tools. */
+      readonly names: readonly string[];
+      /** Whether a cold tool loads through discover_tools. */
+      readonly discoverTools: boolean;
+    },
   ) {
     super(transport);
   }
@@ -795,16 +805,50 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     if (
       !isJSONRPCErrorResponse(recovered) ||
       tool === undefined ||
-      recovered.error.code !== -32602 ||
-      recovered.error.message !== `Tool ${tool} not found`
+      recovered.error.code !== -32602
     )
       return recovered;
+    const notFound = recovered.error.message === `Tool ${tool} not found`;
+    const disabled = recovered.error.message === `Tool ${tool} disabled`;
+    if (!notFound && !disabled) return recovered;
+    const { names, discoverTools } = this.currentToolNameGuidance();
+    const known = names.includes(tool);
+    const suggestions = suggestToolNames(tool, names);
+    const suggestion =
+      suggestions.length === 0
+        ? ""
+        : ` Did you mean ${formatSuggestedToolNames(suggestions)}?`;
+    const loadAdvice =
+      discoverTools && suggestions.length > 0
+        ? " If a suggested tool is not loaded, call discover_tools with its name to load it."
+        : "";
+    if (disabled && !known) {
+      // Excluded from this server's scope: discovery cannot load it, so
+      // neither a load nor a search hint applies to the requested tool.
+      return {
+        ...recovered,
+        error: {
+          ...recovered.error,
+          message: `The requested MCP tool is disabled on this REA server.${suggestion}${loadAdvice} Do not repeat the unknown tool name.`,
+        },
+      };
+    }
+    const discovery =
+      discoverTools && suggestions.length === 0
+        ? " Call discover_tools with a query to find the tool, or tools/list to see the loaded tools."
+        : loadAdvice;
+    const lead = disabled
+      ? "The requested MCP tool is registered but not loaded by this REA server."
+      : "The requested MCP tool is not advertised by this REA server.";
     return {
       ...recovered,
       error: {
         ...recovered.error,
         message:
-          "The requested MCP tool is not advertised by this REA server. Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name.",
+          `${lead}${suggestion}${discovery}` +
+          (suggestions.length === 0 && !discoverTools
+            ? " Call tools/list, select an advertised tool, and retry; do not repeat the unknown tool name."
+            : " Do not repeat the unknown tool name."),
       },
     };
   }
