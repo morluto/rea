@@ -5,19 +5,14 @@ import {
   readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-  completedStableArtifactObservation,
+  artifactFileCancellationError,
+  projectStableArtifactFailure,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
   unsupportedTarget,
   unrecognizedTarget,
 } from "../domain/analysisErrorCore.js";
@@ -164,22 +159,15 @@ export const apkSignatureFailure = (
   cause: unknown,
   path: string,
   identity?: { readonly sha256: string; readonly bytes: number },
-): AnalysisError => {
-  const primary = primaryFailure(artifactFilePrimaryFacts(cause), path);
-  const observation = completedStableArtifactObservation(cause, path, identity);
-  if (observation !== undefined) primary.retainPartialObservation(observation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+): AnalysisError =>
+  projectStableArtifactFailure(
+    cause,
+    primaryFailure(artifactFilePrimaryFacts(cause), path),
+    path,
     APK_SIGNATURE_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { cause, operation: OPERATION },
+    OPERATION,
+    identity,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
 
 /** Distinguish cancellation, access, integrity and limits for the primary failure. */
 const primaryFailure = (
@@ -228,10 +216,7 @@ const artifactReaderFailure = (
     case "integrity":
       return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,

@@ -1,3 +1,4 @@
+import type { MachoReadFailure } from "./machoContainer.js";
 import { z } from "zod";
 
 const hexAddress = z.string().regex(/^0x[a-f0-9]+$/u);
@@ -141,10 +142,7 @@ export type MachoSliceEncryption = z.infer<typeof machoSliceEncryptionSchema>;
 /** Every slice's encryption state, or why the file could not be enumerated. */
 export type MachoEncryptionFacts =
   | { readonly status: "not-mach-o" }
-  | {
-      readonly status: "malformed" | "unsupported";
-      readonly reason: string;
-    }
+  | { readonly status: "failed"; readonly failure: MachoReadFailure }
   | {
       readonly status: "parsed";
       readonly slices: readonly MachoSliceEncryption[];

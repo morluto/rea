@@ -40,7 +40,6 @@ import {
   peImage,
   strxBeforeBase,
 } from "./DwarfUnits.fixture.js";
-import type { ByteSource } from "../../domain/byteSource.js";
 import { bufferByteSource } from "../../domain/byteSource.js";
 
 const inspect = async (

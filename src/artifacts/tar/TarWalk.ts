@@ -4,6 +4,7 @@ import { Budget } from "../../domain/budget.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import {
+  effectivePaxValue,
   parsePaxRecords,
   parsePaxUnsignedDecimal,
   parseTarHeaderBlock,
@@ -138,9 +139,20 @@ const invalidPaxNumber = (records: TarPaxRecords): string | undefined => {
     : undefined;
 };
 
+/** Mutate a retained pax map after budget accounting. */
+const applyPaxInPlace = (
+  target: Map<string, string>,
+  records: TarPaxRecords,
+): void => {
+  for (const [key, raw] of records) {
+    const value = effectivePaxValue(raw);
+    if (value === undefined) target.delete(key);
+    else target.set(key, value);
+  }
+};
+
 /**
- * Apply pax records over earlier ones. POSIX: an empty value deletes the
- * keyword, so the header field applies again.
+ * Apply pax records over earlier ones without mutating `base`.
  */
 const withPax = (
   base: TarPaxRecords,
@@ -148,9 +160,7 @@ const withPax = (
 ): TarPaxRecords => {
   if (records === undefined) return base;
   const merged = new Map(base);
-  for (const [key, value] of records)
-    if (value === "") merged.delete(key);
-    else merged.set(key, value);
+  applyPaxInPlace(merged, records);
   return merged;
 };
 
@@ -167,9 +177,10 @@ const mergedPaxBytesDelta = (
   records: TarPaxRecords,
 ): number => {
   let bytes = 0;
-  for (const [key, value] of records) {
+  for (const [key, raw] of records) {
+    const value = effectivePaxValue(raw);
     const previous = base.get(key);
-    if (value === "") {
+    if (value === undefined) {
       if (previous !== undefined) bytes -= paxRecordBytes(key, previous);
     } else if (previous === undefined) bytes += paxRecordBytes(key, value);
     else bytes += Buffer.byteLength(value) - Buffer.byteLength(previous);
@@ -244,7 +255,7 @@ export const walkTar = async (
   const dialects = new Set<TarHeaderDialect>();
   let paxHeaders = 0;
   const retained = new Budget(TAR_RETAINED_METADATA_BYTES);
-  let global: TarPaxRecords = new Map();
+  const global = new Map<string, string>();
   let chargedGlobalPax = 0;
   let local: TarPaxRecords | undefined;
   let longName: Uint8Array | undefined;
@@ -397,7 +408,7 @@ export const walkTar = async (
             else if (nextBytes < chargedGlobalPax)
               retained.refund(chargedGlobalPax - nextBytes);
             chargedGlobalPax = nextBytes;
-            global = withPax(global, pax.records);
+            applyPaxInPlace(global, pax.records);
           } else local = pax.records;
         } else {
           const end = data.indexOf(0);
@@ -502,11 +513,12 @@ export const walkTar = async (
     }
   } catch (cause: unknown) {
     if (!(cause instanceof TarStreamEnded)) throw cause;
-    if (stream.position === 0) throw tarFormatFailure(cause.detail, 0);
+    // Nothing of the tar stream was read: the carrier's failure is the file's.
+    if (stream.position === 0) throw artifactParseFailure(cause, signal);
     endState = cause.kind;
     endOffset = stream.position;
     limitations.push(
-      `${cause.detail}; tar members after that point were not inventoried.`,
+      `${cause.message}; tar members after that point were not inventoried.`,
     );
     // A member whose data the stream did not finish is not usable.
     while (

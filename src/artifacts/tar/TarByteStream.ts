@@ -6,6 +6,10 @@ import { createGunzip, type Gunzip } from "node:zlib";
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
 import { readArtifactFileBytes } from "../ArtifactFileRange.js";
 import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  ParseFailureError,
+  type ParseFailure,
+} from "../../domain/parseFailure.js";
 
 const SCAN_CHUNK_BYTES = 64 * 1024;
 
@@ -15,13 +19,21 @@ export interface TrailingCarrierBytes {
   readonly nonZeroBytes: number;
 }
 
-/** Why the decompressed tar stream ended before its own end. */
-export class TarStreamEnded extends Error {
+/**
+ * The gzip carrier's own failure, which ended the decompressed tar stream
+ * before the tar archive's end. The walk keeps the members read before it.
+ */
+export class TarStreamEnded extends ParseFailureError<
+  "malformed" | "truncated"
+> {
   constructor(
-    readonly kind: "malformed" | "truncated",
-    readonly detail: string,
+    failure: Extract<
+      ParseFailure,
+      { readonly kind: "malformed" | "truncated" }
+    >,
+    cause: unknown,
   ) {
-    super(detail);
+    super(failure, { cause });
     this.name = "TarStreamEnded";
   }
 }
@@ -297,13 +309,21 @@ const gzipStreamFailure = (cause: unknown, position: number): unknown => {
     cause instanceof Error && "code" in cause ? String(cause.code) : undefined;
   if (code === "Z_BUF_ERROR")
     return new TarStreamEnded(
-      "truncated",
-      `gzip stream ends before its end marker after ${String(position)} decompressed byte(s)`,
+      {
+        kind: "truncated",
+        format: "gzip",
+        detail: `gzip stream ends before its end marker after ${String(position)} decompressed byte(s)`,
+      },
+      cause,
     );
   if (code !== undefined && code.startsWith("Z_"))
     return new TarStreamEnded(
-      "malformed",
-      `gzip stream is malformed after ${String(position)} decompressed byte(s): ${(cause as Error).message}`,
+      {
+        kind: "malformed",
+        format: "gzip",
+        detail: `gzip stream is malformed after ${String(position)} decompressed byte(s): ${(cause as Error).message}`,
+      },
+      cause,
     );
   return cause;
 };

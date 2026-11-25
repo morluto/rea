@@ -18,6 +18,7 @@ import {
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -158,7 +159,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
     };
     try {
       const inspected = await cli.run({
-        arguments: ["inspect-artifact", path, "--json"],
+        arguments: completeArguments("inspect-artifact", path),
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -192,7 +193,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const observed = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(observed.isError, JSON.stringify(observed)).not.toBe(true);
       expect(
@@ -241,7 +242,7 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
   );
 
   const result = await cli.run({
-    arguments: ["inspect-artifact", path, "--json"],
+    arguments: completeArguments("inspect-artifact", path),
     environment: { REA_LOG_LEVEL: "silent" },
   });
   expect(result.exitCode, result.stderr).toBe(1);

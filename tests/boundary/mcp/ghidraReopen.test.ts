@@ -210,7 +210,7 @@ const connectGhidra = async () => {
     query: (addressSuffix: number) =>
       mcp.callTool({
         name: "list_strings",
-        arguments: { address: `0x200${addressSuffix}` },
+        arguments: { detail: "complete", address: `0x200${addressSuffix}` },
       }),
   };
 };

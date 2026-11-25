@@ -69,6 +69,7 @@ import {
   BINARY_LAYOUT_TEST_PROVIDER,
   binaryLayoutFixture,
 } from "../../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
@@ -592,13 +593,11 @@ it("discovers an oversized native dossier by exact metadata and reads its retain
 
 it("advertises exact schemas and projects one layout section from retained Evidence", async () => {
   const layout = analysisViewLayoutFixture();
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(layout)),
-  });
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+      Promise.resolve(ok(layout)),
+    ),
+  );
   const { client, session } = await connect(service);
   const {
     ajv,
@@ -632,7 +631,7 @@ it("advertises exact schemas and projects one layout section from retained Evide
   ).toBe(false);
   const inspected = await client.callTool({
     name: "inspect_binary_layout",
-    arguments: { path: layout.artifact.path },
+    arguments: { detail: "complete", path: layout.artifact.path },
   });
   expect(inspected.isError).not.toBe(true);
   const parent = toolContract("inspect_binary_layout").outputSchema.parse(
@@ -1375,7 +1374,7 @@ it("projects an actual HAR capture retained by the public MCP workflow", async (
   const { client } = await connect(undefined, service);
   const captureResponse = await client.callTool({
     name: "inspect_web_network_capture",
-    arguments: { capture_path: path, format: "har" },
+    arguments: { detail: "complete", capture_path: path, format: "har" },
   });
   expect(captureResponse.isError).not.toBe(true);
   const parent = parseEvidence(captureResponse.structuredContent);
@@ -1456,7 +1455,7 @@ it.each(PUBLISHED_EXAMPLES)(
     const { client } = await connect(undefined, service);
     const capture = await client.callTool({
       name: "inspect_web_network_capture",
-      arguments: { capture_path: path, format: "har" },
+      arguments: { detail: "complete", capture_path: path, format: "har" },
     });
     expect(parseEvidence(capture.structuredContent).evidence_id).toBe(
       example.input.source.evidence_id,

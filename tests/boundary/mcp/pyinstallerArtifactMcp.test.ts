@@ -218,7 +218,7 @@ mcpTest.for([false, true])(
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
@@ -343,7 +343,7 @@ mcpTest(
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inventory = artifactInspectionResultSchema.parse(
@@ -396,7 +396,7 @@ mcpTest(
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
@@ -514,7 +514,7 @@ mcpTest.for([
     ).not.toBe(true);
     const reply = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(reply.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
@@ -636,7 +636,7 @@ mcpTest.for([false, true])(
       ).not.toBe(true);
       const reply = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(reply.isError).not.toBe(true);
       const inventory = artifactInspectionResultSchema.parse(

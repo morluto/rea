@@ -8,7 +8,7 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   readStableArtifact,
   assertStableArtifactState,
@@ -26,8 +26,6 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -75,10 +73,7 @@ const readFailure = (
   const { cause } = artifactFilePrimaryFacts(failure);
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
       return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")

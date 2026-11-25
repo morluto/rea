@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as sha } from "../../support/sha256.js";
 import { access, open, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
@@ -904,9 +904,6 @@ it("finds a split marker and uses the first apphost marker, including offset zer
     await template.close();
   }
 });
-
-const sha = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it("reads the next member offset when it straddles a manifest read window", async () => {
   const root = await createTestTempDirectory("rea-dotnet-numeric-window-");

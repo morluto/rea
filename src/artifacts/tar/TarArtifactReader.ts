@@ -24,7 +24,7 @@ import {
 } from "../../resources/index.js";
 import { ArtifactPreparation } from "../ArtifactPreparation.js";
 import { readArtifactFileBytes } from "../ArtifactFileRange.js";
-import { ownAsyncArtifactStream } from "../OwnedAsyncArtifactStream.js";
+import { OwnedAsyncArtifactStreams } from "../OwnedAsyncArtifactStreams.js";
 import {
   GzipTarStream,
   PlainTarStream,
@@ -34,8 +34,6 @@ import {
 import { walkTar, type TarMember } from "./TarWalk.js";
 
 const CHUNK_BYTES = 64 * 1024;
-/** Bound active member streams; each gzip stream owns one inflater. */
-const MAX_MEMBER_STREAMS = 4;
 
 type TarEntry = ArtifactEntry & {
   readonly formatMetadata: Extract<
@@ -66,7 +64,11 @@ interface PreparedTar {
 export class TarArtifactReader implements ArtifactReader {
   readonly format = "tar" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #streams = new Map<Readable, AbortController>();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    "tar",
+    CHUNK_BYTES,
+  );
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   readonly #expandedBytes: number | undefined;
@@ -150,49 +152,17 @@ export class TarArtifactReader implements ArtifactReader {
         );
       const { handle, initial } = await this.#source.read(signal);
       this.#assertOpen(signal);
-      if (this.#streams.size >= MAX_MEMBER_STREAMS)
-        throw new ArtifactReaderFailure(
-          "limit",
-          "tar reader already owns four active member streams",
-          { boundary: "capacity" },
-        );
-      const controller = new AbortController();
-      return ownAsyncArtifactStream(
+      return this.#streams.open(signal, (active) =>
         this.#compression === "gzip"
-          ? this.#gzipChunks(
-              handle,
-              initial.size,
-              state.member,
-              controller.signal,
-            )
-          : this.#storedChunks(
-              handle,
-              initial.size,
-              state.member,
-              controller.signal,
-            ),
-        controller,
-        {
-          scope: this.#scope,
-          streams: this.#streams,
-          signal,
-          label: "tar",
-          highWaterMark: CHUNK_BYTES,
-        },
+          ? this.#gzipChunks(handle, initial.size, state.member, active)
+          : this.#storedChunks(handle, initial.size, state.member, active),
       );
     });
   }
 
   async close(): Promise<void> {
     this.#closing = true;
-    for (const [stream, controller] of this.#streams) {
-      const cause = new ArtifactReaderFailure(
-        "unavailable",
-        "tar reader closed",
-      );
-      controller.abort(cause);
-      stream.destroy(cause);
-    }
+    this.#streams.close();
     this.#idle?.close();
     this.#idle = undefined;
     await this.#scope.close();
@@ -377,7 +347,7 @@ export class TarArtifactReader implements ArtifactReader {
         }
       } catch (cause: unknown) {
         if (cause instanceof TarStreamEnded)
-          throw new ArtifactReaderFailure("integrity", cause.detail, {
+          throw new ArtifactReaderFailure("integrity", cause.message, {
             integrityCheck: "declared-size",
             cause,
           });

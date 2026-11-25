@@ -32,9 +32,8 @@ import {
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
+import { OwnedAsyncArtifactStreams } from "./OwnedAsyncArtifactStreams.js";
 
-const MAX_MEMBER_STREAMS = 4;
 const CHUNK_BYTES = 64 * 1024;
 const FORMAT = "android-backup";
 const LABEL = "Android backup";
@@ -123,7 +122,11 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
-  readonly #streams = new Map<Readable, AbortController>();
+  readonly #streams = new OwnedAsyncArtifactStreams(
+    this.#scope,
+    LABEL,
+    CHUNK_BYTES,
+  );
   #prepared:
     | {
         readonly metadata: AndroidBackupMetadata;
@@ -208,23 +211,8 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
           "unavailable",
           "Android backup directory has no file contents",
         );
-      if (this.#streams.size >= MAX_MEMBER_STREAMS)
-        throw new ArtifactReaderFailure(
-          "limit",
-          "Android backup reader already owns four member streams",
-          { boundary: "capacity" },
-        );
-      const controller = new AbortController();
-      return ownAsyncArtifactStream(
-        this.#chunks(member!.bytes, controller.signal),
-        controller,
-        {
-          scope: this.#scope,
-          streams: this.#streams,
-          signal,
-          label: LABEL,
-          highWaterMark: CHUNK_BYTES,
-        },
+      return this.#streams.open(signal, (active) =>
+        this.#chunks(member!.bytes, active),
       );
     });
   }
@@ -239,14 +227,7 @@ export class AndroidBackupArtifactReader implements ArtifactReader {
 
   async close(): Promise<void> {
     this.#closing = true;
-    for (const [stream, controller] of this.#streams) {
-      const cause = new ArtifactReaderFailure(
-        "unavailable",
-        "Android backup reader closed",
-      );
-      controller.abort(cause);
-      stream.destroy(cause);
-    }
+    this.#streams.close();
     await this.#scope.close();
     await this.#source.close();
     this.#prepared = undefined;

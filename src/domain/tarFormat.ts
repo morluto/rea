@@ -307,6 +307,11 @@ export const TAR_TYPEFLAGS = {
 
 export type TarPaxRecords = ReadonlyMap<string, string>;
 
+/** An empty pax value clears the override so the base header applies. */
+export const effectivePaxValue = (
+  raw: string | undefined,
+): string | undefined => (raw === "" ? undefined : raw);
+
 export const parsePaxUnsignedDecimal = (
   value: string | undefined,
 ): bigint | undefined =>

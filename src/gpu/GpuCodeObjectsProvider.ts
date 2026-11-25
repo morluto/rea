@@ -5,7 +5,7 @@ import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFileCompletion,
   selectedFileTargetError,
 } from "../resources/index.js";
@@ -30,8 +30,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   parseFailureAnalysisError,
@@ -150,10 +148,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(primary)),
-        );
+        error = artifactFileCancellationError(OPERATION, primary);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&

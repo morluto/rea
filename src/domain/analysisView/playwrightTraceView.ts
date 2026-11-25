@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisTextPage,
   analysisTextPageItemSchema,
@@ -178,9 +179,7 @@ const candidateIndices = <Row extends object>(
     for (let i = 0; i < rows.length; i += 1) {
       const value = rows[i]?.[key];
       if (typeof value !== "string") continue;
-      const bucket = built.get(value);
-      if (bucket === undefined) built.set(value, [i]);
-      else bucket.push(i);
+      appendToMapList(built, value, i);
     }
     index = built;
     indexes.set(key, index);

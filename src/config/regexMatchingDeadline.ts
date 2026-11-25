@@ -1,12 +1,11 @@
+import { defaultedNumberSettingParser } from "./optionalSetting.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
-import { err, ok, type Result } from "../domain/result.js";
 
 export const REGEX_MATCHING_DEADLINE_SETTING = "REA_REGEX_MATCHING_DEADLINE_MS";
 
@@ -31,24 +30,14 @@ export const regexMatchingDeadlineMsSchema = positiveDecimalIntegerSchema(
 );
 
 /** Resolve the effective deadline from one environment value. */
-export const parseRegexMatchingDeadline = (
-  value: string | undefined,
-): Result<RegexMatchingDeadline, ConfigurationError> => {
-  if (value === undefined) return ok(DEFAULT_REGEX_MATCHING_DEADLINE);
-  const parsed = regexMatchingDeadlineMsSchema.safeParse(value);
-  return parsed.success
-    ? ok({ deadlineMs: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(regexMatchingDeadlineConstraint, {
-          settings: [
-            {
-              setting: REGEX_MATCHING_DEADLINE_SETTING,
-              constraint: regexMatchingDeadlineConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseRegexMatchingDeadline =
+  defaultedNumberSettingParser<RegexMatchingDeadline>(
+    REGEX_MATCHING_DEADLINE_SETTING,
+    regexMatchingDeadlineMsSchema,
+    regexMatchingDeadlineConstraint,
+    DEFAULT_REGEX_MATCHING_DEADLINE,
+    (deadlineMs) => ({ deadlineMs, source: "setting" }),
+  );
 
 /**
  * Resolve the deadline from a composition root's selected environment. An

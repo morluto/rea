@@ -1,14 +1,14 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeUnwindRangesPort } from "../../ports/binaryDiagnostics/PeUnwindRangesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeUnwindRangesInputSchema,
   peUnwindRangesSchema,
   type InspectPeUnwindRangesInput,
   type PeUnwindRanges,
 } from "../../domain/native/peUnwindRanges.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
@@ -40,39 +40,21 @@ export class PeUnwindRangesService {
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
         buildEvidence: (value, identity, parameters) => {
-          const architecture = peSubjectArchitecture(
-            value.machine,
-            value.format,
-          );
           const directory = value.exception_directory;
-          const locations = [
-            { kind: "artifact-path" as const, path: value.artifact.path },
-            ...(directory.file_offset === null || directory.size === null
+          return observedPeEvidence(
+            value,
+            identity,
+            OPERATION,
+            parameters,
+            directory.file_offset === null || directory.size === null
               ? []
               : [
                   {
-                    kind: "file-offset-range" as const,
+                    kind: "file-offset-range",
                     start: directory.file_offset,
                     end: directory.file_offset + directory.size,
                   },
-                ]),
-          ];
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "pe",
-              sha256: value.artifact.sha256,
-              ...(architecture === undefined ? {} : { architecture }),
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations,
-            },
+                ],
           );
         },
       },

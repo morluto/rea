@@ -8,7 +8,9 @@ import {
   backupImage,
   backupTar,
   encryptedBackupImage,
+  paxRecord,
 } from "../fixtures/androidBackup.js";
+import { TAR_BLOCK_BYTES } from "../../src/domain/tarFormat.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
@@ -21,6 +23,15 @@ cliTest.for([false, true])(
     const output = join(root, "selected");
     const image = backupImage(
       backupTar([
+        ...(compressed
+          ? [
+              {
+                path: "Pax",
+                type: "x",
+                data: paxRecord("path", "") + paxRecord("size", ""),
+              },
+            ]
+          : []),
         { path: "apps/sample/f/state.json", data: '{"kept":true}' },
         { path: "apps/sample/f/other.txt", data: "not selected" },
       ]),
@@ -46,7 +57,11 @@ cliTest.for([false, true])(
     expect(selected).toMatchObject({
       hash_status: "verified",
       source_path: selected.logical_path,
-      format_metadata: { kind: "android-backup-entry", tar_header_offset: 0 },
+      format_metadata: {
+        kind: "android-backup-entry",
+        tar_header_offset: compressed ? 2 * TAR_BLOCK_BYTES : 0,
+        ...(compressed ? { pax: { path: "", size: "" } } : {}),
+      },
     });
     const extracted = await cli.run({
       arguments: [

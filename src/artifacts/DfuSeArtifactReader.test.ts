@@ -13,7 +13,10 @@ import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExam
 import { compareArtifacts } from "../domain/artifactComparison.js";
 import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
 import { createEvidence } from "../domain/evidence.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
 const FIRMWARE: DfuSeFixture = {
@@ -33,12 +36,8 @@ const FIRMWARE: DfuSeFixture = {
   ],
 };
 
-const writeImage = async (name: string, bytes: Uint8Array): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-dfuse-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeImage = (name: string, bytes: Uint8Array): Promise<string> =>
+  createTestTempFile("rea-dfuse-", name, bytes);
 
 it("inventories one region per element with its file range and target facts", async () => {
   const snapshot = await scanCanonicalArtifactInventory(

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
 import {
@@ -610,9 +611,7 @@ export const readFitStructure = (
   const children = new Map<string, FitNode[]>();
   for (const node of tree.nodes) {
     if (node.parent === null) continue;
-    const siblings = children.get(node.parent);
-    if (siblings === undefined) children.set(node.parent, [node]);
-    else siblings.push(node);
+    appendToMapList(children, node.parent, node);
   }
   const root = byPath.get("/");
   if (root === undefined || !byPath.has("/images"))

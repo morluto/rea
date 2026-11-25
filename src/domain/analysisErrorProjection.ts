@@ -599,7 +599,9 @@ const projectError = (
     code !== "cleanup_incomplete"
       ? { retry: targetFailureRetry(error.failure) }
       : {}),
-    ...(error instanceof ArtifactOperationError && code === "artifact_changed"
+    // Every producer of a changed target, typed or not, takes the changed
+    // kind's retry hint.
+    ...(code === "artifact_changed"
       ? { retry: TARGET_FAILURE_PROJECTIONS.changed.retry }
       : {}),
     ...(recovery === undefined ? {} : { recovery }),

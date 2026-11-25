@@ -4,15 +4,13 @@ import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
   fixedCeilingConstraint,
 } from "../../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   stableArtifactInputFailure,
   readerIntegrityFailure,
   artifactOperationReason,
@@ -24,10 +22,7 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
       return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")

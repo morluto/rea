@@ -1,3 +1,4 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -422,7 +423,7 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     await client.connect(clientTransport);
     const result = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { path: "/tmp/go-fixture" },
+      arguments: { detail: "complete", path: "/tmp/go-fixture" },
     });
     expect(result.isError).toBe(true);
     expect(goCalls).toBe(1);
@@ -545,19 +546,14 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     {
       name: "integration-test",
       version: "1.0.0",
     },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 const text = (result: CallToolResult): string => {

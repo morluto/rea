@@ -48,7 +48,7 @@ export type EspImageRecognition = "esp-image" | "esp8266";
 
 /** A whole-image refusal; no partial facts accompany it. */
 export interface EspImageFailure {
-  readonly kind: "format" | "unsupported";
+  readonly kind: "malformed" | "unsupported";
   readonly message: string;
 }
 
@@ -200,12 +200,12 @@ class StreamingEspImageDecoder implements EspImageDecoder {
     if (this.#failure !== undefined) return err(this.#failure);
     if (!this.satisfied && this.#position !== this.#fileSize)
       return err({
-        kind: "format",
+        kind: "malformed",
         message: `ESP image input ended at offset ${offsetText(this.#position)}, before the admitted size ${offsetText(this.#fileSize)}`,
       });
     if (this.#stage === "header")
       return err({
-        kind: "format",
+        kind: "malformed",
         message: `ESP image header needs ${String(ESP_IMAGE_HEADER_BYTES)} bytes; the file holds ${String(this.#position)}`,
       });
     return ok(
@@ -299,7 +299,7 @@ class StreamingEspImageDecoder implements EspImageDecoder {
             recognized === "esp8266"
               ? { kind: "unsupported", message: ESP8266_REFUSAL }
               : {
-                  kind: "format",
+                  kind: "malformed",
                   message:
                     "ESP image header is not recognized: it needs magic 0xe9, at most 16 segments, ESP-IDF flash mode and speed codes, and a hash_appended byte of 0 or 1",
                 };

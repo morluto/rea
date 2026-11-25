@@ -34,6 +34,8 @@ const connect = async (count: number) => {
   onTestFinished(() => browser.close());
   const { client } = await createApplicationMcpHarness({
     serverOptions: { browserObservation: new CdpBrowserProvider() },
+    // These cases cover the budget's choice for an omitted detail.
+    testDelivery: "budgeted",
   });
   const definitions = (await client.listTools()).tools;
   const call = async (name: string, args: Record<string, unknown>) => {
@@ -114,7 +116,7 @@ it("returns a small page capture inline when detail is omitted", async () => {
 });
 
 it("pages a captured script's metadata without its text, and the text separately", async () => {
-  const body = "x".repeat(40_000);
+  const body = "x".repeat(60_000);
   const browser = await startFakeCdpBrowser({
     commandEvents: ({ method }, origin) =>
       method === "Debugger.enable"
@@ -140,6 +142,7 @@ it("pages a captured script's metadata without its text, and the text separately
   onTestFinished(() => browser.close());
   const { client } = await createApplicationMcpHarness({
     serverOptions: { browserObservation: new CdpBrowserProvider() },
+    testDelivery: "budgeted",
   });
   const call = async (name: string, args: Record<string, unknown>) => {
     const reply = await client.callTool({ name, arguments: args });

@@ -98,7 +98,7 @@ it.each([
     await client.connect(ct);
     const response = await client.callTool({
       name: "batch_decompile",
-      arguments: { addresses: ["example"] },
+      arguments: { detail: "complete", addresses: ["example"] },
     });
     expect(response.isError).toBe(true);
     const error = parseMcpToolError(response).error;

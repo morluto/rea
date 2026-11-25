@@ -41,6 +41,7 @@ import {
   CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
 } from "../../fixtures/captureDecoderLimits.js";
 import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 
@@ -111,6 +112,7 @@ const cliResponse = async (path: string, extra: string[] = []) => {
       [
         entrypoint,
         "inspect-web-network-capture",
+        ...COMPLETE_DETAIL,
         path,
         "saz",
         "--json",
@@ -187,6 +189,7 @@ it("uses HTTP optional whitespace for SAZ identity codings without changing raw 
   }
   const { call } = await connectSazMcp();
   const response = await call("inspect_web_network_capture", {
+    detail: "complete",
     capture_path: path,
     format: "saz",
     record_ordinals: [0, 1, 2, 3],
@@ -198,6 +201,7 @@ it("uses HTTP optional whitespace for SAZ identity codings without changing raw 
   );
   for (const sensitive of ["gzip", "Content-Encoding"]) {
     const excluded = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: path,
       format: "saz",
       record_ordinals: [0, 1, 2, 3],
@@ -320,6 +324,7 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
   for (const excluded of [path, sha256, "content_base64", "fixture-only"])
     expect(JSON.stringify(excludedResponse)).not.toContain(excluded);
   const opaqueReply = await call("inspect_web_network_capture", {
+    detail: "complete",
     capture_path: path,
     format: "saz",
     record_ordinals: [2],
@@ -1118,6 +1123,7 @@ it.each([
     ]);
     const { call } = await connectSazMcp();
     const response = await call("inspect_web_network_capture", {
+      detail: "complete",
       capture_path: path,
       format: "saz",
       record_ordinals: [0],
@@ -1186,6 +1192,7 @@ it("names the ZIP decoder window instead of the expanded-input budget for a larg
   expect(JSON.stringify(error)).not.toContain("max_input_bytes");
   const { call } = await connectSazMcp();
   const response = await call("inspect_web_network_capture", {
+    detail: "complete",
     capture_path: path,
     format: "saz",
   });

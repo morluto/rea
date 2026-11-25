@@ -42,7 +42,10 @@ import * as nodeSeaLocation from "./nodeSea/NodeSeaLocation.js";
 import { observeNodeSeaFuseMatches } from "./nodeSea/NodeSeaBlob.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../tests/fixtures/temporaryDirectory.js";
 import {
   CPU_ARM64,
   CPU_X86_64,
@@ -55,12 +58,8 @@ import {
   resolveArtifactReaderLimits,
 } from "../domain/artifactReaderLimits.js";
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-node-sea-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-node-sea-", name, bytes);
 
 const script = 'console.log("rea-node-sea")\n';
 const populated = {

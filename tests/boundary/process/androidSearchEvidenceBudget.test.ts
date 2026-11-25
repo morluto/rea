@@ -7,10 +7,8 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { err } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const INVENTORY_CLASS_COUNT = 7096;
@@ -84,7 +82,7 @@ const connectJadxSearchFixture = async () => {
     await client.close();
     await server.close();
     await session.close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -330,7 +328,7 @@ test("keeps the complete paged inventory inline without a retaining session", as
     "items_omitted",
   );
   await provider.close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });
 
 test("withholds inline summary when retaining complete Evidence fails", async () => {
@@ -373,5 +371,5 @@ test("withholds inline summary when retaining complete Evidence fails", async ()
   );
 
   await provider.close();
-  await verifyJadxFixtureCleanup(launches);
+  await expectProviderLaunchCleanup(launches);
 });

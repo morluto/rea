@@ -21,7 +21,9 @@ Versions 1 through 5 support unencrypted payloads, either plain TAR or
 zlib-compressed TAR. The reader supports regular files and directories in
 legacy v7 and USTAR TAR headers, with support for USTAR prefixes and local PAX
 headers. Inspection retains PAX path, size, owner and timestamp fields. The
-reader refuses unsupported entry types and PAX attributes.
+reader refuses unsupported entry types and PAX attributes. Empty PAX
+`path` and `size` values select the base TAR header fields. Inspection keeps
+the empty records as source evidence.
 
 The archive's SHA-256 identifies the original acquisition. Each member retains
 its original path, content hash and TAR header/data offsets. For compressed

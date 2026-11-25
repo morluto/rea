@@ -7,6 +7,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
@@ -384,8 +385,16 @@ it("selects code checks for documentation filenames containing line separators",
 });
 
 it.each([
+  "artifacts.d.mts",
+  "artifacts.mjs",
+  "failure-report.d.mts",
+  "failure-report.mjs",
+  "github-api.d.mts",
+  "github-api.mjs",
   "job-timings.mjs",
   "job-timings-batch.mjs",
+  "pr-ci-health.d.mts",
+  "pr-ci-health.mjs",
   "test-report.mjs",
   "test-timing-reporter.mjs",
   "test-history.mjs",
@@ -426,6 +435,36 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
     true,
   );
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
+});
+
+// Linux lanes skip a test gated to macOS; changing one runs the macOS lane.
+it.for([
+  [`it.skipIf(process.platform !== "darwin")("runs", () => {});\n`, true],
+  [`it.skipIf(process.platform === "linux")("runs", () => {});\n`, true],
+  [`it("runs everywhere", () => {});\n`, false],
+] as const)(
+  "selects the macOS lane for a changed test that may be gated to it: %j",
+  async ([source, apple]) => {
+    const { directory, base } = await fixture();
+    const test = "tests/boundary/filesystem/gated.test.ts";
+    const head = await change(directory, [test], source);
+    expect(await classify(directory, base, head)).toMatchObject({ apple });
+  },
+);
+
+it("does not select the macOS lane for a deleted macOS-gated test", async () => {
+  const { directory } = await fixture();
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  const base = await change(
+    directory,
+    [test],
+    `it.skipIf(process.platform !== "darwin")("runs", () => {});\n`,
+  );
+  await rm(join(directory, test));
+  const head = await commit(directory);
+  expect(await classify(directory, base, head)).toMatchObject({
+    apple: false,
+  });
 });
 
 it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
@@ -2052,36 +2091,6 @@ it.each([
     },
   ],
   [
-    "scripts/lib/cli-process-environment.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.mjs",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
-    "scripts/lib/runtime-admission.d.mts",
-    {
-      code: true,
-      package: true,
-      runtime: true,
-      javascript_recovery: true,
-      readiness: false,
-    },
-  ],
-  [
     "tests/conformance/readiness/report/reconstructionReadiness.ts",
     {
       code: true,
@@ -2111,6 +2120,21 @@ it.each([
   ],
 ])("preserves scope boundaries for %s", async (path, expected) => {
   expect(await classifyPaths([path])).toMatchObject(expected);
+});
+
+it.each([
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+])("selects packaged CLI runtime checks for %s", async (path) => {
+  expect(await classifyPaths([path])).toMatchObject({
+    code: true,
+    package: true,
+    runtime: true,
+    javascript_recovery: true,
+    readiness: false,
+  });
 });
 
 it("unions provider scopes across mixed changes and deletions", async () => {

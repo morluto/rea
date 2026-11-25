@@ -1,6 +1,7 @@
 import { err, ok, type Result } from "./result.js";
 import { decodeStrictUtf8 } from "./strictUtf8.js";
 import {
+  effectivePaxValue,
   isZeroBlock,
   parsePaxRecords,
   parsePaxUnsignedDecimal,
@@ -163,7 +164,9 @@ export function* androidBackupTarEntries(
       return;
     }
     const override =
-      type === TAR_TYPEFLAGS.paxLocal ? undefined : pax?.get("size");
+      type === TAR_TYPEFLAGS.paxLocal
+        ? undefined
+        : effectivePaxValue(pax?.get("size"));
     const declaredSize =
       override === undefined ? size : parsePaxUnsignedDecimal(override);
     if (declaredSize === undefined) {
@@ -201,7 +204,7 @@ export function* androidBackupTarEntries(
         return;
       }
       yield ok({
-        path: pax?.get("path") ?? headerPath,
+        path: effectivePaxValue(pax?.get("path")) ?? headerPath,
         kind: type === TAR_TYPEFLAGS.directory ? "directory" : "file",
         headerOffset: position,
         dataOffset,

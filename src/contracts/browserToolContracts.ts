@@ -12,7 +12,7 @@ import {
   webPagePageViewResultSchema,
   webPageSummaryViewResultSchema,
 } from "../domain/analysisView/summarySchemas/webPageSummarySchemas.js";
-import { analysisDetailSizeAwareSchema } from "./analysisDetail.js";
+import { analysisDetailSchema } from "./analysisDetail.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageShapeSchema,
@@ -56,9 +56,9 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { presentRootDiscriminator } from "../domain/schemaAnnotations.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
-/** Page inspection with size-aware delivery; detail never reaches the capture. */
+/** Page inspection with agent-budgeted delivery; detail never reaches the capture. */
 const inspectWebPageRequestSchema = inspectWebPageShapeSchema
-  .extend({ detail: analysisDetailSizeAwareSchema })
+  .extend({ detail: analysisDetailSchema })
   .superRefine(refineInspectWebPageInput);
 const inspectionOutputSchema = evidenceResultOf(
   z.union([
@@ -213,7 +213,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata("inspect_web_page", browserEvidenceEffects),
     description:
-      'Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target\'s current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence. Omitted detail returns the capture inline when its Evidence is at most 32 KiB, else retains it and returns counts; page dom, accessibility, console, network, scripts or resources with inspect_analysis_view view {kind: "web-page", collection}. complete or summary forces that shape; compare_web_captures needs the complete capture.',
+      'Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target\'s current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence. Omitted detail returns the capture inline when it fits the agent result budget, else retains it and returns counts; page dom, accessibility, console, network, scripts or resources with inspect_analysis_view view {kind: "web-page", collection}. complete or summary forces that shape; compare_web_captures needs the complete capture.',
     kind: "browser-provider",
     inputSchema: inspectWebPageRequestSchema,
     outputSchema: inspectionOutputSchema,

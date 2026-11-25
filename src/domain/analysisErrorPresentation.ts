@@ -565,9 +565,7 @@ const CANCELLED_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
 ]);
 
 /** Operations that accept integrity_policy for declared-integrity mismatches. */
-const INTEGRITY_POLICY_OPERATIONS: ReadonlySet<
-  ArtifactOperationError["operation"]
-> = new Set([
+const INTEGRITY_POLICY_OPERATIONS: ReadonlySet<string> = new Set([
   "inventory_artifact",
   "inspect_artifact",
   "extract_artifact",
