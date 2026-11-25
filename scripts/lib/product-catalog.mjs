@@ -1,6 +1,6 @@
 import { formatGeneratedFile } from "./format-generated-file.mjs";
 
-import { assertSameNames, digest, loadSources } from "./catalog-core.mjs";
+import { assertSameNames, loadSources } from "./catalog-core.mjs";
 import { createCliInventory } from "./catalog-cli.mjs";
 import { providerCatalog, toolFamilyCatalog } from "./catalog-builders.mjs";
 
@@ -48,7 +48,8 @@ export const createProductCatalog = async (root) => {
       counts: sources.catalogIdentity.DEFAULT_CATALOG_IDENTITY.counts,
       digests: {
         // Full runtime schema digests belong to server identity, not this facts projection.
-        providers_sha256: digest(providers),
+        providers_sha256:
+          sources.catalogIdentity.digestCatalogProjection(providers),
       },
     },
   };

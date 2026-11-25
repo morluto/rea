@@ -232,16 +232,19 @@ exit 1
   },
 );
 
+const MISSING_ADB =
+  process.platform === "win32" ? "C:\\nonexistent\\adb" : "/nonexistent/adb";
+
 it.each([
   [
     ["inspect-adb-client", "--json"],
-    "/nonexistent/adb",
-    "The selected adb binary was not found: /nonexistent/adb. Set REA_ADB_PATH",
+    MISSING_ADB,
+    `The selected adb binary was not found: ${MISSING_ADB}. Set REA_ADB_PATH`,
   ],
   [
     ["list-adb-devices", "--json"],
-    "/nonexistent/adb",
-    "The selected adb binary was not found: /nonexistent/adb. Set REA_ADB_PATH",
+    MISSING_ADB,
+    `The selected adb binary was not found: ${MISSING_ADB}. Set REA_ADB_PATH`,
   ],
   [
     ["list-adb-devices", "--json"],

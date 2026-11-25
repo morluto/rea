@@ -15,10 +15,7 @@ import {
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
-  translateArtifactFailure,
-  createAsarHeaderSignatureProbe,
-} from "../../resources/index.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
@@ -29,6 +26,7 @@ import {
 } from "../../../tests/fixtures/nativeHeaders.js";
 import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
+import { buildIso9660Image } from "../../domain/iso9660/iso9660.fixture.js";
 import {
   RP2040_FAMILY,
   patternBytes,
@@ -45,10 +43,6 @@ import {
 } from "../../../tests/fixtures/espImage.js";
 import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
-import {
-  fullAndroidOtaPayload,
-  v1AndroidOtaPayload,
-} from "../../domain/firmware/androidOtaPayload.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -148,24 +142,20 @@ describe("native header admission", () => {
 it("projects the parsed ASAR header size when admission rejects an archive", () => {
   const bytes = asarHeaderBytes("{}", { padding: Buffer.alloc(8, 0x20) });
   const headerBytes = bytes.readUInt32LE(4);
-  const probe = createAsarHeaderSignatureProbe({
+  const probe = createArtifactClassificationProbe({
     maximumBytes: headerBytes - 1,
     source: "setting",
   });
   probe.write(bytes);
-  const asarHeader = probe.finish(bytes.length);
-  expect(asarHeader).toMatchObject({
+  const evidence = probe.finish(bytes.length);
+  expect(evidence.asarHeader).toMatchObject({
     state: "limit",
     extents: { headerBytes },
   });
 
   let failure: unknown;
   try {
-    classifyArtifactContent(
-      "app.asar",
-      { prefix: bytes, asarHeader },
-      bytes.length,
-    );
+    classifyArtifactContent("app.asar", evidence, bytes.length);
   } catch (cause) {
     failure = cause;
   }
@@ -571,6 +561,7 @@ it("keeps byte content format separate from path-specific package role", () => {
     kind: "container",
     format: "apk",
     contentFormat: "zip",
+    contentArchitecture: null,
   });
 });
 
@@ -593,21 +584,6 @@ it("classifies nested HEX and S-record content as containers by bytes", () => {
       Buffer.from(":0300300002337A1F\n"),
     ),
   ).toEqual({ kind: "resource", format: "file" });
-});
-
-it("classifies nested Android OTA payloads as containers by CrAU magic", () => {
-  expect(
-    classifyArtifactBytesAtPath("ota/payload.bin", fullAndroidOtaPayload()),
-  ).toEqual({
-    kind: "container",
-    format: "android-ota-payload",
-  });
-  expect(
-    classifyArtifactBytesAtPath("ota/payload.bin", v1AndroidOtaPayload()),
-  ).toEqual({
-    kind: "resource",
-    format: "file",
-  });
 });
 
 it("classifies nested ESP images as containers by bytes", () => {
@@ -658,6 +634,26 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   ).toMatchObject({ format: "file" });
 });
 
+it("classifies an ISO 9660 image by its sector 16 descriptor, under any name", () => {
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "a.txt", bytes: Buffer.from("a") }],
+  });
+  expect(classifyArtifactBytesAtPath("media/disk.bin", bytes)).toEqual({
+    kind: "container",
+    format: "iso9660",
+  });
+  // Routing needs only the signature; parsing reports the truncation.
+  expect(
+    classifyArtifactBytesAtPath("media/disk", bytes.subarray(0, 32_768 + 7)),
+  ).toEqual({ kind: "container", format: "iso9660" });
+  const damaged = Buffer.from(bytes);
+  damaged.write("CD002", 32_769, "latin1");
+  expect(classifyArtifactBytesAtPath("media/disk.iso", damaged)).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
 it("classifies a $MFT stream by its FILE record header, under any name", () => {
   const mft = Buffer.alloc(2_048);
   mft.write("FILE", 0, "latin1");
@@ -699,15 +695,18 @@ it("classifies a FIT by a /images node within the first 4 KiB", () => {
       kind: "container",
       format: "fit",
     });
-  for (const bytes of [
-    devicetreeFixture(),
-    fitFixture({ images, version: 15 }),
-    late,
-  ])
+  for (const bytes of [devicetreeFixture(), late])
     expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
       kind: "resource",
-      format: "file",
+      format: "devicetree",
     });
+  // The devicetree header owner refuses FDT v15, so those bytes stay a file.
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/board.dtb",
+      fitFixture({ images, version: 15 }),
+    ),
+  ).toEqual({ kind: "resource", format: "file" });
 });
 
 describe("FAT prefix observation coverage", () => {
@@ -734,12 +733,9 @@ describe("FAT prefix observation coverage", () => {
     probe.write(bytes.subarray(0, 8_192));
     const evidence = probe.finish(bytes.length);
 
-    expect(
-      evidence.fatSliceHeaders?.sliceHeadersByOffset.get(4_096)?.magic,
-    ).toBe(0xcffaedfe);
-    expect(evidence.fatSliceHeaders?.sliceHeadersByOffset.has(8_192)).toBe(
-      false,
-    );
+    expect(evidence.fatHeader.state).toBe("parsed");
+    expect(evidence.fatSliceHeadersByOffset.get(4_096)?.magic).toBe(0xcffaedfe);
+    expect(evidence.fatSliceHeadersByOffset.has(8_192)).toBe(false);
   });
 });
 
@@ -754,6 +750,26 @@ describe("bounded FAT inventory classification", () => {
       });
     },
   );
+});
+
+it("classifies a streamed XML plist whose prolog passes the retained prefix", () => {
+  const prolog = `<?xml version="1.0"?><!--${" ".repeat(9_000)}-->`;
+  const probe = createArtifactClassificationProbe();
+  const plist = Buffer.from(`${prolog}<plist version="1.0"><dict/></plist>`);
+  for (let offset = 0; offset < plist.length; offset += 4_096)
+    probe.write(plist.subarray(offset, offset + 4_096));
+  const evidence = probe.finish(plist.length);
+  expect(evidence.xmlPlistSignature).toBe(true);
+  expect(
+    classifyArtifactContent("state.archive", evidence, plist.length),
+  ).toMatchObject({
+    kind: "plist",
+    format: "plist",
+  });
+  const other = createArtifactClassificationProbe();
+  const root = Buffer.from(`${prolog}<root><plist/></root>`);
+  other.write(root);
+  expect(other.finish(root.length).xmlPlistSignature).toBe(false);
 });
 
 it("preserves path-selected inventory roles for XML content", () => {

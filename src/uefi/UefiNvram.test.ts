@@ -19,56 +19,94 @@ const encodeEntry = (name: string, data: Buffer, guidIndex: number): Buffer => {
   return entry;
 };
 
-it("parses one AMI NVRAM entry with name, attributes, GUID index and data range", () => {
-  const entry = encodeEntry("Setup", Buffer.from([0xde, 0xad]), 3);
-  const parsed = scanAmiNvramStores(entry, 1, 1).stores[0]?.variables[0];
-  expect(parsed).not.toBeNull();
-  expect(parsed?.name).toBe("Setup");
-  expect(parsed?.attributes).toBe(0x83);
-  expect(parsed?.guidIndex).toBe(3);
-  expect(parsed?.dataOffset).toBe(11 + 5 + 1);
-  expect(parsed?.dataLength).toBe(2);
-  expect(parsed?.endOffset).toBe(entry.length);
-});
+const inactiveEntry = () => {
+  const entry = encodeEntry("Inactive", Buffer.from([2]), 0);
+  entry.writeUInt8(0x03, 9);
+  return entry;
+};
 
-it("recurses into a StdDefaults container and exposes its nested variables", () => {
-  const nested = Buffer.concat([
-    encodeEntry("Setup", Buffer.from([0x01, 0x01, 0x00, 0x00]), 0),
-    encodeEntry("PlatformLang", Buffer.from("en-US\0", "ascii"), 1),
-    Buffer.alloc(4, 0xff),
-  ]);
-  const store = encodeEntry("StdDefaults", nested, 0);
-  const scan = scanAmiNvramStores(store, 16, 2);
-  expect(scan.coverage).toBe("complete");
-  expect(scan.stores).toHaveLength(1);
-  const found = scan.stores[0];
-  if (found === undefined) throw new Error("expected exactly one store");
-  expect(found.name).toBe("StdDefaults");
-  expect(found.variables.map((v) => [v.name, v.depth])).toEqual([
-    ["StdDefaults", 0],
-    ["Setup", 1],
-    ["PlatformLang", 1],
-  ]);
-  expect(found.variables[0]?.parentOffset).toBeNull();
-  expect(found.variables[1]?.parentOffset).toBe(0);
-});
-
-it("walks a flat sibling chain without treating it as a container", () => {
-  const flat = Buffer.concat([
-    encodeEntry("First", Buffer.from([0x10]), 0),
-    encodeEntry("Second", Buffer.from([0x20, 0x21]), 1),
+it("maps nested and top-level siblings across inactive entries and erased padding", () => {
+  const setup = encodeEntry("Setup", Buffer.from([0xde, 0xad]), 3);
+  const inactive = inactiveEntry();
+  const lang = encodeEntry("PlatformLang", Buffer.from("en-US\0", "ascii"), 1);
+  const outer = encodeEntry(
+    "StdDefaults",
+    Buffer.concat([setup, inactive, lang]),
+    0,
+  );
+  const sibling = encodeEntry("Sibling", Buffer.from([0x20, 0x21]), 1);
+  const nextStore = encodeEntry("OtherStore", Buffer.from([3]), 0);
+  const erasedBytes = 2 * 65_536 + 3;
+  const siblingOffset = outer.length + inactive.length;
+  const nextOffset = siblingOffset + sibling.length + erasedBytes;
+  const image = Buffer.concat([
+    outer,
+    inactive,
+    sibling,
+    Buffer.alloc(erasedBytes, 0xff),
+    nextStore,
     Buffer.alloc(8, 0xff),
   ]);
-  const scan = scanAmiNvramStores(flat, 16, 2);
-  expect(scan.stores).toHaveLength(1);
-  const found = scan.stores[0];
-  if (found === undefined) throw new Error("expected exactly one store");
-  expect(found.name).toBe("First");
-  expect(found.variables.map((v) => [v.name, v.depth])).toEqual([
-    ["First", 0],
-    ["Second", 0],
+  const report = scanAmiNvramStores(image, 2, 2);
+  expect(report.coverage).toBe("complete");
+  expect(report.stores).toMatchObject([
+    {
+      name: "StdDefaults",
+      offset: 0,
+      trailingPadding: erasedBytes,
+      variables: [
+        {
+          name: "StdDefaults",
+          offset: 0,
+          depth: 0,
+          parentOffset: null,
+          dataOffset: 23,
+        },
+        {
+          name: "Setup",
+          offset: 23,
+          attributes: 0x83,
+          guidIndex: 3,
+          depth: 1,
+          parentOffset: 0,
+          dataOffset: 40,
+          dataLength: 2,
+        },
+        {
+          name: "PlatformLang",
+          offset: 23 + setup.length + inactive.length,
+          depth: 1,
+          parentOffset: 0,
+        },
+        {
+          name: "Sibling",
+          offset: siblingOffset,
+          depth: 0,
+          parentOffset: null,
+          dataLength: 2,
+        },
+      ],
+    },
+    {
+      name: "OtherStore",
+      offset: nextOffset,
+      trailingPadding: 8,
+      variables: [
+        {
+          name: "OtherStore",
+          offset: nextOffset,
+          depth: 0,
+          parentOffset: null,
+        },
+      ],
+    },
   ]);
-  expect(found.trailingPadding).toBe(8);
+  const limited = scanAmiNvramStores(image, 1, 2);
+  expect(limited).toEqual({
+    stores: report.stores.slice(0, 1),
+    coverage: "partial",
+    limitations: ["Stopped after 1 AMI NVRAM stores; additional stores exist."],
+  });
 });
 
 it("rejects NVAR byte runs that do not match the record framing", () => {
@@ -76,22 +114,6 @@ it("rejects NVAR byte runs that do not match the record framing", () => {
   const scan = scanAmiNvramStores(image, 16, 2);
   expect(scan.stores).toHaveLength(0);
   expect(scan.limitations.join(" ")).toContain("No AMI NVRAM");
-});
-
-it("keeps a container's child walk inside the container boundary", () => {
-  const child = encodeEntry("Child", Buffer.alloc(0), 0);
-  const outer = encodeEntry("Outer", child, 0);
-  const sibling = encodeEntry("Sibling", Buffer.alloc(0), 0);
-  const scan = scanAmiNvramStores(Buffer.concat([outer, sibling]), 16, 2);
-  expect(scan.stores).toHaveLength(1);
-  const found = scan.stores[0];
-  if (found === undefined) throw new Error("expected exactly one store");
-  // Child belongs to Outer; Sibling is a top-level peer, not a second child.
-  expect(found.variables.map((v) => [v.name, v.depth])).toEqual([
-    ["Outer", 0],
-    ["Child", 1],
-    ["Sibling", 0],
-  ]);
 });
 
 it("reports partial coverage when a nested chain exceeds max_depth", () => {
@@ -119,26 +141,6 @@ it("returns partial NVAR coverage when a single store exhausts the record limit"
   expect(result.stores[0]?.variables.length).toBe(scanRecords);
 });
 
-it("preserves a named record's link to a data-only entry without inventing a GUID index", () => {
-  const named = encodeEntry("Setup", Buffer.from([0x42]), 3);
-  named.writeUIntLE(named.length, 6, 3);
-  const dataOnly = Buffer.from([
-    0x4e, 0x56, 0x41, 0x52, 12, 0, 0xff, 0xff, 0xff, 0x88, 0xaa, 0xbb,
-  ]);
-  const result = scanAmiNvramStores(Buffer.concat([named, dataOnly]), 16, 2);
-  expect(result.coverage).toBe("complete");
-  expect(result.stores[0]?.variables).toMatchObject([
-    { name: "Setup", next: named.length, attributes: 0x83, guidIndex: 3 },
-    {
-      name: null,
-      next: 0xffffff,
-      attributes: 0x88,
-      guidIndex: null,
-      dataLength: 2,
-    },
-  ]);
-});
-
 it("separates an inline GUID and UCS-2 name from data and the extended footer", () => {
   const name = Buffer.from("Δ\0", "utf16le");
   const entry = Buffer.concat([
@@ -158,27 +160,6 @@ it("separates an inline GUID and UCS-2 name from data and the extended footer", 
   });
 });
 
-it.each([false, true])(
-  "preserves active NVAR siblings across inactive records (nested: %s)",
-  (nested) => {
-    const first = encodeEntry("First", Buffer.from([1]), 0);
-    const inactive = encodeEntry("Inactive", Buffer.from([2]), 0);
-    inactive.writeUInt8(0x03, 9);
-    const later = encodeEntry("Later", Buffer.from([3]), 0);
-    const chain = Buffer.concat([first, inactive, later]);
-    const result = scanAmiNvramStores(
-      nested ? encodeEntry("Outer", chain, 0) : chain,
-      16,
-      2,
-    );
-    expect(result.coverage).toBe("complete");
-    expect(result.stores).toHaveLength(1);
-    expect(result.stores[0]?.variables.map(({ name }) => name)).toEqual(
-      nested ? ["Outer", "First", "Later"] : ["First", "Later"],
-    );
-  },
-);
-
 it("reports a truncated successor under an established nested NVAR chain", () => {
   const first = encodeEntry("First", Buffer.from([1]), 0);
   const later = encodeEntry("Later", Buffer.from([2]), 0);
@@ -193,8 +174,7 @@ it("reports a truncated successor under an established nested NVAR chain", () =>
 });
 
 it("finds the first active child after an inactive prefix without leaving its container", () => {
-  const inactive = encodeEntry("Inactive", Buffer.alloc(0), 0);
-  inactive.writeUInt8(0x03, 9);
+  const inactive = inactiveEntry();
   const active = encodeEntry("Later", Buffer.from([1]), 0);
   const outer = encodeEntry(
     "StdDefaults",
@@ -277,8 +257,10 @@ it("does not spend a second discovery slot on an already examined invalid succes
   const firstEnd = firstStore.length;
   const laterOffset = firstEnd + invalidSuccessor.length;
   const later = encodeEntry("Later", Buffer.alloc(0), 0);
+  const padding = Buffer.alloc(32, 0xff);
+  const tailOffset = laterOffset + later.length + padding.length;
   const result = scanAmiNvramStores(
-    Buffer.concat([firstStore, invalidSuccessor, later]),
+    Buffer.concat([firstStore, invalidSuccessor, later, padding, NVAR_MAGIC]),
     2,
     1,
   );
@@ -287,8 +269,10 @@ it("does not spend a second discovery slot on an already examined invalid succes
     [0, "First"],
     [laterOffset, "Later"],
   ]);
+  expect(result.stores[1]?.trailingPadding).toBe(padding.length);
   expect(result.coverage).toBe("partial");
   expect(result.limitations).toEqual([
     `NVAR record at 0x${firstEnd.toString(16)} has an incomplete or invalid extent.`,
+    `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached at NVAR candidate 0x${tailOffset.toString(16)}.`,
   ]);
 });

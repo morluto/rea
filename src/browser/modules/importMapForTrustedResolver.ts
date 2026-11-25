@@ -20,7 +20,7 @@ export const importMapForTrustedResolver = (
     Array.isArray(integrity)
   )
     return map;
-  const importer = importerModuleIdentity(importerUrl, baseUrl);
+  const importer = new URL(importerUrl, baseUrl);
   const nextIntegrity: { [key: string]: JsonValue } = Object.create(null);
   let removed = false;
   for (const [key, value] of Object.entries(integrity)) {
@@ -38,36 +38,17 @@ export const importMapForTrustedResolver = (
   return { ...map, integrity: nextIntegrity };
 };
 
-const importerModuleIdentity = (
-  importerUrl: string,
-  baseUrl: string,
-): { readonly hrefs: ReadonlySet<string>; readonly moduleKey: string } => {
-  const absolute = new URL(importerUrl, baseUrl);
-  const withoutHash = new URL(absolute.href);
-  withoutHash.hash = "";
-  return {
-    hrefs: new Set([absolute.href, withoutHash.href]),
-    // Chromium's integrity lookup reports the module URL without search/hash.
-    moduleKey: `${absolute.origin}${absolute.pathname}`,
-  };
-};
-
 const integrityKeyMatchesImporter = (
   key: string,
   baseUrl: string,
-  importer: {
-    readonly hrefs: ReadonlySet<string>;
-    readonly moduleKey: string;
-  },
+  importer: URL,
 ): boolean => {
   try {
     const resolved = new URL(key, baseUrl);
-    const withoutHash = new URL(resolved.href);
-    withoutHash.hash = "";
+    // Compare module URLs without search or fragment.
     return (
-      importer.hrefs.has(resolved.href) ||
-      importer.hrefs.has(withoutHash.href) ||
-      `${resolved.origin}${resolved.pathname}` === importer.moduleKey
+      resolved.origin === importer.origin &&
+      resolved.pathname === importer.pathname
     );
   } catch {
     return false;

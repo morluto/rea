@@ -64,6 +64,8 @@ export const createXmlPlistSignatureProbe = (): {
       }
       const text = preview.decode(selected, { stream: true });
       const result = scanner(text);
+      // A rejected prolog stays rejected whatever the bytes decode to.
+      if (result.state === "rejected") return (state = "rejected");
       // Validate only through the observed signature. Invalid document bytes
       // after that signature cannot undo the format observation.
       const through =
@@ -87,10 +89,6 @@ export const createXmlPlistSignatureProbe = (): {
     },
   };
 };
-
-/** Recognize a plist prolog without claiming that its XML document is valid. */
-export const hasXmlPlistSignature = (bytes: Uint8Array): boolean =>
-  createXmlPlistSignatureProbe().write(bytes) === "matched";
 
 const createXmlPlistPrologScanner = (): ((chunk: string) => {
   state: XmlPlistProbeState;

@@ -108,11 +108,17 @@ const inputError = (userMessage: string, remediationAction: string) =>
     { path: ["capture"], reason: "invalid_value", message: userMessage },
   ]);
 
+interface AdmittedDesktopCapture {
+  readonly folder: string;
+  readonly evidence: Evidence;
+  readonly capture: DesktopApplicationCapture;
+}
+
 /** Admit `capture.json` only as complete desktop capture Evidence. */
 export const readDesktopCapture = async (
   folder: string,
   signal: AbortSignal | undefined,
-): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
+): Promise<AdmittedDesktopCapture> => {
   const resources = new ArtifactResourceScope();
   const outcome = await resources
     .run(async () => {
@@ -153,7 +159,7 @@ export const readDesktopCapture = async (
           `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
           "Capture the application again.",
         );
-      return { evidence: evidence.value, capture: capture.data };
+      return { folder, evidence: evidence.value, capture: capture.data };
     })
     .then(ok, (cause: unknown) => err(cause));
   try {
@@ -545,28 +551,39 @@ const stateLimitations = (policy: DesktopViewPolicy) => [
 
 /** Read a capture folder into the application's state view. */
 const inspectState = async (
-  folder: string,
+  source: string | AdmittedDesktopCapture,
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
   options: DesktopStateViewOptions,
 ): Promise<Evidence> => {
   const policy = desktopViewPolicy(options.viewPolicy);
-  const { evidence, capture } = await readDesktopCapture(folder, signal);
+  const { folder, evidence, capture } =
+    typeof source === "string"
+      ? await readDesktopCapture(source, signal)
+      : source;
+  if (isAborted(signal)) throw cancelledBy(OPERATION, signal);
   const names = applicationNames(capture);
   const facts = roleFacts(capture);
   const index = indexState(capture);
   const candidates = statePaths(index);
-  for (const selected of options.paths ?? [])
-    if (!candidates.includes(selected))
-      throw new AnalysisInputError(
-        OPERATION,
-        {
-          userMessage: `Captured path ${JSON.stringify(selected)} was not found.`,
-          remediationAction:
-            "Use an exact path from this capture's state view; no current filesystem path is substituted.",
-        },
-        [{ path: ["paths"], reason: "invalid_value" }],
-      );
+  let selectedSet: Set<string> | undefined;
+  if (options.paths !== undefined) {
+    const candidateSet = new Set(candidates);
+    selectedSet = new Set<string>();
+    for (const selected of options.paths) {
+      if (!candidateSet.has(selected))
+        throw new AnalysisInputError(
+          OPERATION,
+          {
+            userMessage: `Captured path ${JSON.stringify(selected)} was not found.`,
+            remediationAction:
+              "Use an exact path from this capture's state view; no current filesystem path is substituted.",
+          },
+          [{ path: ["paths"], reason: "invalid_value" }],
+        );
+      selectedSet.add(selected);
+    }
+  }
   const paths = await withRetainedContent(
     folder,
     async (content) => {
@@ -580,7 +597,7 @@ const inspectState = async (
       };
       const described: DesktopStatePath[] = [];
       for (const path of candidates)
-        if (options.paths === undefined || options.paths.includes(path))
+        if (selectedSet === undefined || selectedSet.has(path))
           described.push(await describePath(capture, path, facts, context));
       return described;
     },
@@ -635,7 +652,7 @@ export interface DesktopStateViewOptions {
 
 /** Inspect one capture folder, returning its state view Evidence or a failure. */
 export const inspectDesktopApplicationState = async (
-  folder: string,
+  source: string | AdmittedDesktopCapture,
   readers: DesktopStateReaders,
   signal?: AbortSignal,
   options: DesktopStateViewOptions = {},
@@ -650,7 +667,7 @@ export const inspectDesktopApplicationState = async (
         admitted.error.issues,
         options.viewPolicy,
       );
-    return await inspectState(folder, readers, signal, {
+    return await inspectState(source, readers, signal, {
       ...options,
       ...(options.viewPolicy === undefined
         ? {}

@@ -101,6 +101,52 @@ const dconfReaders: DesktopStateReaders = {
   },
 };
 
+it("keeps a present document with unretained starting bytes without suggesting its final lines", async () => {
+  const base = seedEndCapture();
+  const updated = change(NOTE, { before: SAVED_NOTE, after: EDITED_NOTE });
+  if (updated.before === null) throw new Error("fixture");
+  const capture = withEnd(
+    {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) =>
+          point.name === "seed"
+            ? { ...point, changes: [], retained: [] }
+            : point,
+        ),
+      },
+    },
+    {
+      changes: [{ ...updated, before: { ...updated.before, sha256: null } }],
+      kept: [retained(NOTE, EDITED_NOTE)],
+    },
+  );
+  const draft = await notesOf(capture);
+  expect(draft).toMatchObject({
+    files: [
+      {
+        file: "Documents/today.txt",
+        baseline: {
+          present: true,
+          view: null,
+          view_error: "content not retained",
+        },
+        final: {
+          present: true,
+          format: "text",
+          view: { lines: ["milk", "eggs"] },
+        },
+        change: { kind: "unreadable" },
+        values: [],
+      },
+    ],
+    task: { checks: [] },
+    guards: [],
+    notes: [{ code: "unreadable_view", file: "Documents/today.txt" }],
+  });
+});
+
 describe("draftDesktopApplicationTask notes", () => {
   it("has none when the draft has files", async () => {
     const draft = await notesOf(seedEndCapture());

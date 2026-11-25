@@ -35,7 +35,11 @@ import {
   semanticAmbientIntrinsicWrites,
   semanticAmbientEffectGeneration,
 } from "./javascriptSemanticEffectLog.js";
-import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
+import {
+  semanticDirectEvalRecorded,
+  semanticGlobalCodeSites,
+} from "./javascriptSemanticEffectRecord.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
 // Names and formatting are irrelevant; lexical roles, operators and keys are not.
@@ -65,6 +69,12 @@ const INTRINSICS: Readonly<Record<string, readonly string[]>> = {
   __hasOwnProp: ["Object", "prototype", "hasOwnProperty"],
 };
 
+type InvocationNode =
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.NewExpression
+  | t.TaggedTemplateExpression;
+
 type IntrinsicReadObserver = (
   capture: t.Node,
   path: readonly string[],
@@ -92,10 +102,15 @@ export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
     readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+    /** The caller's path lookup uses fixed lexical captures for this phase. */
+    readonly fixedIntrinsicPaths?: true;
   },
 ) => {
-  const nativeArrayIteration = (array: t.ArrayExpression) =>
-    semanticKnownArrayIterationAt(array, state);
+  let iterationReads = 0;
+  const nativeArrayIteration = (array: t.ArrayExpression) => {
+    iterationReads += 1;
+    return semanticKnownArrayIterationAt(array, state);
+  };
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
   const aliasTargets = new Map<
@@ -737,31 +752,75 @@ export const createSemanticModuleInterop = (
           write.coverage.covers(path),
       );
     }) ?? false;
+  // Reuse normalized dispatch for the same source site under fixed capture
+  // lookup. Custom observation functions and live iterator proofs still run.
+  const dispatches =
+    options?.fixedIntrinsicPaths === true
+      ? new WeakMap<
+          InvocationNode,
+          {
+            readonly invocation: JavaScriptIntrinsicInvocation | undefined;
+            readonly settled: true;
+            readonly writes: number;
+            readonly opaqueSites: number;
+          }
+        >()
+      : undefined;
+  const resolveIntrinsicInvocation = (
+    node: InvocationNode,
+    callablePath = intrinsicPath,
+    mayObserve?: IntrinsicReadObserver,
+  ) =>
+    resolveJavaScriptIntrinsicInvocation(
+      node,
+      callablePath,
+      mayObserve === undefined
+        ? boundIntrinsic
+        : (callee) => boundIntrinsic(callee, mayObserve),
+      mayObserve === undefined
+        ? intrinsicReadChanged
+        : (reference, path) =>
+            intrinsicReadChanged(reference, path, mayObserve),
+      nativeArrayIteration,
+    );
+  const intrinsicInvocationFacts = (
+    node: InvocationNode,
+  ): {
+    readonly invocation: JavaScriptIntrinsicInvocation | undefined;
+    readonly settled: boolean;
+  } => {
+    const opaqueSites = semanticGlobalCodeSites(state).length;
+    const prior = dispatches?.get(node);
+    if (prior?.writes === writes.length && prior.opaqueSites === opaqueSites)
+      return prior;
+    const readsBefore = iterationReads;
+    const invocation = resolveIntrinsicInvocation(node);
+    if (dispatches === undefined || readsBefore !== iterationReads)
+      return { invocation, settled: false };
+    const facts = {
+      invocation,
+      settled: true as const,
+      writes: writes.length,
+      opaqueSites,
+    };
+    dispatches.set(node, facts);
+    return facts;
+  };
   return {
     origin,
     callOrigin,
     intrinsicPath,
+    intrinsicInvocationFacts,
     intrinsicInvocation: (
-      node:
-        | t.CallExpression
-        | t.OptionalCallExpression
-        | t.NewExpression
-        | t.TaggedTemplateExpression,
+      node: InvocationNode,
       callablePath = intrinsicPath,
       mayObserve?: IntrinsicReadObserver,
     ) =>
-      resolveJavaScriptIntrinsicInvocation(
-        node,
-        callablePath,
-        mayObserve === undefined
-          ? boundIntrinsic
-          : (callee) => boundIntrinsic(callee, mayObserve),
-        mayObserve === undefined
-          ? intrinsicReadChanged
-          : (reference, path) =>
-              intrinsicReadChanged(reference, path, mayObserve),
-        nativeArrayIteration,
-      ),
+      dispatches !== undefined &&
+      callablePath === intrinsicPath &&
+      mayObserve === undefined
+        ? intrinsicInvocationFacts(node).invocation
+        : resolveIntrinsicInvocation(node, callablePath, mayObserve),
     boundIntrinsic,
     staticString,
     isFreshObject,
@@ -941,13 +1000,10 @@ const controlBodyOperation = (node: t.Node): t.Node => {
   return node;
 };
 
-const ambientWriteInterops = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    readonly generation: number;
-    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
-  }
->();
+const ambientWriteInterops = semanticConsumerMemo<{
+  readonly generation: number;
+  readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+}>();
 
 /**
  * Module interop that retains every recorded ambient global write, so an

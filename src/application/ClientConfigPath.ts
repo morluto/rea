@@ -87,7 +87,7 @@ const canonicalRegularConfigPath = async (
         ? `${canonical}/`
         : canonical;
     } catch (cause: unknown) {
-      if (!isAbsentPath(cause) || dirname(ancestor) === ancestor)
+      if (!isAbsentClientConfigPath(cause) || dirname(ancestor) === ancestor)
         return requestedPath;
       // An absent directory before '..' cannot establish the selected parent.
       if (basename(ancestor) === "..") return undefined;
@@ -100,7 +100,8 @@ const canonicalRegularConfigPath = async (
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
-const isAbsentPath = (cause: unknown): boolean =>
+/** A candidate cannot exist when the entry is missing or an ancestor is a file. */
+export const isAbsentClientConfigPath = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");

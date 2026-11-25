@@ -1,4 +1,4 @@
-import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { decodeStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
 import type { KnownCoverageStatus } from "../domain/coverage.js";
 import type {
   GpuCodeObjectsInput,
@@ -33,8 +33,10 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  hasElfMagic,
   isBinaryStringReadLimit,
 } from "../domain/binaryContainer.js";
+import { hasDosMzMagic } from "../domain/dosMz.js";
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
@@ -65,11 +67,28 @@ import {
   type AmdElfMetadata,
 } from "./GpuElfKernels.js";
 import {
+  createPtxTargetTracker,
   ptxTargetIdentity,
   readPtxKernels,
   readPtxTarget,
 } from "./PtxKernels.js";
 import type { AmdGpuTargetIdentity } from "./AmdGpuTarget.js";
+
+const PTX_INVALID_UTF8 = "PTX is not valid UTF-8 text";
+
+const readPtxText = (
+  bytes: Buffer,
+  coverage: "complete" | "prefix",
+): string | null => {
+  try {
+    if (coverage === "complete") return decodeStrictUtf8(bytes, "preserve");
+    // The probe can end in the middle of an otherwise valid scalar.
+    return strictUtf8Decoder("preserve").decode(bytes, { stream: true });
+  } catch (cause) {
+    if (!(cause instanceof TypeError)) throw cause;
+    return null;
+  }
+};
 
 /** File declarations only. Every child range stays in its named parent coordinate space. */
 export class GpuInventory {
@@ -177,10 +196,7 @@ export class GpuInventory {
       await this.#hip(source, depth);
       return "hip-bundle";
     }
-    if (
-      prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
-      (prefix[0] === 0x4d && prefix[1] === 0x5a)
-    ) {
+    if (hasElfMagic(prefix) || hasDosMzMagic(prefix)) {
       const elf = prefix[0] === 0x7f;
       const directory = await readGpuNativeDirectory(
         source,
@@ -259,39 +275,43 @@ export class GpuInventory {
       return directory.format;
     }
     // PTX is positively identified by its directives, never by extension or arbitrary embedded text.
-    let probe = await source.read(0, Math.min(source.size, 64 * 1024));
-    let targetFacts = readPtxTarget(probe.toString("utf8"));
-    if (probe.length < Math.min(source.size, GPU_REPORT_BYTES)) {
-      probe = await source.read(0, Math.min(source.size, GPU_REPORT_BYTES));
-      targetFacts = readPtxTarget(probe.toString("utf8"));
-    }
+    const probe = await source.read(0, Math.min(source.size, GPU_REPORT_BYTES));
+    const complete = probe.length === source.size;
+    const text = readPtxText(probe, complete ? "complete" : "prefix");
+    // Replacement decoding may identify a malformed candidate. Only strict
+    // text can establish its target or become retained PTX text evidence.
+    const targetFacts = readPtxTarget(text ?? probe.toString("utf8"));
     if (targetFacts.recognized) {
-      const target = probe.length === source.size ? targetFacts.target : null;
-      const limitation =
-        probe.length < source.size
-          ? "PTX target scan reached the 16 MiB text budget before all module directives were examined."
-          : targetFacts.limitation;
       const row = gpuObject(source, {
         offset: 0,
         size: source.size,
         kind: "ptx",
       });
-      row.target = target;
-      if (limitation !== null) {
-        row.inspection = "partial";
-        row.limitations.push(limitation);
+      if (text === null) row.limitations.push(PTX_INVALID_UTF8);
+      if (!complete)
+        row.limitations.push(
+          "PTX target scan reached the 16 MiB text budget before all module directives were examined.",
+        );
+      if (complete && text !== null) {
+        row.target = targetFacts.target;
+        if (targetFacts.limitation !== null)
+          row.limitations.push(targetFacts.limitation);
+      }
+      if (row.limitations.length > 0) {
+        row.inspection = text === null ? "malformed" : "partial";
         this.discovery = "partial";
       }
       this.#add(row);
       await this.#payload(
-        probe.length === source.size
-          ? new GpuBufferSource(probe, source.containerId)
-          : source,
+        complete ? new GpuBufferSource(probe, source.containerId) : source,
         row,
+        complete
+          ? { standalonePtx: text === null ? null : { text, targetFacts } }
+          : undefined,
       );
       return "ptx";
     }
-    if (probe.length < source.size)
+    if (!complete)
       throw new BinaryResourceFailure(
         "structure",
         GPU_REPORT_BYTES,
@@ -323,9 +343,14 @@ export class GpuInventory {
     {
       amdMetadata,
       declaredDecodedSize,
+      standalonePtx,
     }: {
       amdMetadata?: AmdElfMetadata;
       declaredDecodedSize?: number | bigint;
+      standalonePtx?: {
+        text: string;
+        targetFacts: ReturnType<typeof readPtxTarget>;
+      } | null;
     } = {},
   ): Promise<void> {
     if (this.input.analysis !== "kernels") return;
@@ -387,35 +412,23 @@ export class GpuInventory {
           );
         }
       }
-      this.#decoded(row, sha256Hex(bytes), bytes.length);
+      const decodedSha256 = sha256Hex(bytes);
+      this.#decoded(row, decodedSha256, bytes.length);
       const decoded = new GpuBufferSource(bytes, row.id);
       if (row.kind === "ptx") {
+        // Standalone discovery already retained this encoding failure.
+        if (standalonePtx === null) return;
         // NVIDIA appends NUL alignment padding to an uncompressed PTX entry.
         let length = bytes.length;
         if (row.raw_flags !== null)
           while (length > 0 && bytes[length - 1] === 0) length--;
         const content = bytes.subarray(0, length);
-        let text: string;
-        try {
-          text = decodeStrictUtf8(content, "preserve");
-        } catch {
-          return rejectGpu("PTX is not valid UTF-8 text");
-        }
-        const target = readPtxTarget(text);
-        const conflict = this.#target(row, {
-          value: target.target,
-          key: target.target,
-          scope: "exact",
-          ...(target.limitation === null
-            ? {}
-            : { limitation: target.limitation }),
-        });
-        if (conflict !== undefined) coverage = "partial";
-        const parsed = readPtxKernels(text, row.id);
+        const text = standalonePtx?.text ?? readPtxText(content, "complete");
+        if (text === null) return rejectGpu(PTX_INVALID_UTF8);
         const artifact = {
           id: `${row.id}/ptx`,
           object_id: row.id,
-          sha256: sha256Hex(content),
+          sha256: length === bytes.length ? decodedSha256 : sha256Hex(content),
           media_type: "text/x-ptx" as const,
           encoding: "utf-8" as const,
           byte_length: content.length,
@@ -424,12 +437,44 @@ export class GpuInventory {
         };
         this.#retain(artifact);
         this.ptx_artifacts.push(artifact);
-        for (const { kernel, coverage: kernelCoverage } of parsed) {
-          if (conflict !== undefined) kernel.limitations.push(conflict);
-          if (kernelCoverage === "partial") coverage = "partial";
-          this.#retain(kernel);
-          this.kernels.push(kernel);
+        // Extract target directives and kernel entries in a single token pass
+        // for embedded PTX; on a parse failure fall back to readPtxTarget so
+        // any target directives after a malformed entry are still preserved.
+        const tracker =
+          standalonePtx === undefined ? createPtxTargetTracker() : undefined;
+        const firstKernel = this.kernels.length;
+        const finishTarget = (target: ReturnType<typeof readPtxTarget>) => {
+          const limitation = this.#target(row, {
+            value: target.target,
+            key: target.target,
+            scope: "exact",
+            ...(target.limitation === null
+              ? {}
+              : { limitation: target.limitation }),
+          });
+          if (limitation === undefined) return;
+          coverage = "partial";
+          for (let index = firstKernel; index < this.kernels.length; index++) {
+            this.#retain([limitation]);
+            this.kernels[index]!.limitations.push(limitation);
+          }
+        };
+        try {
+          for (const { kernel, coverage: kernelCoverage } of readPtxKernels(
+            text,
+            row.id,
+            tracker,
+          )) {
+            this.#retain(kernel);
+            this.kernels.push(kernel);
+            if (kernelCoverage === "partial") coverage = "partial";
+          }
+        } catch (cause) {
+          if (!(cause instanceof GpuReportCapacityFailure))
+            finishTarget(standalonePtx?.targetFacts ?? readPtxTarget(text));
+          throw cause;
         }
+        finishTarget(standalonePtx?.targetFacts ?? tracker!.facts());
       } else if (row.kind === "cubin" || row.kind === "amdgpu") {
         if (row.kind === "amdgpu" && isLlvmBitcode(bytes))
           throw new BinaryFormatFailure("unsupported", LLVM_BITCODE_LIMITATION);
@@ -484,12 +529,14 @@ export class GpuInventory {
       payload_target: payload.value,
       cuda_target_header: payload.cudaHeader ?? null,
       amd_target_metadata: payload.amdMetadata ?? null,
+      amd_pal_metadata: payload.amdPal ?? null,
       target_consistency: state,
       target: selectedTarget ?? payload.value,
     });
     row.payload_target = payload.value;
     row.cuda_target_header = payload.cudaHeader ?? null;
     row.amd_target_metadata = payload.amdMetadata ?? null;
+    row.amd_pal_metadata = payload.amdPal ?? null;
     row.target_consistency = state;
     if (selectedTarget === null) row.target = payload.value;
     if (row.target === null) this.discovery = "partial";

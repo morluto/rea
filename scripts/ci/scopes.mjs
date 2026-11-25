@@ -91,7 +91,7 @@ const PATH_SCOPES = {
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
     "src/server/externalMutationAdmission.ts",
-    "src/server/providerEnvironment.ts",
+    "src/server/createServer.ts",
     "src/process/ExecFileOutput.ts",
     "src/process/ExecFileOutput.test.ts",
     "tests/composition/analysis-sessions/binarySession.test.ts",
@@ -100,6 +100,7 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/mutationWorkflow.test.ts",
     "src/server/externalMutationToolHandler.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/debuggerToolBindings.ts",
     "tests/boundary/mcp/rizin*.test.ts",
     "tests/boundary/mcp/debuggerExternalMutationLifecycleMcp.test.ts",
     "tests/fixtures/debuggerMcp.ts",
@@ -108,7 +109,6 @@ const PATH_SCOPES = {
     "tests/boundary/providers/GdbSession*.test.ts",
     "tests/boundary/providers/GdbCommandQueue.test.ts",
     "tests/boundary/providers/gdbTestHelpers.ts",
-    "tests/boundary/providers/RizinDebugSessionCoverage.part*.test.ts",
     "tests/boundary/providers/RizinDebugSession*.test.ts",
     "tests/boundary/providers/RizinInferiorTty.test.ts",
     "tests/boundary/providers/RizinDecoderInputs.test.ts",
@@ -119,7 +119,6 @@ const PATH_SCOPES = {
     "tests/boundary/cli/reverseEngineeringCommands.test.ts",
     "tests/boundary/mcp/cutter*.test.ts",
     "tests/boundary/mcp/gdb*.test.ts",
-    "tests/boundary/mcp/debuggerCancellationMcp.test.ts",
     "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
     "tests/boundary/mcp/rizinPendingOutput.test.ts",
     "tests/boundary/mcp/reverseEngineeringPartialMcp.test.ts",
@@ -184,6 +183,7 @@ const PATH_SCOPES = {
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
+    "tests/boundary/cli/nativeBundleExecutableProvenanceCliMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",
     "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
@@ -212,7 +212,9 @@ const PATH_SCOPES = {
     ".github/actions/publish-mcp/**",
     ".github/actions/prepare-release-package/**",
     ".github/workflows/release-recovery.yml",
+    ".github/workflows/release-abandon.yml",
     "scripts/ci/release-recovery.mjs",
+    "scripts/ci/release-attempt.*",
     "scripts/ci/verified-package.mjs",
     "scripts/ci/qualified-package-envelope.mjs",
     "scripts/ci/prepare-npm-publication.mjs",
@@ -224,6 +226,7 @@ const PATH_SCOPES = {
     "tests/boundary/mcp/packageCatalogVerification.test.ts",
     "scripts/verify-published-package.mjs",
     "tests/boundary/filesystem/releaseRecovery.test.ts",
+    "tests/boundary/filesystem/releaseAttempt.test.ts",
     "tests/boundary/filesystem/mcpRegistryPublication.test.ts",
     "tests/boundary/filesystem/npmRelease.test.ts",
     "tests/boundary/process/releaseArtifactCanary.test.ts",
@@ -240,6 +243,8 @@ const PATH_SCOPES = {
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
+    "tests/process-global/curatedWindowsLane.test.ts",
+    "src/desktop/AgentEnvBridgeSources.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
@@ -260,7 +265,7 @@ const PATH_SCOPES = {
     "scripts/prepare.mjs",
     "scripts/lib/release-proposal.*",
     "scripts/lib/release-pull-request.mjs",
-    "patches/release-please+17.3.0.patch",
+    "patches/release-please+17.11.2.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
@@ -300,6 +305,7 @@ const PATH_SCOPES = {
     // Live advertisement, independent of the POSIX-generated catalog.
     "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
+    "tests/boundary/filesystem/safeOutputTreePublication.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",
@@ -432,9 +438,10 @@ const PATH_SCOPES = {
     "src/application/WebScriptExportService.ts",
     "src/contracts/webScriptToolContracts.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/browserToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webModuleCommands.ts",
-    "src/cliBrowserScenarioCommands.ts",
+    "src/cli/browserScenarioCommands.ts",
     "src/cli/environmentCommands.ts",
     "src/cli.ts",
     "src/contracts/cliCommandNames.ts",
@@ -452,7 +459,7 @@ const PATH_SCOPES = {
     "src/application/binaryDiagnostics/**",
     "src/ports/binaryDiagnostics/**",
     "src/contracts/native/binaryDiagnosticsToolContracts.ts",
-    "src/composition/binaryDiagnostics.ts",
+    "src/composition/binaryDiagnostics/**",
     "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/binaryDiagnosticsCommands.ts",
@@ -559,7 +566,7 @@ const PATH_SCOPES = {
     "src/contracts/native/binaryDiagnosticsToolContracts.ts",
     "src/contracts/toolEffects.ts",
     "src/contracts/toolOutputSchemaGroups.ts",
-    "src/composition/binaryDiagnostics.ts",
+    "src/composition/binaryDiagnostics/**",
     "src/server/createServer.ts",
     "src/server/sessionAvailabilityPolicy.ts",
     "src/cli/binaryDiagnosticsCommands.ts",
@@ -626,6 +633,7 @@ const PATH_SCOPES = {
     "src/contracts/webRuntimeToolContracts.ts",
     "src/contracts/toolEffects.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/browserToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webRuntimeCommands.ts",
     "src/cli/commandCancellation.ts",
@@ -729,6 +737,14 @@ const PATH_SCOPES = {
   ],
 };
 
+// Only the broad PR matrix waits for static checks. Shared qualification and
+// selected PR tests can start as soon as their runtime artifact is available.
+export function testShardJob(event, tier, mode) {
+  return event === "pull_request" && tier === "fast" && mode === "full"
+    ? "test-shard-broad"
+    : "test-shard";
+}
+
 // Each lane owns its path inputs, selection policy, and required jobs. The
 // workflow stays explicit; contract tests bind it to this registry.
 const sameJobs = (paths, jobs, selection = {}) => ({
@@ -740,11 +756,11 @@ export const CI_LANES = {
   code: {
     paths: [],
     required: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     // A selected PR subset runs its source tests in the test-shard groups.
-    selectedTests: ["build", "test-shard"],
+    selectedTests: ["build", "test-shard", "test"],
   },
   runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
   package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {

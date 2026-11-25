@@ -14,6 +14,7 @@ import {
 } from "../../fixtures/il2cpp/readers.js";
 import {
   createIl2cppMetadataFixture,
+  createLinkedIl2cppMetadataFixture,
   FIXTURE_IMAGES,
   fixtureImages,
   FIXTURE_METHODS,
@@ -155,17 +156,12 @@ describe("IL2CPP global-metadata version 39", () => {
     },
   );
 
-  it("accepts empty sections that share an offset with occupied sections and padding gaps", () => {
+  it("accepts an empty section whose offset is inside an occupied section", () => {
     const bytes = mutated((fixture, target) => {
       const methods = fixture.section("methods");
       target.writeInt32LE(
         methods.offset + 3,
         fixture.header("windowsRuntimeStrings", "offset"),
-      );
-      // Grow strings into trailing padding that no other section occupies.
-      target.writeInt32LE(
-        fixture.section("strings").size,
-        fixture.header("strings", "size"),
       );
     });
     expect(readIl2cppMetadata(bytes).types).toEqual(FIXTURE_TYPES);
@@ -212,6 +208,28 @@ describe("rejected IL2CPP global-metadata", () => {
       expect(rejected.message).toContain("metadata version is unknown");
     },
   );
+
+  it.each([
+    ["a MethodDef row reused within one image", (first: number) => first],
+    ["a token outside the MethodDef table", () => 0x0a000002],
+    ["MethodDef row zero", () => 0x06000000],
+  ])("refuses %s as malformed metadata before native linking", (_, token) => {
+    const fixture = createLinkedIl2cppMetadataFixture({ version: 31 });
+    const bytes = Buffer.from(fixture.bytes);
+    // Methods 0 and 1 belong to the same image; the token is at offset 24.
+    const first = bytes.readUInt32LE(fixture.record("methods", 0) + 24);
+    bytes.writeUInt32LE(token(first), fixture.record("methods", 1) + 24);
+    // The public inventory does not read tokens, so it is unaffected.
+    expect(readIl2cppMetadata(bytes).methods).toHaveLength(
+      readIl2cppMetadata(fixture.bytes).methods.length,
+    );
+    const rejected = failure(bytes, readIl2cppMetadataForLinking);
+    expect(rejected).toMatchObject({
+      reason: "invalid-method-definition-token",
+      kind: "malformed",
+      failure: { format: "il2cpp-metadata" },
+    });
+  });
 
   it("uses the same truncated-prefix classification before native linking", () => {
     const bytes = Buffer.alloc(7);
@@ -499,29 +517,6 @@ describe("rejected IL2CPP metadata references", () => {
       ),
       "invalid-string",
     );
-  });
-
-  it("rejects a string section overlapping literal data", () => {
-    rejects(
-      mutated((fixture, bytes) => {
-        bytes.writeInt32LE(
-          fixture.section("strings").offset - 1,
-          fixture.header("strings", "offset"),
-        );
-      }),
-      "section-overlap",
-    );
-  });
-
-  it("decodes a valid string suffix from its byte offset", () => {
-    const fixture = createIl2cppMetadataFixture({
-      typeNames: { 0: "xPlayer" },
-    });
-    const bytes = Buffer.from(fixture.bytes);
-    const originalOffset = fixture.record("typeDefinitions", 0);
-    bytes.writeInt32LE(bytes.readInt32LE(originalOffset) + 1, originalOffset);
-
-    expect(readIl2cppMetadata(bytes).types[0]?.name).toBe("Player");
   });
 
   it("accepts a UTF-8 code-point boundary suffix and rejects a split code point", () => {

@@ -69,12 +69,17 @@ export const analysisErrorWithCleanupDependencies = (
   primary: AnalysisError,
   cleanup: AnalysisError,
   operation = "close_binary",
-): AnalysisError =>
-  analysisErrorWithCleanupFailure(
-    primary,
-    cleanup,
-    operation,
-  ).bindCleanupDependencies([primary, cleanup]);
+  compose?: (primary: AnalysisError, cleanup: AnalysisError) => AnalysisError,
+): AnalysisError => {
+  const failure =
+    compose?.(primary, cleanup) ??
+    analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  // An existing envelope already owns its dependencies. New projections
+  // must follow both source errors without acquiring either owner again.
+  return failure === cleanup || failure === primary
+    ? failure
+    : failure.bindCleanupDependencies([primary, cleanup]);
+};
 
 /**
  * Compose a failure with a close rejection whose completion may be unknown. A
@@ -107,7 +112,7 @@ export const analysisErrorWithCloseRejections = (
 
 /**
  * Compose several cleanup failures into one provider cleanup failure. It lists
- * the parts' resources and completes once every part reports release. Pass
+ * the parts' distinct resources and completes once every part reports release. Pass
  * `causes` to keep failures that are not AnalysisErrors in the aggregate
  * cause; only `failures` own completion.
  */
@@ -119,17 +124,77 @@ export const providerCleanupErrorFromFailures = (
     readonly operation: string;
     readonly causes?: readonly unknown[];
     readonly message?: string;
+    readonly remediationAction?: string;
   },
 ): ProviderCleanupError =>
   new ProviderCleanupError(
     providerId,
-    failures.flatMap((failure) => failure.cleanupResources),
+    [...new Set(failures.flatMap((failure) => failure.cleanupResources))],
     typeof diagnostics === "string" ? { reason: diagnostics } : diagnostics,
     {
       operation: options.operation,
       cause: new AggregateError(options.causes ?? failures, options.message),
+      ...(options.remediationAction === undefined
+        ? {}
+        : { remediationAction: options.remediationAction }),
     },
   ).bindCleanupDependencies(failures);
+
+/** Compose rejected closes and follow known resource ownership independently of completion. */
+export const providerCleanupErrorFromCloseRejections = (
+  providerId: string,
+  rejections: readonly {
+    readonly cause: unknown;
+    readonly cleanupOwner?: AnalysisError | undefined;
+    readonly unconfirmedResources?: readonly string[];
+  }[],
+  diagnostics: Readonly<Record<string, JsonValue>>,
+  options: {
+    readonly operation: string;
+    readonly message: string;
+    readonly remediationAction?: string;
+  },
+): ProviderCleanupError => {
+  const owners = rejections.flatMap(({ cleanupOwner }) =>
+    cleanupOwner === undefined ? [] : [cleanupOwner],
+  );
+  const resources = () => [
+    ...new Set(
+      rejections.flatMap(({ cleanupOwner, unconfirmedResources }) => {
+        if (cleanupOwner === undefined) return unconfirmedResources ?? [];
+        return cleanupOwner.cleanupIncomplete
+          ? cleanupOwner.cleanupResources
+          : [];
+      }),
+    ),
+  ];
+  const aggregate = new ProviderCleanupError(
+    providerId,
+    resources(),
+    diagnostics,
+    {
+      operation: options.operation,
+      cause: new AggregateError(
+        rejections.map(({ cause }) => cause),
+        options.message,
+      ),
+      ...(options.remediationAction === undefined
+        ? {}
+        : { remediationAction: options.remediationAction }),
+    },
+  );
+  if (owners.length === rejections.length)
+    return aggregate.bindCleanupDependencies(owners);
+  // Unconfirmed closes keep the aggregate pending. Known owners still account
+  // for their own resources as those resources are released.
+  if (owners.length > 0)
+    aggregate.bindCleanupResourceOwner({
+      get cleanupResources() {
+        return resources();
+      },
+    });
+  return aggregate;
+};
 
 /**
  * Follow an existing live owner's cleanup completion from a wrapper error while
@@ -142,3 +207,17 @@ export const withInheritedCleanupOwnership = <Failure extends AnalysisError>(
   owner: AnalysisError,
 ): Failure =>
   owner.cleanupIncomplete ? failure.bindCleanupDependencies([owner]) : failure;
+
+/** Delegate both cleanup completion and live resource reporting to `owner`. */
+export const withDelegatedCleanupOwner = <Failure extends AnalysisError>(
+  failure: Failure,
+  owner: AnalysisError,
+): Failure =>
+  failure.bindCleanupDependencies([owner]).bindCleanupResourceOwner(owner);
+
+/** Retain `cleanup` as a secondary failure and follow its cleanup completion. */
+export const withSecondaryCleanupFailure = <Failure extends AnalysisError>(
+  primary: Failure,
+  cleanup: AnalysisError,
+): Failure =>
+  primary.retainSecondaryFailure(cleanup).bindCleanupDependencies([cleanup]);

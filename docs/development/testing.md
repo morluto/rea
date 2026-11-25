@@ -44,7 +44,7 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
 | `npm run check:fast`              | Cached typecheck and lint, then the architecture guards and their counted baselines                                     |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
-| `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
+| `npm run check:pr`                | Opt-in deterministic test suite and generated-file checks                                                               |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 | `npm run docs:build`              | Generate and build the VitePress site for local preview                                                                 |
 | `npm run verify:docs:routes`      | Build the VitePress site and verify rendered local routes, anchors, images, and physical edit targets                   |
@@ -126,15 +126,21 @@ API dependency, and independent fixture compiler oracles keep their existing
 TypeScript versions.
 
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
-The build also records `dist/mcp-catalog.json` (compact inputs) from the
-canonical SDK registrations and binds it to the runtime with its SHA-256
-digest. Target-free stdio MCP startup with the default catalog and output
-profiles serves its schemas without constructing analysis validators, including
-when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The build also records `dist/mcp-catalog.json` from the canonical SDK
+registrations, including each tool's compact output advertisement, and binds
+it to the runtime with its SHA-256 digest. Target-free stdio MCP startup with
+the default catalog serves those recorded schemas without constructing
+analysis validators. That includes a family limit (`REA_MCP_TOOL_FAMILIES`)
+and `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` when the catalog contains
+`compactOutputSchemas`. A compact profile whose recorded catalog has no
+compact output schemas falls back to eager composition.
+The internal catalog stores object roots for the SDK's result codec, preserves
+non-object output schemas for legacy wrapping, and retains the complete
+`binary_session` output schema for `rea mcp doctor`.
 The first tool or guided-workflow request materializes the canonical runtime
 on that same SDK server. It preserves the advertised schemas throughout
-materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
-startup use eager composition, as do source runs without recorded artifacts.
+materialization. Initial-target, HTTP, and family-scoped hot/cold startup
+use eager composition, as do source runs without recorded artifacts.
 Compare memory both after discovery and after a completed request; report
 diagnostic GC separately from normal resident memory.
 
@@ -160,7 +166,8 @@ no compiled-runtime prerequisite, not a fixed time budget.
 duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
-`static-deep-check-reports`, including after that gate fails.
+`static-deep-check-reports`, including after that gate fails. On reruns, both
+artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
@@ -253,8 +260,10 @@ changing a callback solely to satisfy its declared `void` return type.
 `npm run knip:production` writes advisory candidates to
 `.cache/static-checks/production-reachability.json`; execution/report errors fail.
 Ordinary Knip remains. `check`, `check:pr`, and `check:ci:deep` run reachability
-then typed lint sequentially after cached work. Typed lint builds the project
-type graph and stays separate from fast feedback. Its default Go settings are
+then full typed lint sequentially after cached work. Fast PR Static checks
+report typed diagnostics for changed JavaScript and TypeScript files. They use
+full typed lint if the changed file list exceeds the CI output budget. Typed
+lint builds the project type graph in both modes. Its default Go settings are
 `GOMAXPROCS=1` and `GOMEMLIMIT=1024MiB`; caller-selected settings take precedence.
 One Go worker reuses checker caches across the file queue without changing the
 file inventory or TypeScript project scope. The Go memory target is soft and
@@ -262,11 +271,10 @@ does not cap the complete process family's memory; measure the full invocation
 when enforcing a host budget.
 
 Routine iterations and rebases need focused regressions and relevant checks.
-Before handing off a PR, run `npm run check` and generated-document checks when
-applicable; CI owns the full suite and coverage. Use the full local gate for
-broad changes or diagnosing CI, rather than after every edit. Package/install
-changes additionally need package verification; provider changes need actual
-provider evidence.
+Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
+before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
+Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
 Actions jobs own their runner and use up to four; see
@@ -515,6 +523,49 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+### Verifier scripts
+
+Compilers, linkers, `readelf`, and the REA CLI that a verifier starts go through
+`createVerifierCommands()` in `scripts/lib/verify-commands.mjs`. The helper loads
+`scripts/lib/verifier-command-owner.mts` and runs each command with
+`runOwnedCommand` (`src/process/OwnedCommand.ts`). POSIX commands spawn through
+`spawnOwnedProviderProcess` (`src/process/ProviderProcess.ts`); Windows commands
+use the owned job from `scripts/lib/windows-owned-command.mjs`. Pass the
+deadline to `exec` as `timeout` in milliseconds. An omitted timeout, or `0`,
+keeps only caller cancellation. When the deadline elapses, owned cleanup kills
+the process family: the POSIX process group and descendants that carry the
+command run token, or the Windows job. Cleanup that does not confirm stays
+on the verifier resource scope. `close()` aborts commands still running, and a
+failed close stays registered for retry.
+
+`createVerifierRun()` and `completeVerifierRun()` in
+`scripts/lib/verifier-run.mjs` bracket the run. Call
+`assertVerifierCleanupComplete` on the completed lineage. It accepts only status
+`verified` with an empty descendant list, confirming that no owned process
+survived. An `unavailable` lineage fails the assertion. Windows reports this
+observation unavailable because the verifier has no retained Job Object lease
+for it; provider jobs are verified by their native owners. A verified lineage
+has checked every live descendant's `REA_PROCESS_RUN_ID`. An empty descendant
+list means none were live during that observation. It does not prove that the
+verifier never launched children earlier in the run. A PID is not ownership
+proof.
+
+Close the command owner before that assertion. If shutdown fails, retain the
+diagnostic workspace. `scripts/verify-real-ghidra-ppc64.mjs` shares one command
+owner for the compiler, `readelf`, and the CLI, closes it through
+`workspaceFixture.closeEarly` before `completeVerifierRun`, and applies the same
+lineage condition. The script retains the workspace when close fails, the
+lineage is unverified, or the run fails, and releases the workspace only after
+those checks pass.
+
+Create the command owner before resolving or starting a tool, then start the
+tool with that owner's `exec`. `execFile`, `spawn`, `execFileSync`, and
+`promisify(execFile)` leave the process outside this owner. The example's
+pre-workspace toolchain probe is `requireLaneToolchain`, which runs each probe
+through `runOwnedCommand` so the tool starts under an owner. Scripts that still
+call `execFile` directly are known debt. Migrate them separately; a new or
+touched verifier uses these helpers.
+
 ## CodeQL production scope
 
 [The production configuration](https://github.com/morluto/rea/blob/main/.github/codeql/production.yml) excludes
@@ -626,6 +677,33 @@ Unblob extraction. Check the final readiness or capability output retains the
 producer's repair instructions, including which launch environment must change.
 When feasible, follow the advice and verify that the same operation now works.
 Report unexecuted recovery steps explicitly.
+
+Real-provider scripts that start compilers, linkers, readers, or the REA CLI
+follow [Verifier scripts](#verifier-scripts).
+
+### Public-corpus checks
+
+Synthetic fixtures prove the cases you thought of. Published files from
+well-known projects find the ones you didn't: unusual but valid headers,
+large real images and formats REA doesn't recognise yet. Use them for routing,
+parser-robustness and output-size checks, and download them during the check.
+Never commit them. Never execute downloaded files.
+
+| Corpus                                            | Exercises                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| corkami/pocs `PE/bin`                             | PE parser strictness across documented header quirks           |
+| WerWolv/ImHex-Patterns `tests/patterns/test_data` | First-contact acceptance and refusal across many formats       |
+| bkaradzic/bgfx `examples/runtime/shaders`         | Embedded DXBC, DXIL and SPIR-V at a fixed offset               |
+| Godot editor release (win64)                      | Static PE readers on an image over 100 MB                      |
+| x64dbg snapshot with its symbols archive          | 32- and 64-bit PEs with matching PDBs                          |
+| Orama-Interactive/Pixelorama releases             | Godot 3 and 4 `.pck`, embedded packs, a known two-version diff |
+
+For each file record the REA revision, the asset (repository, release tag,
+name, SHA-256), the command, whether it was accepted or refused, the
+suggested next probes, and the output size. Compare facts with an independent
+parser or the format specification where one exists. A count of accepted files
+says nothing about correctness. A refusal is a finding only when REA has a
+reader for that format or the refusal hides facts it already parsed.
 
 ### Checking installers and publisher downloads
 
@@ -740,11 +818,26 @@ ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
 When consolidating interpretation across consumers, use the same authored
-input and an independently specified expected fact at the boundary where
-each consumer previously made its own decision. Allow differences in
-recovery or display when those belong to the consumer. For generated
-installers and verifiers, exercise the emitted artifact in its supported
-runtime so the test covers the code that actually receives the input.
+input at the boundary where each consumer previously made its own decision.
+Choose a case that makes competing interpretations disagree and a control
+that should succeed. Assert the expected fact and its provenance independently
+of the implementation. Allow differences in recovery or display when those
+belong to the consumer. For generated installers and verifiers, exercise the
+emitted artifact in its supported runtime.
+
+When the operation changes state, verify the published or retained result as
+well as preflight. When ownership includes cleanup, check who retains
+responsibility after a failed attempt and what happens on retry.
+
+When detection and detailed inspection share a reader, compare a valid
+input, a recognizable malformed input, and a valid input whose examined
+prefix ends at the budget when those cases apply. Assert the recognized
+format, which fields are established, and the coverage and diagnostics in
+each consumer. If the source feeds both a digest and a converter, exercise a
+change to the original between the snapshot read and conversion. Assert that
+the digest and converted value describe the same bytes, or that the operation
+returns a typed failure. Check advertised effects and the lifecycle of any
+temporary copy.
 
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -914,9 +1007,9 @@ cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries.
 `tests/support/providerLifecycleCoverage.ts` maps every registered provider id
 to its launch, handshake, operation, cancellation, cleanup and retry
-regressions, a not-applicable reason, or an explicit gap. Name the test file
-and literal title when a change adds or moves a provider lifecycle regression;
-the shrink-only gap list closes as stages gain coverage. Check server
+regressions or a reason a stage does not apply. Name the test file and the
+title at its registration site when a change adds or moves a lifecycle
+regression. The check rejects uncovered applicable stages. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
@@ -1203,15 +1296,14 @@ and job log also list up to 20 reported failed test files and the count of
 unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
-Only a successful complete merge on the default branch publishes shard history,
-and only from a push, schedule, or manual run. Fast runs publish
-`test-timings-fast`. Full runs publish `test-timings-full`. Pull requests do not
-publish it: the lookup reads one unpaginated artifact page, and pull-request
-artifacts would crowd out the default branch. The build job downloads the
-artifact that matches its tier, so fast shards use durations measured without
-coverage and full shards keep coverage-weighted durations. A tier with no
-qualifying artifact leaves history unset. The download is that small
-checkout-relative timing file, not the coverage/JUnit bundle. Timing weights come from Vitest module
+A complete shard merge on a default-branch push, schedule, or manual run can
+publish timing history. Fast runs publish `test-timings-fast` and full runs
+publish `test-timings-full`. The build job accepts only verified artifacts from
+successful default-branch CI runs that match its tier. It lists one page of
+matching artifacts and checks up to five producer runs individually. When
+eligible artifacts remain, it can check them against up to three pages of
+successful CI runs within the shared 20-second lookup budget. A tier with no qualifying artifact leaves history unset. The build
+downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
 not added again. The weights describe file costs under the measured worker and
@@ -1308,9 +1400,10 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-POSIX native package jobs, documentation checks, Go binary verification, and the
-Apple artifact lane reuse the same workflow's portable Turbo cache
-(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+The build job stages and uploads `rea-build-cache` when a selected POSIX native
+package, Apple artifact, or reusable provider job consumes it. Portable test
+shards download `rea-test-runtime`. Documentation checks restore the
+cross-run Turbo cache. Windows jobs
 (`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
 than Linux's accelerated `tsrs` checker, so they restore and publish a separate
 Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to
@@ -1432,104 +1525,34 @@ The required checks still report on every PR and fail closed:
 
 ## Real-toolchain verification lanes
 
-See [Real-toolchain verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).
+Use [Testing lanes and provider verification](../testing-lanes.md) to choose a
+command for the host, provider, and workflow you changed. Record which lane
+ran and which coverage was unavailable.
 
-## Android APK analysis
+<!-- Keep fragment links from earlier versions of this page working. -->
 
-See [Android APK analysis](../testing-lanes.md#android-apk-analysis).
-
-## Apktool resource decoding
-
-See [Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding).
-
-## Flutter build identification
-
-See [Flutter build identification](../testing-lanes.md#flutter-build-identification).
-
-## ADB device acquisition
-
-See [ADB device acquisition](../testing-lanes.md#adb-device-acquisition).
-
-## Optional NativeAOT Ghidra analysis
-
-See [Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis).
-
-## IDA MCP adapter
-
-See [IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter).
-
-## Kuna lane
-
-See [Kuna lane](../testing-lanes.md#kuna-lane).
-
-## DOS Ghidra analysis
-
-See [DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis).
-
-## Apple Interface Builder archives
-
-See [Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives).
-
-## Native platform baseline in CI
-
-See [Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci).
-
-### Termux Android browser smoke test
-
-See [Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test).
-
-## Packet capture analysis
-
-See [Packet capture analysis](../testing-lanes.md#packet-capture-analysis).
-
-## Apple native metadata and UI
-
-See [Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui).
-
-### Firmware adapters
-
-See [Firmware adapters](../testing-lanes.md#firmware-adapters).
-
-### JavaScript source recovery
-
-See [JavaScript source recovery](../testing-lanes.md#javascript-source-recovery).
-
-### Captured website source-map lane
-
-See [Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane).
-
-### JavaScript large-output lane
-
-See [JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane).
-
-### Website runtime attribution lane
-
-See [Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane).
-
-### Offline binary layout
-
-See [Offline binary layout](../testing-lanes.md#offline-binary-layout).
-
-### Offline EVM interface
-
-See [Offline EVM interface](../testing-lanes.md#offline-evm-interface).
-
-### Recorded crash evidence
-
-See [Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence).
-
-### Exported environment bundles
-
-See [Exported environment bundles](../testing-lanes.md#exported-environment-bundles).
-
-## Agent evaluation and conformance records
-
-See [Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records).
-
-## Frida instrumentation
-
-See [Frida instrumentation](../testing-lanes.md#frida-instrumentation).
-
-### Offline WASM artifacts
-
-See [Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts).
+- <a id="android-apk-analysis"></a>[Android APK analysis](../testing-lanes.md#android-apk-analysis)
+- <a id="apktool-resource-decoding"></a>[Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding)
+- <a id="flutter-build-identification"></a>[Flutter build identification](../testing-lanes.md#flutter-build-identification)
+- <a id="adb-device-acquisition"></a>[ADB device acquisition](../testing-lanes.md#adb-device-acquisition)
+- <a id="optional-nativeaot-ghidra-analysis"></a>[Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis)
+- <a id="ida-mcp-adapter"></a>[IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter)
+- <a id="kuna-lane"></a>[Kuna lane](../testing-lanes.md#kuna-lane)
+- <a id="dos-ghidra-analysis"></a>[DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis)
+- <a id="apple-interface-builder-archives"></a>[Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives)
+- <a id="native-platform-baseline-in-ci"></a>[Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci)
+- <a id="termux-android-browser-smoke-test"></a>[Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test)
+- <a id="packet-capture-analysis"></a>[Packet capture analysis](../testing-lanes.md#packet-capture-analysis)
+- <a id="apple-native-metadata-and-ui"></a>[Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui)
+- <a id="firmware-adapters"></a>[Firmware adapters](../testing-lanes.md#firmware-adapters)
+- <a id="javascript-source-recovery"></a>[JavaScript source recovery](../testing-lanes.md#javascript-source-recovery)
+- <a id="captured-website-source-map-lane"></a>[Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane)
+- <a id="javascript-large-output-lane"></a>[JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane)
+- <a id="website-runtime-attribution-lane"></a>[Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane)
+- <a id="offline-binary-layout"></a>[Offline binary layout](../testing-lanes.md#offline-binary-layout)
+- <a id="offline-evm-interface"></a>[Offline EVM interface](../testing-lanes.md#offline-evm-interface)
+- <a id="recorded-crash-evidence"></a>[Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence)
+- <a id="exported-environment-bundles"></a>[Exported environment bundles](../testing-lanes.md#exported-environment-bundles)
+- <a id="agent-evaluation-and-conformance-records"></a>[Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records)
+- <a id="frida-instrumentation"></a>[Frida instrumentation](../testing-lanes.md#frida-instrumentation)
+- <a id="offline-wasm-artifacts"></a>[Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts)

@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
+import { buffer } from "node:stream/consumers";
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 import { expect, it, vi } from "vitest";
 import * as hexRecordDecoding from "../domain/firmware/hexRecords.js";
@@ -14,17 +17,23 @@ import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   INTEL_HEX_I32_GAP,
   SREC_S19,
+  intelHexInterleavedRuns,
   intelHexRecord,
+  srecRecord,
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
-import { ArtifactFileSource } from "../resources/index.js";
 
 const writeImage = async (name: string, text: string): Promise<string> => {
   const directory = await createTestTempDirectory("rea-hex-records-");
   const path = join(directory, name);
   await writeFile(path, text);
   return path;
+};
+
+const firstRegion = async (reader: HexRecordArtifactReader) => {
+  for await (const entry of reader.entries()) return entry;
+  throw new Error("Missing region");
 };
 
 it.each(["close", "cancel"] as const)(
@@ -77,17 +86,59 @@ it("reports unknown coverage and termination facts as limitations", async () => 
   );
 });
 
-it("fails closed on over-limit records", async () => {
-  const runs = [intelHexRecord(0, 0, [1])];
-  for (let index = 1; index <= 65_536; index += 1) {
-    const address = index * 2;
-    if (address % 0x1_0000 === 0)
-      runs.push(intelHexRecord(4, 0, [0, address >>> 16]));
-    runs.push(intelHexRecord(0, address & 0xffff, [1]));
-  }
+it.each([
+  [5, false],
+  [6, false],
+  [5, true],
+] as const)(
+  "retains data after an S%i count (later final count: %s)",
+  async (type, finalCount) => {
+    const text = SREC_S19.replace(
+      "S5030002FA",
+      [
+        srecRecord(type, 2, []),
+        srecRecord(1, 0x20, [0x2a]),
+        ...(finalCount ? [srecRecord(type, 3, [])] : []),
+      ].join("\n"),
+    );
+    const path = await writeImage("count.s19", text);
+    const result = await scanCanonicalArtifactInventory(path);
+    const warning = expect.stringMatching(
+      /line 4.*count covers 2 of 3 data records/iu,
+    );
+    if (finalCount) expect(result.limitations).not.toContainEqual(warning);
+    else expect(result.limitations).toContainEqual(warning);
+    expect(result.coverage.status).toBe("complete");
+
+    // GNU objcopy 2.44 retained these exact bytes for the S5 inputs.
+    const resourceScope = new ArtifactResourceScope();
+    try {
+      const extracted = await extractArtifact({
+        inputPath: path,
+        inputFormat: "srec",
+        outputRoot: join(dirname(path), "out"),
+        environment: process.env,
+        integrityPolicy: "fail",
+        resourceScope,
+      });
+      const bytes = await readFile(
+        join(extracted.output_root, "0x00000000-0x00000020.bin"),
+      );
+      const expected = Buffer.from([
+        ...Array.from({ length: 32 }, (_, index) => index),
+        0x2a,
+      ]);
+      expect(bytes.equals(expected)).toBe(true);
+    } finally {
+      await resourceScope.close();
+    }
+  },
+);
+
+it("refuses one over-limit physical run even when all addresses could merge", async () => {
   await expect(
     scanCanonicalArtifactInventory(
-      await writeImage("runs.hex", `${runs.join("\n")}\n`),
+      await writeImage("runs.hex", intelHexInterleavedRuns(true)),
     ),
   ).rejects.toMatchObject({
     reason: "limit",
@@ -134,60 +185,75 @@ it("re-inventories extracted regions as raw files", async () => {
   }
 });
 
-it("rejects a changed carrier during extraction preparation", async () => {
-  const path = await writeImage("changed.hex", INTEL_HEX_I32_GAP);
-  const reader = new HexRecordArtifactReader(path, "intel-hex");
-  try {
-    await expect(reader.prepareContainer("0".repeat(64))).rejects.toMatchObject(
-      { reason: "integrity" },
-    );
-  } finally {
-    await reader.close();
-  }
-});
-
-it("rejects forged entries and changed carrier identity, then closes idempotently", async () => {
+it("binds the carrier digest, rejects forged entries and detects same-size source drift", async () => {
   const path = await writeImage("identity.hex", INTEL_HEX_I32_GAP);
   const reader = new HexRecordArtifactReader(path, "intel-hex");
   try {
+    const observed = createHash("sha256")
+      .update(INTEL_HEX_I32_GAP)
+      .digest("hex");
+    const wrong = "0".repeat(64);
+    await expect(reader.prepareContainer(wrong)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+      details: { declaredSha256: wrong, calculatedSha256: observed },
+    });
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
+    const entry = entries[1];
     if (entry === undefined) throw new Error("Missing region");
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
     await expect(
       reader.open({ ...entry, adapterKey: "hex-records:9" }),
-    ).rejects.toMatchObject({ reason: "integrity" });
-    await writeFile(path, INTEL_HEX_I32_GAP.replace(":00000001FF\n", ""));
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
+    expect(entry.path).toBe("0x08000100-0x08000103.bin");
+    const replacement = INTEL_HEX_I32_GAP.replace(
+      ":04010000DEADBEEFC3",
+      ":04020000DEADBEEFC2",
+    );
+    expect(replacement).not.toBe(INTEL_HEX_I32_GAP);
+    const { size } = await stat(path);
+    await writeFile(path, replacement);
+    // Stabilize the distinct timestamp even on a coarse-resolution volume.
+    await utimes(path, 1_000_000_000, 1_000_000_000);
+    expect((await stat(path)).size).toBe(size);
     await expect(reader.open(entry)).rejects.toMatchObject({
       reason: "integrity",
+      integrityCheck: "container-identity",
     });
   } finally {
-    await reader.close();
     await reader.close();
   }
 });
 
 it("settles an active region stream when closed", async () => {
-  const reader = new HexRecordArtifactReader(
-    await writeImage("close.hex", INTEL_HEX_I32_GAP),
-    "intel-hex",
-  );
+  const path = await writeImage("close.hex", INTEL_HEX_I32_GAP);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new HexRecordArtifactReader(path, "intel-hex", admitted);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
-    if (entry === undefined) throw new Error("Missing region");
+    const entry = await firstRegion(reader);
     const stream = await reader.open(entry);
+    let closed = false;
+    stream.once("close", () => {
+      closed = true;
+    });
+    stream.read(0);
     await reader.close();
-    expect(stream.destroyed).toBe(true);
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "unavailable" });
+    expect(closed).toBe(true);
+    await expect(reader.open(entry)).rejects.toMatchObject({
+      reason: "unavailable",
+    });
   } finally {
     await reader.close();
+    await admitted.handle.close();
   }
 });
 
@@ -210,9 +276,10 @@ it("retries decoded-region preparation cancelled while reading", async () => {
       reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     read.mockRestore();
-    expect(
-      (await reader.entries()[Symbol.asyncIterator]().next()).value,
-    ).toMatchObject({ kind: "file" });
+    expect(await firstRegion(reader)).toMatchObject({
+      path: "0x08000000-0x0800001f.bin",
+      declaredSize: 32,
+    });
   } finally {
     read.mockRestore();
     await reader.close();
@@ -223,36 +290,41 @@ it("retries decoded-region preparation cancelled while reading", async () => {
 it("does not publish decoded regions when final source verification fails", async () => {
   const path = await writeImage("partial.hex", INTEL_HEX_I32_GAP);
   const control = new HexRecordArtifactReader(path, "intel-hex");
-  const reader = new HexRecordArtifactReader(path, "intel-hex");
-  const expected = (await control.entries()[Symbol.asyncIterator]().next())
-    .value!;
-  const nativeRead = ArtifactFileSource.prototype.read;
-  const physical = Object.assign(
-    new Error("final source verification failed"),
-    { code: "EIO" },
-  );
-  let calls = 0;
-  const read = vi
-    .spyOn(ArtifactFileSource.prototype, "read")
-    .mockImplementation(function (this: ArtifactFileSource, ...args) {
-      calls += 1;
-      if (calls === 2) return Promise.reject(physical);
-      return nativeRead.apply(this, args);
-    });
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new HexRecordArtifactReader(path, "intel-hex", admitted);
+  const physical = Object.assign(new Error("final descriptor stat failed"), {
+    code: "EIO",
+  });
+  const stats = vi.spyOn(admitted.handle, "stat");
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  let remaining = admitted.initial.size;
+  const read = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = (await Reflect.apply(nativeRead, admitted.handle, args)) as {
+      bytesRead: number;
+    };
+    remaining -= result.bytesRead;
+    if (remaining === 0) stats.mockRejectedValueOnce(physical);
+    return result;
+  }) as typeof nativeRead);
   try {
+    const expected = await firstRegion(control);
     await expect(reader.entries()[Symbol.asyncIterator]().next()).rejects.toBe(
       physical,
     );
+    expect(reader.formatMetadata()).toBeUndefined();
     await expect(reader.open(expected)).rejects.toMatchObject({
       reason: "integrity",
+      integrityCheck: "foreign-entry",
     });
     read.mockRestore();
-    expect(
-      (await reader.entries()[Symbol.asyncIterator]().next()).value,
-    ).toMatchObject({ path: expected.path });
+    expect(await firstRegion(reader)).toEqual(expected);
   } finally {
     read.mockRestore();
+    stats.mockRestore();
     await reader.close();
+    await admitted.handle.close();
     await control.close();
   }
 });
@@ -277,18 +349,11 @@ it("honors cancellation before admitting a file with the exact reason", async ()
 it.each(["cancel", "close"] as const)(
   "settles decoding when the caller requests %s",
   async (action) => {
-    const rows: string[] = [];
-    for (let address = 0; address < 0x1_0000; address += 16)
-      rows.push(
-        intelHexRecord(
-          0,
-          address,
-          Array.from({ length: 16 }, () => 0),
-        ),
-      );
-    const text = `${Array.from({ length: 16 }, (_, segment) =>
-      [intelHexRecord(4, 0, [0, segment]), ...rows].join("\n"),
-    ).join("\n")}\n:00000001FF\n`;
+    const data = Array.from({ length: 128 }, () => 7);
+    const rows = Array.from({ length: 384 }, (_, index) =>
+      intelHexRecord(0, index * data.length, data),
+    );
+    const text = [...rows, ":00000001FF", ""].join("\n");
     const reader = new HexRecordArtifactReader(
       await writeImage("large.hex", text),
       "intel-hex",
@@ -363,39 +428,31 @@ it("retains the caller's cancellation reason after a region stream was opened", 
   const controller = new AbortController();
   const reason = { stage: "region consumption" };
   try {
-    const { value: entry } = await reader
-      .entries()
-      [Symbol.asyncIterator]()
-      .next();
-    if (entry === undefined) throw new Error("Missing region");
+    const entry = await firstRegion(reader);
     const stream = await reader.open(entry, controller.signal);
     controller.abort(reason);
-    await expect(
-      (async () => {
-        for await (const _chunk of stream) {
-          /* drain */
-        }
-      })(),
-    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
-    await reader.close();
+    await setImmediate();
     expect(stream.closed).toBe(true);
+    await expect(buffer(stream)).rejects.toMatchObject({
+      reason: "cancelled",
+      cause: reason,
+    });
   } finally {
     await reader.close();
   }
 });
 
 it("bounds copied region chunks and isolates cached bytes across opens", async () => {
-  const data = Array.from({ length: 16 }, () => 0);
-  const records = Array.from({ length: 4096 }, (_, index) =>
-    intelHexRecord(0, index * 16, data),
-  );
-  const text = [
-    intelHexRecord(4, 0, [0, 0]),
-    ...records,
-    intelHexRecord(4, 0, [0, 1]),
-    ...records,
-    intelHexRecord(1, 0, []),
-  ].join("\n");
+  const bank = (index: number, value: number): string[] => {
+    const data = Array.from({ length: 128 }, () => value);
+    return [
+      intelHexRecord(4, 0, [0, index]),
+      ...Array.from({ length: 512 }, (_, row) =>
+        intelHexRecord(0, row * data.length, data),
+      ),
+    ];
+  };
+  const text = [...bank(0, 7), ...bank(1, 13), ":00000001FF"].join("\n");
   const reader = new HexRecordArtifactReader(
     await writeImage("chunked.hex", text),
     "intel-hex",
@@ -403,31 +460,34 @@ it("bounds copied region chunks and isolates cached bytes across opens", async (
   const controller = new AbortController();
   const reason = { stage: "partial region consumption" };
   try {
-    const { value: entry } = await reader
-      .entries()
-      [Symbol.asyncIterator]()
-      .next();
-    if (entry === undefined) throw new Error("Missing region");
+    const entry = await firstRegion(reader);
     const stream = await reader.open(entry, controller.signal);
     const iterator = stream[Symbol.asyncIterator]();
     const { value: first }: { value: unknown } = await iterator.next();
     if (!Buffer.isBuffer(first)) throw new Error("Expected byte chunk");
     expect(first.length).toBeLessThanOrEqual(64 * 1024);
-    expect(first.length).toBeLessThan(entry.declaredSize!);
+    expect(entry.declaredSize).toBe(128 * 1024);
     first[0] = 42;
     const reopened = await reader.open(entry);
     const peer = reopened[Symbol.asyncIterator]();
     const { value: again }: { value: unknown } = await peer.next();
     if (!Buffer.isBuffer(again)) throw new Error("Expected byte chunk");
-    expect(again[0]).toBe(0);
+    expect(again[0]).toBe(7);
     controller.abort(reason);
     await expect(iterator.next()).rejects.toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
-    const { value: peerRemainder }: { value: unknown } = await peer.next();
-    if (!Buffer.isBuffer(peerRemainder)) throw new Error("Expected peer bytes");
-    expect(peerRemainder[0]).toBe(0);
+    const received = [again];
+    for await (const chunk of peer) {
+      if (!Buffer.isBuffer(chunk)) throw new Error("Expected peer bytes");
+      received.push(chunk);
+    }
+    const expected = Buffer.concat([
+      Buffer.alloc(64 * 1024, 7),
+      Buffer.alloc(64 * 1024, 13),
+    ]);
+    expect(Buffer.concat(received).equals(expected)).toBe(true);
     await reader.close();
     expect(stream.closed).toBe(true);
     expect(reopened.closed).toBe(true);

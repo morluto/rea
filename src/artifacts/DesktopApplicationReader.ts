@@ -523,8 +523,13 @@ const pathConventions = (path: string, rootName: string) => {
   };
 };
 
+/**
+ * Files whose headers are read. Besides host executable marking, which
+ * Windows cannot apply to ELF or Mach-O files, a bundle's `Contents/MacOS/`
+ * entries and extensionless files at the root name conventional Unix mains.
+ */
 const probeSelected = (entry: DirectoryArtifactEntry): boolean =>
   entry.executable ||
-  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios)))$/iu.test(
+  /(?:\.(?:exe|dll|so|dylib|pck|utoc|bundle|ab|unity3d)|(?:^|\/)(?:global-metadata\.dat|data\.win|game\.(?:unx|ios))|(?:^|\/)Contents\/MacOS\/[^/]+|^[^/.]+)$/iu.test(
     entry.path,
   );

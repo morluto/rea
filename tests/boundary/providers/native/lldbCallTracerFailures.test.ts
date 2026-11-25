@@ -1,6 +1,5 @@
 import {
   access,
-  mkdtemp,
   readFile,
   rm,
   writeFile,
@@ -10,9 +9,9 @@ import {
 } from "node:fs/promises";
 import { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { z } from "zod";
 
 import {
@@ -823,8 +822,8 @@ describe("LLDB primary outcome during owned process cleanup", () => {
     .each(["caller cancellation", "deadline timeout"] as const)(
     "preserves a physical bridge failure and no-target proof when %s arrives during successful process cleanup",
     async (interruption) => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-primary-outcome-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-primary-outcome-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       await writeFile(
@@ -901,7 +900,6 @@ describe("LLDB primary outcome during owned process cleanup", () => {
         stopSpy.mockRestore();
         deadlineSpy?.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );
@@ -911,8 +909,8 @@ describe("LLDB process exit while output is still open", () => {
   it.skipIf(process.platform === "win32")(
     "keeps a nonzero leader exit observed before cancellation while inherited output is still open",
     async () => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-exit-before-cancel-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-exit-before-cancel-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       await writeFile(
@@ -981,7 +979,6 @@ describe("LLDB process exit while output is still open", () => {
         drainSpy.mockRestore();
         stopSpy.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );
@@ -992,7 +989,7 @@ describe("LLDB process exit while output is still open", () => {
  * does after rea_trace, while an inherited child keeps its output open.
  */
 const publishedResultLldb = async (result: string) => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-lldb-published-"));
+  const fixtureRoot = await createTestTempDirectory("rea-lldb-published-");
   const fakeLldb = join(fixtureRoot, "fake-lldb");
   await writeFile(
     fakeLldb,
@@ -1131,7 +1128,6 @@ describe("LLDB target proof published before interruption", () => {
             deadlineSpy?.mockRestore();
             if (retainedRoot !== undefined)
               await rm(retainedRoot, { recursive: true, force: true });
-            await rm(fixtureRoot, { recursive: true, force: true });
           }
         },
       );
@@ -1205,15 +1201,14 @@ describe("LLDB target proof read by cleanup retry", () => {
           stopSpy.mockRestore();
           if (retainedRoot !== undefined)
             await rm(retainedRoot, { recursive: true, force: true });
-          await rm(fixtureRoot, { recursive: true, force: true });
         }
       },
     );
 });
 
 const completedOutputCloseFixture = async () => {
-  const fixtureRoot = await mkdtemp(
-    join(tmpdir(), "rea-lldb-complete-output-"),
+  const fixtureRoot = await createTestTempDirectory(
+    "rea-lldb-complete-output-",
   );
   const fakeLldb = join(fixtureRoot, "fake-lldb");
   const completedPidPath = join(fixtureRoot, "completed-target.pid");
@@ -1332,7 +1327,6 @@ describe("LLDB process exit at output-close loop completion", () => {
         } finally {
           waitSpy.mockRestore();
           expect((await tracer.close()).ok).toBe(true);
-          await rm(fixture.fixtureRoot, { recursive: true, force: true });
         }
       },
     );
@@ -1340,8 +1334,8 @@ describe("LLDB process exit at output-close loop completion", () => {
   it.skipIf(process.platform === "win32")(
     "keeps a nonzero exit when output closure and cancellation meet at loop exit",
     async () => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-closed-output-cancel-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-closed-output-cancel-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       await writeFile(
@@ -1407,7 +1401,6 @@ describe("LLDB process exit at output-close loop completion", () => {
         waitSpy.mockRestore();
         stopSpy.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );
@@ -1471,8 +1464,8 @@ describe("LLDB work budget elapsing during process cleanup", () => {
     .each(["confirmed", "unconfirmed"] as const)(
     "keeps the completed trace when the budget elapses during %s process cleanup",
     async (cleanup) => {
-      const fixtureRoot = await mkdtemp(
-        join(tmpdir(), "rea-lldb-cleanup-deadline-"),
+      const fixtureRoot = await createTestTempDirectory(
+        "rea-lldb-cleanup-deadline-",
       );
       const fakeLldb = join(fixtureRoot, "fake-lldb");
       const observation = `${JSON.stringify({ kind: "event", event: EVENT })}\n`;
@@ -1541,7 +1534,6 @@ describe("LLDB work budget elapsing during process cleanup", () => {
         stopSpy.mockRestore();
         deadlineSpy.mockRestore();
         await tracer.close();
-        await rm(fixtureRoot, { recursive: true, force: true });
       }
     },
   );

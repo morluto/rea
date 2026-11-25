@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -14,7 +12,13 @@ import {
   requireMcpOperationResult,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
@@ -25,7 +29,6 @@ if (
   throw new Error(
     "This optional lane requires BYO Ghidra on Linux/macOS and GNU MIPS cross-binutils.",
   );
-const execute = promisify(execFile);
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
 await requireLaneToolchain("mips-shared");
@@ -35,11 +38,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -56,6 +54,12 @@ const env = {
     ? {}
     : { GHIDRA_HEADLESS_MAXMEM: process.env.GHIDRA_HEADLESS_MAXMEM }),
 };
+// The public CLI launch uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 const reports = [];
 let failure;
 try {
@@ -70,6 +74,7 @@ try {
         workspace,
         byteOrder,
         variant,
+        execOwned,
       );
       const resolved = await parseBinaryTarget(fixture.path);
       if (!resolved.ok) throw resolved.error;
@@ -115,9 +120,10 @@ try {
       });
       let calls = 0;
       const reply = async (name, args = {}) => {
+        throwIfInterrupted();
         const response = await client.callTool(
           { name, arguments: args },
-          { timeout: 180000 },
+          { timeout: 180000, signal: commandInterruption.signal },
         );
         await writeFile(
           join(workspace, `${byteOrder}-${variant}-${++calls}-${name}.json`),
@@ -129,8 +135,12 @@ try {
         requireMcpOperationResult(await reply(name, args), name);
       const original = await readFile(fixture.path);
       try {
-        await client.connect(transport);
-        await client.listTools();
+        await untilInterrupted(
+          client.connect(transport, { signal: commandInterruption.signal }),
+        );
+        await untilInterrupted(
+          client.listTools(undefined, { signal: commandInterruption.signal }),
+        );
         if (
           variant === "symbol-relative" ||
           variant === "section-relocations"
@@ -149,7 +159,9 @@ try {
               : /section relocation declarations/u,
           );
           assert.deepEqual(await readFile(fixture.path), original);
-          await client.ping();
+          await untilInterrupted(
+            client.ping({ signal: commandInterruption.signal }),
+          );
           reports.push({ ...fixture, status: "refused", ping: true });
           continue;
         }
@@ -291,8 +303,10 @@ try {
           firstInstruction,
         );
         await call("close_binary");
-        await client.ping();
-        const cli = await execute(
+        await untilInterrupted(
+          client.ping({ signal: commandInterruption.signal }),
+        );
+        const cli = await execOwned(
           process.execPath,
           [
             "scripts/rea.mjs",
@@ -336,21 +350,60 @@ try {
 } catch (cause) {
   failure = cause;
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw workspaceFixture.retainedError(
+    `MIPS16 shared command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        failure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [failure, cleanupFailure],
+              "MIPS16 shared verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw retainWorkspace(
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained workspace: ${workspace}`,
     {
-      cause: failure,
+      cause:
+        failure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [failure, lineageFailure],
+              "MIPS16 shared verification failed and cleanup was unverified",
+            ),
     },
   );
 if (failure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `MIPS16 shared verification failed; retained workspace: ${workspace}`,
     { cause: failure },
   );
+const interrupted = commandInterruption.reason();
+if (interrupted !== undefined)
+  throw workspaceFixture.retainedError(
+    `MIPS16 shared verification interrupted; retained diagnostic workspace: ${workspace}`,
+    { cause: interrupted },
+  );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await workspaceFixture.release();
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

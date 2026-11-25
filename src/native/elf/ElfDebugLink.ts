@@ -1,13 +1,19 @@
 import { crc32 } from "node:zlib";
 
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import {
+  hasElfMagic,
+  BinaryReader,
+  type ImageSection,
+  BinaryResourceFailure,
+} from "../../domain/binaryContainer.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   zstandardFrameAllowanceCause,
@@ -27,29 +33,34 @@ import {
   MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
   MAX_ELF_DEBUG_LINK_NAME_BYTES,
   type ElfDebugLink,
+  type ElfDebugLinkLimitationCode,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import {
-  BinaryReader,
-  type ImageSection,
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
-import {
   readElfImage,
   readElfImageCooperative,
+  readElfImageFromReader,
 } from "../../domain/native/elfImage.js";
-import { parseElfNotes, parseElfNotesCooperative } from "./ElfNoteParser.js";
+import {
+  readElfBuildIds,
+  readElfBuildIdsCooperative,
+  readElfBuildIdsFromHandle,
+} from "./ElfNoteParser.js";
 import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import {
   sharedElfSectionNameDecoder,
   type CooperativeElfSectionNameDecoder,
+  type ElfSectionNameDecodeRequest,
 } from "../../domain/native/elfSectionNameTable.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
+import type {
+  ByteSource,
+  PrefixedByteSource,
+} from "../../domain/byteSource.js";
 
 type PreparedCandidateImage = Result<ReturnType<typeof readElfImage>, unknown>;
-type PreparedNotes = Result<ReturnType<typeof parseElfNotes>, unknown>;
+type PreparedNotes = Result<ReturnType<typeof readElfBuildIds>, unknown>;
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = ElfDebugLink;
@@ -62,8 +73,9 @@ const DEBUG_SECTION_NAMES = [
   ".gnu_debugaltlink",
   ".gnu_debugdata",
 ] as const;
+const DEBUGLINK_CRC_BYTES = 4;
+const LINK_NAME_SCAN_CHUNK_BYTES = 1024 * 1024;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-const GNU_BUILD_ID_NOTE_TYPE = 3;
 
 const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
   offset >= 0n &&
@@ -116,12 +128,11 @@ const isRethrownBudget = (cause: unknown): boolean =>
 interface LocatedSection {
   readonly status: SectionStatus;
   readonly location: { offset: number; bytes: number } | null;
-  readonly body: Buffer | null;
   readonly reason: "not_file_backed" | "compressed" | "duplicate" | null;
 }
 
-const locate = (
-  bytes: Buffer,
+const locateSection = (
+  fileLength: number,
   found: readonly ElfSection[],
   namesComplete: boolean,
 ): LocatedSection => {
@@ -130,38 +141,88 @@ const locate = (
     return {
       status: namesComplete ? "absent" : "unknown",
       location: null,
-      body: null,
       reason: null,
     };
   if (found.length > 1)
     return {
       status: "malformed",
       location: null,
-      body: null,
       reason: "duplicate",
     };
   const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, bytes.length))
+  if (section.type === 8 || location === null || !inFile(section, fileLength))
     return {
       status: "malformed",
       location: null,
-      body: null,
       reason: "not_file_backed",
     };
   if (section.compressed)
     return {
       status: "unsupported",
       location,
-      body: null,
       reason: "compressed",
     };
   return {
     status: "present",
     location,
-    body: bytes.subarray(location.offset, location.offset + location.bytes),
     reason: null,
   };
 };
+
+const readSourceSlice = async (
+  source: ByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> =>
+  length === 0
+    ? Buffer.alloc(0)
+    : source.prefix !== undefined && offset + length <= source.prefix.length
+      ? source.prefix.subarray(offset, offset + length)
+      : source.readRange(offset, length);
+
+const readLinkName = async (
+  source: ByteSource,
+  location: NonNullable<LocatedSection["location"]>,
+  tailBytes: number,
+): Promise<{ readonly prefix: Buffer; readonly nul: number }> => {
+  const prefixLength = Math.min(
+    location.bytes,
+    MAX_ELF_DEBUG_LINK_NAME_BYTES + 1 + tailBytes,
+  );
+  const prefix = await readSourceSlice(source, location.offset, prefixLength);
+  const found = prefix.indexOf(0);
+  if (found >= 0 || prefix.length < prefixLength) return { prefix, nul: found };
+
+  // An overlong name can still have a usable CRC or build ID. Find its
+  // actual terminator without retaining the unreportable name.
+  for (let offset = prefix.length; offset < location.bytes;) {
+    const length = Math.min(
+      LINK_NAME_SCAN_CHUNK_BYTES,
+      location.bytes - offset,
+    );
+    const chunk = await readSourceSlice(
+      source,
+      location.offset + offset,
+      length,
+    );
+    const nul = chunk.indexOf(0);
+    if (nul >= 0) return { prefix, nul: offset + nul };
+    if (chunk.length < length) break;
+    offset += length;
+  }
+  return { prefix, nul: -1 };
+};
+
+const readLinkTail = (
+  source: ByteSource,
+  prefix: Buffer,
+  sectionOffset: number,
+  offset: number,
+  length: number,
+): Promise<Buffer> =>
+  offset + length <= prefix.length
+    ? Promise.resolve(prefix.subarray(offset, offset + length))
+    : readSourceSlice(source, sectionOffset + offset, length);
 
 const closedDebuglink = (
   status: SectionStatus,
@@ -175,13 +236,11 @@ const closedDebuglink = (
   reason,
 });
 
-const parseDebuglink = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
+const parseDebuglink = async (
+  source: ByteSource,
+  located: LocatedSection,
   little: boolean,
-): Report["debuglink"] => {
-  const located = locate(bytes, found, namesComplete);
+): Promise<Report["debuglink"]> => {
   if (located.reason === "duplicate")
     return closedDebuglink("malformed", "debuglink_duplicate_section");
   if (located.reason === "not_file_backed")
@@ -192,47 +251,44 @@ const parseDebuglink = (
       "debuglink_section_compressed",
       located.location,
     );
-  if (located.status !== "present" || located.body === null)
+  const { location } = located;
+  if (located.status !== "present" || location === null)
     return closedDebuglink(located.status, null);
-  const body = located.body;
-  const nul = body.indexOf(0);
+  const { prefix, nul } = await readLinkName(
+    source,
+    location,
+    3 + DEBUGLINK_CRC_BYTES, // At most three bytes of alignment before the CRC.
+  );
   if (nul < 0)
     return closedDebuglink(
       "malformed",
       "debuglink_unterminated_name",
-      located.location,
+      location,
     );
-  const crcOffset = (nul + 1 + 3) & ~3;
-  if (crcOffset + 4 > body.length)
-    return closedDebuglink(
-      "malformed",
-      "debuglink_truncated",
-      located.location,
-    );
-  const crc = new BinaryReader(body, little, "elf").u32(crcOffset);
-  const crcHex = crc32Hex(crc);
-  if (nul === 0)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      crc32_hex: crcHex,
-      reason: "debuglink_empty_name",
-    };
-  if (nul > MAX_ELF_DEBUG_LINK_NAME_BYTES)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      crc32_hex: crcHex,
-      reason: "debuglink_name_exceeds_limit",
-    };
+  const crcOffset = Math.ceil((nul + 1) / 4) * 4;
+  if (crcOffset + DEBUGLINK_CRC_BYTES > location.bytes)
+    return closedDebuglink("malformed", "debuglink_truncated", location);
+  const crcBytes = await readLinkTail(
+    source,
+    prefix,
+    location.offset,
+    crcOffset,
+    DEBUGLINK_CRC_BYTES,
+  );
+  if (crcBytes.length !== DEBUGLINK_CRC_BYTES)
+    return closedDebuglink("malformed", "debuglink_truncated", location);
+  const crc = new BinaryReader(crcBytes, little, "elf").u32(0);
+  let reason: Report["debuglink"]["reason"] = null;
+  if (nul === 0) reason = "debuglink_empty_name";
+  else if (nul > MAX_ELF_DEBUG_LINK_NAME_BYTES)
+    reason = "debuglink_name_exceeds_limit";
   return {
-    status: "present",
-    location: located.location,
-    filename: untrustedName(body.toString("latin1", 0, nul)),
-    crc32_hex: crcHex,
-    reason: null,
+    status: reason === null ? "present" : "malformed",
+    location,
+    filename:
+      reason === null ? untrustedName(prefix.toString("latin1", 0, nul)) : null,
+    crc32_hex: crc32Hex(crc),
+    reason,
   };
 };
 
@@ -248,12 +304,10 @@ const closedAlt = (
   reason,
 });
 
-const parseDebugaltlink = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-): Report["debugaltlink"] => {
-  const located = locate(bytes, found, namesComplete);
+const parseDebugaltlink = async (
+  source: ByteSource,
+  located: LocatedSection,
+): Promise<Report["debugaltlink"]> => {
   if (located.reason === "duplicate")
     return closedAlt("malformed", "debugaltlink_duplicate_section");
   if (located.reason === "not_file_backed")
@@ -264,73 +318,53 @@ const parseDebugaltlink = (
       "debugaltlink_section_compressed",
       located.location,
     );
-  if (located.status !== "present" || located.body === null)
+  const { location } = located;
+  if (located.status !== "present" || location === null)
     return closedAlt(located.status, null);
-  const body = located.body;
-  const nul = body.indexOf(0);
+  const { prefix, nul } = await readLinkName(
+    source,
+    location,
+    MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
+  );
   if (nul < 0)
-    return closedAlt(
-      "malformed",
-      "debugaltlink_unterminated_name",
-      located.location,
-    );
-  const build = body.subarray(nul + 1);
-  const nameOk = nul > 0 && nul <= MAX_ELF_DEBUG_LINK_NAME_BYTES;
+    return closedAlt("malformed", "debugaltlink_unterminated_name", location);
+  const buildBytes = location.bytes - (nul + 1);
   const nameTooLong = nul > MAX_ELF_DEBUG_LINK_NAME_BYTES;
-  const buildOk =
-    build.length > 0 && build.length <= MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES;
-  const buildTooLong = build.length > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES;
-  const filename = nameOk
-    ? untrustedName(body.toString("latin1", 0, nul))
-    : null;
-  const buildHex = buildOk ? build.toString("hex") : null;
-  if (build.length === 0)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename,
-      build_id_hex: null,
-      reason: "debugaltlink_missing_build_id",
-    };
-  if (nul === 0)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      build_id_hex: buildHex,
-      reason: "debugaltlink_empty_name",
-    };
-  if (nameTooLong)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      build_id_hex: buildTooLong ? null : buildHex,
-      reason: "debugaltlink_name_exceeds_limit",
-    };
-  if (buildTooLong)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename,
-      build_id_hex: null,
-      reason: "debugaltlink_build_id_exceeds_limit",
-    };
+  const buildTooLong = buildBytes > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES;
+  const filename =
+    nul > 0 && !nameTooLong
+      ? untrustedName(prefix.toString("latin1", 0, nul))
+      : null;
+  const buildHex =
+    buildBytes === 0 || buildTooLong
+      ? null
+      : (
+          await readLinkTail(
+            source,
+            prefix,
+            location.offset,
+            nul + 1,
+            buildBytes,
+          )
+        ).toString("hex");
+  let reason: Report["debugaltlink"]["reason"] = null;
+  if (buildBytes === 0) reason = "debugaltlink_missing_build_id";
+  else if (nul === 0) reason = "debugaltlink_empty_name";
+  else if (nameTooLong) reason = "debugaltlink_name_exceeds_limit";
+  else if (buildTooLong) reason = "debugaltlink_build_id_exceeds_limit";
   return {
-    status: "present",
-    location: located.location,
+    status: reason === null ? "present" : "malformed",
+    location,
     filename,
     build_id_hex: buildHex,
-    reason: null,
+    reason,
   };
 };
 
-const parseDebugdata = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-): Report["debugdata"] => {
-  const located = locate(bytes, found, namesComplete);
+const parseDebugdata = async (
+  source: ByteSource,
+  located: LocatedSection,
+): Promise<Report["debugdata"]> => {
   if (located.reason === "duplicate")
     return {
       status: "malformed",
@@ -352,25 +386,30 @@ const parseDebugdata = (
       xz_magic: null,
       reason: "debugdata_section_compressed",
     };
-  if (located.status !== "present" || located.body === null)
+  const { location } = located;
+  if (located.status !== "present" || location === null)
     return {
       status: located.status,
       location: null,
       xz_magic: null,
       reason: null,
     };
-  const body = located.body;
-  if (body.length < XZ_MAGIC.length)
+  const magicBytes = await readSourceSlice(
+    source,
+    location.offset,
+    Math.min(location.bytes, XZ_MAGIC.length),
+  );
+  if (magicBytes.length < XZ_MAGIC.length)
     return {
       status: "malformed",
-      location: located.location,
+      location,
       xz_magic: false,
       reason: "debugdata_truncated",
     };
-  const magic = body.subarray(0, XZ_MAGIC.length).equals(XZ_MAGIC);
+  const magic = magicBytes.equals(XZ_MAGIC);
   return {
     status: magic ? "present" : "malformed",
-    location: located.location,
+    location,
     xz_magic: magic,
     reason: magic ? null : "debugdata_not_xz",
   };
@@ -391,34 +430,23 @@ const unknownBuildId = (
 
 const observeBuildId = (
   bytes: Buffer,
-  artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   preparedNotes?: PreparedNotes,
 ): ObservedBuildId => {
-  let notes: ReturnType<typeof parseElfNotes>;
+  let notes: ReturnType<typeof readElfBuildIds>;
   try {
     if (preparedNotes !== undefined && !preparedNotes.ok)
       throw preparedNotes.error;
     notes =
       preparedNotes?.value ??
-      parseElfNotes(
-        bytes,
-        artifact,
-        buildIdNoteInput(artifact, input),
-        BUILD_ID_NOTE_OPTIONS,
-      );
+      readElfBuildIds(bytes, input, MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES);
   } catch (cause) {
     if (
       isRethrownBudget(cause) ||
       zstandardFrameAllowanceCause(cause) !== undefined
     )
       throw cause;
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
-      return unknownBuildId(
-        "note_tables_malformed",
-        `ELF note tables could not be decoded: ${cause.message}`,
-      );
-    if (cause instanceof BinaryFormatFailure)
+    if (cause instanceof ParseFailureError && cause.kind !== "limit")
       return unknownBuildId(
         cause.kind === "unsupported"
           ? "note_tables_unsupported"
@@ -427,40 +455,24 @@ const observeBuildId = (
       );
     throw cause;
   }
-  const ids: string[] = [];
-  const sources: BuildId["sources"] = [];
-  let oversized = false;
-  for (const entry of notes.entries) {
-    if (entry.owner !== "GNU" || entry.type !== GNU_BUILD_ID_NOTE_TYPE)
-      continue;
-    // The parser leaves oversized descriptors undecoded, so judge the raw size.
-    if (entry.descsz > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES) {
-      oversized = true;
-      continue;
-    }
-    const hex = entry.gnu?.build_id_hex;
-    if (hex === null || hex === undefined || hex.length === 0) continue;
-    if (!ids.includes(hex)) ids.push(hex);
-    sources.push({
-      hex,
-      table_kind: entry.table_kind,
-      table_index: entry.table_index,
-      note: entry.location,
-      descriptor: entry.descriptor.location,
-    });
-  }
-  // An oversized note leaves the identity unknown, but the bounded ids and
-  // their note locations that were read stay as evidence.
-  if (oversized)
+  const { sources, oversized, unreadableStorage } = notes;
+  const ids = [...new Set(sources.map(({ hex }) => hex))];
+  // Retain readable ids and their note locations when identity is incomplete.
+  if (unreadableStorage !== null || oversized)
     return {
       buildId: {
         status: "unknown",
         hex: null,
         ids,
         sources,
-        reason: "build_id_exceeds_limit",
+        reason:
+          unreadableStorage === null
+            ? "build_id_exceeds_limit"
+            : "note_tables_unsupported",
       },
-      limitation: "A GNU build-id exceeds 256 bytes and was not copied.",
+      limitation:
+        unreadableStorage ??
+        "A GNU build-id exceeds 256 bytes and was not copied.",
     };
   if (ids.length === 0)
     return {
@@ -496,63 +508,30 @@ const sectionsNamed = (
   name: string,
 ): readonly ElfSection[] => sections.filter((section) => section.name === name);
 
-const BUILD_ID_NOTE_OPTIONS = {
-  maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
-};
-const buildIdNoteInput = (
-  artifact: Report["artifact"],
-  input: InspectElfDebugLinkInput,
-) => ({
-  path: artifact.path,
-  max_file_bytes: input.max_file_bytes,
-  max_entries: input.max_entries,
-});
-
-/** Decode separate-debug linkage from one in-memory ELF image. */
 const ELF_DEBUG_LINK_OPERATION = "inspect_elf_debug_link";
 
-export const parseElfDebugLink = (
-  bytes: Buffer,
+const finalizeElfDebugLinkReport = (
+  image: ReturnType<typeof readElfImage>,
+  sections: readonly ElfSection[],
+  namesComplete: boolean,
   artifact: Report["artifact"],
-  input: InspectElfDebugLinkInput,
-  image?: ReturnType<typeof readElfImage>,
-  preparedNotes?: PreparedNotes,
+  debuglink: Report["debuglink"],
+  debugaltlink: Report["debugaltlink"],
+  debugdata: Report["debugdata"],
+  observed: ObservedBuildId,
 ): Report => {
-  // The directory admits section names before either decoder inflates them.
-  image =
-    image ??
-    readElfImage(bytes, ELF_DEBUG_LINK_OPERATION, input.max_file_bytes);
-  const sections = image.sections.filter(
-    (section): section is ElfSection => section.format === "elf",
-  );
-  const namesComplete =
-    image.section_names_limitation === undefined &&
-    sections.every((section) => section.name !== null);
-  const little = image.byte_order === "little";
-  const debuglink = parseDebuglink(
-    bytes,
-    sectionsNamed(sections, ".gnu_debuglink"),
-    namesComplete,
-    little,
-  );
-  const debugaltlink = parseDebugaltlink(
-    bytes,
-    sectionsNamed(sections, ".gnu_debugaltlink"),
-    namesComplete,
-  );
-  const debugdata = parseDebugdata(
-    bytes,
-    sectionsNamed(sections, ".gnu_debugdata"),
-    namesComplete,
-  );
-  const observed = observeBuildId(bytes, artifact, input, preparedNotes);
+  const limitationCodes: ElfDebugLinkLimitationCode[] = ["standing_caveats"];
   const limitations: Limitations = [...ELF_DEBUG_LINK_LIMITATIONS];
   if (image.section_names_limitation !== undefined)
     limitations.push(image.section_names_limitation);
   if (observed.limitation !== null) limitations.push(observed.limitation);
+  if (observed.buildId.status === "conflict")
+    limitationCodes.push("multiple_build_ids");
   const filename = debuglink.filename?.text ?? null;
-  if (filename !== null && !debugFileNameIsSingleSegment(filename))
+  if (filename !== null && !debugFileNameIsSingleSegment(filename)) {
+    limitationCodes.push("name_not_single_segment");
     limitations.push(ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION);
+  }
   const lookup_paths = deriveDebugFileLookupPaths({
     binaryPath: artifact.path,
     debuglinkName: filename,
@@ -585,6 +564,7 @@ export const parseElfDebugLink = (
       status: coverageIncomplete ? "partial" : "complete",
       examined_sections,
     },
+    limitation_codes: limitationCodes,
     limitations,
   };
 };
@@ -625,13 +605,9 @@ const candidateSections = (
   };
 };
 
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46";
-
 const readCandidateIdentity = (
   content: Buffer,
   totalBytes: number,
-  artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   preparedImage?: PreparedCandidateImage,
   preparedNotes?: PreparedNotes,
@@ -731,7 +707,7 @@ const readCandidateIdentity = (
   let observed: ObservedBuildId | null = null;
   if (frameAllowance === undefined) {
     try {
-      observed = observeBuildId(content, artifact, input, preparedNotes);
+      observed = observeBuildId(content, input, preparedNotes);
     } catch (cause) {
       frameAllowance = zstandardFrameAllowanceCause(cause);
       if (frameAllowance === undefined && !isRethrownBudget(cause)) throw cause;
@@ -899,7 +875,6 @@ export const verifyElfDebugCandidate = (
   const read = readCandidateIdentity(
     candidate.prefix,
     candidate.bytes,
-    candidateArtifact(candidate),
     input,
     preparedImage,
     preparedNotes,
@@ -907,11 +882,18 @@ export const verifyElfDebugCandidate = (
   const crc = crcCheck(report.debuglink.crc32_hex, candidate.crc32);
   const build = buildIdCheck(report.build_id, read.identity);
   const verification = verificationOf(crc, build);
+  const limitationCodes: ElfDebugLinkLimitationCode[] = [
+    ...report.limitation_codes,
+  ];
   const limitations = [...report.limitations];
-  if (candidate.prefix.length !== candidate.bytes)
+  if (candidate.prefix.length !== candidate.bytes) {
+    limitationCodes.push("candidate_prefix_only");
     limitations.push(ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION);
-  if (read.budgetExceeded)
+  }
+  if (read.budgetExceeded) {
+    limitationCodes.push("candidate_budget_exceeded");
     limitations.push(ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION);
+  }
   if (read.frameAllowance !== undefined)
     limitations.push(
       `Candidate ELF section names could not be decoded because ${read.frameAllowance.failure.detail}.`,
@@ -919,10 +901,14 @@ export const verifyElfDebugCandidate = (
   if (
     verification.status === "matches" &&
     (crc.status === "unavailable" || build.status === "unavailable")
-  )
+  ) {
+    limitationCodes.push("unavailable_check");
     limitations.push(ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION);
-  if (verification.status === "cannot_verify")
+  }
+  if (verification.status === "cannot_verify") {
+    limitationCodes.push("cannot_verify");
     limitations.push(ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION);
+  }
   return {
     ...report,
     candidate: {
@@ -934,6 +920,7 @@ export const verifyElfDebugCandidate = (
       ...read.sections,
     },
     verification,
+    limitation_codes: limitationCodes,
     limitations,
   };
 };
@@ -941,29 +928,19 @@ export const verifyElfDebugCandidate = (
 const debugLinkPause = (signal?: AbortSignal) => () =>
   yieldArtifactRead(signal);
 
-const candidateArtifact = (candidate: ElfDebugCandidateFile) => ({
-  path: candidate.path,
-  sha256: candidate.sha256,
-  bytes: candidate.bytes,
-});
-
 const prepareBuildIdNotes = async (
   bytes: Buffer,
-  artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
-  pause: ZstandardFramePause,
   decode: CooperativeElfSectionNameDecoder,
   signal: AbortSignal | undefined,
 ): Promise<PreparedNotes> => {
   assertArtifactReadActive(signal);
   try {
     return ok(
-      await parseElfNotesCooperative(
+      await readElfBuildIdsCooperative(
         bytes,
-        artifact,
-        buildIdNoteInput(artifact, input),
-        pause,
-        BUILD_ID_NOTE_OPTIONS,
+        input,
+        MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
         decode,
       ),
     );
@@ -973,32 +950,95 @@ const prepareBuildIdNotes = async (
   }
 };
 
-/** Same linkage as {@link parseElfDebugLink}. Section names yield for `signal`. */
-export const parseElfDebugLinkCooperative = async (
-  bytes: Buffer,
+/** Decode separate-debug linkage positionally over a bounded file handle. */
+export const parseElfDebugLinkFromHandle = async (
+  source: PrefixedByteSource,
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   signal?: AbortSignal,
 ): Promise<Report> => {
   const pause = debugLinkPause(signal);
   const decode = sharedElfSectionNameDecoder(pause);
-  const image = await readElfImageCooperative(
-    bytes,
+  let sectionNames: ElfSectionNameDecodeRequest | undefined;
+  const image = await readElfImageFromReader(
+    source,
     ELF_DEBUG_LINK_OPERATION,
     pause,
     input.max_file_bytes,
-    decode,
+    (request) => {
+      sectionNames = request;
+      return decode(request);
+    },
   );
-  const notes = await prepareBuildIdNotes(
-    bytes,
-    artifact,
-    input,
-    pause,
-    decode,
-    signal,
-  );
+  // Both readers borrow the same stable file. Reuse only the exact extent
+  // admitted by the image reader so the decoder can share its result.
+  const noteSource: PrefixedByteSource = {
+    size: source.size,
+    prefix: source.prefix,
+    readRange: (offset, length) =>
+      sectionNames?.fileOffset === offset && sectionNames.raw.length === length
+        ? Promise.resolve(sectionNames.raw)
+        : source.readRange(offset, length),
+  };
+  let notes: PreparedNotes;
   assertArtifactReadActive(signal);
-  return parseElfDebugLink(bytes, artifact, input, image, notes);
+  try {
+    notes = ok(
+      await readElfBuildIdsFromHandle(
+        noteSource,
+        input,
+        MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
+        decode,
+      ),
+    );
+  } catch (cause) {
+    assertArtifactReadActive(signal);
+    notes = err(cause);
+  }
+  assertArtifactReadActive(signal);
+  const sections = image.sections.filter(
+    (section): section is ElfSection => section.format === "elf",
+  );
+  const namesComplete =
+    image.section_names_limitation === undefined &&
+    sections.every((section) => section.name !== null);
+  const little = image.byte_order === "little";
+  const debuglink = await parseDebuglink(
+    source,
+    locateSection(
+      source.size,
+      sectionsNamed(sections, ".gnu_debuglink"),
+      namesComplete,
+    ),
+    little,
+  );
+  const debugaltlink = await parseDebugaltlink(
+    source,
+    locateSection(
+      source.size,
+      sectionsNamed(sections, ".gnu_debugaltlink"),
+      namesComplete,
+    ),
+  );
+  const debugdata = await parseDebugdata(
+    source,
+    locateSection(
+      source.size,
+      sectionsNamed(sections, ".gnu_debugdata"),
+      namesComplete,
+    ),
+  );
+  const observed = observeBuildId(Buffer.alloc(0), input, notes);
+  return finalizeElfDebugLinkReport(
+    image,
+    sections,
+    namesComplete,
+    artifact,
+    debuglink,
+    debugaltlink,
+    debugdata,
+    observed,
+  );
 };
 
 /** Same comparison as {@link verifyElfDebugCandidate}. Section names yield for `signal`. */
@@ -1040,9 +1080,7 @@ export const verifyElfDebugCandidateCooperative = async (
     return verifyElfDebugCandidate(report, candidate, input, preparedImage);
   const notes = await prepareBuildIdNotes(
     candidate.prefix,
-    candidateArtifact(candidate),
     input,
-    pause,
     decode,
     signal,
   );
@@ -1077,6 +1115,11 @@ export const unreadableElfDebugCandidate = (report: Report): Report => ({
       reason: "candidate_unreadable",
     },
   },
+  limitation_codes: [
+    ...report.limitation_codes,
+    "candidate_unreadable",
+    "cannot_verify",
+  ],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,

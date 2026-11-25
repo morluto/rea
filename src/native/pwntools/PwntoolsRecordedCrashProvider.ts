@@ -4,10 +4,10 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   recordedCrashPayloadSchema,
-  recordedCrashSchema,
+  safeParseProjectedRecordedCrash,
+  safeParseRecordedCrashDebuggerEnrichment,
   type InspectRecordedCrashInput,
   type RecordedCrash,
   type RecordedCrashPartialObservation,
@@ -25,6 +25,60 @@ import {
   recordedCrashStageOutput,
 } from "../pwndbg/PwndbgCoreContext.js";
 import type { z } from "zod";
+
+const LINUX_CORE_OWNER_BASE64 = "Q09SRQA=";
+const LINUX_CORE_OWNER_BYTES = Buffer.from("CORE\0");
+
+const verifySnapshotBase64Bytes = (
+  raw: string,
+  range: { readonly offset: string; readonly bytes: string },
+  snapshotBytes: Buffer,
+  diagnostics: RecordedCrash["decoder_diagnostics"],
+): void => {
+  const start =
+    range.offset.length <= 15
+      ? Number(range.offset)
+      : Number(BigInt(range.offset));
+  const length =
+    range.bytes.length <= 15
+      ? Number(range.bytes)
+      : Number(BigInt(range.bytes));
+  if (length === 0) {
+    if (raw.length !== 0)
+      throw new AnalysisOutputError(
+        "inspect_recorded_crash",
+        "Reported raw note bytes differ from the selected snapshot.",
+        { capturedOutput: diagnostics },
+      );
+    return;
+  }
+  if (raw === LINUX_CORE_OWNER_BASE64) {
+    if (
+      length !== LINUX_CORE_OWNER_BYTES.length ||
+      LINUX_CORE_OWNER_BYTES.compare(
+        snapshotBytes,
+        start,
+        start + LINUX_CORE_OWNER_BYTES.length,
+      ) !== 0
+    )
+      throw new AnalysisOutputError(
+        "inspect_recorded_crash",
+        "Reported raw note bytes differ from the selected snapshot.",
+        { capturedOutput: diagnostics },
+      );
+    return;
+  }
+  const decoded = Buffer.from(raw, "base64");
+  if (
+    decoded.length !== length ||
+    decoded.compare(snapshotBytes, start, start + length) !== 0
+  )
+    throw new AnalysisOutputError(
+      "inspect_recorded_crash",
+      "Reported raw note bytes differ from the selected snapshot.",
+      { capturedOutput: diagnostics },
+    );
+};
 
 /** Preserve every recorded thread while optionally enriching the same owned snapshot. */
 export class PwntoolsRecordedCrashProvider
@@ -53,25 +107,16 @@ export class PwntoolsRecordedCrashProvider
         ),
         payloadSchema: recordedCrashPayloadSchema,
         project: ({ input, payload, snapshot, diagnostics }): RecordedCrash => {
-          const validate = (debuggerContext: RecordedCrash["debugger"]) =>
-            recordedCrashSchema.safeParse({
-              ...payload,
-              artifact: {
-                path: input.path,
-                sha256: snapshot.sha256,
-                bytes: snapshot.bytes.length,
-              },
-              debugger: debuggerContext,
-              decoder_diagnostics: diagnostics,
-              diagnostics:
-                debuggerContext.status === "available"
-                  ? recordedCrashStageOutput(
-                      diagnostics,
-                      debuggerContext.diagnostics,
-                    )
-                  : diagnostics,
-            });
-          const checked = validate({ status: "not-requested" });
+          const checked = safeParseProjectedRecordedCrash(payload, {
+            artifact: {
+              path: input.path,
+              sha256: snapshot.sha256,
+              bytes: snapshot.bytes.length,
+            },
+            debugger: { status: "not-requested" },
+            decoder_diagnostics: diagnostics,
+            diagnostics,
+          });
           if (!checked.success)
             throw new AnalysisOutputError(
               "inspect_recorded_crash",
@@ -80,46 +125,28 @@ export class PwntoolsRecordedCrashProvider
             );
           const value = checked.data;
           validateRecordedCrashStructure(value, snapshot.bytes, diagnostics);
-          const checkBytes = (
-            raw: string,
-            range: { readonly offset: string; readonly bytes: string },
-          ) => {
-            const start = Number(BigInt(range.offset));
-            const length = Number(BigInt(range.bytes));
-            if (
-              !Buffer.from(raw, "base64").equals(
-                snapshot.bytes.subarray(start, start + length),
-              )
-            )
-              throw new AnalysisOutputError(
-                "inspect_recorded_crash",
-                "Reported raw note bytes differ from the selected snapshot.",
-                { capturedOutput: diagnostics },
-              );
-          };
           for (const note of value.notes) {
-            checkBytes(note.owner_bytes_base64, note.owner_location);
-            checkBytes(note.descriptor_bytes_base64, note.descriptor_location);
+            verifySnapshotBase64Bytes(
+              note.owner_bytes_base64,
+              note.owner_location,
+              snapshot.bytes,
+              diagnostics,
+            );
+            verifySnapshotBase64Bytes(
+              note.descriptor_bytes_base64,
+              note.descriptor_location,
+              snapshot.bytes,
+              diagnostics,
+            );
           }
           for (const padding of value.note_padding)
-            checkBytes(padding.bytes_base64, padding.location);
+            verifySnapshotBase64Bytes(
+              padding.bytes_base64,
+              padding.location,
+              snapshot.bytes,
+              diagnostics,
+            );
           validateRecordedCrashSources(value, snapshot.bytes, diagnostics);
-          for (const thread of value.threads)
-            for (const register of thread.registers) {
-              const start = Number(BigInt(register.location.offset));
-              if (
-                new BinaryReader(
-                  snapshot.bytes,
-                  true,
-                  "pwntools-recorded-crash",
-                ).word(start, 64) !== BigInt(register.value)
-              )
-                throw new AnalysisOutputError(
-                  "inspect_recorded_crash",
-                  "Reported register value differs from its recorded source bytes.",
-                  { capturedOutput: diagnostics },
-                );
-            }
           return value;
         },
         partialObservation: (input, value) =>
@@ -138,18 +165,6 @@ export class PwntoolsRecordedCrashProvider
         }) => {
           if (!input.include_debugger_context) return value;
           const diagnostics = value.decoder_diagnostics;
-          const validate = (debuggerContext: RecordedCrash["debugger"]) =>
-            recordedCrashSchema.safeParse({
-              ...value,
-              debugger: debuggerContext,
-              diagnostics:
-                debuggerContext.status === "available"
-                  ? recordedCrashStageOutput(
-                      diagnostics,
-                      debuggerContext.diagnostics,
-                    )
-                  : diagnostics,
-            });
           try {
             if (options?.signal?.aborted)
               throw cancelledBy("inspect_recorded_crash", options.signal, {
@@ -172,7 +187,11 @@ export class PwntoolsRecordedCrashProvider
               producerLimits,
             });
             const context = completed.context;
-            const enriched = validate(context);
+            const enriched = safeParseRecordedCrashDebuggerEnrichment(
+              value,
+              context,
+              recordedCrashStageOutput(diagnostics, context.diagnostics),
+            );
             if (!enriched.success)
               throw pwndbgContextFinalizationFailure(
                 new AnalysisOutputError(

@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -21,7 +19,13 @@ import { functionDossierSchema } from "../dist/domain/native/functionDossier.js"
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPcFixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
@@ -45,7 +49,6 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -56,11 +59,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -76,12 +74,13 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
+const commands = await createVerifierCommands();
 const reports = [];
 let primaryFailure;
 try {
   {
-    const fixture = await buildPowerPcFixture(workspace);
-    const independent = await inspectPowerPcReadelf(fixture.path);
+    const fixture = await buildPowerPcFixture(workspace, commands);
+    const independent = await inspectPowerPcReadelf(commands, fixture.path);
     const resolved = await parseBinaryTarget(fixture.path);
     if (!resolved.ok) throw resolved.error;
     assert.deepEqual(
@@ -254,7 +253,7 @@ try {
       await call("close_binary");
 
       // Same public operation through CLI, not a private injected provider.
-      const cli = await execute(
+      const cli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -314,21 +313,22 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
-const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw retainWorkspace(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
-  );
-if (primaryFailure !== undefined)
-  throw retainWorkspace(
-    `PowerPC verification failed; retained workspace: ${workspace}`,
-    {
-      cause: primaryFailure,
+let completed;
+try {
+  await withVerifierCleanup(async () => {
+    if (primaryFailure !== undefined) throw primaryFailure;
+  }, [
+    async () => {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+      completed = await completeVerifierRun(run);
+      assertVerifierCleanupComplete(completed.process_lineage);
     },
+  ]);
+} catch (cause) {
+  throw workspaceFixture.retainedError(
+    `PowerPC verification failed; retained workspace: ${workspace}`,
+    { cause },
   );
+}
 await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

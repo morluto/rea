@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
 import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
-import * as composition from "../../src/composition/binaryDiagnostics.js";
+import * as binaryLayoutComposition from "../../src/composition/binaryDiagnostics/binaryLayout.js";
+import * as recordedCrashComposition from "../../src/composition/binaryDiagnostics/recordedCrash.js";
 import { BinaryLayoutService } from "../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
@@ -54,7 +55,10 @@ it.each(
       version: "1",
     };
     if (scenario === "layout")
-      vi.spyOn(composition, "createBinaryLayoutService").mockReturnValue(
+      vi.spyOn(
+        binaryLayoutComposition,
+        "createBinaryLayoutService",
+      ).mockReturnValue(
         new BinaryLayoutService({
           identity,
           inspect: () => {
@@ -64,7 +68,10 @@ it.each(
         }),
       );
     else
-      vi.spyOn(composition, "createRecordedCrashService").mockReturnValue(
+      vi.spyOn(
+        recordedCrashComposition,
+        "createRecordedCrashService",
+      ).mockReturnValue(
         new RecordedCrashService({
           identity,
           inspect: () => {

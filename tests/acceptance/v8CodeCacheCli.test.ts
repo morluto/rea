@@ -3,82 +3,76 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { v8CodeCacheFixture } from "../../src/v8/V8CodeCache.fixture.js";
+import {
+  v8CodeCacheFixture,
+  withSyntheticLegacyHeader,
+  withSyntheticNarrowHeader,
+} from "../../src/v8/V8CodeCache.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const outputSchema = toolContract("inspect_v8_code_cache").outputSchema;
 
 cliTest(
-  "reports the observed header and payload through the public CLI",
+  "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-");
-    const path = join(root, "module.jsc");
-    const bytes = v8CodeCacheFixture(
-      "function add(a, b) { return a + b; } add(1, 2);",
-    );
-    await writeFile(path, bytes);
-    const result = await cli.run({
-      arguments: ["inspect-v8-code-cache", path, "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = outputSchema.parse(result.json);
-    const report = evidence.normalized_result;
-    expect(report.header.magic).toBe(bytes.readUInt32LE(0));
-    expect(report.header.magic_build_stable).toBe(0xc0de);
-    expect(report.header.fields).toHaveLength(8);
-    expect(report.payload.offset).toBe(32);
-    expect(report.payload.bytes).toBe(bytes.length - 32);
-    expect(report.payload.sha256).toMatch(/^[0-9a-f]{64}$/u);
-    expect(report.coverage.status).toBe("complete");
-  },
-);
-
-cliTest(
-  "resolves a relative code cache path against the working directory",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-v8-cli-rel-");
-    await writeFile(join(root, "module.jsc"), v8CodeCacheFixture());
-    const result = await cli.run({
-      arguments: ["inspect-v8-code-cache", "module.jsc", "--json"],
-      cwd: root,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(
-      outputSchema.parse(result.json).normalized_result.artifact.path,
-    ).toBe(join(root, "module.jsc"));
-  },
-);
-
-cliTest(
-  "locates retained printable sequences with byte ranges",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-v8-cli-strings-");
-    const path = join(root, "module.jsc");
     const marker = "EMBEDDED_CONFIG_KEY_7c1d";
-    const bytes = v8CodeCacheFixture(
+    const wide = v8CodeCacheFixture(
       `var settings = { key: "${marker}" }; settings.key;`,
     );
-    await writeFile(path, bytes);
-    const result = await cli.run({
-      arguments: [
-        "inspect-v8-code-cache",
+    const digest = (bytes: Buffer) =>
+      createHash("sha256").update(bytes).digest("hex");
+    const payloadDigest = digest(wide.subarray(32));
+    for (const [bytes, headerBytes] of [
+      [wide, 32],
+      [withSyntheticNarrowHeader(wide), 28],
+      [withSyntheticLegacyHeader(wide), 24],
+    ] as const) {
+      const name = `header-${String(headerBytes)}.jsc`;
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: [
+          "inspect-v8-code-cache",
+          headerBytes === 32 ? name : path,
+          "--min-string-bytes",
+          "8",
+          "--json",
+        ],
+        cwd: root,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = outputSchema.parse(result.json).normalized_result;
+      expect(report.artifact).toEqual({
         path,
-        "--minStringBytes",
-        "8",
-        "--json",
-      ],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const report = outputSchema.parse(result.json).normalized_result;
-    const observation = report.embedded_strings.find((entry) =>
-      entry.text.includes(marker),
-    );
-    expect(observation).toBeDefined();
-    expect(observation!.offset).toBeGreaterThanOrEqual(report.payload.offset);
-    expect(observation!.offset + observation!.bytes).toBeLessThanOrEqual(
-      report.artifact.bytes,
-    );
+        bytes: bytes.length,
+        sha256: digest(bytes),
+      });
+      expect(report.header.magic).toBe(bytes.readUInt32LE(0));
+      expect(report.header.magic_build_stable).toBe(0xc0de);
+      expect(report.header.header_bytes).toBe(headerBytes);
+      expect(report.header.fields).toHaveLength(headerBytes / 4);
+      expect(report.payload).toMatchObject({
+        offset: headerBytes,
+        bytes: bytes.length - headerBytes,
+        sha256: payloadDigest,
+      });
+      expect(report.coverage.status).toBe("complete");
+      const observation = report.embedded_strings.find((entry) =>
+        entry.text.includes(marker),
+      );
+      if (observation === undefined)
+        throw new Error("Missing printable marker");
+      expect(
+        bytes
+          .subarray(
+            observation.offset,
+            observation.offset + observation.retained_bytes,
+          )
+          .toString("latin1"),
+      ).toBe(observation.text);
+    }
   },
 );
 

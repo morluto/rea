@@ -70,7 +70,10 @@ import {
   semanticPropertyReadSources,
   type SemanticPropertyReadSource,
 } from "./javascriptSemanticIterationSources.js";
-import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
+import type {
+  IterationSourceValue,
+  SemanticIterationSource,
+} from "./javascriptSemanticIterationFacts.js";
 import { semanticGetterReceiverReferences } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
@@ -184,7 +187,7 @@ const localPropertyMethods = (
     paths.add(key);
     examined.set(node, paths);
     if (++selections > state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return undefined;
     }
     if (
@@ -264,7 +267,11 @@ const localPropertyMethods = (
           (capture) => capture.depth === 1 && capture.ownEnumerable,
         )
       ) {
-        for (const prototype of semanticNativePrototypeChain(node, selected!)) {
+        for (const prototype of semanticNativePrototypeChain(
+          node,
+          selected!,
+          state,
+        )) {
           if (selected === null || typeof selected === "object")
             return undefined;
           const at = current.memberReadAt ?? root;
@@ -295,7 +302,7 @@ const localPropertyMethods = (
         }
       }
       const references = t.isArrayExpression(node)
-        ? semanticArrayPropertyReferences(node, [selected!])
+        ? semanticArrayPropertyReferences(node, [selected!], state)
         : remaining.length === 0 && accessor !== "invoke"
           ? semanticObjectAccessorReferences(
               node,
@@ -513,7 +520,11 @@ export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   mayObserve: JavaScriptBindingIndex["mayObserve"],
-): Generator<void, void> {
+): Generator<void, ReadonlyMap<t.VariableDeclarator, t.AssignmentPattern>> {
+  const firstArrayDefaults = new Map<
+    t.VariableDeclarator,
+    t.AssignmentPattern
+  >();
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
@@ -574,7 +585,7 @@ export function* collectSemanticMemberMutationsSteps(
       if (examined.has(identity)) continue;
       examined.add(identity);
       if (examined.size > state.precision.alias_selections) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         return [{ node: root, path: [] }];
       }
       const receiver = selected.slice(0, -1);
@@ -729,7 +740,7 @@ export function* collectSemanticMemberMutationsSteps(
   const recordBindingEffect = (
     records: JavaScriptSemanticMemberEffect[],
     effect: JavaScriptSemanticMemberEffect,
-  ): void => {
+  ): boolean => {
     const fields: {
       readonly [Field in keyof JavaScriptSemanticMemberEffect]-?: unknown;
     } = {
@@ -750,9 +761,10 @@ export function* collectSemanticMemberMutationsSteps(
       recorded = new Set();
       recordedBindingEffects.set(records, recorded);
     }
-    if (recorded.has(key)) return;
+    if (recorded.has(key)) return false;
     recorded.add(key);
     records.push(effect);
+    return true;
   };
   // Ambient indexing owns aliases of global objects. Consume its canonical
   // writes instead of reparsing qualified or aliased process assignments.
@@ -899,7 +911,22 @@ export function* collectSemanticMemberMutationsSteps(
     iterableReferences.push(reference);
   };
   const ambientPaths = createAmbientPathResolver(state, true);
-  const markValue = (
+  // One query's alias states. Exact paths are affordable for almost every
+  // query; a query that outgrows this budget is answered again by escaping
+  // whole objects, so one dense alias cluster cannot spend the source's
+  // allowance or refuse every other fact in the file.
+  const queryStateBudget =
+    state.precision.alias_selections * QUERY_STATES_PER_ALIAS_SELECTION;
+  let queryActive = false;
+  let queryStates = 0;
+  let queryCollapsed = false;
+  const collapsedEscapes = new Set<string>();
+  // Bindings an abandoned exact query walked form a cluster too dense for
+  // exact paths. A later query that reaches one collapses at once instead of
+  // spending its whole budget to rediscover the same cluster.
+  const queryBindings = new Set<string>();
+  const denseBindings = new Set<string>();
+  const walkValue = (
     node: t.Node,
     path: PropertyPath,
     bindings: ReadonlySet<string>,
@@ -932,6 +959,8 @@ export function* collectSemanticMemberMutationsSteps(
     const pending: PendingValue[] = [];
     const schedule = (value: PendingValue): void => {
       work.charge();
+      if (!queryCollapsed && ++queryStates > queryStateBudget)
+        throw QUERY_STATE_BUDGET_EXCEEDED;
       pending.push(value);
     };
     // The effect, mutation and assigned sources belong to this invocation.
@@ -1000,7 +1029,7 @@ export function* collectSemanticMemberMutationsSteps(
           ++additionalAlternatives > state.precision.alias_selections
         ) {
           projectionsWidened = true;
-          state.valueResourceLimits.add("alias-selections");
+          state.observations.valueResourceLimits.add("alias-selections");
           exactProjections.clear();
         } else {
           exact.add(selection);
@@ -1140,11 +1169,6 @@ export function* collectSemanticMemberMutationsSteps(
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
-        const captureSelectionIdentity = JSON.stringify([
-          current.memberReadAt?.start,
-          current.memberReadAt?.end,
-          capturedSelectionKey(current.capturedSelections),
-        ]);
         // Ancestry closes repeated source identities before recursively selected
         // copy vectors grow; independent contexts remain distinct in coverage.
         const captureKey = JSON.stringify([
@@ -1154,6 +1178,11 @@ export function* collectSemanticMemberMutationsSteps(
         ]);
         const lifetime = lifetimeKey(captureKey, current.path);
         if (current.bindings.has(lifetime)) continue;
+        if (!queryCollapsed) {
+          if (denseBindings.has(binding.bindingId))
+            throw QUERY_STATE_BUDGET_EXCEEDED;
+          queryBindings.add(binding.bindingId);
+        }
         // Union compatible copied-slot selections at each binding. Carrying every
         // combination of exclusions through branch diamonds is exponential.
         // Preserve paths that can change observed slots or Array prototype
@@ -1169,6 +1198,11 @@ export function* collectSemanticMemberMutationsSteps(
         );
         const selector = path[selectorIndex];
         if (selector !== null && typeof selector === "object") {
+          const captureSelectionIdentity = JSON.stringify([
+            current.memberReadAt?.start,
+            current.memberReadAt?.end,
+            capturedSelectionKey(current.capturedSelections),
+          ]);
           const selectionIdentity = JSON.stringify([
             binding.bindingId,
             effect,
@@ -1227,7 +1261,7 @@ export function* collectSemanticMemberMutationsSteps(
           current.originAt?.start ?? -1
         }\u0001${current.originAt?.end ?? -1}\u0001${
           current.ownerInitializer?.start ?? -1
-        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}`;
+        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}\u0001${queryCollapsed}`;
         let covering = coveringPaths.get(pathState);
         if (covering === undefined) {
           covering = new SemanticPropertyPathCoverage();
@@ -1255,6 +1289,53 @@ export function* collectSemanticMemberMutationsSteps(
           : undefined;
         // An active normalized prefix owns its closure before nested traversals.
         if (!covering.retain(path, captureContexts)) continue;
+        // A collapsed query keeps no member path. An alias reached through a
+        // projection escapes whole, which covers every effect below it; each
+        // value escapes once per origin.
+        if (queryCollapsed && current.path.length > 0) {
+          const identity = JSON.stringify([
+            nodeIdentity(current.node),
+            nodeIdentity(current.originAt),
+            nodeIdentity(current.ownerInitializer),
+          ]);
+          if (collapsedEscapes.has(identity)) continue;
+          collapsedEscapes.add(identity);
+          // An escape walk queues the whole-object escape as one more state.
+          // Starting a walk for each projected alias would nest one call per
+          // link of an alias chain and overflow the stack on a long one.
+          if (effect === "escape" && assignedSources === undefined)
+            enqueue({
+              node: current.node,
+              path: [],
+              bindings: new Set(),
+              originAt: current.originAt,
+              definiteReceiver: true,
+              memberReadAt:
+                current.memberReadAt ??
+                patternClose ??
+                mutation ??
+                current.originAt,
+              capturedSelections: current.capturedSelections,
+              ...(current.ownerInitializer === undefined
+                ? {}
+                : { ownerInitializer: current.ownerInitializer }),
+            });
+          else
+            markValue(
+              current.node,
+              [],
+              new Set(),
+              "escape",
+              mutation,
+              current.originAt,
+              current.ownerInitializer,
+              widenedGetterResult,
+              undefined,
+              undefined,
+              current,
+            );
+          continue;
+        }
         // A self alias such as `node = node[key]` revisits its capture with the
         // same prefix added on every cycle, so exact paths never repeat. A self
         // store such as `s.c = s.c.p` adds its segment after the stored key
@@ -1345,8 +1426,6 @@ export function* collectSemanticMemberMutationsSteps(
             : undefined;
         const primitiveWrite =
           value?.status === "literal" || value?.status === "union";
-        // The coverage index already owns binding-effect deduplication.
-        recordedEffectCount += 1;
         const nested = new Set(current.bindings);
         nested.add(lifetime);
         nested.add(captureKey);
@@ -1404,23 +1483,26 @@ export function* collectSemanticMemberMutationsSteps(
             current.path.length > 1
               ? (current.memberReadAt ?? current.originAt)
               : current.originAt;
-          if (effect === "escape")
-            recordBindingEffect(binding.escapedPaths, {
-              path,
-              node: mutation,
-              receiverInitializers,
-              ...(receiverAt === undefined ? {} : { receiverAt }),
-            });
-          else
-            recordBindingEffect(binding.memberWrites, {
-              receiverIdentity: definiteReceiver ? "definite" : "possible",
-              path,
-              node: mutation,
-              receiverInitializers,
-              ...(receiverAt === undefined ? {} : { receiverAt }),
-              ...(assignedSources === undefined ? {} : { assignedSources }),
-            });
-          clearSemanticValueCaches(state);
+          const added =
+            effect === "escape"
+              ? recordBindingEffect(binding.escapedPaths, {
+                  path,
+                  node: mutation,
+                  receiverInitializers,
+                  ...(receiverAt === undefined ? {} : { receiverAt }),
+                })
+              : recordBindingEffect(binding.memberWrites, {
+                  receiverIdentity: definiteReceiver ? "definite" : "possible",
+                  path,
+                  node: mutation,
+                  receiverInitializers,
+                  ...(receiverAt === undefined ? {} : { receiverAt }),
+                  ...(assignedSources === undefined ? {} : { assignedSources }),
+                });
+          if (added) {
+            recordedEffectCount += 1;
+            clearSemanticValueCaches(state);
+          }
           // Resolve a stored child at the receiver capture, before selecting
           // the final written slot. The source owner preserves replacements
           // and captures; a local container does not isolate its children.
@@ -1639,6 +1721,80 @@ export function* collectSemanticMemberMutationsSteps(
             });
         }
       }
+    }
+  };
+  /**
+   * Record one effect on every value `node` may alias. The query is answered
+   * with exact member paths unless it outgrows its state budget; then it is
+   * answered again as an escape of the whole value, and of every value a
+   * write stored into it, since those become reachable through an object
+   * whose members are no longer tracked. An escape covers every effect below
+   * it, so the collapsed answer is a superset of the exact one. Effects the
+   * abandoned exact attempt already recorded are true and are kept.
+   */
+  const markValue: typeof walkValue = (
+    node,
+    path,
+    bindings,
+    effect = "write",
+    mutation,
+    originAt = mutation,
+    ownerInitializer,
+    widenedGetterResult = false,
+    assignedSources,
+    definiteReceiver = true,
+    selection,
+  ) => {
+    const walk = (): void =>
+      walkValue(
+        node,
+        path,
+        bindings,
+        effect,
+        mutation,
+        originAt,
+        ownerInitializer,
+        widenedGetterResult,
+        assignedSources,
+        definiteReceiver,
+        selection,
+      );
+    // A nested query belongs to the query that requested it.
+    if (queryActive) return walk();
+    queryActive = true;
+    queryStates = 0;
+    queryBindings.clear();
+    try {
+      walk();
+    } catch (cause: unknown) {
+      if (cause !== QUERY_STATE_BUDGET_EXCEEDED) throw cause;
+      for (const bindingId of queryBindings) denseBindings.add(bindingId);
+      state.observations.valueResourceLimits.add("alias-selections");
+      queryCollapsed = true;
+      try {
+        // The collapsed escape names no site, so it may precede any read.
+        // Its states then do not depend on which query reached them, and a
+        // later collapsed query stops at whatever an earlier one covered.
+        walkValue(
+          node,
+          [],
+          new Set(),
+          "escape",
+          undefined,
+          originAt,
+          ownerInitializer,
+          widenedGetterResult,
+          undefined,
+          undefined,
+          selection,
+        );
+        for (const stored of storedSourceNodes(assignedSources ?? []))
+          walkValue(stored, [], new Set(), "escape", undefined);
+      } finally {
+        queryCollapsed = false;
+      }
+    } finally {
+      queryActive = false;
     }
   };
   const markEscaped = (
@@ -1884,6 +2040,14 @@ export function* collectSemanticMemberMutationsSteps(
           for (const target of semanticWriteTargets(execution.target))
             writeOnlyMembers.add(target);
       for (const source of semanticIterationSources(node, parent)) {
+        const first = source.arrayPattern?.elements[0];
+        if (
+          source.kind === "iteration" &&
+          t.isVariableDeclarator(node) &&
+          node.id === source.arrayPattern &&
+          t.isAssignmentPattern(first)
+        )
+          firstArrayDefaults.set(node, first);
         // Local stores retain their sources on member writes. Only the ambient
         // identity owner can establish that storing itself exposes a reference.
         if (
@@ -2032,9 +2196,20 @@ export function* collectSemanticMemberMutationsSteps(
       pattern,
       receiverCaptures,
     );
-    // A later-only write can invalidate the merged lattice without changing
-    // this acquisition. Leave the original capture on its established route.
-    if (captured === undefined || captured.storedSources.length === 0)
+    if (captured === undefined || captured.sources.length === 0) return false;
+    const originalOnly = captured.storedSources.length === 0;
+    // A later receiver write can hide the original slot in the merged value.
+    // Reuse the captured own-data source when that original receiver is proved.
+    if (
+      originalOnly &&
+      (receiver.members.length === 0 ||
+        captured.sources.length !== 1 ||
+        !semanticBindingAtRead(binding, receiver.root, state)
+          .hasDefiniteInitializer ||
+        !t.isObjectExpression(
+          unwrapJavaScriptExpression(captured.sources[0]!.node).node,
+        ))
+    )
       return false;
     const contentsMayChange = bindingProjectedContentsMayChangeAt(
       state,
@@ -2071,6 +2246,9 @@ export function* collectSemanticMemberMutationsSteps(
         const selection = native
           ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
           : undefined;
+        // The original-source path can discharge acquisition only when it
+        // adds no effects. Keep the ordinary escape for a possible close.
+        if (originalOnly && (!native || selection !== undefined)) return false;
         if (!native || selection !== undefined)
           markValue(
             alternative,
@@ -2179,7 +2357,9 @@ export function* collectSemanticMemberMutationsSteps(
           reference,
         );
     }
-    for (const [index, reference] of [...iterableReferences].entries()) {
+    const iterableSnapshotLength = iterableReferences.length;
+    for (let index = 0; index < iterableSnapshotLength; index += 1) {
+      const reference = iterableReferences[index]!;
       if (index % 64 === 0) yield;
       if (semanticReferenceSourcesInactive(reference, state)) continue;
       if (reference.iterationOnly) {
@@ -2269,6 +2449,7 @@ export function* collectSemanticMemberMutationsSteps(
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
   clearSemanticValueCaches(state);
+  return firstArrayDefaults;
 }
 
 interface ReferencedValue extends JavaScriptSemanticObjectReference {
@@ -2366,7 +2547,7 @@ const referencedValues = (
     if (effect === "write" && path.length < 2) return [];
     return t.isObjectExpression(node)
       ? semanticObjectPropertyReferences(node, path, state)
-      : semanticArrayPropertyReferences(node, path);
+      : semanticArrayPropertyReferences(node, path, state);
   }
   if (t.isClass(node) || t.isNewExpression(node))
     return constructedReferenceValues(
@@ -2462,6 +2643,37 @@ interface MutationObserverNode {
     readonly numericIndex: boolean;
   };
 }
+
+/**
+ * Alias states one query may schedule per `alias_selections` unit before it
+ * is answered by escaping whole objects. At the default precision this is
+ * 4,096 states.
+ */
+const QUERY_STATES_PER_ALIAS_SELECTION = 8;
+
+/** Unwinds an exact query that outgrew its state budget; never escapes the owner. */
+const QUERY_STATE_BUDGET_EXCEEDED = Symbol("query state budget exceeded");
+
+/** Every value a store may have written, including its guarded alternatives. */
+const storedSourceNodes = (
+  sources: readonly SemanticIterationSource[],
+): ReadonlySet<t.Node> => {
+  const nodes = new Set<t.Node>();
+  const pending: IterationSourceValue[] = [];
+  for (const source of sources)
+    pending.push(
+      source,
+      ...(source.fallbackSources ?? []),
+      ...(source.requiredSources ?? []),
+    );
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const value = pending[cursor];
+    if (value === undefined || nodes.has(value.node)) continue;
+    nodes.add(value.node);
+    pending.push(...(value.iterationSources ?? []));
+  }
+  return nodes;
+};
 
 const observableMutationPaths = (
   state: JavaScriptSemanticAnalysisState,
@@ -2575,6 +2787,10 @@ const observableMutationPaths = (
         link(expressionNode(source.node), observer);
     }
   }
+  const expandedOrigins = new WeakMap<
+    MutationObserverNode,
+    Set<MutationObservableOrigin>
+  >();
   const settle = (): void => {
     while (pendingExpressions.length > 0 || pending.length > 0) {
       while (pendingExpressions.length > 0) {
@@ -2730,6 +2946,13 @@ const observableMutationPaths = (
               )
                 add("array-prototype");
             } else {
+              let expanded = expandedOrigins.get(observer);
+              if (expanded === undefined) {
+                expanded = new Set();
+                expandedOrigins.set(observer, expanded);
+              }
+              if (expanded.has(origin)) continue;
+              expanded.add(origin);
               for (const reference of referencedValues(
                 origin,
                 [key],

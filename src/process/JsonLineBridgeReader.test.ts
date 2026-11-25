@@ -10,18 +10,15 @@ import {
   type JsonLineBridgeFailure,
 } from "./JsonLineBridgeReader.js";
 
-type Response = Parameters<typeof ghidraReplyEnvelope.id>[0];
-
 const readerFor = ({
   inFlight = [] as number[],
-  nextId = 5,
   maxReplyBytes = 1024,
 } = {}) => {
   const delivered: number[] = [];
   const rejected: GhidraRemoteError[] = [];
   const failures: JsonLineBridgeFailure[] = [];
   const pending = new Set(inFlight);
-  const reader = new JsonLineBridgeReader<Response, GhidraRemoteError>({
+  const reader = new JsonLineBridgeReader({
     envelope: ghidraReplyEnvelope,
     maxReplyBytes: () => maxReplyBytes,
     deliver: (response) => {
@@ -29,7 +26,7 @@ const readerFor = ({
       delivered.push(response.id);
       return true;
     },
-    wasSent: (id) => id < nextId,
+    wasSent: (id) => id < 5,
     rejectInFlight: (cause) => {
       if (pending.size === 0) return false;
       pending.clear();
@@ -71,12 +68,15 @@ describe("JSON-line bridge reader", () => {
     ]);
   });
 
-  it("never accepts a success on the reserved id", () => {
-    const { reader, failures } = readerFor({ inFlight: [4] });
-
-    reader.push(Buffer.from('{"id":0,"ok":false}\n'));
-
-    expect(failures).toMatchObject([{ kind: "envelope" }]);
+  it.each([
+    ["a success on the reserved id", success(0)],
+    ["a rejection with no error", '{"id":0,"ok":false}\n'],
+  ])("refuses %s at the Ghidra envelope", (_case, reply) => {
+    const { reader, failures } = readerFor();
+    reader.push(Buffer.from(reply));
+    expect(failures).toMatchObject([
+      { kind: "envelope", cause: { code: "response_shape" } },
+    ]);
   });
 
   it("refuses a schema-valid success on the reserved id without delivering it", () => {

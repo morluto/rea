@@ -355,3 +355,55 @@ it("admits a summary that fits exactly after sealing", () => {
     1024 * 1024,
   );
 });
+
+it("paginates filtered and ID-selected route pages accurately across skipped offsets", () => {
+  const source = {
+    ...parent(),
+    normalizedResult: {
+      input_path: "/gone/app",
+      root_artifact_sha256: "c".repeat(64),
+      route_inventory: inventory(
+        [
+          "createBrowserRouter([",
+          "  { path: '/alpha' },",
+          "  { path: '/beta' },",
+          "  { path: '/gamma' },",
+          "  { path: '/delta' },",
+          "  { path: '/epsilon' },",
+          "]);",
+          "router.push('/login');",
+        ].join("\n"),
+      ),
+    },
+  };
+  const all = query(source, { collection: "routes", fields: ["path"] });
+  expect(all.items).toHaveLength(6);
+  const byPath = new Map(
+    all.items.map((row) => ["path" in row ? row.path : undefined, row.id]),
+  );
+  const page = query(source, {
+    collection: "routes",
+    fields: ["path"],
+    where: {
+      ids: [
+        byPath.get("/epsilon")!,
+        byPath.get("/gamma")!,
+        byPath.get("/login")!,
+        byPath.get("/alpha")!,
+        byPath.get("/delta")!,
+      ],
+      classifications: ["page"],
+    },
+    offset: 1,
+    limit: 2,
+  });
+  expect(
+    page.items.map((row) => ("path" in row ? row.path : undefined)),
+  ).toEqual(["/delta", "/epsilon"]);
+  expect(page.coverage).toMatchObject({
+    total: 4,
+    examined: 2,
+    next_offset: 3,
+    exhausted: false,
+  });
+});

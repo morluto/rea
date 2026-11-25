@@ -1,9 +1,11 @@
+import {
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
-  imageFileSizeRemediation,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
@@ -23,12 +25,13 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  parsePeLoadConfig,
+  parsePeLoadConfigFromHandle,
   PE_LOAD_CONFIG_LIMITS,
   type PeLoadConfigLimit,
 } from "./PeLoadConfigParser.js";
 
 const OPERATION = "inspect_pe_load_config";
+const PE_HEADER_PREFIX_BYTES = 4096;
 
 /** Portable TLS/load-config reader over one bounded, identity-checked regular file. */
 export class PeLoadConfigProvider implements PeLoadConfigPort {
@@ -48,32 +51,45 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
   }
 
   async inspect(input: InspectPeLoadConfigInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
-      return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+      return await this.#resources.run(async () =>
+        withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const report = await parsePeLoadConfig(
-          snapshot.bytes,
+          PE_FILE_CEILING_BYTES,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
+            ),
+            retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              observed = identity;
+            },
           },
-          input,
-          options?.signal,
-        );
-        assertArtifactReadActive(options?.signal);
-        return ok(report);
-      });
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const report = await parsePeLoadConfigFromHandle(
+              handle,
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            );
+            assertArtifactReadActive(options?.signal);
+            return ok(report);
+          },
+        ),
+      );
     } catch (cause) {
-      return err(peLoadConfigFailure(cause, input, snapshot));
+      return err(peLoadConfigFailure(cause, input, observed));
     }
   }
 }
@@ -100,7 +116,7 @@ const limitRecovery = (
 const peLoadConfigFailure = (
   cause: unknown,
   input: InspectPeLoadConfigInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ): AnalysisError =>
   projectPeBinaryFailure<PeLoadConfigLimit>(
     cause,
@@ -108,13 +124,12 @@ const peLoadConfigFailure = (
     {
       operation: OPERATION,
       providerId: PE_LOAD_CONFIG_PROVIDER.id,
-      fileSizeRemediation: () =>
-        imageFileSizeRemediation(
-          input.max_file_bytes,
-          MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
-        ),
+      fileCeiling: {
+        name: "The PE whole-file ceiling (32-bit file offsets)",
+        bytes: PE_FILE_CEILING_BYTES,
+      },
       limits: PE_LOAD_CONFIG_LIMITS,
       limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },
-    snapshot,
+    observed,
   );
