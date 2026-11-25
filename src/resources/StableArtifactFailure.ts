@@ -205,18 +205,24 @@ const artifactCleanupFailure = (
   );
 };
 
-/** Project descriptor cleanup while keeping its exact leases bound to the error. */
+/** Build the provider cleanup error and bind it to the reader's exact leases. */
+export const artifactFileCleanupError = (
+  cause: unknown,
+  providerId: string,
+  operation: string,
+): ProviderCleanupError | undefined => {
+  if (!(cause instanceof ArtifactReaderFailure)) return undefined;
+  const error = artifactCleanupFailure(cause, providerId, operation);
+  if (error !== undefined) bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Preserve the original close failure when the reader has no cleanup evidence. */
 export const projectArtifactCloseFailure = (
   cause: unknown,
   providerId: string,
   operation: string,
-): unknown => {
-  if (!(cause instanceof ArtifactReaderFailure)) return cause;
-  const error = artifactCleanupFailure(cause, providerId, operation);
-  if (error === undefined) return cause;
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
+): unknown => artifactFileCleanupError(cause, providerId, operation) ?? cause;
 
 /** Close a provider's descriptor scope and preserve its cleanup leases on failure. */
 export const closeArtifactResources = async (
