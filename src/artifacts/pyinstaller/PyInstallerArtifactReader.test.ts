@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../../tests/support/sha256.js";
 import { open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -11,7 +11,10 @@ import {
   materializeArtifactInventory,
   scanCanonicalArtifactInventory,
 } from "../../../tests/fixtures/artifactInventory.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  createTestTempDirectory,
+  createTestTempFile,
+} from "../../../tests/fixtures/temporaryDirectory.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
@@ -24,9 +27,6 @@ import {
   pyzArchive,
   type CArchiveFixtureMember,
 } from "./CArchive.fixture.js";
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
 
@@ -110,12 +110,8 @@ const pyzWithInternedModuleName = (name: string, body: Buffer): Buffer => {
   return Buffer.concat([ordinary.subarray(0, tableOffset), table]);
 };
 
-const writeArchive = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-pyinstaller-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeArchive = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-pyinstaller-", name, bytes);
 
 const sampleMembers = (
   script: Buffer,

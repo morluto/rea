@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
   invalidAnalysisView,
@@ -85,9 +86,7 @@ const getCollectionFilterIndex = <T extends Row>(
     const value = row[key];
     if (typeof value !== "string") unresolved += 1;
     else {
-      const bucket = byValue.get(value);
-      if (bucket === undefined) byValue.set(value, [index]);
-      else bucket.push(index);
+      appendToMapList(byValue, value, index);
     }
   }
   const built = { byValue, unresolved };

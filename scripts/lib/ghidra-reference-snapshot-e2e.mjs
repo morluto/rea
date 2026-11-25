@@ -12,15 +12,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.js";
 import { createAnalysisProfile } from "../../dist/domain/analysisProfile.js";
-import {
-  createAnalysisSnapshotEntry,
-  parseAnalysisSnapshot,
-  serializeAnalysisSnapshot,
-  snapshotBinding,
-  snapshotTarget,
-} from "../../dist/domain/analysisSnapshot.js";
-import { createEvidence } from "../../dist/domain/evidence.js";
-import { createEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
+import { serializeAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
+import { createLegacyGhidraSnapshot } from "./ghidra-legacy-snapshot-e2e.mjs";
 import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 /** Reject a valid older snapshot whose instruction-only collector omitted a real edge. */
@@ -70,39 +63,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     result.incoming_references.length,
     observed.normalized_result.incoming_references.length - 1,
   );
-  const evidence = createEvidence(nativeTarget, observed.provider, {
-    operation: observed.operation,
-    parameters: observed.parameters,
+  const snapshot = createLegacyGhidraSnapshot({
+    nativeTarget,
+    observed,
     result,
-    rawResult: result,
-    analysisProfile: legacyProfile,
-    limitations: observed.limitations,
-    locations: observed.locations,
-  });
-  const binding = snapshotBinding(legacyProfile);
-  const identity = snapshotTarget(nativeTarget);
-  const snapshot = parseAnalysisSnapshot({
-    target: identity,
-    binding,
-    entries: [
-      createAnalysisSnapshotEntry({
-        target: identity,
-        binding,
-        operation: observed.operation,
-        parameters: observed.parameters,
-        execution: {
-          result,
-          rawResult: result,
-          provider: observed.provider,
-          analysisProfile: legacyProfile,
-          limitations: observed.limitations,
-          locations: observed.locations,
-          subject: evidence.subject,
-        },
-      }),
-    ],
-    workflow_entries: [],
-    evidence_bundle: createEvidenceBundle([evidence]),
+    legacyProfile,
   });
   assert.equal(
     snapshot.entries.length,

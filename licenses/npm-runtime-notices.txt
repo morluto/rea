@@ -7790,10 +7790,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 
-===== rolldown@1.3.2 =====
+===== rolldown@1.3.3 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/rolldown/-/rolldown-1.3.2.tgz
-Integrity: sha512-EFHqbVkXiYZA6akmYm2bvJhNbEGdUwAResRhYwl/BO8QhB5KxsG+t3RVHJSIOy5jBEb0XCACvrIGnnl6Z8sMGA==
+Archive: https://registry.npmjs.org/rolldown/-/rolldown-1.3.3.tgz
+Integrity: sha512-ksB1g74e7haRy02OYm4lOQAlr6sK6hBpAY5R+YC30Gkv4L1COwF6M9umBAYAPxWpGow6Vr+IXtyDjH9fq7A+Zg==
 Scope: generated runtime helpers; the build compiler is not bundled.
 
 --- package/LICENSE ---

@@ -1,5 +1,6 @@
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../support/sha256.js";
 import { open, writeFile, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -33,8 +34,6 @@ const MALFORMED_TARGET = {
   operation: "inspect_model_artifact",
 } as const;
 
-const hash = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 const writeModelFixture = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-model-reader-");
   const path = join(root, "content.without-format-extension");

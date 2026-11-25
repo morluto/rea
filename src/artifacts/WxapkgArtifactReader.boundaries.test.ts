@@ -5,11 +5,10 @@ import {
 } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { buildWxapkg } from "../../tests/fixtures/wxapkg.js";
@@ -17,14 +16,8 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { ArtifactFileSource } from "../resources/index.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-wxapkg-boundary-"),
-    "package.wxapkg",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-wxapkg-boundary-", "package.wxapkg", bytes);
 
 it("retries Wxapkg preparation cancelled during file reading", async () => {
   const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));

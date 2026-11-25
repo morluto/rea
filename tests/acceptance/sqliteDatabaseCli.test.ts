@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import {
   lstat,
   readFile,
@@ -35,9 +35,6 @@ import {
   createSharedMcpSession,
   type TestCli,
 } from "../support/cli/cliFixture.js";
-
-const digest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 // These stateless parity cases use the same default admission settings. Keep
 // their server file-owned, while lifecycle and configuration cases use fresh

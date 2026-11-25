@@ -1,5 +1,3 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
 import { expect, it } from "vitest";
@@ -13,15 +11,11 @@ import {
   UIMAGE_MAGIC,
 } from "../domain/uimageFormat.js";
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-uimage-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-uimage-", name, bytes);
 
 it("parses header facts with raw and named fields", () => {
   const bytes = buildUImage({

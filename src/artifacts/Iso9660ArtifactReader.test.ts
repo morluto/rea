@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../tests/support/sha256.js";
 import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -23,9 +23,6 @@ import {
 } from "../domain/iso9660/iso9660.fixture.js";
 
 const SECTOR = 2048;
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
   const path = join(await createTestTempDirectory("rea-iso9660-"), name);
   await writeFile(path, bytes);

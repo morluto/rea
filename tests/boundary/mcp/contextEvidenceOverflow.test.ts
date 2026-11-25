@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -131,11 +132,7 @@ mcpTest.for([
 it.each([true, false])(
   "recovers retained context facets when possible (profile=%s)",
   async (profile) => {
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const identity = createFixtureProviderIdentity();
     const target = join(
       await createTestTempDirectory("rea-context-oversize-success-"),
       "fixture.com",
