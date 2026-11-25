@@ -58,6 +58,8 @@ export type RasterRenderFailure =
 export interface RasterRenderOptions {
   coverage: readonly RasterRenderRange[] | PreparedRasterRenderCoverage;
   signal?: AbortSignal;
+  /** An owning operation can record cancellation before an opaque reason escapes. */
+  checkCancellation?: () => void;
   maxPixels?: number;
   maxOutputBytes?: number;
 }
@@ -127,6 +129,10 @@ export class PreparedRasterRenderCoverage {
   }
 }
 export const prepareRasterRenderCoverage = PreparedRasterRenderCoverage.prepare;
+function observeRenderCancellation(options: RasterRenderOptions): void {
+  if (options.checkCancellation) options.checkCancellation();
+  else options.signal?.throwIfAborted();
+}
 function prepare(
   bytes: Uint8Array,
   layout: Pick<RasterRenderLayout, "payloadRange">,
@@ -138,7 +144,7 @@ function prepare(
       coverage: PreparedRasterRenderCoverage;
     }
   | RasterRenderFailure {
-  options.signal?.throwIfAborted();
+  observeRenderCancellation(options);
   if (bytes.length > SOURCE_LIMIT)
     return limited("Raster logical source", SOURCE_LIMIT, "bytes");
   const c =
@@ -282,7 +288,7 @@ export async function copyRasterResourceRaw(
   if (layout.payloadRange.length > limit)
     return limited("Packed RAW output", limit, "bytes");
   await setImmediate();
-  options.signal?.throwIfAborted();
+  observeRenderCancellation(options);
   return {
     status: "copied",
     raw: Buffer.from(
@@ -358,7 +364,7 @@ async function render(
   options: RasterRenderOptions,
   maxSide?: number,
 ): Promise<RasterRendered | RasterRenderFailure> {
-  options.signal?.throwIfAborted();
+  observeRenderCancellation(options);
   const admitted = preflightRasterResource(layout, {
     ...options,
     ...(maxSide === undefined ? {} : { maxSide }),
@@ -385,7 +391,7 @@ async function render(
   for (let y = 0; y < height; y++) {
     if (y % 32 === 0) {
       await setImmediate();
-      options.signal?.throwIfAborted();
+      observeRenderCancellation(options);
     }
     const sy = rasterSampleCoordinate(y, layout.height, height),
       row = layout.rowOrder === "bottom-up" ? layout.height - 1 - sy : sy;
@@ -428,10 +434,10 @@ async function render(
     }
   }
   await setImmediate();
-  options.signal?.throwIfAborted();
+  observeRenderCancellation(options);
   const png = encodeRasterRgbaPng(width, height, rgba);
   await setImmediate();
-  options.signal?.throwIfAborted();
+  observeRenderCancellation(options);
   return {
     status: "rendered",
     width,

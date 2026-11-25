@@ -1,10 +1,12 @@
 import * as rendering from "./RasterResourceRendering.js";
 import { access, readFile, writeFile, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate } from "node:timers";
 import { inflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { structuredRasterFixture } from "../../../tests/fixtures/structuredRaster.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { StructuredRasterExportService } from "./StructuredRasterExportService.js";
 import { structuredRasterExportResultSchema } from "../../domain/native/structuredRasterExport.js";
@@ -198,6 +200,70 @@ it("keeps published receipt despite cancellation after commit", async () => {
     await s.close();
   }
 });
+it("reports cancellation during PNG rendering with the typed reason kept opaque", async () => {
+  const f = await fixture();
+  const s = new StructuredRasterExportService();
+  const controller = new AbortController();
+  const reason = new AnalysisInputError("inner_operation", undefined, [
+    { path: ["path"], reason: "invalid_value", message: "inner error" },
+  ]);
+  const render = rendering.renderRasterResource;
+  const spy = vi
+    .spyOn(rendering, "renderRasterResource")
+    .mockImplementation((...args) => {
+      setImmediate(() => controller.abort(reason));
+      return render(...args);
+    });
+  try {
+    const result = await s.export(args(f), { signal: controller.signal });
+    if (result.ok) throw Error("Expected render cancellation");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "export_structured_raster_resources",
+      partialObservation: {
+        kind: "file-snapshot-hash",
+        sha256: f.expected_sha256,
+      },
+    });
+    expect(result.error.cause).toBe(reason);
+    expect(reason.partialObservation).toBeUndefined();
+    await expect(access(f.output_directory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    spy.mockRestore();
+    await s.close();
+  }
+});
+
+it("keeps a render failure when the caller reuses it as the abort reason", async () => {
+  const f = await fixture();
+  const s = new StructuredRasterExportService();
+  const controller = new AbortController();
+  const failure = new Error("render failed");
+  const spy = vi
+    .spyOn(rendering, "renderRasterResource")
+    .mockImplementation(async () => {
+      controller.abort(failure);
+      throw failure;
+    });
+  try {
+    const result = await s.export(args(f), { signal: controller.signal });
+    if (result.ok) throw Error("Expected render failure");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "export_structured_raster_resources",
+    });
+    expect(result.error.cause).toBe(failure);
+    await expect(access(f.output_directory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    spy.mockRestore();
+    await s.close();
+  }
+});
+
 it("honors pre-aborted admission before reporting malformed input", async () => {
   const s = new StructuredRasterExportService(),
     controller = new AbortController();

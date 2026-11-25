@@ -12,7 +12,7 @@ import {
   AnalysisOutputError,
   fixedCeilingConstraint,
   cancelledBy,
-  carriedReason,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -41,15 +41,13 @@ export function rasterExportCapacity(
     narrowing: "Select fewer resources or smaller raster hypotheses.",
   });
 }
-export const rasterExportFailureDialect = (
-  signal?: AbortSignal,
-): ProviderFailureDialect => ({
+export const throwIfRasterExportCancelled = (signal?: AbortSignal): void => {
+  if (isAborted(signal)) throw cancelledBy(RASTER_EXPORT_OPERATION, signal);
+};
+
+export const rasterExportFailureDialect = (): ProviderFailureDialect => ({
   providerId: REA_WORKFLOW_PROVIDER.id,
   operation: RASTER_EXPORT_OPERATION,
-  recognise: (cause: unknown) =>
-    signal?.aborted && cause === signal.reason
-      ? cancelledBy(RASTER_EXPORT_OPERATION, carriedReason(signal.reason))
-      : undefined,
   unclassified: (cause, details) =>
     new AnalysisOutputError(
       RASTER_EXPORT_OPERATION,
@@ -94,15 +92,15 @@ export class RasterExportPublication {
   ): Promise<T> {
     let tree: SafeOutputTree | undefined, receipt: T | undefined;
     try {
-      signal?.throwIfAborted();
+      throwIfRasterExportCancelled(signal);
       await this.trees.checkDestination(destination);
-      signal?.throwIfAborted();
+      throwIfRasterExportCancelled(signal);
       tree = await this.trees.create(destination);
       const writer = createExportWriter(tree, this.maxBytes, signal);
       receipt = await produce(writer);
       // Validate the deliverable before committing. Do not allow post-commit cancellation to erase it.
       observation(receipt);
-      signal?.throwIfAborted();
+      throwIfRasterExportCancelled(signal);
       await tree.commit(signal);
       return receipt;
     } catch (cause) {
@@ -113,7 +111,7 @@ export class RasterExportPublication {
           "output_directory",
           cause,
         ),
-        rasterExportFailureDialect(signal),
+        rasterExportFailureDialect(),
       );
       const owned = tree;
       const lease =
@@ -177,7 +175,7 @@ function createExportWriter(
       return count;
     },
     async write(path, bytes) {
-      signal?.throwIfAborted();
+      throwIfRasterExportCancelled(signal);
       if (bytes.byteLength > maxBytes - total)
         throw rasterExportCapacity(
           "Aggregate raster export byte budget exceeded, including metadata.",

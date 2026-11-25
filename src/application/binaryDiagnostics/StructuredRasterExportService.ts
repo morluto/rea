@@ -23,6 +23,7 @@ import {
   RasterExportPublication,
   RASTER_EXPORT_OPERATION,
   rasterExportFailureDialect,
+  throwIfRasterExportCancelled,
 } from "./RasterExportPublication.js";
 import {
   planExport,
@@ -61,12 +62,7 @@ export class StructuredRasterExportService {
         this.exportOwned(rawInput, options),
       );
     } catch (cause) {
-      return err(
-        classifyProviderFailure(
-          cause,
-          rasterExportFailureDialect(options?.signal),
-        ),
-      );
+      return err(classifyProviderFailure(cause, rasterExportFailureDialect()));
     }
   }
   private async exportOwned(
@@ -124,6 +120,7 @@ export class StructuredRasterExportService {
         input.path,
       );
     try {
+      throwIfRasterExportCancelled(options?.signal);
       if (snapshot.artifact.sha256 !== input.expected_sha256.toLowerCase())
         throw new AnalysisArtifactChangedError(
           RASTER_EXPORT_OPERATION,
@@ -165,7 +162,7 @@ export class StructuredRasterExportService {
       return err(
         classifyProviderFailure(
           cause,
-          rasterExportFailureDialect(options?.signal),
+          rasterExportFailureDialect(),
         ).retainPartialObservation({
           kind: "file-snapshot-hash",
           ...snapshot.artifact,

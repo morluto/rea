@@ -14,6 +14,7 @@ import {
   RASTER_EXPORT_LIMITS,
   RASTER_EXPORT_OPERATION,
   rasterExportCapacity,
+  throwIfRasterExportCancelled,
   type RasterExportWriter,
 } from "./RasterExportPublication.js";
 import {
@@ -79,7 +80,7 @@ export function preflightExport(
 ): void {
   if (!input.formats.includes("png")) return;
   for (const plan of plans) {
-    signal?.throwIfAborted();
+    throwIfRasterExportCancelled(signal);
     if (
       !plan.layout ||
       !resolveRasterColorPolicy(input.color_policy, plan.registry, plan.layout)
@@ -101,7 +102,7 @@ async function writeResources(
   signal: AbortSignal | undefined,
 ): Promise<void> {
   for (let ordinal = 0; ordinal < plans.length; ordinal++) {
-    signal?.throwIfAborted();
+    throwIfRasterExportCancelled(signal);
     const plan = plans[ordinal]!,
       outcome = plan.outcome;
     if (!plan.payload) continue;
@@ -117,7 +118,9 @@ async function writeResources(
         { payloadRange: plan.payload },
         {
           coverage,
-          ...(signal ? { signal } : {}),
+          ...(signal
+            ? { checkCancellation: () => throwIfRasterExportCancelled(signal) }
+            : {}),
           maxOutputBytes: Math.min(
             writer.remainingBytes,
             RASTER_RENDER_MAX_SOURCE_BYTES,
@@ -151,7 +154,11 @@ async function writeResources(
           policy,
           {
             coverage,
-            ...(signal ? { signal } : {}),
+            ...(signal
+              ? {
+                  checkCancellation: () => throwIfRasterExportCancelled(signal),
+                }
+              : {}),
             // Renderer allowance bounds transient working buffers, not disk bytes.
             // Publication separately admits the encoded PNG against aggregate output.
             maxOutputBytes: RASTER_RENDER_MAX_WORKING_BYTES,
@@ -187,7 +194,7 @@ export async function writeExport(
     signal: AbortSignal | undefined;
   },
 ): Promise<StructuredRasterExportResult> {
-  signal?.throwIfAborted();
+  throwIfRasterExportCancelled(signal);
   const coverage = prepareRasterRenderCoverage(
     prepared.logical.bytes.length,
     prepared.logical.coverage,
@@ -200,7 +207,7 @@ export async function writeExport(
   const chunks: string[] = [];
   let size = 0;
   for (const segment of prepared.logical.segments) {
-    signal?.throwIfAborted();
+    throwIfRasterExportCancelled(signal);
     const line = JSON.stringify(segment) + "\n";
     size += Buffer.byteLength(line);
     if (size > writer.remainingBytes)
