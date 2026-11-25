@@ -324,6 +324,7 @@
     "prepublishOnly": "npm run verify:windows-native:artifact",
     "verify:cutter": "npm run build:cached && node scripts/verify-real-cutter.mjs",
     "verify:windows-native": "node scripts/verify-windows-native.mjs",
+    "verify:windows-private-runtime": "node scripts/verify-windows-private-runtime.mjs",
     "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs",
     "build:ghidra:nativeaot": "node scripts/build-ghidra-nativeaot.mjs",
     "verify:ghidra:bridge-sources": "node scripts/verify-ghidra-bridge-sources.mjs",
