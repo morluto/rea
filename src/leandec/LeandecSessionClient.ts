@@ -16,7 +16,9 @@ import {
 } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -45,6 +47,10 @@ import {
 } from "./LeandecProviderCapabilities.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { matchRegexValues } from "../process/RegexMatcher.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import type { AnalysisSearchQuery } from "../domain/analysisSearch.js";
 import type { LeandecSettings } from "./LeandecSettings.js";
 
@@ -88,6 +94,12 @@ const canonicalAddress = (raw: unknown): string | undefined => {
   }
 };
 
+const publicAddress = (value: unknown): string => {
+  const address = canonicalAddress(value);
+  if (address === undefined) throw new AnalysisOutputError("leandec", "Invalid Leandec address");
+  return "0x" + address;
+};
+
 const invalidReply = (detail: string): never => {
   throw new AnalysisOutputError("leandec", `Malformed Leandec reply: ${detail}`);
 };
@@ -122,13 +134,13 @@ const waitShared = async <T>(promise: Promise<T>, signal?: AbortSignal): Promise
 };
 
 const filterEntries = async <T>(entries: readonly T[], value: (entry: T) => string,
-  query: AnalysisSearchQuery, operation: string, signal?: AbortSignal): Promise<readonly T[]> => {
+  query: AnalysisSearchQuery, operation: string, deadline: RegexMatchingDeadline, heapRequest: RegexWorkerHeapRequest, signal?: AbortSignal): Promise<readonly T[]> => {
   if (query.mode !== "regex") {
     const matches = analysisSearchPredicate(query);
     return entries.filter(entry => matches(value(entry)));
   }
   const matched = await matchRegexValues({ operation, pattern: query.pattern,
-    caseSensitive: query.case_sensitive ?? false, values: entries.map(value), signal });
+    caseSensitive: query.case_sensitive ?? false, values: entries.map(value), deadline, heapRequest, signal });
   if (!matched.ok) throw matched.error;
   const indices = new Set(matched.value);
   return entries.filter((_entry, index) => indices.has(index));
@@ -159,11 +171,16 @@ export class LeandecSessionClient implements AnalysisClient {
   readonly #owner = new AbortController();
   #runtime: PrivateRuntimeRoot | undefined;
   readonly #failedHandles = new Set<OwnedFileHandle>();
+  readonly #stagingRoots = new Set<PrivateRuntimeRoot>();
+  readonly #progress = new Map<symbol, ProgressReporter>();
+  #cleanupFailure: ProviderCleanupError | undefined;
 
   constructor(
     target: BinaryTarget,
     settings: LeandecSettings,
-    profile?: AnalysisProfileCommitment,
+    profile: AnalysisProfileCommitment | undefined,
+    private readonly regexDeadline: RegexMatchingDeadline,
+    private readonly regexHeap: RegexWorkerHeapRequest,
   ) {
     this.#target = target;
     this.#settings = settings;
@@ -188,7 +205,7 @@ export class LeandecSessionClient implements AnalysisClient {
       );
     if (options.signal?.aborted === true)
       return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+        cancelledBy(operation, options.signal),
       );
     if (operation !== "health" && !isLeandecOperation(operation))
       return err(
@@ -212,7 +229,7 @@ export class LeandecSessionClient implements AnalysisClient {
           limitations:
             operation === "health"
               ? answer.limitations
-              : [...leandecLimitations(operation), ...answer.limitations],
+              : [...leandecLimitations(operation, this.regexDeadline, this.regexHeap), ...answer.limitations],
           ...(this.#profile === undefined
             ? {}
             : { analysisProfile: this.#profile }),
@@ -229,7 +246,7 @@ export class LeandecSessionClient implements AnalysisClient {
 
   async close(): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
-    this.#owner.abort();
+    this.#owner.abort(OwnerCancellation.ownerClosed);
     try {
       await this.#client.close();
       await Promise.allSettled([this.#session, this.#inventory, this.#strings]);
@@ -237,11 +254,17 @@ export class LeandecSessionClient implements AnalysisClient {
         await owner.close();
         this.#failedHandles.delete(owner);
       }
+      for (const staging of this.#stagingRoots) {
+        await staging.close();
+        this.#stagingRoots.delete(staging);
+      }
       await this.#runtime?.close();
       this.#runtime = undefined;
+      this.#cleanupFailure?.markCleanupIncomplete(false);
       return ok(null);
     } catch (cause: unknown) {
-      return err(classifyProviderFailure(cause, this.#failureDialect("close", {})));
+      this.#cleanupFailure ??= new ProviderCleanupError("leandec", ["Leandec MCP process and owned input resources"], { reason: cause instanceof Error ? cause.message : String(cause) }, { cause });
+      return err(this.#cleanupFailure);
     }
   }
 
@@ -329,7 +352,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const inventory = await this.#inventoryOf(key, options);
     return {
       result: inventory.entries.map((entry) => ({
-        address: entry.address,
+        address: publicAddress(entry.address),
         value: entry.qualified,
       })),
       locations: [],
@@ -353,8 +376,8 @@ export class LeandecSessionClient implements AnalysisClient {
       options,
     );
     return {
-      result: (await filterEntries(inventory.entries, entry => entry.qualified, query, operation, options.signal))
-        .map((entry) => ({ address: entry.address, value: entry.qualified })),
+      result: (await filterEntries(inventory.entries, entry => entry.qualified, query, operation, this.regexDeadline, this.regexHeap, options.signal))
+        .map((entry) => ({ address: publicAddress(entry.address), value: entry.qualified })),
       locations: [],
       limitations: coverage("functions", inventory.entries.length, inventory.total),
     };
@@ -374,7 +397,7 @@ export class LeandecSessionClient implements AnalysisClient {
         ? strings.items
         : strings.items.filter((entry) => entry.address === wanted);
     return {
-      result: selected.map(({ address, value }) => ({ address, value })),
+      result: selected.map(({ address, value }) => ({ address: publicAddress(address), value })),
       locations: [],
       limitations:
         strings.total > strings.items.length
@@ -393,8 +416,8 @@ export class LeandecSessionClient implements AnalysisClient {
     const query = this.#searchQuery(operation, parameters);
     const strings = await this.#stringsOf(options);
     return {
-      result: (await filterEntries(strings.items, entry => entry.value, query, operation, options.signal))
-        .map(({ address, value }) => ({ address, value })),
+      result: (await filterEntries(strings.items, entry => entry.value, query, operation, this.regexDeadline, this.regexHeap, options.signal))
+        .map(({ address, value }) => ({ address: publicAddress(address), value })),
       locations: [],
       limitations: coverage("strings", strings.items.length, strings.total),
     };
@@ -407,8 +430,8 @@ export class LeandecSessionClient implements AnalysisClient {
   ): Promise<Answer> {
     const entry = await this.#resolve(operation, parameters.procedure, options);
     return {
-      result: entry.address,
-      locations: [{ kind: "address", address: entry.address }],
+      result: publicAddress(entry.address),
+      locations: [{ kind: "address", address: publicAddress(entry.address) }],
       limitations: [],
     };
   }
@@ -429,7 +452,7 @@ export class LeandecSessionClient implements AnalysisClient {
     if (exact !== undefined)
       return {
         result: exact,
-        locations: [{ kind: "address", address }],
+        locations: [{ kind: "address", address: publicAddress(address) }],
         limitations: [],
       };
     const labels = record(
@@ -446,7 +469,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const label = labelRows.length === 0 ? undefined : requiredText(list(labelRows[0])[0]);
     return {
       result: label ?? null,
-      locations: [{ kind: "address", address }],
+      locations: [{ kind: "address", address: publicAddress(address) }],
       limitations: label === undefined ? [INTERIOR_ONLY] : [],
     };
   }
@@ -468,7 +491,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const code = requiredText(payload.pseudocode);
     return {
       result: code === undefined || code.length === 0 ? null : code,
-      locations: [{ kind: "address", address: entry.address }],
+      locations: [{ kind: "address", address: publicAddress(entry.address) }],
       limitations:
         payload.cached === true
           ? []
@@ -492,7 +515,7 @@ export class LeandecSessionClient implements AnalysisClient {
     );
     return {
       result: requiredText(payload.assembly),
-      locations: [{ kind: "address", address: entry.address }],
+      locations: [{ kind: "address", address: publicAddress(entry.address) }],
       limitations: [],
     };
   }
@@ -514,8 +537,8 @@ export class LeandecSessionClient implements AnalysisClient {
     const field = operation === "procedure_callers" ? "callers" : "callees";
     return {
       result: list(payload[field])
-        .map((item) => requiredText(record(item).address)),
-      locations: [{ kind: "address", address: entry.address }],
+        .map((item) => publicAddress(record(item).address)),
+      locations: [{ kind: "address", address: publicAddress(entry.address) }],
       limitations:
         payload.cached === true
           ? []
@@ -556,12 +579,12 @@ export class LeandecSessionClient implements AnalysisClient {
     const sources = [
       ...new Set(
         list(references.references)
-          .map((item) => requiredText(record(item).src)),
+          .map((item) => publicAddress(record(item).src)),
       ),
     ];
     return {
       result: sources,
-      locations: [{ kind: "address", address }],
+      locations: [{ kind: "address", address: publicAddress(address) }],
       limitations: [
         ...(references.complete === true
           ? []
@@ -594,15 +617,17 @@ export class LeandecSessionClient implements AnalysisClient {
       await this.#call("read_bytes", { target: key, address, length }, options),
     );
     const bytes = hexFromDump(requiredText(payload.dump));
+    if (bytes.length / 2 !== requiredCount(payload.length) || bytes.length / 2 > length || canonicalAddress(payload.address) !== address)
+      invalidReply("inconsistent byte dump");
     return {
       result: {
-        address,
+        address: publicAddress(address),
         requested_bytes: length,
         returned_bytes: bytes.length / 2,
         bytes_hex: bytes,
         complete: bytes.length / 2 === length,
       },
-      locations: [{ kind: "address", address }],
+      locations: [{ kind: "address", address: publicAddress(address) }],
       limitations: [],
     };
   }
@@ -656,11 +681,19 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   async #ensureSession(options: ExecutionOptions): Promise<string> {
-    this.#session ??= this.#open({ signal: this.#owner.signal }).catch((cause: unknown) => {
-      this.#session = undefined;
-      throw cause;
-    });
-    return waitShared(this.#session, options.signal);
+    const token = Symbol("leandec waiter");
+    if (options.progress !== undefined) this.#progress.set(token, options.progress);
+    try {
+      this.#session ??= this.#open({ signal: this.#owner.signal, progress: { report: async update => {
+        await Promise.allSettled([...this.#progress.values()].map(reporter => reporter.report(update)));
+      } } }).catch((cause: unknown) => {
+        this.#session = undefined;
+        throw cause;
+      });
+      return await waitShared(this.#session, options.signal);
+    } finally {
+      this.#progress.delete(token);
+    }
   }
 
   async #open(options: ExecutionOptions): Promise<string> {
@@ -741,6 +774,7 @@ export class LeandecSessionClient implements AnalysisClient {
       throw new AnalysisOutputError("open_binary", "Leandec input cache is not a private owner-controlled directory");
     const destination = join(directory, digest);
     const staging = await PrivateRuntimeRoot.create({ parent: directory, prefix: "rea-stage-" });
+    this.#stagingRoots.add(staging);
     try {
       const temporary = join(staging.path, "input");
       await copyFile(path, temporary);
@@ -758,6 +792,7 @@ export class LeandecSessionClient implements AnalysisClient {
       return destination;
     } finally {
       await staging.close();
+      this.#stagingRoots.delete(staging);
     }
   }
 
@@ -803,9 +838,7 @@ export class LeandecSessionClient implements AnalysisClient {
     const deadline = Date.now() + this.#settings.importTimeoutMs;
     for (;;) {
       if (options.signal?.aborted === true)
-        throw new AnalysisCancelledError("analyze", {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy("analyze", options.signal);
       if (Date.now() > deadline)
         throw new AnalysisTimeoutError(
           "analyze",
@@ -928,7 +961,7 @@ export class LeandecSessionClient implements AnalysisClient {
         if (cause instanceof LeandecCallCancelled)
           return cause.reason === "timeout"
             ? new AnalysisTimeoutError(operation, this.#settings.defaultTimeoutMs, { ...details, userMessage: cause.message })
-            : new AnalysisCancelledError(operation, { ...details, cause: options.signal?.reason ?? cause });
+            : cancelledBy(operation, options.signal ?? carriedReason(cause), details);
         if (cause instanceof LeandecToolError)
           return /no function|no procedure|required|hexadecimal|invalid|unknown target|not a procedure/iu.test(cause.message)
             ? new AnalysisInputError(operation, { ...details, userMessage: cause.message })
@@ -961,7 +994,7 @@ export class LeandecSessionClient implements AnalysisClient {
 const hexFromDump = (dump: string): string => {
   const parts: string[] = [];
   for (const line of dump.split("\n")) {
-    const payload = line.slice(8).split("|")[0] ?? "";
+    const payload = line.replace(/^[0-9a-f]+\s+/iu, "").split("|")[0] ?? "";
     for (const token of payload.replace("*", " ").trim().split(/\s+/u)) {
       if (/^[0-9a-f]{2}$/u.test(token)) parts.push(token);
     }

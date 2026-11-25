@@ -170,7 +170,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [GameCube DOL analysis through Ghidra](ghidra-dol.md)
 - [PowerPC ELF analysis through Ghidra](ghidra-ppc.md)
 - [Kuna provider](kuna-provider.md)
-- [Leandec provider](leandec-provider.md)
+- [Leandec provider](providers/leandec-provider.md)
 - [Reverse-engineering tool integrations](reverse-engineering-tools.md)
 
 ## Contracts and evidence

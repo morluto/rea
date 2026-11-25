@@ -24,7 +24,8 @@ export type LeandecSettingsResolution =
       readonly code:
         | "not_configured"
         | "executable_missing"
-        | "runtime_missing";
+        | "runtime_missing"
+        | "open_options_invalid";
       readonly reason: string;
     };
 
@@ -33,9 +34,10 @@ const DEFAULT_IMPORT_TIMEOUT_MS = 3_600_000;
 const DEFAULT_INVENTORY_LIMIT = 50_000;
 const DEFAULT_STRING_LIMIT = 20_000;
 
-const integer = (raw: string | undefined, fallback: number): number => {
+const integer = (raw: string | undefined, fallback: number): number | undefined => {
+  if (raw === undefined) return fallback;
   const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
+  return /^[0-9]+$/u.test(raw) && Number.isSafeInteger(value) && value >= 1 && value <= 2147483647 ? value : undefined;
 };
 
 /** Read SERVER_VERSION from the script so the profile reflects the real server. */
@@ -89,6 +91,12 @@ export const resolveLeandecSettings = (
   });
   if (python === undefined)
     return { ok: false, code: "runtime_missing", reason: `Python interpreter is not executable: ${requestedPython}` };
+  const defaultTimeoutMs = integer(environment.LEANDEC_CALL_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+  const importTimeoutMs = integer(environment.LEANDEC_IMPORT_TIMEOUT_MS, DEFAULT_IMPORT_TIMEOUT_MS);
+  const inventoryLimit = integer(environment.LEANDEC_INVENTORY_LIMIT, DEFAULT_INVENTORY_LIMIT);
+  const stringLimit = integer(environment.LEANDEC_STRING_LIMIT, DEFAULT_STRING_LIMIT);
+  if (defaultTimeoutMs === undefined || importTimeoutMs === undefined || inventoryLimit === undefined || stringLimit === undefined || (environment.LEANDEC_AUTO_ANALYZE !== undefined && !["0", "1"].includes(environment.LEANDEC_AUTO_ANALYZE)))
+    return { ok: false, code: "open_options_invalid", reason: "LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and 2147483647; LEANDEC_AUTO_ANALYZE must be 0 or 1." };
   return {
     ok: true,
     settings: {
@@ -96,22 +104,10 @@ export const resolveLeandecSettings = (
       server,
       cwd: dirname(server),
       environment,
-      defaultTimeoutMs: integer(
-        environment.LEANDEC_CALL_TIMEOUT_MS,
-        DEFAULT_TIMEOUT_MS,
-      ),
-      importTimeoutMs: integer(
-        environment.LEANDEC_IMPORT_TIMEOUT_MS,
-        DEFAULT_IMPORT_TIMEOUT_MS,
-      ),
-      inventoryLimit: integer(
-        environment.LEANDEC_INVENTORY_LIMIT,
-        DEFAULT_INVENTORY_LIMIT,
-      ),
-      stringLimit: integer(
-        environment.LEANDEC_STRING_LIMIT,
-        DEFAULT_STRING_LIMIT,
-      ),
+      defaultTimeoutMs,
+      importTimeoutMs,
+      inventoryLimit,
+      stringLimit,
       autoAnalyze: environment.LEANDEC_AUTO_ANALYZE !== "0",
       serverVersion: serverVersionOf(server),
     },

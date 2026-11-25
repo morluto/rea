@@ -9,6 +9,8 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
 } from "../ports/AnalysisProvider.js";
+import { resolveRegexMatchingDeadline, type RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import { resolveRegexWorkerHeapRequest, type RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
@@ -39,6 +41,8 @@ export class LeandecProvider implements AnalysisProviderCandidate {
   constructor(
     environment: Readonly<Record<string, string | undefined>>,
     private readonly platform: NodeJS.Platform = process.platform,
+    private readonly regexDeadline: RegexMatchingDeadline = resolveRegexMatchingDeadline(environment),
+    private readonly regexHeap: RegexWorkerHeapRequest = resolveRegexWorkerHeapRequest(environment),
   ) {
     this.#resolution = resolveLeandecSettings(environment);
   }
@@ -53,6 +57,8 @@ export class LeandecProvider implements AnalysisProviderCandidate {
       availability.status === "available"
         ? { available: true }
         : { available: false, reason: availability.reason, code: availability.code },
+      this.regexDeadline,
+      this.regexHeap,
     );
   }
 
@@ -131,6 +137,6 @@ export class LeandecProvider implements AnalysisProviderCandidate {
     _context?: AnalysisClientContext,
   ): AnalysisClient {
     if (!this.#resolution.ok) throw new Error(this.#resolution.reason);
-    return new LeandecSessionClient(target, this.#resolution.settings, profile);
+    return new LeandecSessionClient(target, this.#resolution.settings, profile, this.regexDeadline, this.regexHeap);
   }
 }

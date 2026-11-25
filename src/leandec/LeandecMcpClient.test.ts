@@ -45,19 +45,19 @@ describe.skipIf(process.platform === "win32")("Leandec stdio transport", () => {
       const result = await client.call("observe", {});
       expect(result).toMatchObject({notifications: [expect.any(Number)]});
     } finally { await client.close(); }
-  }, 30000);
+  });
 
   it("rejects malformed MCP envelopes instead of returning empty output", async () => {
     const client = await clientFor();
     try {
       await expect(client.call("malformed", {})).rejects.toBeInstanceOf(LeandecRpcError);
     } finally { await client.close(); }
-  }, 30000);
+  });
 
   it("rejects a pending call on process exit and closes idempotently", async () => {
     const client = await clientFor();
     try {
       await expect(client.call("exit", {})).rejects.toBeInstanceOf(LeandecRpcError);
     } finally { await client.close(); await client.close(); }
-  }, 30000);
+  });
 });

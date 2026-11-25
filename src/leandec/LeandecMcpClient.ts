@@ -161,7 +161,10 @@ export class LeandecMcpClient {
         timeoutMs: this.#options.defaultTimeoutMs,
       },
     );
-    const serverInfo = asRecord(asRecord(result)?.serverInfo);
+    const reply = asRecord(result);
+    const serverInfo = asRecord(reply?.serverInfo);
+    if (reply?.protocolVersion !== "2024-11-05" || asRecord(asRecord(reply.capabilities)?.tools) === undefined || typeof serverInfo?.name !== "string" || typeof serverInfo.version !== "string")
+      throw new LeandecRpcError("frame", "Incompatible Leandec MCP handshake", this.#stderr);
     if (typeof serverInfo?.version === "string")
       this.#serverVersion = serverInfo.version;
     this.#write({ jsonrpc: "2.0", method: "notifications/initialized" });

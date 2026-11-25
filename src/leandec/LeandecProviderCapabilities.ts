@@ -4,7 +4,9 @@ import type {
   ProviderIdentity,
 } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
-import { REGEX_MATCHING_LIMITATION } from "../process/RegexMatcher.js";
+import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
+import { DEFAULT_REGEX_MATCHING_DEADLINE, type RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import { DEFAULT_REGEX_WORKER_HEAP_REQUEST, type RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 
 /** Public identity committed by every Leandec-backed observation. */
 export const LEANDEC_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
@@ -58,6 +60,8 @@ const BYTES_LIMITATION =
 /** The limitations that apply to one operation's answer, and only those. */
 export const leandecLimitations = (
   operation: LeandecOperation,
+  deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): readonly string[] => {
   switch (operation) {
     case "list_documents":
@@ -67,11 +71,11 @@ export const leandecLimitations = (
     case "address_name":
       return [PROVENANCE, INVENTORY_LIMITATION];
     case "search_procedures":
-      return [PROVENANCE, INVENTORY_LIMITATION, REGEX_MATCHING_LIMITATION];
+      return [PROVENANCE, INVENTORY_LIMITATION, launchRegexMatchingLimitation(deadline, heapRequest)];
     case "list_strings":
       return [PROVENANCE, STRING_LIMITATION];
     case "search_strings":
-      return [PROVENANCE, STRING_LIMITATION, REGEX_MATCHING_LIMITATION];
+      return [PROVENANCE, STRING_LIMITATION, launchRegexMatchingLimitation(deadline, heapRequest)];
     case "procedure_callers":
     case "procedure_callees":
     case "xrefs":
@@ -94,6 +98,8 @@ export const leandecCapabilities = (
         readonly reason: string;
         readonly code: ProviderRejectionCode;
       },
+  deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
+  heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): readonly CapabilityDescriptor[] =>
   LEANDEC_OPERATIONS.map((operation) => ({
     provider: LEANDEC_PROVIDER_IDENTITY,
@@ -117,5 +123,5 @@ export const leandecCapabilities = (
       changesPermissions: false,
       requiresRoot: false,
     },
-    limitations: Object.freeze(leandecLimitations(operation)),
+    limitations: Object.freeze(leandecLimitations(operation, deadline, heapRequest)),
   }));

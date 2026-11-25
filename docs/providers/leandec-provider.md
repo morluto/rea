@@ -87,3 +87,5 @@ Leandec analyzes static files. The adapter launches only the configured Python i
 MCP server also exposes mutating tools (`patch`, `rename`, `bookmark`); this adapter does not
 call them, but the server process itself is not a sandbox. Analyze untrusted binaries in an
 isolated environment and verify the license and rights before reconstruction.
+
+Numeric limits must be decimal integers from 1 through 2147483647. Invalid launch values disable the provider instead of silently choosing defaults. Regex mode uses REA's accepted regex deadline and worker heap settings.
