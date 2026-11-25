@@ -1427,6 +1427,7 @@
 * **registration:** share the isolated child process environment ([#14525](https://github.com/morluto/rea/issues/14525)) ([63d1eca](https://github.com/morluto/rea/commit/63d1ecac00f8f0358a54db5f41f8a00d9d86d30d))
 * **release-exposure:** consolidate native and packaged evidence checks ([#13382](https://github.com/morluto/rea/issues/13382)) ([ca7572d](https://github.com/morluto/rea/commit/ca7572d6e926b744c6ee9bd9f343974d63154f93))
 * **release:** consolidate immutable checkpoint fixtures ([#13388](https://github.com/morluto/rea/issues/13388)) ([1a613fd](https://github.com/morluto/rea/commit/1a613fd0d548aa978febfa55374ddf8bf55766f8))
+* remove stale imports after temporary directory fixture migration ([#14605](https://github.com/morluto/rea/issues/14605)) ([8dd0452](https://github.com/morluto/rea/commit/8dd045224afeb3b5f298fb9fcae370e5898f0e0b))
 * **replay:** remove unused factory fixtures ([#14511](https://github.com/morluto/rea/issues/14511)) ([2f2a66f](https://github.com/morluto/rea/commit/2f2a66f2115db4002891b8056f734cd1f3c26a01))
 * **resources:** consolidate directory reader identity checks ([#12941](https://github.com/morluto/rea/issues/12941)) ([8a971e1](https://github.com/morluto/rea/commit/8a971e192ad60cd73956f79dd24d8a77061e9aa0))
 * **resources:** consolidate output publication coverage ([#12938](https://github.com/morluto/rea/issues/12938)) ([329510a](https://github.com/morluto/rea/commit/329510a5e189333b88dabcb7062e33dcb7d5c95a))
