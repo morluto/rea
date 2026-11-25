@@ -298,7 +298,11 @@ export const adhocCompletenessTernaryCount = (content) => {
     }
     if (isId(token, "extends")) {
       const previous = tokens[index - 1];
-      if (!isPunct(previous, ".") && !isPunct(previous, "?.")) {
+      if (
+        !isPunct(previous, ".") &&
+        !isPunct(previous, "?.") &&
+        sawExtendsAtDepth[depth] !== true
+      ) {
         sawExtendsAtDepth[depth] = true;
         extendsAngleDepth[depth] = 0;
       }

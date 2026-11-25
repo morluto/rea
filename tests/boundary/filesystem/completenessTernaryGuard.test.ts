@@ -43,6 +43,14 @@ it.each([
     'type Status<T> = T extends Record<string, Map<string, number>> ? "complete" : "partial";',
     0,
   ],
+  [
+    'type Status<T> = T extends Map<infer K extends string, unknown> ? "complete" : "partial";',
+    0,
+  ],
+  [
+    'type Status<T> = T extends Map<infer K extends Record<string, number>, unknown> ? "complete" : "partial";',
+    0,
+  ],
   ['function f(status?: "complete") { return status; }', 0],
   ['const obj = x ? { status: "complete" } : {};', 0],
   ['const obj = { status: "complete" };', 0],
