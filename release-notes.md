@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247))
 * **artifacts:** artifactReaderLimitsSchema now requires iso9660 (descriptor_count, directory_depth, record_count, directory_bytes, path_bytes), so saved Evidence records containing effective_limits from prior versions without iso9660 fail parseInventoryPage validation and must be re-inspected.
 * **artifacts:** subject.identity gains a directory kind {kind:"directory",algorithm:"rea-directory-tree",version:1,sha256}. A directory inventory's subject and root sha256 are its tree digest, and a partial walk's subject is {kind:"unknown",reason:"not-observed"}. inspect_artifact no longer requires an open target. Directory symlink occurrences record link_target and compare by it.
 * **native:** procedure_references.procedure may now identify an address outside every procedure, with classification null and an unavailable body. find_xrefs_to_name adds resolved_name and candidates, and resolves bare import names on Ghidra.
@@ -65,6 +66,7 @@
 * **delivery:** size the default delivery of native inventories and traces ([59a7999](https://github.com/morluto/rea/commit/59a799931c13c9a8d89e490c20298882497d50d8))
 * **desktop:** recognise native releases and rank application probes first ([#14264](https://github.com/morluto/rea/issues/14264)) ([46b73f5](https://github.com/morluto/rea/commit/46b73f5b8116ac71333a0c37980f166c13bedd4e))
 * **elf:** inspect exports without section headers ([#9083](https://github.com/morluto/rea/issues/9083)) ([7e15884](https://github.com/morluto/rea/commit/7e158843b36c7cca8a8614687652d20e0f77e323))
+* **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247)) ([40e9a3f](https://github.com/morluto/rea/commit/40e9a3f1a1769f3fbb24ca226aa853f42d78c42e))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
