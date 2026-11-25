@@ -70,7 +70,6 @@ describe("target failure projection", () => {
         },
       });
       expect(projected).not.toHaveProperty("recovery");
-      expect(projected).not.toHaveProperty("details.format_failure");
       // Every kind's projection satisfies the schema CLI and MCP advertise.
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
         true,

@@ -1085,6 +1085,58 @@ if (siblingDeclarationFiles.length > 0)
     `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
   );
 
+// The TargetFailure model (#14239) is the only vocabulary for why a target
+// could not be read. These retired carriers and reason spellings must not
+// return: each one restated a kind the model owns. Worker protocols use the
+// model's kinds (`malformed`, `truncated`) on the wire, too.
+const RETIRED_TARGET_FAILURE_VOCABULARY = [
+  /\bAnalysisUnsupportedTargetError\b/u,
+  /\bAnalysisMalformedTargetError\b/u,
+  /\bMachoReadIssue\b/u,
+  /\bFatSliceRangeIssue\b/u,
+  /\bformat_failure\b/u,
+  /\breason\s*(?::|===|!==)\s*["']format["']/u,
+  /"reason"\s*:\s*"format"/u,
+  /Failure\(\s*["']format["']\s*,/u,
+];
+const listVocabularyFiles = async (dir, extensions) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.name === "node_modules") continue;
+    if (entry.isDirectory())
+      output.push(...(await listVocabularyFiles(path, extensions)));
+    else if (extensions.some((extension) => entry.name.endsWith(extension)))
+      output.push(path);
+  }
+  return output;
+};
+const vocabularyGuardPath = "scripts/verify/architecture-guards.mjs";
+const vocabularyFiles = await Promise.all(
+  [
+    ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
+    ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
+    ...(await listVocabularyFiles(join(root, "scripts"), [
+      ".mjs",
+      ".ts",
+      ".py",
+    ])),
+    ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+const retiredVocabulary = vocabularyFiles.filter(
+  ({ path, content }) =>
+    path !== vocabularyGuardPath &&
+    RETIRED_TARGET_FAILURE_VOCABULARY.some((pattern) => pattern.test(content)),
+);
+if (retiredVocabulary.length > 0)
+  failures.push(
+    `retired target-failure vocabulary (raise a TargetFailure kind instead; see docs/reference/target-failures.md):\n${retiredVocabulary.map(({ path }) => `  ${path}`).join("\n")}`,
+  );
+
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))
     failures.push(
