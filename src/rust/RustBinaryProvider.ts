@@ -28,7 +28,6 @@ import {
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readRustBinaryImageFromHandle,
@@ -56,7 +55,6 @@ import {
   type RustProducerLimits,
 } from "../domain/rust/rustResourceLimits.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_rust_binary";
 const HEADER_PREFIX_BYTES = 4096;
@@ -119,11 +117,7 @@ export class RustBinaryProvider implements RustBinaryPort {
             const selected = await requireSelectedNativeImageFromReader(
               OPERATION,
               input.path,
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               input.architecture,
             );
             const image = inFile(
@@ -459,14 +453,6 @@ const failureFor = (
           );
         return undefined;
       },
-      unclassified: (failure) =>
-        new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   if (completed !== undefined) primary.retainPartialObservation(completed);

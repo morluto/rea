@@ -19,7 +19,6 @@ import {
 } from "../../domain/binaryContainer.js";
 import {
   peDeclaredFileMappings,
-  readPeImage,
   readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
@@ -140,38 +139,8 @@ const MAX_LOAD_CONFIG_READ_BYTES = 512;
 
 type PeRangeReader = (offset: number, length: number) => Promise<Buffer>;
 
-/**
- * Read one PE TLS directory and load configuration from a parsed PE image
- * without executing the image. Yields to the event loop and honors cancellation
- * every `ENTRIES_PER_YIELD` callback slots.
- */
-export const parsePeLoadConfigFromImage = async (
-  bytes: Buffer,
-  image: PeImage,
-  artifact: PeLoadConfig["artifact"],
-  input: InspectPeLoadConfigInput,
-  signal?: AbortSignal,
-): Promise<PeLoadConfig> =>
-  parsePeLoadConfigCore(
-    (offset, length) =>
-      Promise.resolve(bytes.subarray(offset, offset + length)),
-    image,
-    artifact,
-    input,
-    signal,
-  );
-
-/** Read PE TLS directory and load configuration from a random-access range reader and pre-parsed PeImage. */
+/** Read PE TLS and load configuration from a range reader and a pre-parsed image. */
 export const parsePeLoadConfigFromReader = async (
-  readBytes: PeRangeReader,
-  image: PeImage,
-  artifact: PeLoadConfig["artifact"],
-  input: InspectPeLoadConfigInput,
-  signal?: AbortSignal,
-): Promise<PeLoadConfig> =>
-  parsePeLoadConfigCore(readBytes, image, artifact, input, signal);
-
-const parsePeLoadConfigCore = async (
   readBytes: PeRangeReader,
   image: PeImage,
   artifact: PeLoadConfig["artifact"],
@@ -322,27 +291,6 @@ const parsePeLoadConfigCore = async (
 };
 
 /**
- * Read one PE TLS directory and load configuration without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` callback slots.
- */
-export const parsePeLoadConfig = async (
-  bytes: Buffer,
-  artifact: PeLoadConfig["artifact"],
-  input: InspectPeLoadConfigInput,
-  signal?: AbortSignal,
-): Promise<PeLoadConfig> => {
-  assertArtifactReadActive(signal);
-  return parsePeLoadConfigFromImage(
-    bytes,
-    readPeImage(bytes),
-    artifact,
-    input,
-    signal,
-  );
-};
-
-/**
  * Read one PE TLS directory and load configuration from a verified
  * random-access handle without buffering the full PE image in memory.
  */
@@ -360,7 +308,7 @@ export const parsePeLoadConfigFromHandle = async (
       : offset >= 0 && offset + length <= handle.prefix.length
         ? Promise.resolve(handle.prefix.subarray(offset, offset + length))
         : handle.readRange(offset, length);
-  return parsePeLoadConfigCore(readBytes, image, artifact, input, signal);
+  return parsePeLoadConfigFromReader(readBytes, image, artifact, input, signal);
 };
 
 const readTls = async ({

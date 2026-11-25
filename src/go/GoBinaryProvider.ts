@@ -32,7 +32,6 @@ import {
   type GoStringLiterals,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -44,7 +43,6 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../domain/binaryContainer.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_go_binary";
 const HEADER_PREFIX_BYTES = 4096;
@@ -143,14 +141,6 @@ const failureFor = (
           );
         return undefined;
       },
-      unclassified: (failure) =>
-        new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   if (completed !== undefined) primary.retainPartialObservation(completed);
@@ -319,11 +309,7 @@ export class GoBinaryProvider implements GoBinaryPort {
             const selected = await requireSelectedNativeImageFromReader(
               OPERATION,
               input.path,
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               input.architecture,
             );
             const imageOptions = {

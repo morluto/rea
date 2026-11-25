@@ -75,11 +75,7 @@ export class ElfNotesProvider implements ElfNotesPort {
           },
           (handle) =>
             parseElfNotesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
