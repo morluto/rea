@@ -290,7 +290,7 @@ class BundleResourceArtifactClient implements AnalysisClient {
       return err(
         translateArtifactFailure(
           operation as ArtifactAnalysisOperation,
-          this.root.canonicalPath,
+          this.root.callerPath,
           cause,
         ),
       );
@@ -482,7 +482,9 @@ class ArtifactClient implements AnalysisClient {
       return err(
         translateArtifactFailure(
           operation as ArtifactAnalysisOperation,
-          artifactTargetSelectedPath(this.target),
+          // The caller's spelling, not the resolved file the reader opened.
+          this.target.callerInputPath ??
+            artifactTargetSelectedPath(this.target),
           cause,
         ),
       );
