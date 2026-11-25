@@ -46,6 +46,7 @@ import {
   type StateToolFacts,
   type StateType,
   type StateView,
+  requestLine,
 } from "./environmentStateRules.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
@@ -97,9 +98,6 @@ interface ObservedMembership {
   readonly ids: Set<string>;
   capacity: number;
 }
-
-const requestLine = (record: StateRecordFacts): string =>
-  record.path + (record.query ?? "");
 
 /** The member names of the object at a pointer, none when it holds no object. */
 const memberNames = (body: JsonValue, pointer: string): string[] => {

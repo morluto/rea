@@ -14,6 +14,7 @@ import {
   type StateItemView,
   type StateListView,
   type StateRecordFacts,
+  requestLine,
 } from "./environmentStateRules.js";
 
 /** Query names that page a list rather than choose how it shows its entities. */
@@ -411,9 +412,6 @@ export const replayReason = (
     ? "projection"
     : "variant";
 };
-
-const requestLine = (record: StateRecordFacts): string =>
-  record.path + (record.query ?? "");
 
 /** The found lines a replay key tells from the other latest lines, which are parsed once for all of them. */
 const keyedVariants = (
