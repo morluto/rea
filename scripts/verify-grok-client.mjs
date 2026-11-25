@@ -10,6 +10,7 @@ import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { containsText } from "./verify/clients/result-discovery.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -375,13 +376,7 @@ command = "unrelated-server"
 enabled = false
 `;
     await writeFile(configPath, original);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment);
     await verifyClientSetup({
       client: "grok_build",
       commands,
