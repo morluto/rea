@@ -1,10 +1,8 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inventoryArtifact } from "../../../tests/fixtures/artifactInventory.js";
 import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import type {
@@ -23,12 +21,8 @@ import {
   ktxFixture,
 } from "./gpuAsset.fixture.js";
 
-const write = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-gpu-asset-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const write = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-gpu-asset-", name, bytes);
 
 const read = async (format: GpuAssetFormat, bytes: Buffer) => {
   const reader = new GpuAssetArtifactReader(
