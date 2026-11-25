@@ -91,7 +91,7 @@ it("refuses a chunk table above the selected budget and admits it on retry throu
     artifact_limits: { android_sparse_image: { chunk_count: 3 } },
   });
   expect(parseMcpToolError(refused).error).toMatchObject({
-    code: "truncated",
+    code: "partial",
     retryable: true,
     details: {
       reader_limit: {
