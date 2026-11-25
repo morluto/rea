@@ -1,23 +1,23 @@
 import {
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
-  timerDurationMsSchema,
+  MAX_NODE_TIMER_DELAY_MS,
 } from "../domain/analysisResourceLimits.js";
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 /** Default deadline for Darwin ownership-helper `swiftc` compilation. */
 /** Fresh Swift SDK cache took ~88s on the supported Intel macOS VM. */
 export const DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS = 120_000;
 
 /** Parse REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS; absent keeps Ghidra decompiles unbounded. */
-export const ghidraDecompileTimeoutSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
-  .transform(Number)
-  .pipe(z.number().int().min(1).max(MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS));
+export const ghidraDecompileTimeoutSchema = positiveDecimalIntegerSchema(
+  1,
+  MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
+  "must be a positive decimal integer",
+);
 
 /** Parse the optional setting without reading the ambient process environment. */
-export const providerStartupTimeoutSchema = z
-  .string()
-  .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
-  .transform(Number)
-  .pipe(timerDurationMsSchema);
+export const providerStartupTimeoutSchema = positiveDecimalIntegerSchema(
+  1,
+  MAX_NODE_TIMER_DELAY_MS,
+  "must be a positive decimal integer",
+);

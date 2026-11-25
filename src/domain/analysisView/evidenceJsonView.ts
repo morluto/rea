@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Evidence } from "../evidence.js";
+import { Budget } from "../budget.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../analysisResourceLimits.js";
 import { jsonParts } from "../jsonSerialization.js";
@@ -56,36 +57,143 @@ interface SerializedEvidenceJson {
 }
 
 /**
- * One chunked serialization per immutable retained record, built with
- * `jsonParts` so records exceeding Node's single-string limit remain pageable.
- * Paging is then O(log(chunks) + limit) per call after the first; a mutable
- * inline parent is serialized per call because nothing proves it is unchanged.
+ * Code units of serialized Evidence kept across calls, summed over records.
+ * It is a delivery cache, not an admission limit: a record that does not fit
+ * is still paged, by a streaming pass that keeps only the requested window.
  */
-const serialized = new WeakMap<object, SerializedEvidenceJson>();
+export const EVIDENCE_JSON_CACHE_CODE_UNITS = 16 * 1024 * 1024;
 
-const buildSerializedChunks = (evidence: Evidence): SerializedEvidenceJson => {
-  const chunks: string[] = [];
-  const starts: number[] = [];
+/** Units kept around a window: one before it for surrogate checks, one after. */
+const WINDOW_MARGIN_CODE_UNITS = 2;
+
+/**
+ * Serialize `evidence` once with `jsonParts`, so records past Node's single
+ * string limit stay pageable. It keeps every part while the total fits
+ * `wholeLimit`; past that it keeps only parts overlapping `[from, to)`, so
+ * memory stays bounded by the window. Offsets in `starts` stay absolute.
+ */
+const scanSerializedChunks = (
+  evidence: Evidence,
+  wholeLimit: number,
+  from: number,
+  to: number,
+): SerializedEvidenceJson & { readonly whole: boolean } => {
+  let chunks: string[] = [];
+  let starts: number[] = [];
+  let whole = true;
   let totalLength = 0;
   for (const part of jsonParts(evidence)) {
     if (part.length === 0) continue;
-    starts.push(totalLength);
-    chunks.push(part);
+    const start = totalLength;
     totalLength += part.length;
+    if (whole && totalLength > wholeLimit) {
+      whole = false;
+      const kept = chunks.flatMap((chunk, index) =>
+        starts[index]! + chunk.length > from && starts[index]! < to
+          ? [[chunk, starts[index]!] as const]
+          : [],
+      );
+      chunks = kept.map(([chunk]) => chunk);
+      starts = kept.map(([, at]) => at);
+    }
+    if (whole || (totalLength > from && start < to)) {
+      starts.push(start);
+      chunks.push(part);
+    }
   }
   starts.push(totalLength);
-  return { chunks, starts, totalLength };
+  return { chunks, starts, totalLength, whole };
 };
 
-const serializeEvidence = (evidence: Evidence): SerializedEvidenceJson => {
-  if (!isImmutableJsonSnapshot(evidence))
-    return buildSerializedChunks(evidence);
-  const known = serialized.get(evidence);
-  if (known !== undefined) return known;
-  const doc = buildSerializedChunks(evidence);
-  serialized.set(evidence, doc);
-  return doc;
-};
+interface CacheEntry {
+  /** Weak, so a cached record is released when its owner releases it. */
+  readonly record: WeakRef<object>;
+  readonly codeUnits: number;
+}
+
+/**
+ * Whole serializations of immutable records, least recently used first, so
+ * repeated paging of a record is O(log(chunks) + limit). Their total stays
+ * within the cache's code units. Records are held weakly: the cache never
+ * extends a record's lifetime, and a collected record's units are released.
+ * A mutable inline parent is never cached because nothing proves it is
+ * unchanged; it and any record too large to fit are paged from a window.
+ */
+export class EvidenceJsonSerializationCache {
+  readonly #documents = new WeakMap<
+    object,
+    { readonly document: SerializedEvidenceJson; readonly entry: CacheEntry }
+  >();
+  readonly #order = new Set<CacheEntry>();
+  readonly #collected = new FinalizationRegistry<CacheEntry>((entry) => {
+    if (this.#order.delete(entry)) this.#budget.refund(entry.codeUnits);
+  });
+  readonly #budget: Budget;
+
+  constructor(readonly maximumCodeUnits = EVIDENCE_JSON_CACHE_CODE_UNITS) {
+    this.#budget = new Budget(maximumCodeUnits);
+  }
+
+  /** Code units of the whole serializations currently cached. */
+  get cachedCodeUnits(): number {
+    return this.#budget.used;
+  }
+
+  /** Whether `record`'s whole serialization is cached. */
+  holds(record: object): boolean {
+    return this.#documents.has(record);
+  }
+
+  /** The serialization one page of `evidence` reads. */
+  serialize(
+    evidence: Evidence,
+    offset: number,
+    limit: number | undefined,
+  ): SerializedEvidenceJson {
+    const cacheable = isImmutableJsonSnapshot(evidence);
+    if (cacheable) {
+      const known = this.#documents.get(evidence);
+      if (known !== undefined) {
+        this.#order.delete(known.entry);
+        this.#order.add(known.entry);
+        return known.document;
+      }
+    }
+    // A default page is at most DEFAULT_EVIDENCE_JSON_PAGE_BYTES escaped
+    // bytes, and every code unit escapes to at least one byte.
+    const window = limit ?? DEFAULT_EVIDENCE_JSON_PAGE_BYTES;
+    const document = scanSerializedChunks(
+      evidence,
+      cacheable ? this.maximumCodeUnits : 0,
+      Math.max(0, offset - WINDOW_MARGIN_CODE_UNITS),
+      offset + window + WINDOW_MARGIN_CODE_UNITS,
+    );
+    if (document.whole && cacheable) this.#remember(evidence, document);
+    return document;
+  }
+
+  #remember(record: object, document: SerializedEvidenceJson): void {
+    const charged = this.#budget.chargeEvicting(document.totalLength, () => {
+      const oldest = this.#order.values().next().value;
+      if (oldest === undefined) return undefined;
+      this.#order.delete(oldest);
+      this.#collected.unregister(oldest);
+      const evicted = oldest.record.deref();
+      if (evicted !== undefined) this.#documents.delete(evicted);
+      return oldest.codeUnits;
+    });
+    if (!charged) return;
+    const entry: CacheEntry = {
+      record: new WeakRef(record),
+      codeUnits: document.totalLength,
+    };
+    this.#documents.set(record, { document, entry });
+    this.#order.add(entry);
+    this.#collected.register(record, entry, entry);
+  }
+}
+
+const sharedSerializations = new EvidenceJsonSerializationCache();
 
 /** Chunk index containing UTF-16 offset `index` (`0 <= index < doc.totalLength`). */
 const locateChunk = (doc: SerializedEvidenceJson, index: number): number => {
@@ -200,6 +308,7 @@ const pageEnd = (
 export const projectEvidenceJsonView = (
   parent: AnalysisViewParent,
   view: EvidenceJsonViewRequest,
+  serializations: EvidenceJsonSerializationCache = sharedSerializations,
 ) => {
   if (parent.evidence === undefined)
     return err(
@@ -212,7 +321,11 @@ export const projectEvidenceJsonView = (
         },
       ]),
     );
-  const doc = serializeEvidence(parent.evidence);
+  const doc = serializations.serialize(
+    parent.evidence,
+    view.offset,
+    view.limit,
+  );
   const start = Math.min(view.offset, doc.totalLength);
   if (splitsPair(doc, start))
     return err(

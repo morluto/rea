@@ -95,6 +95,7 @@ export {
 export type {
   ArtifactCleanupAttempt,
   ArtifactResourceOwner,
+  RetainedResourceScope,
 } from "./ArtifactResourceScope.js";
 export {
   imageFileSizeRemediation,

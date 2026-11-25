@@ -160,7 +160,8 @@ describe.skipIf(process.platform !== "darwin")(
               ),
               captured_output: {
                 stdout: expect.stringMatching(diagnosticPattern),
-                exit_code: 1,
+                // Xcode 26 dyld_info exits 1 after the refusal; Xcode 16 exits 0.
+                exit_code: expect.toBeOneOf([0, 1]),
                 signal: null,
                 truncated: false,
               },

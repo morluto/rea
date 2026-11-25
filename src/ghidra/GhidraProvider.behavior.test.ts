@@ -3968,19 +3968,20 @@ const sessionInfo = () => ({
   },
 });
 
-describe("Ghidra empty reference diagnostics", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
+const createElfClientWithResult = (result: JsonValue) =>
+  createElfClient(
     provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok(result)),
       close: () => Promise.resolve(ok(null)),
-    }));
+    })),
+  );
 
-  const observation = (value: JsonValue) => ({ value, limitations: [] });
+const referenceObservation = (value: JsonValue) => ({ value, limitations: [] });
 
+describe("Ghidra empty reference diagnostics", () => {
   it("names unresolved references in the limitations of an empty xrefs result", async () => {
-    const ghidra = emptyReferenceProvider([]);
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult([]);
     try {
       const execution = await client.execute("xrefs", {
         address: "0x1005409a2",
@@ -3994,8 +3995,7 @@ describe("Ghidra empty reference diagnostics", () => {
   });
 
   it("does not add the unresolved-references caveat to a non-empty xrefs result", async () => {
-    const ghidra = emptyReferenceProvider(["0x100003670"]);
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult(["0x100003670"]);
     try {
       const execution = await client.execute("xrefs", {
         address: "0x1005409a2",
@@ -4013,8 +4013,8 @@ describe("Ghidra empty reference diagnostics", () => {
   it.each(["incoming", "outgoing"] as const)(
     "qualifies the empty %s direction in procedure_references limitations",
     async (direction) => {
-      const ghidra = emptyReferenceProvider(
-        observation({
+      const client = await createElfClientWithResult(
+        referenceObservation({
           procedure: ghidraFunctionIdentity(),
           direction,
           references: [],
@@ -4022,7 +4022,6 @@ describe("Ghidra empty reference diagnostics", () => {
           unresolved_calls: [],
         }),
       );
-      const client = await createElfClient(ghidra);
       try {
         const execution = await client.execute("procedure_references", {
           procedure: "0x401000",
@@ -4047,8 +4046,8 @@ describe("Ghidra empty reference diagnostics", () => {
   );
 
   it("does not add the caveat to procedure_references that returned references", async () => {
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         procedure: ghidraFunctionIdentity(),
         direction: "outgoing",
         references: [ghidraReferenceEdge()],
@@ -4056,7 +4055,6 @@ describe("Ghidra empty reference diagnostics", () => {
         unresolved_calls: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("procedure_references", {
         procedure: "0x401000",
@@ -4076,8 +4074,8 @@ describe("Ghidra empty reference diagnostics", () => {
 
   it("names the external-specific outgoing caveat for an external procedure_references result", async () => {
     const identity = ghidraFunctionIdentity();
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         procedure: {
           ...identity,
           classification: { ...identity.classification, external: true },
@@ -4088,7 +4086,6 @@ describe("Ghidra empty reference diagnostics", () => {
         unresolved_calls: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("procedure_references", {
         procedure: "0x401000",
@@ -4108,25 +4105,15 @@ describe("Ghidra empty reference diagnostics", () => {
 });
 
 describe("Ghidra empty function-reference facets", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-
-  const observation = (value: JsonValue) => ({ value, limitations: [] });
-
   it("names each unresolved direction in the limitations of a dossier without any references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         ...dossier,
         incoming_references: [],
         outgoing_references: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4148,10 +4135,9 @@ describe("Ghidra empty function-reference facets", () => {
 
   it("qualifies the empty incoming direction when a dossier observed only outgoing references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({ ...dossier, incoming_references: [] }),
+    const client = await createElfClientWithResult(
+      referenceObservation({ ...dossier, incoming_references: [] }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4173,14 +4159,13 @@ describe("Ghidra empty function-reference facets", () => {
 
   it("qualifies the empty outgoing direction when a dossier observed only incoming references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         ...dossier,
         incoming_references: [ghidraReferenceEdge()],
         outgoing_references: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4199,8 +4184,8 @@ describe("Ghidra empty function-reference facets", () => {
 
   it("qualifies an external function's empty facets without local-disassembly guidance", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider(
-      observation({
+    const client = await createElfClientWithResult(
+      referenceObservation({
         ...dossier,
         procedure: {
           ...dossier.procedure,
@@ -4213,7 +4198,6 @@ describe("Ghidra empty function-reference facets", () => {
         outgoing_references: [],
       }),
     );
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("analyze_function", {
         procedure: "0x401000",
@@ -4238,16 +4222,9 @@ describe("Ghidra empty function-reference facets", () => {
 });
 
 describe("Ghidra empty annotation reference facets", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-
   it("names each unresolved direction when annotation readback observes no references", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider({
+    const client = await createElfClientWithResult({
       annotations: {
         address: "0x401000",
         name: "fixture_main",
@@ -4261,7 +4238,6 @@ describe("Ghidra empty annotation reference facets", () => {
         persists_after_close: false,
       },
     });
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("annotate_native_function", {
         procedure: "0x401000",
@@ -4281,7 +4257,7 @@ describe("Ghidra empty annotation reference facets", () => {
 
   it("qualifies the empty direction when annotation readback observed one direction only", async () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    const ghidra = emptyReferenceProvider({
+    const client = await createElfClientWithResult({
       annotations: {
         address: "0x401000",
         name: "fixture_main",
@@ -4299,7 +4275,6 @@ describe("Ghidra empty annotation reference facets", () => {
         persists_after_close: false,
       },
     });
-    const client = await createElfClient(ghidra);
     try {
       const execution = await client.execute("annotate_native_function", {
         procedure: "0x401000",
@@ -4319,13 +4294,6 @@ describe("Ghidra empty annotation reference facets", () => {
 });
 
 describe("Ghidra empty instruction reference facets", () => {
-  const emptyReferenceProvider = (result: JsonValue) =>
-    provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-
   const instruction = (incoming: JsonValue[], outgoing: JsonValue[]) => ({
     ...compactInstruction(outgoing),
     incoming_references: incoming,
@@ -4348,8 +4316,7 @@ describe("Ghidra empty instruction reference facets", () => {
   const executeInspect = async (
     result: JsonValue,
   ): Promise<readonly string[]> => {
-    const ghidra = emptyReferenceProvider(result);
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult(result);
     try {
       const execution = await client.execute("inspect_native_instruction", {
         document: null,
@@ -4432,12 +4399,7 @@ describe("Ghidra empty instruction reference facets", () => {
 
 describe("Ghidra containing-procedure absence", () => {
   const containing = async (result: JsonValue) => {
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(result)),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
+    const client = await createElfClientWithResult(result);
     try {
       const execution = await client.execute("resolve_containing_procedure", {
         address: "0x401000",

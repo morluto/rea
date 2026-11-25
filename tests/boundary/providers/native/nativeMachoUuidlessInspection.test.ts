@@ -94,19 +94,22 @@ class UuidlessDyldRunner implements NativeCommandRunner {
   }
 }
 
-it.each([
-  { fileType: 4, diagnostic: "unknown mh.filetype 4" },
-  { fileType: 3, diagnostic: "unknown mh.filetype 3" },
-  { fileType: 4, diagnostic: "unknown filetype 4" },
-  { fileType: 3, diagnostic: "unknown filetype 3" },
-  {
-    fileType: 10,
-    diagnostic: unbackedTextDiagnostic,
-  },
-])(
-  "classifies $diagnostic for Mach-O type $fileType before nm fallback",
-  async ({ fileType, diagnostic }) => {
-    const runner = new UuidlessDyldRunner(diagnostic);
+// Xcode 26 dyld_info exits 1 after a refusal; Xcode 16 exits 0.
+it.each(
+  [
+    { fileType: 4, diagnostic: "unknown mh.filetype 4" },
+    { fileType: 3, diagnostic: "unknown mh.filetype 3" },
+    { fileType: 4, diagnostic: "unknown filetype 4" },
+    { fileType: 3, diagnostic: "unknown filetype 3" },
+    {
+      fileType: 10,
+      diagnostic: unbackedTextDiagnostic,
+    },
+  ].flatMap((refusal) => [1, 0].map((exitCode) => ({ ...refusal, exitCode }))),
+)(
+  "classifies $diagnostic for Mach-O type $fileType with exit $exitCode before nm fallback",
+  async ({ fileType, diagnostic, exitCode }) => {
+    const runner = new UuidlessDyldRunner(diagnostic, "", null, exitCode);
     const target = await makeTarget("refused-type", fileType);
     const path = target.path;
     const result = await new NativeMacOSProvider({}, runner, "darwin")
@@ -125,7 +128,7 @@ it.each([
         },
         capturedOutput: {
           stdout: dyldDiagnosticOutput(path, diagnostic),
-          exit_code: 1,
+          exit_code: exitCode,
           signal: null,
           truncated: false,
         },

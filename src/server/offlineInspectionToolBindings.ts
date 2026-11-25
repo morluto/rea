@@ -209,7 +209,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   nugetNupkg: ((service) => ({
     inspect_nuget_nupkg: {
       admission: "application",
-      run: (input, options) => service.inspect(input, options),
+      summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<NugetNupkgService>,
   pythonPyc: ((service) => ({
