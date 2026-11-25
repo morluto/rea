@@ -159,7 +159,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
   const { client } = await createHarness();
   const completeReply = await client.callTool({
     name: "inspect_managed_artifact",
-    arguments: { path },
+    arguments: { detail: "complete", path },
   });
   expect(completeReply.isError).not.toBe(true);
   const parent = parseEvidence(completeReply.structuredContent);
@@ -260,7 +260,7 @@ it("refuses selected delivery before file access when the server cannot retain E
   }
   const complete = await client.callTool({
     name: "inspect_managed_artifact",
-    arguments: { path },
+    arguments: { detail: "complete", path },
   });
   expect(complete.isError).not.toBe(true);
   expect(

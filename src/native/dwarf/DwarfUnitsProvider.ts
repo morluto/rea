@@ -1,5 +1,5 @@
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   withStableArtifactHandle,
   yieldArtifactRead,
@@ -56,16 +56,12 @@ export class DwarfUnitsProvider {
   readonly identity = DWARF_UNITS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        DWARF_UNITS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      DWARF_UNITS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -94,11 +90,7 @@ export class DwarfUnitsProvider {
             const selected = await requireSelectedNativeImageFromReader(
               OPERATION,
               input.path,
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               input.architecture,
             );
             const located = await locateDwarfSectionsFromHandle(
@@ -197,9 +189,7 @@ const buildReport = (
  * Why this file holds no file-backed .debug_info, or null when it declares
  * one. A declared section whose bytes went undecoded is unknown, never absent.
  */
-const debugInfoAbsence = (
-  availability: DebugInfoAvailability,
-): string | null =>
+const debugInfoAbsence = (availability: DebugInfoAvailability): string | null =>
   availability.state === "no_contents"
     ? NO_FILE_BACKED_DEBUG_INFO
     : availability.state === "absent"

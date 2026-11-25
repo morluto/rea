@@ -26,10 +26,22 @@ cliTest(
       arguments: ["inspect-artifact", ".", "--json"],
       cwd,
     });
-    expect(result.exitCode).toBe(1);
+    // "." selects the working directory, which is inventoried as a tree.
+    expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
-      code: "target_unavailable",
-      details: { path: cwd, constraint: "directory_requires_file" },
+      subject: {
+        identity: {
+          kind: "directory",
+          algorithm: "rea-directory-tree",
+          version: 1,
+          // The empty tree's root digest.
+          sha256:
+            "b28a57a57239d69019456fc9079821c5f31911fc656d15ff77703cb13991b3b6",
+        },
+        // The caller path owner keeps "."'s directory requirement as a "/".
+        local_path: `${cwd}/`,
+      },
+      caller_input_path: ".",
     });
   },
 );

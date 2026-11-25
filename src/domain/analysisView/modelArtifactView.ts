@@ -12,16 +12,18 @@ import {
   type ModelArtifact,
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import type { JsonValue } from "../jsonValue.js";
 import {
   pickFields,
   selectIndexedViewRows,
   selectViewRows,
 } from "./selectViewRows.js";
-import { err, ok, type Result } from "../result.js";
+import { ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -154,15 +156,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const cached = reusable ? checked.get(report) : undefined;
   const subject = evidenceFileTarget(parent);
   if (subject != null && subject.sha256 !== report.artifact.sha256)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Model full-file subject does not match its recorded artifact",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Model full-file subject does not match its recorded artifact",
     );
   if (cached !== undefined) return ok(cached);
   const summary = summarizeModel(report);
@@ -193,15 +188,8 @@ export const projectModelArtifactView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "model-artifact")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof modelArtifactViewRequestSchema>

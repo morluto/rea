@@ -48,7 +48,7 @@ import {
   type ArtifactNode,
   type ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
-import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
+import { unsupportedTarget } from "../../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventoryForExtractionInScope } from "../inventory/ArtifactInventory.js";
@@ -203,27 +203,30 @@ export const materializeArtifactInventoryInScope = async (
     containerMetadata?.kind === "godot-pck" &&
     containerMetadata.directory_status !== "available"
   )
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      "godot-pck",
       `Godot PCK directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   if (
     containerMetadata?.kind === "unityfs" &&
     containerMetadata.directory_status !== "available"
   )
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      "unityfs",
       `UnityFS directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   if (
     containerMetadata?.kind === "wxapkg" &&
     containerMetadata.directory_status !== "available"
   )
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      "wxapkg",
       `wxapkg directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
   const { available, selected: activeOccurrences } =
@@ -241,9 +244,10 @@ export const materializeArtifactInventoryInScope = async (
     // REA never decrypts archive entries, so an encrypted entry makes the
     // complete extraction unsupported rather than the archive invalid.
     if (occurrence.encrypted)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         "extract_artifact",
         input.selectedPath ?? input.inputPath,
+        snapshot.manifest.root_format,
         `Archive entry ${occurrence.logical_path} is encrypted; REA does not decrypt archive entries, so the archive cannot be extracted completely`,
       );
     // Inventory retains unavailable source occurrences, but extraction cannot
@@ -703,9 +707,10 @@ const requireExtractableFormat = async (
       },
     );
     if (!detected.pack)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         "extract_artifact",
         input.selectedPath ?? input.inputPath,
+        format,
         `Artifact format has no extraction reader: ${format}`,
       );
     return detected.probeFacts;
@@ -795,19 +800,27 @@ const createReader = async (
               : undefined,
         });
   if (reader === undefined)
-    throw new AnalysisUnsupportedTargetError(
+    throw unsupportedTarget(
       "extract_artifact",
       input.selectedPath ?? input.inputPath,
+      containerFormat,
       `Artifact format has no extraction reader: ${containerFormat}`,
     );
   return reader;
 };
 
 const preflight = (entry: ArtifactEntry): void => {
-  if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
+  // A directory or other non-byte entry is the caller's selection; an
+  // encrypted member holds bytes REA cannot read.
+  if (entry.kind !== "file" && entry.kind !== "slice")
     throw new ArtifactReaderFailure(
-      "format",
+      "path",
       `Selected artifact entry cannot be read: ${entry.path}`,
+    );
+  if (entry.encrypted)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `Selected artifact entry is encrypted: ${entry.path}`,
     );
 };
 

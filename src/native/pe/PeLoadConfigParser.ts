@@ -19,11 +19,16 @@ import {
 } from "../../domain/binaryContainer.js";
 import {
   peDeclaredFileMappings,
-  readPeImage,
   readPeImageFromReader,
   type PeImage,
+  peImageRangeReader,
 } from "../../domain/native/peImage.js";
 import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
+import {
+  peDirectorySizeAnomaly,
+  type PeHeaderAnomaly,
+} from "../../domain/native/peHeaderAnomalies.js";
 import {
   guardFlagRecord,
   loadConfigFieldCovered,
@@ -135,38 +140,8 @@ const MAX_LOAD_CONFIG_READ_BYTES = 512;
 
 type PeRangeReader = (offset: number, length: number) => Promise<Buffer>;
 
-/**
- * Read one PE TLS directory and load configuration from a parsed PE image
- * without executing the image. Yields to the event loop and honors cancellation
- * every `ENTRIES_PER_YIELD` callback slots.
- */
-export const parsePeLoadConfigFromImage = async (
-  bytes: Buffer,
-  image: PeImage,
-  artifact: PeLoadConfig["artifact"],
-  input: InspectPeLoadConfigInput,
-  signal?: AbortSignal,
-): Promise<PeLoadConfig> =>
-  parsePeLoadConfigCore(
-    (offset, length) =>
-      Promise.resolve(bytes.subarray(offset, offset + length)),
-    image,
-    artifact,
-    input,
-    signal,
-  );
-
-/** Read PE TLS directory and load configuration from a random-access range reader and pre-parsed PeImage. */
+/** Read PE TLS and load configuration from a range reader and a pre-parsed image. */
 export const parsePeLoadConfigFromReader = async (
-  readBytes: PeRangeReader,
-  image: PeImage,
-  artifact: PeLoadConfig["artifact"],
-  input: InspectPeLoadConfigInput,
-  signal?: AbortSignal,
-): Promise<PeLoadConfig> =>
-  parsePeLoadConfigCore(readBytes, image, artifact, input, signal);
-
-const parsePeLoadConfigCore = async (
   readBytes: PeRangeReader,
   image: PeImage,
   artifact: PeLoadConfig["artifact"],
@@ -188,25 +163,47 @@ const parsePeLoadConfigCore = async (
   const sectionAt = (rva: number): SectionSegment | null =>
     (cachedSections ??= sectionIndex(image.sections))(rva);
 
-  const dataDirectory = (index: number): DirectorySpan | null => {
+  const headerAnomalies: PeHeaderAnomaly[] = [...image.pe_header_anomalies];
+  /**
+   * `loaderBytes` is the structure the loader reads at the RVA whatever the
+   * declared Size; it is set only for directories whose Size the loader
+   * ignores (TLS).
+   */
+  const dataDirectory = (
+    index: number,
+    loaderBytes?: { readonly name: string; readonly bytes: number },
+  ): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
     if (entry === undefined) return null;
     const { address: rva, size } = entry;
-    if (rva === 0 && size === 0) return null;
-    if (rva === 0 || size === 0)
-      throw new BinaryFormatFailure(
-        "malformed",
-        `PE data directory ${String(index)} declares a zero RVA or size while the other field is nonzero`,
+    // The loader treats a zero RVA as no directory, whatever Size says.
+    if (rva === 0) return null;
+    const short =
+      rva !== 0 && loaderBytes !== undefined && size < loaderBytes.bytes;
+    if (short)
+      headerAnomalies.push(
+        peDirectorySizeAnomaly(
+          loaderBytes.name,
+          index,
+          size,
+          loaderBytes.bytes,
+        ),
       );
-    if (!fitsRva(rva, size))
+    else if (size === 0)
       throw new BinaryFormatFailure(
         "malformed",
-        `PE data directory ${String(index)} RVA ${hex(rva)} span of ${String(size)} bytes extends beyond the 32-bit RVA space`,
+        `PE data directory ${String(index)} declares Size 0 at a nonzero RVA`,
+      );
+    const span = short ? loaderBytes.bytes : size;
+    if (!fitsRva(rva, span))
+      throw new BinaryFormatFailure(
+        "malformed",
+        `PE data directory ${String(index)} RVA ${hex(rva)} span of ${String(span)} bytes extends beyond the 32-bit RVA space`,
       );
     return {
       rva,
       size,
-      file_offset: getLookup().offset(base + BigInt(rva), size),
+      file_offset: getLookup().offset(base + BigInt(rva), span),
     };
   };
 
@@ -235,7 +232,10 @@ const parsePeLoadConfigCore = async (
   const tls = await readTls({
     readBytes,
     bits,
-    directory: dataDirectory(PE_TLS_DIRECTORY),
+    directory: dataDirectory(PE_TLS_DIRECTORY, {
+      name: "TLS",
+      bytes: TLS_STRUCT_BYTES[bits],
+    }),
     pointerWidth,
     locate,
     rvaOf,
@@ -282,32 +282,13 @@ const parsePeLoadConfigCore = async (
     machine: image.pe_machine,
     bits,
     architecture: image.architecture,
+    image_base: peImageBaseHex(base),
     tls,
     load_config: loadConfig,
     examined_callbacks: tls?.callbacks.length ?? 0,
+    header_anomalies: headerAnomalies,
     limitations: [...PE_LOAD_CONFIG_LIMITATIONS],
   };
-};
-
-/**
- * Read one PE TLS directory and load configuration without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` callback slots.
- */
-export const parsePeLoadConfig = async (
-  bytes: Buffer,
-  artifact: PeLoadConfig["artifact"],
-  input: InspectPeLoadConfigInput,
-  signal?: AbortSignal,
-): Promise<PeLoadConfig> => {
-  assertArtifactReadActive(signal);
-  return parsePeLoadConfigFromImage(
-    bytes,
-    readPeImage(bytes),
-    artifact,
-    input,
-    signal,
-  );
 };
 
 /**
@@ -322,13 +303,8 @@ export const parsePeLoadConfigFromHandle = async (
 ): Promise<PeLoadConfig> => {
   assertArtifactReadActive(signal);
   const image = await readPeImageFromReader(handle);
-  const readBytes: PeRangeReader = (offset, length) =>
-    length === 0
-      ? Promise.resolve(Buffer.alloc(0))
-      : offset >= 0 && offset + length <= handle.prefix.length
-        ? Promise.resolve(handle.prefix.subarray(offset, offset + length))
-        : handle.readRange(offset, length);
-  return parsePeLoadConfigCore(readBytes, image, artifact, input, signal);
+  const readBytes = peImageRangeReader(handle);
+  return parsePeLoadConfigFromReader(readBytes, image, artifact, input, signal);
 };
 
 const readTls = async ({
@@ -357,12 +333,8 @@ const readTls = async ({
   readonly signal: AbortSignal | undefined;
 }): Promise<PeLoadConfigTls | null> => {
   if (directory === null) return null;
+  // The directory owner mapped the whole structure; the loader ignores Size.
   const structBytes = TLS_STRUCT_BYTES[bits];
-  if (directory.size < structBytes)
-    throw new BinaryFormatFailure(
-      "malformed",
-      `TLS directory is ${String(directory.size)} bytes; PE${String(bits)} requires ${String(structBytes)}`,
-    );
   const tlsReader = new BinaryReader(
     await readBytes(directory.file_offset, structBytes),
     true,
@@ -458,6 +430,7 @@ const readTls = async ({
 
   return {
     directory,
+    structure_location: { offset: directory.file_offset, bytes: structBytes },
     start_address_of_raw_data: hex(start),
     end_address_of_raw_data: hex(end),
     raw_data_size: rawSize,

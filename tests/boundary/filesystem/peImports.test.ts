@@ -5,6 +5,7 @@ import { peImportsSchema } from "../../../src/domain/native/peImports.js";
 import { createPeImportsService } from "../../../src/composition/binaryDiagnostics/peImports.js";
 import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("PE import stable filesystem boundary", () => {
   it("reports non-file and missing selections as caller input errors", async () => {
@@ -14,26 +15,12 @@ describe("PE import stable filesystem boundary", () => {
     await writeFile(path, peImportImage());
     await symlink(path, alias);
     const service = createPeImportsService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [join(root, "missing.exe"), "invalid_value"],
-      [join(path, "child.exe"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_pe_imports",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_pe_imports",
+      { root, alias, path },
+      ".exe",
+    );
   });
 
   it("retains partial Evidence for an import name beyond the read allowance", async () => {

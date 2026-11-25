@@ -1,5 +1,6 @@
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
+import { sha256 as hash } from "../../support/sha256.js";
 import { open, writeFile, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -29,12 +30,10 @@ import {
 
 /** A malformed model header is a malformed target, like every format failure. */
 const MALFORMED_TARGET = {
-  _tag: "AnalysisMalformedTargetError",
+  _tag: "AnalysisTargetFailureError",
   operation: "inspect_model_artifact",
 } as const;
 
-const hash = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
 const writeModelFixture = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-model-reader-");
   const path = join(root, "content.without-format-extension");
@@ -69,8 +68,10 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Unknown version admitted");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: `GGUF version bytes ${versionBytes} are unsupported (little-endian ${String(little)}, big-endian ${String(big)}; byte order unknown); supported versions are 2 and 3`,
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: `GGUF version bytes ${versionBytes} are unsupported (little-endian ${String(little)}, big-endian ${String(big)}; byte order unknown); supported versions are 2 and 3`,
+      },
     });
   },
 );
@@ -717,6 +718,9 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
       { name: "empty-k", type: 10, shape: [64n, 0n], offset: 32n, bytes: 0 },
       { name: "quant", type: 2, shape: [32n], offset: 32n, bytes: 18 },
       { name: "fp8", type: 43, shape: [3n], offset: 64n, bytes: 3 },
+      { name: "arm-4x4", type: 31, shape: [32n, 4n], offset: 96n, bytes: 72 },
+      { name: "arm-4x8", type: 32, shape: [32n], offset: 192n, bytes: 18 },
+      { name: "arm-8x8", type: 33, shape: [32n], offset: 224n, bytes: 18 },
     ],
   });
   const { provider, path } = await providerAt(fixture.bytes);
@@ -727,8 +731,11 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
     { type: "Q2_K", byte_length: 0, storage_validation: "consistent" },
     { type: "Q4_0", byte_length: 18, storage_validation: "consistent" },
     { type: "F8_E4M3", byte_length: 3, storage_validation: "consistent" },
+    { type: "Q4_0_4_4", byte_length: 72, storage_validation: "consistent" },
+    { type: "Q4_0_4_8", byte_length: 18, storage_validation: "consistent" },
+    { type: "Q4_0_8_8", byte_length: 18, storage_validation: "consistent" },
   ]);
-  expect(result.value.totals.tensor_bytes).toBe(33);
+  expect(result.value.totals.tensor_bytes).toBe(141);
   expect(result.value.coverage).toMatchObject({
     tensor_ranges: "complete",
     storage_sizes: "complete",
@@ -1462,8 +1469,8 @@ it.each([
     const result = await provider.inspect({ path, hash: "header" });
     if (result.ok) throw new Error("Pickle admitted");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("PyTorch pickle"),
+      _tag: "AnalysisTargetFailureError",
+      failure: { detail: expect.stringContaining("PyTorch pickle") },
     });
   },
 );
@@ -1489,7 +1496,7 @@ it("admits a valid model after refusing pickle and rejects unapproved path types
   );
   expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
   await writeFile(path, ggufFixture().bytes);
   expect((await provider.inspect({ path, hash: "header" })).ok).toBe(true);

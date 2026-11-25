@@ -629,8 +629,11 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     expect(
       await read(Uint8Array.from([0xfe, 0xed, 0xfa, 0xcf, 0, 0, 0, 0])),
     ).toEqual({
-      status: "unsupported",
-      reason: "big-endian Mach-O images are not supported",
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        detail: "big-endian Mach-O images are not supported",
+      }),
     });
   });
 });
@@ -857,10 +860,13 @@ describe("Mach-O encryption reader: large universal files", () => {
     // The confirmed container reports the sibling's real fault, not an
     // unresolved JVM identity.
     expect(await readMachoImage(sparseReadAt, size)).toEqual({
-      status: "malformed",
-      reason: expect.stringMatching(
-        /FAT architecture 1\b.*slice range.*beyond.*file/iu,
-      ),
+      status: "failed",
+      failure: expect.objectContaining({
+        kind: "truncated",
+        detail: expect.stringMatching(
+          /FAT architecture 1\b.*slice range.*beyond.*file/iu,
+        ),
+      }),
     });
   });
 });

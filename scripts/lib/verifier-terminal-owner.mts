@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { IDisposable, IPty } from "@lydell/node-pty";
 
-import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../../src/domain/result.js";
 import {
@@ -107,15 +105,7 @@ class VerifierTerminalOwner implements VerifierCleanupOwner {
   readonly #runId = randomUUID();
   readonly #evidence = new ProcessOwnershipEvidenceOwner();
   readonly #preparationResources = new ArtifactResourceScope();
-  readonly #resourceOwner: RetainedResourceScope = {
-    run: (work) => this.#preparationResources.run(work),
-    retain: (owner, resource) =>
-      this.#preparationResources.retain({
-        kind: "lease",
-        resource,
-        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-      }),
-  };
+  readonly #resourceOwner = this.#preparationResources.forCloseOwners();
   readonly #subscriptions = new Set<IDisposable>();
   readonly #maxOutputBytes: number;
   #output = "";

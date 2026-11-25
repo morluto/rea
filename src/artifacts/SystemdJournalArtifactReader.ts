@@ -17,6 +17,7 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   ArtifactFileSource,
+  artifactParseFailure,
 } from "../resources/index.js";
 import {
   malformedInput,
@@ -160,40 +161,30 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    if (failure.kind === "unsupported") {
-      // The signature established the format and the header names a layout
-      // this reader does not implement, so the file is complete and a fresh
-      // copy cannot help. Truncation stays reserved for short structures.
-      return new ArtifactReaderFailure(
-        "unsupported",
-        `systemd journal file is unsupported: ${failure.message}`,
-        {
-          cause: unsupportedInput("systemd-journal", failure.message, {
-            undecodedContent: true,
-          }),
-        },
-      );
-    }
     if (failure.kind === "limit")
       return new ArtifactReaderFailure(
         "limit",
         `systemd journal file exceeds a fixed limit: ${failure.message}`,
         failure.boundary === undefined ? {} : { boundary: failure.boundary },
       );
-    // The signature establishes the format before any structure does, so a
-    // file that carries it and stops short is truncated input, not bytes of
-    // an unknown shape. The parse failure keeps that distinction for callers
-    // that report a reason.
-    const signed = this.#signatureSeen;
-    return new ArtifactReaderFailure(
-      "format",
-      `systemd journal file is malformed: ${failure.message}`,
-      {
-        cause: signed
+    // The signature established the format and the header names a layout this
+    // reader does not implement, so the file is complete and a fresh copy
+    // cannot help: truncated stays reserved for short structures.
+    //
+    // Without the signature the bytes are simply not a journal, so malformed
+    // covers that and any structural damage in a file that carries it. A file
+    // that carries it and stops short is truncated rather than malformed.
+    const cause =
+      failure.kind === "unsupported"
+        ? unsupportedInput("systemd-journal", failure.message, {
+            undecodedContent: true,
+          })
+        : this.#signatureSeen
           ? truncatedInput("systemd-journal", failure.message)
-          : malformedInput("systemd-journal", failure.message),
-      },
-    );
+          : malformedInput("systemd-journal", failure.message);
+    const mapped = artifactParseFailure(cause, undefined);
+    if (mapped instanceof ArtifactReaderFailure) return mapped;
+    throw mapped;
   }
 }
 

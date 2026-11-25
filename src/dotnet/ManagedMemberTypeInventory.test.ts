@@ -144,12 +144,11 @@ it("decodes a single selected type to completion on a game-scale assembly", () =
       operand: "0x0a000001",
     }),
   );
-  // Member references stay assembly-wide: the selection narrows declaring
-  // types, not the reference inventory behind call edges.
-  expect(result.member_refs).toHaveLength(11442);
-  expect(
-    result.member_refs.find((ref) => ref.token === "0x0a000001"),
-  ).toMatchObject({ name: "Member0" });
+  // The selection narrows member references to the rows its bodies use: the
+  // one call target, out of 11442 in the assembly.
+  expect(result.member_refs).toEqual([
+    expect.objectContaining({ token: "0x0a000001", name: "Member0" }),
+  ]);
 });
 
 it("preserves explicit type selection when its selected body exhausts capacity", () => {

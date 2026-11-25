@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createModelFixtureServer } from "./model-fixture-server.mjs";
+import {
+  createModelFixtureServer,
+  readModelFixtureBody,
+} from "./model-fixture-server.mjs";
 
 /** Exercise native Anthropic adapters locally, without live-provider claims. */
 export const createAnthropicModelFixture = async ({ directory, onRequest }) => {
@@ -11,18 +14,7 @@ export const createAnthropicModelFixture = async ({ directory, onRequest }) => {
   const server = await createModelFixtureServer(
     async (request, response, recordFailure) => {
       try {
-        const chunks = [];
-        let bytes = 0;
-        for await (const chunk of request) {
-          bytes += chunk.length;
-          assert(
-            bytes <= 10 * 1024 * 1024,
-            "Model fixture request exceeds 10 MiB budget",
-          );
-          chunks.push(chunk);
-        }
-        const raw = Buffer.concat(chunks).toString("utf8");
-        const body = raw.length === 0 ? null : JSON.parse(raw);
+        const body = await readModelFixtureBody(request);
         const path = new URL(request.url, "http://localhost").pathname;
         // Retain producer bodies and URLs, without transport authentication headers.
         await writeFile(

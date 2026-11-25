@@ -71,7 +71,7 @@ it("retains completed Android Evidence through the MCP cancellation delivery pat
   await client.connect(clientTransport);
   const request = {
     name: "inspect_android_package",
-    arguments: { path: fixture.apk },
+    arguments: { detail: "complete", path: fixture.apk },
   };
   const controlReply = await client.callTool(request);
   expect(controlReply.isError).not.toBe(true);

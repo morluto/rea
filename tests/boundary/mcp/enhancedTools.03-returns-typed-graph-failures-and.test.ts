@@ -5,6 +5,8 @@ import {
   type AnalysisOperationPort,
 } from "../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { err } from "../../../src/domain/result.js";
 
 import {
   closeEnhancedToolResources,
@@ -13,14 +15,28 @@ import {
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
 
 describe("enhanced MCP tools", () => {
   it("returns stable unresolved-name results", async () => {
     const tools = new EnhancedTools({
-      execute: () => Promise.resolve(ok(inventory({}))),
+      execute: (operation) =>
+        Promise.resolve(
+          operation === "list_names"
+            ? ok(inventory({}))
+            : err(
+                new AnalysisInputError(
+                  operation,
+                  { conformsToInputContract: true },
+                  [{ path: ["procedure"], reason: "invalid_value" }],
+                ),
+              ),
+        ),
     });
 
     const unresolved = await tools.executeValidated({
@@ -145,7 +161,7 @@ it("pages observed references and preserves provider completeness through MCP", 
         ok: true,
         value: createAnalysisExecution(
           addresses,
-          { id: "fixture", name: "Fixture analysis provider", version: "1" },
+          createFixtureProviderIdentity(),
           providerTruncated === undefined
             ? {}
             : { referencesTruncated: providerTruncated },

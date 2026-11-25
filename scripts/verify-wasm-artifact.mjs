@@ -23,6 +23,7 @@ import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 
 import { verifyWabtCleanup } from "./lib/verify-wabt-cleanup.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const directory = process.env.REA_WABT_BIN_DIRECTORY;
 if (!isAbsolute(directory ?? "")) {
@@ -97,7 +98,9 @@ try {
   throw cause;
 }
 const childTempRoot = childTemp.path;
-const client = new Client({ name: "wabt-artifact-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "wabt-artifact-verifier", version: "1" }),
+);
 const callTool = (request) =>
   client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });
 const transport = new StdioClientTransport({
@@ -289,7 +292,7 @@ try {
     const cli = parseEvidence(cliValue);
     const reply = await callTool({
       name: "inspect_wasm_artifact",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
@@ -435,7 +438,7 @@ try {
       const error = requireMcpToolError(
         await callTool({
           name: "inspect_wasm_artifact",
-          arguments: invalidInput,
+          arguments: { ...invalidInput, detail: "complete" },
         }),
       );
       assert.equal(error.category, "invalid_input");
@@ -533,7 +536,7 @@ try {
     const cli = parseEvidence(await inspectCli(input));
     const reply = await callTool({
       name: "inspect_wasm_artifact",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
@@ -602,7 +605,7 @@ try {
     const cli = parseEvidence(await inspectCli(input));
     const reply = await callTool({
       name: "inspect_wasm_artifact",
-      arguments: input,
+      arguments: { ...input, detail: "complete" },
     });
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(

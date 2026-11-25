@@ -444,6 +444,16 @@ See [Android boot images](../android-boot-image.md) for header versions 0 throug
 4, vendor ramdisk table entries, stored compression, and the unverified AVB
 footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
+Inventory and extract an ISO 9660 disc image without mounting it:
+
+```sh
+rea inspect-artifact ./installer.iso --detail summary --evidence_output installer.json --json
+rea extract-artifact ./installer.iso --json
+```
+
+See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
+names, multi-extent and interleaved files, and what is not decoded.
+
 Inspect local model declarations without loading weights:
 
 ```bash
@@ -870,11 +880,21 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 ```
 
 An exact CLI cache hit is normally read before starting a provider process.
-`decompile --provider ghidra --snapshot ...` also retains its single selected
-Program's pseudocode result, even without an explicit document selector. Old
+It returns the saved Evidence record itself, with the same `evidence_id` as the
+record in the snapshot's `evidence_bundle`.
+With Ghidra, every one-shot read-only query (for example `decompile`, `search`,
+`xrefs` and `procedure-references`) is retained for its
+single selected Program, even without an explicit document selector. Old
 snapshots that contain only the Evidence need one new query to add that replay
 entry. This does not retain every body from `decompile-all` or make a persistent
-session's implicit document replayable.
+session's implicit document replayable. `xrefs` with a symbol name resolves the
+name through the provider first, so pass the address to replay without starting
+it.
+
+A provider that declares its results live, such as Hopper, IDA and Kuna, is
+observed again on every call. With `--snapshot`, such a result carries the
+limitation `Not saved for snapshot replay: <provider> declares this result
+live ...`; the snapshot still records its Evidence.
 On Windows, Ghidra first admits the selected source through its native snapshot
 owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
@@ -1542,7 +1562,10 @@ A document can exceed the runtime's string limit when each encoded line fits.
 Staging limits the encoded text kept in memory. The TOON encoder still
 normalizes the input tree before yielding lines, so working memory also
 depends on the size of the input and the longest encoded line.
-Token counting and token windows still require a complete formatted string.
+Token counting and token windows require a complete formatted string. For structured
+TOON output, every selected key and string must contain well-formed UTF-16,
+including values outside the requested token window. Use `--filter-output` to
+select a representable field, or JSON or YAML to retain unpaired surrogates.
 Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
@@ -1718,8 +1741,7 @@ rea inspect-artifact ./app.asar --json | jq . > inspection.json
 `--token-count` reports a tokenx estimate for the selected emitted document,
 including a requested full-output envelope and metadata. JSON uses the same
 terminal indentation or compact piped representation as normal output; JSONL
-uses its emitted line representation. The final newline is included (tokenx
-assigns whitespace no tokens). This is an estimate, not a model tokenizer count.
+uses its emitted line representation. The estimate includes the final newline. Its token cost depends on the preceding text.
 Counting retains the existing bounded formatted-string allocation after capacity
 admission; omit the flag to stream large JSON documents without materializing
 the complete formatted text. Exhausted token windows display an empty range at

@@ -9,6 +9,7 @@ import { DEFAULT_CATALOG_IDENTITY } from "../../dist/contracts/catalog/catalogId
 import { MCP_TARGET_FREE_ENVIRONMENT_OVERRIDES } from "../../dist/config/mcpTargetEnvironment.js";
 import { mergeEnvironmentOverrides } from "../../dist/process/snapshotEnvironment.js";
 import { verifyCompleteToolCatalog } from "./verify-package-core.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Install the selected archive or registry specifier with an owned ten-minute deadline. */
 export async function installCanaryPackage(
@@ -86,7 +87,9 @@ export async function verifyCanaryMcp(
     env: targetFreeEnvironment,
     stderr: "pipe",
   });
-  const client = new Client({ name: "release-package-canary", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "release-package-canary", version: "1" }),
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk) => {
     if (stderr.length < 16_384)

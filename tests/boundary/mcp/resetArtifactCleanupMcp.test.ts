@@ -1,5 +1,5 @@
+import { successfulTool as call } from "../../support/mcp/mcpFixture.js";
 import type { Client } from "@modelcontextprotocol/client";
-import type { CallToolResult } from "@modelcontextprotocol/server";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -20,18 +20,6 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-const call = async (
-  client: Client,
-  name: string,
-  arguments_: Record<string, unknown> = {},
-): Promise<CallToolResult> => {
-  const reply = await client.callTool({ name, arguments: arguments_ });
-  expect(reply.isError, `${name}: ${JSON.stringify(reply.content)}`).not.toBe(
-    true,
-  );
-  return reply;
-};
 
 const currentBundle = async (client: Client) =>
   parseMcpEvidenceBundle(await call(client, "get_evidence_bundle"));

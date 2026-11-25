@@ -15,7 +15,6 @@ import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
-  registryPackageSource,
   type EnvironmentBundleOptions,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
@@ -42,10 +41,7 @@ const planBundle = (options: PlanOptions = {}) =>
       : { ...servedSource, exchanges: options.exchanges },
     {
       name: options.name,
-      packageSource:
-        options.tarball === undefined
-          ? registryPackageSource()
-          : { kind: "tarball", path: options.tarball },
+      packageTarball: options.tarball,
       served: options.served ?? (() => served),
     },
   );
@@ -326,7 +322,6 @@ describe("planEnvironmentBundle served check", () => {
       replay: { record_ordinal: 0 },
     });
     const planned = planEnvironmentBundle(source, {
-      packageSource: registryPackageSource(),
       served: exportPreparation(source, items.capture),
     });
     if (!planned.ok) throw planned.error;
@@ -351,7 +346,6 @@ describe("planEnvironmentBundle without a state", () => {
       code: "unsupported_target",
     });
     const planned = planEnvironmentBundle(fallback.source, {
-      packageSource: registryPackageSource(),
       served: () => fallback.served,
     });
     if (!planned.ok) throw planned.error;
@@ -432,7 +426,6 @@ describe("planEnvironmentBundle without a state", () => {
       code: "resource_constraint",
     });
     const planned = planEnvironmentBundle(source, {
-      packageSource: registryPackageSource(),
       served: exportPreparation(source, fixture.capture),
     });
     if (!planned.ok) throw planned.error;
@@ -468,7 +461,6 @@ it("refuses a bundle that the server cannot admit in either mode, using export o
   };
   const source = { ...servedSource, manifest };
   const result = planEnvironmentBundle(source, {
-    packageSource: registryPackageSource(),
     served: exportPreparation(source, fixture.capture),
   });
   expect(result).toMatchObject({

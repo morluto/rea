@@ -355,7 +355,7 @@ it("refuses a file that does not begin with the journal signature", async () => 
   try {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "malformed" });
   } finally {
     await reader.close();
   }
@@ -367,7 +367,7 @@ it("refuses a file shorter than the fixed header", async () => {
   try {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "malformed" });
   } finally {
     await reader.close();
   }
@@ -386,7 +386,7 @@ it("reports a short signed journal as truncated rather than malformed", async ()
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       cause: { failure: { kind: "truncated" } },
     });
   } finally {

@@ -35,7 +35,7 @@ describe.skipIf(process.platform !== "darwin")(
         expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
         const inspected = await client.callTool({
           name: "inspect_artifact",
-          arguments: {},
+          arguments: { detail: "complete" },
         });
         expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(
           true,

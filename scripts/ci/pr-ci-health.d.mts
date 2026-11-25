@@ -9,6 +9,7 @@ export interface PrCiPullRequest {
   number: number | null;
   draft?: boolean;
   identityValid: boolean;
+  eligibilityChangedDuringScan?: boolean;
   mergeable?: boolean;
   head: PrCiHead;
   [key: string]: unknown;

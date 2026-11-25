@@ -159,7 +159,8 @@ its reader finishes, is `unknown` with a limitation naming the reader format;
 a complete traversal of one container never covers another.
 ZIP members are listed from the central directory. Coverage is `complete` only
 when its records account for every byte before the directory (a well-formed
-APK signing block is accounted for); otherwise coverage is `unknown` and a
+APK signing block is accounted for, as is all-zero padding under 4 KiB that
+aligns that block to a 4 KiB boundary); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
 An extent must fit before the directory and agree with the local header's
@@ -335,8 +336,15 @@ and unknowns retain their separate meaning. Legacy replies keep their existing
 framing.
 
 `list_procedures`, `search_procedures`, `list_strings`, `search_strings` and
-`list_names` accept `detail: "summary"`. Complete inline delivery remains the
-default. Summary retains the original complete Evidence and returns its row
+`list_names` accept `detail: "complete"` or `detail: "summary"`. These five
+inventories, `batch_decompile` and `trace_feature` grow with the target, so an
+omitted `detail` follows the
+[agent result budget](limits-and-recovery.md#agent-result-budget): the complete
+Evidence is returned inline when its UTF-8 JSON fits
+`delivery.agent_result_budget_bytes`, and otherwise the session retains it and
+returns its summary. A server that retains no Evidence, or a session that does
+not advertise `inspect_analysis_view`, returns the complete Evidence. On a stripped 1.2 MB ELF (Debian 12 `zstd`), complete MCP results
+were 8.2 MB for `list_names` and 3.6 MB for `trace_feature` with `error`. Summary retains the original complete Evidence and returns its row
 count, provider identity, analysis-profile digest, original query, parent Evidence
 ID, limitations and explicit unknown discovery coverage. Delivery detail is excluded from provider arguments
 and original Evidence identity.
@@ -387,8 +395,9 @@ zero-total representation must handle the new `unavailable` status and nullable
 total; historical saved views remain valid.
 
 `procedure_address`, `procedure_callees`, `procedure_callers`,
-`resolve_containing_procedure` and `get_call_graph` also accept `detail: "summary"`
-(complete remains the default). The summary includes the first 64 recorded
+`resolve_containing_procedure`, `get_call_graph` and `xrefs` also accept
+`detail: "summary"`; an omitted `detail` follows the
+[agent result budget](limits-and-recovery.md#agent-result-budget). The summary includes the first 64 recorded
 observations, exact source parameters and provider/profile identity, relationship
 coverage where recorded, and the retained complete parent's ID. Continue with
 `view: {"kind":"native-observation","offset":64,"limit":64}`. Array positions
@@ -400,10 +409,7 @@ limitation and reason IDs index that page's `items.messages` dictionary. Expand
 those references to recover exact text, repeated messages, and absent versus
 empty optional fields. Failed nodes retain their original error.
 
-Retained `xrefs` Evidence also supports `native-observation` address pages and
-`native-context` source caveats. `xrefs` still returns complete Evidence by
-default and does not accept `detail`; when its MCP response exceeds the budget,
-follow the returned continuation to page the retained result. These addresses
+Retained `xrefs` Evidence pages its addresses the same way. These addresses
 remain untyped; paging does not add reference kinds or establish completeness.
 The page tells callers that any additional provider detail recorded in the parent
 requires retrieving or exporting the complete Evidence.
@@ -883,7 +889,9 @@ reachability. The CLI keeps complete trace JSON; save it and use
 
 ### Selected batch decompile results
 
-`batch_decompile` returns every pseudocode body by default. `detail: "summary"`
+`batch_decompile` returns every pseudocode body inline when the batch Evidence
+fits the agent result budget; an omitted `detail` summarizes a larger batch, and
+`detail: "complete"` always returns every body. `detail: "summary"`
 retains the complete batch in the session first and returns its producer counts,
 `source_provider` (the composing workflow), `source_analysis_profile_digest`,
 `decompiling_provider`, procedure identity counts, total and largest
@@ -2089,7 +2097,8 @@ when both are omitted, storage is not compared.
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`) and FIT images (`fit-image`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
+ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
 only one side records, or that the other side records as another kind, is
@@ -2325,7 +2334,9 @@ call can use the returned arguments contract. Output schemas, when the
 selected profile lists them, remain in `tools/list`. Search defaults to three results, allows up to
 20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
 request order and reject unknown or excluded names before loading anything.
-Use fewer keywords when no result matches; search requires every word to match.
+Search ranks tools that match all words first, then partial matches by matched
+word count, name matches, and canonical name; try fewer or different keywords
+when no word matches.
 Both reply representations must fit the configured response budget before any
 tools load. An oversized page returns a resource constraint; reduce `limit` or
 request fewer exact names and retry. Input schemas are retained in full within

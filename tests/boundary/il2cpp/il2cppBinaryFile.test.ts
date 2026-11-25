@@ -8,7 +8,7 @@ import {
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import {
   AnalysisInputError,
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { describe, expect, it } from "vitest";
@@ -145,7 +145,7 @@ const containerFailure = (
   try {
     link(bytes, architecture);
   } catch (cause) {
-    if (cause instanceof AnalysisMalformedTargetError)
+    if (cause instanceof AnalysisTargetFailureError)
       return { path: cause.path, ...cause.failure };
     throw cause;
   }
@@ -244,13 +244,15 @@ it("still rejects distinct MetadataRegistration fields", () => {
   ).toEqual({ reason: "metadata-registration-not-found", kind: "malformed" });
 });
 
-it("rejects reused MethodDef tokens within an image but preserves cross-image reuse and folded addresses", () => {
-  const duplicateTokens = Uint32Array.from(facts.methodTokens);
-  duplicateTokens[1] = duplicateTokens[0]!;
+it("rejects a MethodDef row past the module's method pointers but preserves cross-image reuse and folded addresses", () => {
+  // A valid MethodDef row the binary's 3-slot module does not hold: the
+  // metadata admits it, so only the pair disagrees.
+  const beyondModule = Uint32Array.from(facts.methodTokens);
+  beyondModule[0] = 0x06000004;
   expect(() =>
     linkIl2cppBinary(createIl2cppBinaryFixture(), metadata, {
       ...facts,
-      methodTokens: duplicateTokens,
+      methodTokens: beyondModule,
     }),
   ).toThrow(
     expect.objectContaining({

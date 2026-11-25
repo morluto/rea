@@ -1,7 +1,5 @@
-import {
-  AnalysisMalformedTargetError,
-  AnalysisUnsupportedTargetError,
-} from "../analysisErrorCore.js";
+import { AnalysisTargetFailureError } from "../analysisErrorCore.js";
+import type { TargetFailureOf } from "../targetFailure.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
 
 /** Header facts admitted before an unsupported table layout was identified. */
@@ -28,16 +26,55 @@ export class ManagedReaderFailure extends Error {
 /** Refuse a heap-dependent row whose shared stream issue is reported by layout inventory. */
 export class ManagedHeapAmbiguityFailure extends ManagedReaderFailure {}
 
-/** A resource or unsupported layout leaves metadata unknown, not malformed. */
-export const managedMetadataFailureStatus = (
-  issue: ManagedParseIssue,
-): "partial" | "malformed" =>
-  issue.code === "resource-limit" || issue.code === "unsupported-metadata"
-    ? "partial"
-    : "malformed";
+/**
+ * Whether a reader stopped on a valid construct REA does not implement: a
+ * metadata layout or signature form outside decoder coverage. Every other
+ * code except `resource-limit` names a rule the bytes broke.
+ */
+export const isManagedCoverageGap = (code: ManagedParseIssue["code"]) =>
+  code === "unsupported-metadata" || code === "unsupported-signature";
 
 /** The ParseFailure format of a managed PE/CLI image and its ECMA-335 metadata. */
 export const MANAGED_PE_CLI_FORMAT = "pe-cli";
+
+/**
+ * The target failure a managed reader's issue establishes: the one place
+ * that interprets an issue code. A construct outside decoder coverage is
+ * `unsupported`, so a newer valid file is never called corrupt; every other
+ * code except `resource-limit` names a rule the bytes broke. A resource limit
+ * names a budget only its producer knows, so it returns `undefined`.
+ */
+export const managedIssueTargetFailure = ({
+  code,
+  scope,
+  offset,
+  detail,
+}: ManagedParseIssue):
+  | TargetFailureOf<"malformed" | "unsupported">
+  | undefined => {
+  if (code === "resource-limit") return undefined;
+  const facts = {
+    format: MANAGED_PE_CLI_FORMAT,
+    detail,
+    field: scope,
+    ...(offset === null ? {} : { offset }),
+  };
+  return isManagedCoverageGap(code)
+    ? { kind: "unsupported", ...facts, undecodedContent: true }
+    : { kind: "malformed", ...facts };
+};
+
+/**
+ * Metadata status after a reader stopped, derived from the issue's target
+ * failure: only bytes that break a rule make metadata `malformed`; a budget
+ * or a construct outside coverage leaves it unknown (`partial`).
+ */
+export const managedMetadataFailureStatus = (
+  issue: ManagedParseIssue,
+): "partial" | "malformed" =>
+  managedIssueTargetFailure(issue)?.kind === "malformed"
+    ? "malformed"
+    : "partial";
 
 /**
  * The selected file's refusal when a managed reader stopped on its bytes.
@@ -52,29 +89,12 @@ export const managedInspectionTargetFailure = (
   operation: string,
   path: string,
   cause: unknown,
-):
-  | AnalysisMalformedTargetError
-  | AnalysisUnsupportedTargetError
-  | undefined => {
+): AnalysisTargetFailureError | undefined => {
   if (!(cause instanceof ManagedReaderFailure)) return undefined;
-  const { code, scope, offset, detail } = cause.issue;
-  if (code === "resource-limit") return undefined;
-  if (code === "unsupported-metadata" || code === "unsupported-signature")
-    return new AnalysisUnsupportedTargetError(operation, path, detail, {
-      cause,
-    });
-  return new AnalysisMalformedTargetError(
-    operation,
-    path,
-    {
-      kind: "malformed",
-      format: MANAGED_PE_CLI_FORMAT,
-      detail,
-      field: scope,
-      ...(offset === null ? {} : { offset }),
-    },
-    { cause },
-  );
+  const failure = managedIssueTargetFailure(cause.issue);
+  return failure === undefined
+    ? undefined
+    : new AnalysisTargetFailureError(operation, path, failure, { cause });
 };
 
 /** Construct a typed managed parse failure at an exact byte location. */
@@ -86,14 +106,19 @@ export const managedFailure = (
 ): ManagedReaderFailure =>
   new ManagedReaderFailure({ code, scope, offset, detail });
 
-/** Retain a local malformed fact; capacity and unexpected failures still escape. */
+/**
+ * Retain one value's malformed or unsupported fact so independent values can
+ * still be read. A budget or an unsupported metadata layout stops the whole
+ * read, and unexpected failures still escape.
+ */
 export const retainManagedValueFailure = (
   cause: unknown,
   issues: ManagedParseIssue[],
 ): ManagedReaderFailure => {
   if (
     !(cause instanceof ManagedReaderFailure) ||
-    managedMetadataFailureStatus(cause.issue) === "partial"
+    cause.issue.code === "resource-limit" ||
+    cause.issue.code === "unsupported-metadata"
   )
     throw cause;
   if (!(cause instanceof ManagedHeapAmbiguityFailure)) issues.push(cause.issue);

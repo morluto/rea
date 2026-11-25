@@ -193,3 +193,65 @@ it("checks the stored OTA operation bytes when a partition hash is absent", asyn
     }
   }
 });
+
+it("retains payload header and partitions when optional trailing payloadSignature parsing fails", async () => {
+  const path = await writeCarrier(
+    "bad-trailing-sig.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      // Invalid protobuf wire type 7 in optional trailing payload signature blob.
+      payloadSignature: Buffer.from([0x0f, 0xff, 0xff, 0xff]),
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-ota-payload");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Optional trailing payload signature could not be parsed",
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "android-ota-payload",
+    payload_signature_count: null,
+    partitions: [{ name: "boot" }],
+  });
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "boot.img"),
+  ).toMatchObject({ hash_status: "verified" });
+});
+
+it("refuses trailing payloadSignature blobs that exceed the fixed signature count limit", async () => {
+  const writer = new BinaryWriter();
+  for (let index = 0; index < 65; index += 1)
+    writer.tag(1, WireType.LengthDelimited).bytes(new Uint8Array([index]));
+  const path = await writeCarrier(
+    "too-many-trailing-sigs.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      payloadSignature: Buffer.from(writer.finish()),
+    }),
+  );
+  const reader = new AndroidOtaPayloadArtifactReader(path);
+  try {
+    await expect(async () => {
+      for await (const _entry of reader.entries()) {
+        // Expect refusal during preparation before yielding entries.
+      }
+    }).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining("signature count"),
+    });
+  } finally {
+    await reader.close();
+  }
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /signature count exceeds the fixed 64-signature ceiling/u,
+  );
+});

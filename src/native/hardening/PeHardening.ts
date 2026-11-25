@@ -17,6 +17,7 @@ import {
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
 import {
   readPeImage,
@@ -200,6 +201,7 @@ const readPeHardeningCore = async (
     bits: image.bits,
     byte_order: "little",
     machine: image.pe_machine,
+    image_base: peImageBaseHex(image.image_base),
     slice: null,
     rows,
   };

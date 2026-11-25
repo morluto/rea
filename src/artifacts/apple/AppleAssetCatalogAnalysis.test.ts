@@ -890,12 +890,14 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
     if (!(error instanceof AnalysisError)) throw error;
     expect(error.cause).toBe(cause);
     expect(projectAnalysisError(error)).toMatchObject({
-      code: "artifact_operation_failed",
-      message: expect.stringMatching(/invalid.*changed.*fresh copy/iu),
+      code: "unsupported_target",
+      retryable: false,
       details: {
         operation: "inspect_asset_catalog",
-        reason: "format",
-        detail: expect.stringContaining(relativePath),
+        path,
+        reason: expect.stringContaining(relativePath),
+        failure_kind: "malformed",
+        format: "asset-catalog",
         diagnostics: { catalog_path: relativePath },
         captured_output: {
           stdout: "partial metadata",

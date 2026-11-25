@@ -45,7 +45,7 @@ it("delivers a complete Ghidra inventory within the existing MCP response budget
   try {
     const reply = await harness.mcp.callTool({
       name: "list_procedures",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = sessionEvidence(harness.session, reply.structuredContent);

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -30,6 +29,7 @@ import {
   fakeGdbStartupPreamble,
 } from "../providers/gdbTestHelpers.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const selectedBytes = Buffer.from("caller-selected executable bytes\n");
 const selectedDigest = createHash("sha256").update(selectedBytes).digest("hex");
@@ -57,6 +57,7 @@ it.skipIf(process.platform === "win32")(
     });
     const reply = await serveInProcessCli(cli, [
       "debug-with-gdb",
+      ...COMPLETE_DETAIL,
       "info files",
       "--executable",
       f.executable,
@@ -286,7 +287,7 @@ it.skipIf(process.platform === "win32")(
     for (const command of ["info files", "file /other/file", "info files"]) {
       const reply = await f.client.callTool({
         name: "gdb_console",
-        arguments: { session_id, command },
+        arguments: { detail: "complete", session_id, command },
       });
       expect(reply.isError).not.toBe(true);
       const evidence = evidenceSchema.parse(reply.structuredContent);
@@ -323,7 +324,7 @@ it.skipIf(process.platform === "win32")(
     const { session_id } = startSchema.parse(started.structuredContent);
     const reply = await f.client.callTool({
       name: "gdb_console",
-      arguments: { session_id, command: "info files" },
+      arguments: { detail: "complete", session_id, command: "info files" },
     });
     const evidence = evidenceSchema.parse(reply.structuredContent);
     expect(evidence.subject.identity).toMatchObject({

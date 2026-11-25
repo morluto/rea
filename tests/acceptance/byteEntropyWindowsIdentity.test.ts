@@ -9,6 +9,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { ByteEntropyService } from "../../src/application/binaryDiagnostics/ByteEntropyService.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { completeArguments } from "../support/completeDetail.js";
 
 describe.skipIf(process.platform !== "win32")(
   "Windows selected-file spelling",
@@ -46,13 +47,13 @@ describe.skipIf(process.platform !== "win32")(
             const direct = await service.inspect({ path: spelling });
             if (!direct.ok) throw direct.error;
             const fromCli = await cli.run({
-              arguments: ["inspect-byte-entropy", spelling, "--json"],
+              arguments: completeArguments("inspect-byte-entropy", spelling),
             });
             expect(fromCli.exitCode, fromCli.stderr).toBe(0);
             const evidence = parseEvidence(fromCli.json);
             const response = await client.callTool({
               name: "inspect_byte_entropy",
-              arguments: { path: spelling },
+              arguments: { detail: "complete", path: spelling },
             });
             expect(response.isError).not.toBe(true);
             const mcpEvidence = parseEvidence(response.structuredContent);

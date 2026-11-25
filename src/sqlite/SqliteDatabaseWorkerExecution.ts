@@ -2,7 +2,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   completedStableArtifact,
   readStableArtifact,
   ArtifactReaderFailure,
@@ -22,10 +22,9 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   sqliteDatabaseSchema,
@@ -94,7 +93,6 @@ interface SqliteWorkerInspection {
 
 // Each input rejection names the caller argument that requires correction.
 const rejectedArgument = {
-  format: "path",
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
@@ -187,6 +185,15 @@ const rejectedReply = (
         retryable: false,
         remediationAction: `The selected database is readable; only the combined projection exceeded this connection's native result-column limit. Request at most ${String(reply.engine_column_limit)} columns per call, splitting wider facts across calls, or omit table to inspect stored declarations with schema_scope: database. The limit belongs to SQLite's connection, so worker_timeout_ms and client deadlines do not raise it. Do not repeat the unchanged request.`,
       },
+    );
+  // SQLite established that the selected snapshot's bytes are not a valid
+  // database: a target refusal at the caller's path, not a bad argument.
+  if (reply.reason === "malformed")
+    return new AnalysisTargetFailureError(
+      operation,
+      selectedPath,
+      { kind: "malformed", format: "sqlite", detail: reply.message },
+      { capturedOutput },
     );
   const argument = rejectedArgument[reply.reason];
   return new AnalysisInputError(operation, { capturedOutput }, [
@@ -332,11 +339,9 @@ const sqliteReplyCompletionFailure = (
   );
   bindArtifactFileCleanup(cause, cleanup);
   if (cause.reason !== "cancelled") return cleanup;
-  const cancellation = cancelledBy(
-    operation,
-    carriedReason(artifactFileCancellationCause(cause)),
-    { capturedOutput },
-  );
+  const cancellation = artifactFileCancellationError(operation, cause, {
+    capturedOutput,
+  });
   return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 

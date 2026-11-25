@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import {
   BOOKMARK_ROWS,
   FIXED_HELD_TAG_ROWS,
@@ -21,19 +18,11 @@ import {
 } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 import {
   bookClock,
-  environmentStateViewOf,
   numberedUuid,
+  planOf,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isObject, type JsonObject } from "./environmentStateRules.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
 
 const TRIMMED = {
   kind: "iso",
