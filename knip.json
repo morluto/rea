@@ -17,6 +17,7 @@
     "scripts/verify-real-ghidra-noreturn.mjs",
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
+    "scripts/verify-real-ghidra-psp-indirect.mjs",
     "scripts/verify-real-ghidra-function-bundle.mjs",
     "tests/processOwnershipRunner.ts",
     "tests/support/targetFailure/readers/*.ts"
