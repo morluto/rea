@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 
 import { expect, it } from "vitest";
 
@@ -17,12 +17,6 @@ import {
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { elf } from "../domain/binaryTarget.fixture.js";
 
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
 const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-android-boot-");
   const path = join(directory, name);
@@ -37,7 +31,7 @@ const openAll = async (path: string): Promise<ReadonlyMap<string, Buffer>> => {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
     for (const entry of entries)
-      out.set(entry.path, await collect(await reader.open(entry)));
+      out.set(entry.path, await buffer(await reader.open(entry)));
     return out;
   } finally {
     await reader.close();

@@ -395,9 +395,7 @@ it("isolates returned declaration arrays from saved FIT facts", async () => {
       reason: "integrity",
     });
     const stream = await reader.open(fresh);
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(chunk as Buffer);
-    expect(Buffer.concat(chunks).equals(FIT_KERNEL)).toBe(true);
+    expect((await buffer(stream)).equals(FIT_KERNEL)).toBe(true);
   } finally {
     await reader.close();
   }
