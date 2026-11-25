@@ -77,6 +77,22 @@ export const godotReaderLimitsSchema = z.strictObject({
 });
 export type GodotReaderLimits = z.output<typeof godotReaderLimitsSchema>;
 
+export const DEFAULT_ISO9660_READER_LIMITS = {
+  descriptor_count: 64,
+  directory_depth: 64,
+  record_count: 262_144,
+  directory_bytes: 64 * 1024 * 1024,
+  path_bytes: 64 * 1024 * 1024,
+};
+export const iso9660ReaderLimitsSchema = z.strictObject({
+  descriptor_count: count,
+  directory_depth: count,
+  record_count: count,
+  directory_bytes: bytes,
+  path_bytes: bytes,
+});
+export type Iso9660ReaderLimits = z.output<typeof iso9660ReaderLimitsSchema>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -147,6 +163,22 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Godot directory representation admission; omitted fields use ${JSON.stringify(DEFAULT_GODOT_READER_LIMITS)}. Applies before path allocation and again to retained metadata.`,
     ),
+  iso9660: z
+    .strictObject({
+      descriptor_count:
+        iso9660ReaderLimitsSchema.shape.descriptor_count.exactOptional(),
+      directory_depth:
+        iso9660ReaderLimitsSchema.shape.directory_depth.exactOptional(),
+      record_count:
+        iso9660ReaderLimitsSchema.shape.record_count.exactOptional(),
+      directory_bytes:
+        iso9660ReaderLimitsSchema.shape.directory_bytes.exactOptional(),
+      path_bytes: iso9660ReaderLimitsSchema.shape.path_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `ISO 9660 admission; omitted fields use ${JSON.stringify(DEFAULT_ISO9660_READER_LIMITS)}. Descriptor count bounds the volume descriptor set; directory depth, record count, directory bytes and path bytes bound directory-tree traversal.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -161,6 +193,7 @@ export const artifactReaderLimitsSchema = z.strictObject({
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  iso9660: iso9660ReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
@@ -175,6 +208,7 @@ export const resolveArtifactReaderLimits = (
   },
   node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
+  iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),

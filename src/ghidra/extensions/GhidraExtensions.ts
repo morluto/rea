@@ -8,8 +8,8 @@ import type { AppConfig } from "../../config/types.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   type ArtifactResourceScope,
@@ -199,12 +199,12 @@ const extensionRefusalError = (
         refusal.reason,
         { userMessage: refusal.reason },
       )
-    : new AnalysisUnsupportedTargetError(
+    : // The reason names the workflows that remain available.
+      unsupportedTarget(
         "resolve_analysis_profile",
         target.path,
+        target.format,
         refusal.reason,
-        // The reason names the workflows that remain available.
-        { remediationAction: refusal.reason },
       );
 
 /** Snapshot committed extension bytes into the private runtime before Java loads them. */

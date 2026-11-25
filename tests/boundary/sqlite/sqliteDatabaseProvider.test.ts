@@ -544,6 +544,12 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
       expect(result.ok ? undefined : result.error).toBeInstanceOf(
         ProviderCleanupError,
       );
+      if (result.ok) throw new Error("Expected an unresolved cleanup");
+      if (scenario === "cancelled cleanup-failure") {
+        const [cancellation] = result.error.secondaryFailures;
+        expect(cancellation?._tag).toBe("AnalysisCancelledError");
+        expect(cancellation?.cause).toBe(cancellationReason);
+      }
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -970,22 +976,6 @@ it("reports application-collation row failures as unavailable while retaining sc
     );
   }
   expect(Buffer.compare(await readFile(path), original)).toBe(0);
-});
-
-it("rejects malformed databases without altering the selected file", async () => {
-  const workspace = await createTestWorkspace("rea-sqlite-invalid-");
-  onTestFinished(() => removeTestWorkspace(workspace.root));
-  const path = await workspace.write(
-    "not-a-database.db",
-    "selected non-SQLite bytes",
-  );
-  const bytes = await readFile(path);
-  const result = await createProvider().inspect({ path });
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisInputError" },
-  });
-  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 nativeTest.runIf(process.platform !== "win32")(

@@ -1,6 +1,9 @@
 import { Budget } from "../domain/budget.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  BinaryReader,
+  createBinaryReaderCache,
+} from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import { absoluteOffset, alignUp, type ScanRegion } from "./UefiBytes.js";
 import {
@@ -63,6 +66,8 @@ export const unsupportedVolumeBodyReason = (
 ): string =>
   `Firmware volume at 0x${header.absoluteBase.toString(16)} has an unsupported file-system GUID (${header.fileSystemGuid ?? "unavailable"}); its body was not parsed.`;
 
+const fvReaderFor = createBinaryReaderCache(true, "UEFI firmware volume");
+
 /**
  * Parse one header at a local position. Returns null when the position cannot
  * hold a structurally complete header (bounds or signature); returns header
@@ -82,7 +87,7 @@ export function parseFirmwareVolumeHeader(
   ) {
     return null;
   }
-  const reader = new BinaryReader(region.buffer, true, "UEFI firmware volume");
+  const reader = fvReaderFor(region.buffer);
   const signature = reader.u32(
     localHeaderBase + FV_HEADER_LAYOUT.signatureOffset,
   );
@@ -438,7 +443,7 @@ function verifyFirmwareVolumeChecksum(
   ) {
     return false;
   }
-  const checksumReader = new BinaryReader(buffer, true, "UEFI firmware volume");
+  const checksumReader = fvReaderFor(buffer);
   let total = 0;
   for (let offset = 0; offset < headerLength; offset += 2) {
     total = (total + checksumReader.u16(localHeaderBase + offset)) & 0xffff;

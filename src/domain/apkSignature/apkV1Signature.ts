@@ -265,6 +265,7 @@ export const centralDirectoryV1SignatureEntries = (
   centralDirectorySize: number,
   totalEntries: number,
   apksigRecords: number = totalEntries,
+  baseOffset = 0,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const end = centralDirectoryOffset + centralDirectorySize;
   if (
@@ -275,7 +276,7 @@ export const centralDirectoryV1SignatureEntries = (
   )
     return err({
       kind: "malformed-central-directory",
-      offset: centralDirectoryOffset,
+      offset: baseOffset + centralDirectoryOffset,
       detail: "declared central-directory extent is outside the file",
     });
   const reader = new BinaryReader(
@@ -309,7 +310,7 @@ export const centralDirectoryV1SignatureEntries = (
       }[kind];
       return err({
         kind: "malformed-central-directory",
-        offset,
+        offset: baseOffset + offset,
         detail,
       });
     }
@@ -330,7 +331,7 @@ export const centralDirectoryV1SignatureEntries = (
                 name: "max_v1_signature_entries",
                 maximum: MAX_V1_SIGNATURE_ENTRIES,
               },
-              { offset: at },
+              { offset: baseOffset + at },
             ),
           );
         entries.push({
@@ -354,7 +355,7 @@ export const centralDirectoryV1SignatureEntries = (
   if (at !== end)
     return err({
       kind: "malformed-central-directory",
-      offset: at,
+      offset: baseOffset + at,
       detail: `${String(end - at)} bytes of the declared central directory remain after ${String(totalEntries)} records`,
     });
   return ok({
@@ -413,31 +414,26 @@ export const centralDeclaresEncryption = (entry: ApkV1Entry): boolean =>
 /** Why an entry's stored bytes could not be located. */
 export type ApkLocalEntryError = { readonly detail: string };
 
-/** An entry's stored bytes and whether either header sets the encryption flag. */
-export interface ApkLocalEntryData {
-  readonly data: Uint8Array;
+/** Validated local header extent for one v1 signature entry. */
+export interface ApkLocalEntryHeader {
+  readonly dataStart: number;
+  readonly dataEnd: number;
   readonly declaresEncryption: boolean;
 }
 
 /**
- * Locate an entry's stored (possibly compressed) bytes through its local file
- * header. The data must lie within the archive's entry region (before the
- * signing block or central directory) and its declared sizes must be read
- * directly, so Zip64-sized entries are reported, not guessed. As apksig's
- * LocalFileRecord does, the local header must agree with the central
- * directory on the name (no longer in bytes, then equal once decoded, as
- * apksig compares them), the
- * data-descriptor flag and (without a data
- * descriptor) the CRC-32 and both sizes: a disagreement leaves the entry's
- * bytes unknown, never read from one side. Like LocalFileRecord, the
- * encryption flag (bit 0) does not stop the read; it is returned so the caller
- * can say so, and bytes that really are encrypted fail to decode.
+ * Validate a local file header (starting at byte 0 of `localHeaderAndName`)
+ * against the central-directory entry and return the file-relative byte span
+ * of its stored data. As in apksig's LocalFileRecord, names and descriptor
+ * flags must agree. Without a data descriptor the CRC and sizes must also
+ * agree. Either header can declare encryption.
  */
-export const localEntryData = (
-  bytes: Uint8Array,
+export const parseLocalEntryHeader = (
+  localHeaderAndName: Uint8Array,
   entry: ApkV1Entry,
   entriesEnd: number,
-): Result<ApkLocalEntryData, ApkLocalEntryError> => {
+  fileSize: number,
+): Result<ApkLocalEntryHeader, ApkLocalEntryError> => {
   if (
     entry.compressedSize === ZIP64_SENTINEL ||
     entry.uncompressedSize === ZIP64_SENTINEL ||
@@ -445,21 +441,25 @@ export const localEntryData = (
   )
     return err({ detail: "Zip64 entry sizes are not read" });
   const at = entry.localHeaderOffset;
-  const limit = Math.min(entriesEnd, bytes.length);
+  const limit = Math.min(entriesEnd, fileSize);
   if (at + ZIP_LOCAL_HEADER_BYTES > limit)
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
   const reader = new BinaryReader(
-    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    Buffer.from(
+      localHeaderAndName.buffer,
+      localHeaderAndName.byteOffset,
+      localHeaderAndName.byteLength,
+    ),
     true,
     "zip",
   );
-  if (reader.u32(at) !== ZIP_LOCAL_HEADER_SIGNATURE)
+  if (reader.u32(0) !== ZIP_LOCAL_HEADER_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const flags = reader.u16(at + 6);
+  const flags = reader.u16(6);
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -472,34 +472,38 @@ export const localEntryData = (
       ["compressed size", 18, entry.compressedSize],
       ["uncompressed size", 22, entry.uncompressedSize],
     ] as const) {
-      const local = reader.u32(at + offset);
+      const local = reader.u32(offset);
       if (local !== expected)
         return err({
           detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
         });
     }
-  const nameLength = reader.u16(at + 26);
+  const nameLength = reader.u16(26);
   const nameStart = at + ZIP_LOCAL_HEADER_BYTES;
   if (
     nameStart + nameLength > limit ||
     // apksig refuses a local name longer in bytes before decoding either.
     nameLength > entry.rawName.length ||
     !sameZipName(
-      bytes.subarray(nameStart, nameStart + nameLength),
+      localHeaderAndName.subarray(
+        ZIP_LOCAL_HEADER_BYTES,
+        ZIP_LOCAL_HEADER_BYTES + nameLength,
+      ),
       entry.rawName,
     )
   )
     return err({
       detail: "local header name differs from the central directory's",
     });
-  const start = nameStart + nameLength + reader.u16(at + 28);
-  const end = start + entry.compressedSize;
-  if (end > limit)
+  const dataStart = nameStart + nameLength + reader.u16(28);
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > limit)
     return err({
-      detail: `entry data at byte ${String(start)} runs past the entries`,
+      detail: `entry data at byte ${String(dataStart)} runs past the entries`,
     });
   return ok({
-    data: bytes.subarray(start, end),
+    dataStart,
+    dataEnd,
     declaresEncryption: ((entry.flags | flags) & FLAG_ENCRYPTED) !== 0,
   });
 };

@@ -7,6 +7,7 @@ export const javaScriptRouteMechanismSchema = z.enum([
   "nested-route-object",
   "typed-route-tree",
   "next-app-chunk",
+  "expo-router-context-key",
   "navigation-target",
   "route-string-constant",
 ]);

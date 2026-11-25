@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../../domain/result.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { reportedSystemCode } from "../../kernel/reportedSystemCode.js";
 
 /** Parsed listener failure facts for recovery guidance. */
 export type StreamableHttpListenFailure =
@@ -34,18 +35,11 @@ export type StreamableHttpListenClassification = Result<
   UnclassifiedStreamableHttpListenFailure
 >;
 
-const systemCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause))
-    return undefined;
-  const code: unknown = cause.code;
-  return typeof code === "string" ? code : undefined;
-};
-
 /** Classify configuration and native listener failures once, at their owning boundary. */
 const classify = (cause: unknown): StreamableHttpListenClassification => {
   if (cause instanceof StreamableHttpHostAllowlistError)
     return ok(cause.failure);
-  const code = systemCode(cause);
+  const code = reportedSystemCode(cause);
   switch (code) {
     case "ENOTFOUND":
     case "EAI_AGAIN":

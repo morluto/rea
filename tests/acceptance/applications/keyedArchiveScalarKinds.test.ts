@@ -273,10 +273,10 @@ cliTest(
       });
       expect(output.exitCode).toBe(1);
       expect(output.json).toMatchObject({
-        code: "artifact_operation_failed",
+        code: "unsupported_target",
         details: {
-          reason: "format",
-          detail: expect.stringContaining("Keyed archive has no $top roots"),
+          failure_kind: "malformed",
+          reason: expect.stringContaining("Keyed archive has no $top roots"),
         },
       });
       const opened = await call("open_binary", { path });

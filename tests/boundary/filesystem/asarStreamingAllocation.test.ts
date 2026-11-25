@@ -18,8 +18,8 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import {
-  closeAsarHandle,
   readValidatedAsarEntry,
+  readValidatedAsarRange,
 } from "../../../src/artifacts/AsarEntryStream.js";
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
@@ -112,13 +112,17 @@ const createPackedFixture = async () => {
 
 describe("ASAR entry streaming", () => {
   it.skipIf(process.platform === "win32")(
-    "closes a packed member handle when its unopened output stream is destroyed",
+    "reuses one snapshot descriptor across container and packed member streams until reader close",
     async () => {
       const archive = await createPackedFixture();
       let snapshotPath: string | undefined;
+      let snapshotOpens = 0;
       const reader = new AsarArtifactReader(archive, {
         openFile: async (path, flags) => {
-          if (path !== archive) snapshotPath = path;
+          if (path !== archive) {
+            snapshotPath = path;
+            snapshotOpens += 1;
+          }
           return openFile(path, flags);
         },
       });
@@ -130,22 +134,34 @@ describe("ASAR entry streaming", () => {
         }
         const entry = entries.find(({ path }) => path === "small.js");
         if (entry === undefined) throw new Error("Expected packed ASAR member");
-        const snapshot = await reader.openContainer();
         if (snapshotPath === undefined)
           throw new Error("Expected snapshot acquisition");
         const identity = await lstat(snapshotPath);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
+        const snapshot = await reader.openContainer();
         await buffer(snapshot);
-        const probe = await openFile(snapshotPath, "r");
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
-        await probe.close();
-        expect(await matchingDescriptorCount(identity)).toBe(0);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
         const output = await reader.open(entry);
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
         const closed = new Promise<void>((resolve) =>
           output.once("close", resolve),
         );
         output.destroy();
         await closed;
+        expect(output.destroyed).toBe(true);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
+        const second = await reader.open(entry);
+        expect((await buffer(second)).toString("utf8")).toBe(packedContents);
+        expect(snapshotOpens).toBe(1);
+        expect(await matchingDescriptorCount(identity)).toBe(1);
+
+        await reader.close();
         await waitForNoMatchingDescriptor(identity);
       } finally {
         await reader.close();
@@ -153,34 +169,31 @@ describe("ASAR entry streaming", () => {
     },
   );
 
-  it("closes an acquired packed member handle before returning cancellation", async () => {
+  it("closes an acquired snapshot handle before returning cancellation", async () => {
     const archive = await createPackedFixture();
-    const cancellation = new Error("cancel at member acquisition");
+    const cancellation = new Error("cancel at snapshot handle acquisition");
     let controller: AbortController | undefined;
-    let memberHandle: FileHandle | undefined;
+    let snapshotHandle: FileHandle | undefined;
     const reader = new AsarArtifactReader(archive, {
       openFile: async (path, flags) => {
         const handle = await openFile(path, flags);
-        if (controller !== undefined) {
-          memberHandle = handle;
+        if (path !== archive && controller !== undefined) {
+          snapshotHandle = handle;
           controller.abort(cancellation);
         }
         return handle;
       },
     });
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries.find(({ path }) => path === "small.js");
-      if (entry === undefined) throw new Error("Expected packed ASAR member");
+      await reader.prepareContainer();
       controller = new AbortController();
-      await expect(reader.open(entry, controller.signal)).rejects.toMatchObject(
-        {
-          reason: "cancelled",
-          cause: cancellation,
-        },
-      );
-      expect(memberHandle?.fd).toBe(-1);
+      await expect(
+        reader.openContainer(controller.signal),
+      ).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: cancellation,
+      });
+      expect(snapshotHandle?.fd).toBe(-1);
     } finally {
       await reader.close();
     }
@@ -212,6 +225,57 @@ describe("ASAR entry streaming", () => {
       }
     },
   );
+});
+
+describe("ASAR range streaming", () => {
+  it("propagates cancellation during an in-flight range read even under stream backpressure", async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("abort during paused chunk");
+    const chunkBytes = 256 * 1024;
+    let readCalls = 0;
+    const read = (async (target: Buffer, offset: number, length: number) => {
+      readCalls += 1;
+      controller.abort(cancellation);
+      target.fill(0x61, offset, offset + length);
+      return { bytesRead: length, buffer: target };
+    }) as FileHandle["read"];
+    const output = readValidatedAsarRange(
+      { read },
+      0,
+      chunkBytes * 2,
+      "large.bin",
+      "/fixture/archive.asar",
+      controller.signal,
+    );
+    const failed = new Promise<Error>((resolve) =>
+      output.once("error", resolve),
+    );
+    output.pause();
+    output.read(0);
+    await expect(failed).resolves.toMatchObject({
+      reason: "cancelled",
+      cause: cancellation,
+    });
+    expect(readCalls).toBe(1);
+  });
+
+  it("rejects out-of-bounds range reads with declared-size integrity failure", async () => {
+    const read = (async (target: Buffer, _offset: number, length: number) => ({
+      bytesRead: length + 1,
+      buffer: target,
+    })) as FileHandle["read"];
+    const output = readValidatedAsarRange(
+      { read },
+      0,
+      16,
+      "overread.bin",
+      "/fixture/archive.asar",
+    );
+    await expect(buffer(output)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "declared-size",
+    });
+  });
 });
 
 describe("ASAR entry producer identity", () => {
@@ -321,31 +385,6 @@ describe("ASAR entry producer identity", () => {
 });
 
 describe("ASAR read failures", () => {
-  it.skipIf(process.platform === "win32")(
-    "checks cancellation after closing an empty member handle",
-    async () => {
-      const root = await createTestTempDirectory("rea-asar-empty-close-");
-      const archive = join(root, "container.asar");
-      await writeFile(archive, "container bytes");
-      const identity = await lstat(archive);
-      const handle = await openFile(archive, "r");
-      try {
-        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
-        const controller = new AbortController();
-
-        await expect(
-          closeAsarHandle(async () => {
-            await handle.close();
-            controller.abort();
-          }, controller.signal),
-        ).rejects.toMatchObject({ reason: "cancelled" });
-        await waitForNoMatchingDescriptor(identity);
-      } finally {
-        await handle.close().catch(() => undefined);
-      }
-    },
-  );
-
   it.skipIf(process.platform === "win32")(
     "closes the opened unpacked file and retains ASAR context when handle stat fails",
     async () => {

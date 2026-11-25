@@ -3,6 +3,7 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import { basename } from "node:path";
+import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { equalJsonText } from "../../domain/jsonSerialization.js";
@@ -22,9 +23,15 @@ export const bindSessionEvidenceExecution = (
   evidence: Evidence,
   callerInputPath: string | undefined,
 ): AnalysisExecution => {
+  // A sourced execution reuses its record only when that record links exactly
+  // the sources the execution carries, in order, so the reused Evidence keeps
+  // its authenticated provenance.
+  const sources = execution.sourceEvidence ?? [];
   if (
-    (execution.sourceEvidence !== undefined &&
-      execution.sourceEvidence.length > 0) ||
+    sources.length !== evidence.evidence_links.length ||
+    sources.some(
+      (source, index) => source.evidence_id !== evidence.evidence_links[index],
+    ) ||
     evidence.caller_input_path !== callerInputPath
   )
     return execution;
@@ -46,8 +53,12 @@ export const bindSessionEvidenceExecution = (
       : Object.freeze({ ...execution.subject });
   const result = Object.freeze({
     ...execution,
-    result: evidence.normalized_result,
-    rawResult: evidence.raw_result,
+    result:
+      immutableJsonSnapshotMember(evidence, "normalized_result") ??
+      evidence.normalized_result,
+    rawResult:
+      immutableJsonSnapshotMember(evidence, "raw_result") ??
+      evidence.raw_result,
     provider: evidence.provider,
     ...(evidence.analysis_profile === null
       ? {}
@@ -127,7 +138,7 @@ export const completedOperationEvidence = (
       parameters,
       observation,
       "observed",
-      { callerTarget: options.target },
+      { callerTarget: options.target, immutable: true },
     ),
   );
 };

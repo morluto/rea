@@ -1,3 +1,4 @@
+import { supportedFixtureTarget } from "../../fixtures/analysisExecution.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -295,12 +296,7 @@ const connectUnconfiguredSymbolFallback = async (
             remediation: "Configure the fixture symbol provider.",
             diagnostics: {},
           }),
-          inspectTargetSupport: () => ({
-            status: "supported",
-            code: null,
-            reason: null,
-            diagnostics: {},
-          }),
+          inspectTargetSupport: supportedFixtureTarget,
         },
       ],
       "auto",

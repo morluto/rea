@@ -225,14 +225,14 @@ it.each([
   await expect(decodeBunModuleGraph(graph)).rejects.toThrow(reason);
 });
 
-it("recognizes a truncated section as malformed", async () => {
+it("recognizes a truncated section as truncated", async () => {
   const section = bunPrefixedPayload(bunModuleGraphPayload({ modules: [{}] }));
   const result = await locate(
     machoBunSection(section.subarray(0, section.length - 1)),
   );
   expect(result).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "truncated" },
   });
 });
 
@@ -251,7 +251,7 @@ it("locates the legacy trailer before its final carrier length", async () => {
 it("rejects truncated length prefixes and ignores empty placeholders", async () => {
   expect(await locate(machoBunSection(Buffer.from([1])))).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "truncated" },
   });
   expect(await locate(machoBunSection(Buffer.alloc(8)))).toEqual({
     status: "absent",
@@ -297,7 +297,7 @@ it.each([
     expect((await probe(bytes, limits)).result).toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "truncated",
         message: expect.stringContaining("truncated"),
       },
     });
@@ -322,7 +322,7 @@ it("reports an impossible Bun suffix byte count as a format error", async () => 
   expect((await probe(section(), limits)).result).toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("byte_count"),
     },
   });
@@ -353,7 +353,10 @@ it.each([
     change(bytes);
     expect(await locate(bytes)).toMatchObject({
       status: "present",
-      failure: { reason: "format", message: expect.stringContaining(reason) },
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining(reason),
+      },
     });
   },
 );
@@ -388,7 +391,7 @@ it.each(["thin", "universal"] as const)(
     expect(result).toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("segment range is outside the file"),
       },
     });
@@ -426,7 +429,7 @@ it.each(["cpu-type", "cpu-subtype"] as const)(
     expect((await probe(unpadded)).result).toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("CPU type/subtype disagrees"),
       },
     });
@@ -575,7 +578,7 @@ it.each([
     expect(await locate(carrier(section))).toMatchObject({
       status: "present",
       failure: {
-        reason: "format",
+        reason: "truncated",
         message: expect.stringContaining("past the end of the file"),
       },
     });
@@ -596,7 +599,7 @@ it("requires PE raw section padding to fit before reading a Bun graph", async ()
   expect((await probe(valid.subarray(0, -1))).result).toMatchObject({
     status: "present",
     failure: {
-      reason: "format",
+      reason: "truncated",
       message: expect.stringContaining("past the end of the file"),
     },
   });
@@ -742,7 +745,7 @@ it.each([
   const { result } = await probe(image);
   expect(result).toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 

@@ -39,8 +39,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: .nvmrc
       - name: Cache npm package downloads
         id: npm-cache
@@ -54,13 +55,13 @@ jobs:
       - name: Acquire fixed upstream native profile in runner temporary storage
         shell: bash
         run: |
-          capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.2.3"
+          capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.3.1"
           mkdir -p "${capture_tool_root}"
           # This immutable GET may reset mid-body; retry it before checksum verification.
           curl --fail --location --retry 3 --retry-all-errors --max-time 180 \
-            https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz \
+            https://downloads.mitmproxy.org/12.3.1/mitmproxy-12.3.1-linux-x86_64.tar.gz \
             --output "${capture_tool_root}/mitmproxy.tar.gz"
-          echo '2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5  mitmproxy.tar.gz' \
+          echo 'f7b4237f5702f6cd21357fe6e4680a7e905f8f9b816b872230d018ea696c34d5  mitmproxy.tar.gz' \
             | (cd "${capture_tool_root}" && sha256sum --check --strict)
           tar -xzf "${capture_tool_root}/mitmproxy.tar.gz" -C "${capture_tool_root}"
           echo "REA_MITMDUMP_COMMAND=${capture_tool_root}/mitmdump" >> "${GITHUB_ENV}"

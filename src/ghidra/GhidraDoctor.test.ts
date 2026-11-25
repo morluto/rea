@@ -18,7 +18,10 @@ import {
 } from "vitest";
 
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
-import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
+import {
+  createDoctorHostFixture,
+  ubuntu2404Distribution,
+} from "../application/Doctor.fixture.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
@@ -96,14 +99,7 @@ const doctorHost = (
     platform: "linux",
     architecture: "x64",
     macosVersion: () => Promise.resolve(undefined),
-    linuxDistribution: () =>
-      Promise.resolve({
-        id: "ubuntu",
-        versionId: "24.04",
-        packageFamily: "deb",
-        hopperSetupSupported: true,
-      }),
-    validTarget: () => Promise.resolve(true),
+    linuxDistribution: ubuntu2404Distribution,
     executable: (path) =>
       Promise.resolve(hopperAvailable && path.includes("Hopper")),
     linuxDemoRuntimeCheck: () =>
@@ -192,10 +188,11 @@ describe("Ghidra doctor JDK alternatives", () => {
     );
   });
 
-  it("reads candidate versions from files and excludes out-of-range JDKs and runtime-only homes", async () => {
+  it("reads candidate versions within the metadata budget and excludes ineligible homes", async () => {
     const root = await createTestTempDirectory("rea-ghidra-jdks-");
+    const compatibleRelease = 'JAVA_VERSION="27.0.1"\n'.padEnd(65_536, " ");
     const homes = [
-      ["wrong-name-21", 'JAVA_VERSION="27.0.1"\n', true],
+      ["wrong-name-21", compatibleRelease, true],
       ["too-old", 'JAVA_VERSION="21.0.9"\n', true],
       ["too-new", 'JAVA_VERSION="29"\n', true],
       ["runtime-only", 'JAVA_VERSION="27"\n', false],
@@ -218,7 +215,7 @@ describe("Ghidra doctor JDK alternatives", () => {
     );
     expect(matches).toEqual({
       candidates: [{ home: join(root, "wrong-name-21"), version: "27.0.1" }],
-      limits: [],
+      limits: [{ kind: "release-metadata", limit: 65_536, skippedHomes: 1 }],
     });
   });
 });
@@ -294,6 +291,38 @@ describe("Ghidra doctor integration", async () => {
     ).toMatchObject({
       ok: true,
     });
+  });
+
+  it("classifies every passing provider check healthy and keeps failure classes for failures", async () => {
+    const passing = await runDoctor(undefined, doctorHost(await inspection()));
+    const checks = passing.providerInspections?.[0]?.checks ?? [];
+    expect(checks.map(({ name }) => name)).toEqual(
+      expect.arrayContaining(["configuration", "platform", "architecture"]),
+    );
+    expect(
+      checks.map(({ ok, classification, code }) => ({
+        ok,
+        classification,
+        code,
+      })),
+    ).toEqual(
+      checks.map(() => ({ ok: true, classification: "healthy", code: null })),
+    );
+
+    const unsupported = await runDoctor(
+      undefined,
+      doctorHost(
+        await inspection({ installDir: INSTALL, architecture: "arm" }),
+      ),
+    );
+    expect(
+      unsupported.providerInspections?.[0]?.checks.find(
+        ({ name }) => name === "architecture",
+      ),
+    ).toMatchObject({ ok: false, classification: "unsupported_host" });
+    expect(
+      unsupported.checks.find(({ name }) => name === "ghidra-architecture"),
+    ).toMatchObject({ ok: false, classification: "unsupported_host" });
   });
 
   it.each([
@@ -689,6 +718,7 @@ describe("Windows Ghidra temporary directory check", () => {
       expect.objectContaining({
         name: "temp_directory",
         ok: true,
+        classification: "healthy",
         detail: expect.stringContaining(
           "does not test writes by Ghidra's child JVM",
         ),

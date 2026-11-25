@@ -8,7 +8,10 @@ import {
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
-import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
+import {
+  readStableFileBytes,
+  RegularFileCapacityError,
+} from "../filesystem/readStableFileBytes.js";
 import {
   ArtifactFileCleanupFailure,
   ArtifactResourceScope,
@@ -85,8 +88,14 @@ type JdkLocationScanLimit = {
   readonly limit: number;
 };
 
+type JdkReleaseMetadataRefusal = {
+  readonly kind: "release-metadata";
+  readonly limit: number;
+};
+
 type JdkDiscoveryLimit =
   | JdkLocationScanLimit
+  | (JdkReleaseMetadataRefusal & { readonly skippedHomes: number })
   | { readonly kind: "suggestions"; readonly limit: number };
 
 /** Doctor hints based on installed files. Candidate JVMs are never started. */
@@ -108,7 +117,9 @@ export const findGhidraInstalledJdks = async (
   if (selected !== undefined) seen.add(selected);
   const candidates: JdkCandidate[] = [];
   const limits: JdkDiscoveryLimit[] = [];
-  for (const location of locations) {
+  let metadataLimit: JdkReleaseMetadataRefusal | undefined;
+  let skippedHomes = 0;
+  scan: for (const location of locations) {
     const listed = await options.resourceOwner.run(() =>
       listJdkHomes(location, options),
     );
@@ -122,13 +133,20 @@ export const findGhidraInstalledJdks = async (
         options,
       );
       if (candidate === undefined) continue;
+      if ("kind" in candidate) {
+        metadataLimit = candidate;
+        skippedHomes++;
+        continue;
+      }
       candidates.push(candidate);
       if (candidates.length === MAX_SUGGESTIONS) {
         limits.push({ kind: "suggestions", limit: MAX_SUGGESTIONS });
-        return { candidates, limits };
+        break scan;
       }
     }
   }
+  if (metadataLimit !== undefined)
+    limits.push({ ...metadataLimit, skippedHomes });
   return { candidates, limits };
 };
 
@@ -205,12 +223,12 @@ const readJdkCandidate = async (
   seen: Set<string>,
   requirement: GhidraJavaRequirement,
   options: GhidraInstallationFileOptions,
-): Promise<JdkCandidate | undefined> => {
+): Promise<JdkCandidate | JdkReleaseMetadataRefusal | undefined> => {
   const resolved = await realpath(home).catch(() => undefined);
   if (resolved === undefined || seen.has(resolved)) return undefined;
   seen.add(resolved);
   const version = await jdkVersion(home, options);
-  if (version === undefined) return undefined;
+  if (typeof version !== "string") return version;
   const major = ghidraJavaMajor(version);
   return major !== undefined && ghidraJavaMajorAccepted(major, requirement)
     ? { home, version }
@@ -220,7 +238,7 @@ const readJdkCandidate = async (
 const jdkVersion = async (
   home: string,
   options: GhidraInstallationFileOptions,
-): Promise<string | undefined> => {
+): Promise<string | JdkReleaseMetadataRefusal | undefined> => {
   try {
     for (const name of ["java", "javac"]) {
       const path = posix.join(home, "bin", name);
@@ -279,6 +297,8 @@ const jdkVersion = async (
       });
     if (options.signal?.aborted)
       throw cancelledBy("ghidra:doctor", options.signal);
+    if (cause instanceof RegularFileCapacityError)
+      return { kind: "release-metadata", limit: cause.maximumBytes };
     return undefined;
   }
 };

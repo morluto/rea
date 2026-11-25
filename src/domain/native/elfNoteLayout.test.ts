@@ -1,6 +1,22 @@
 import { expect, it } from "vitest";
 import { readElfNoteHeader } from "./elfNoteLayout.js";
 
+it("keeps byte order and view offsets independent across repeated reads", () => {
+  const backing = new Uint8Array(13);
+  const first = backing.subarray(0, 12);
+  const second = backing.subarray(1);
+  backing.set([1, 2]);
+  const header = (namesz: number) => ({
+    ok: true,
+    value: { namesz, descsz: 0, type: 0 },
+  });
+  expect(readElfNoteHeader(first, true)).toEqual(header(0x0201));
+  expect(readElfNoteHeader(first, false)).toEqual(header(0x01020000));
+  expect(readElfNoteHeader(second, true)).toEqual(header(2));
+  backing[1] = 3;
+  expect(readElfNoteHeader(first, true)).toEqual(header(0x0301));
+});
+
 it.each([false, true])(
   "preserves raw note sizes and type without admission (littleEndian=%s)",
   (littleEndian) => {
@@ -40,5 +56,27 @@ it.each([false, true])(
           message: expect.stringContaining("truncated"),
         },
       });
+  },
+);
+
+it.each([false, true])(
+  "reads note headers at an explicit offset within a shared buffer (littleEndian=%s)",
+  (littleEndian) => {
+    const table = Buffer.alloc(32, 0);
+    const view = new DataView(table.buffer, table.byteOffset, table.byteLength);
+    view.setUint32(16, 4, littleEndian);
+    view.setUint32(20, 16, littleEndian);
+    view.setUint32(24, 3, littleEndian);
+    expect(readElfNoteHeader(table, littleEndian, 16)).toEqual({
+      ok: true,
+      value: { namesz: 4, descsz: 16, type: 3 },
+    });
+    expect(readElfNoteHeader(table, littleEndian, 24)).toEqual({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("truncated"),
+      },
+    });
   },
 );

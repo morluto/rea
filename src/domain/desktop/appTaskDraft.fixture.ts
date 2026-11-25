@@ -1,3 +1,4 @@
+import { zipEntry, zipView } from "./zipView.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
@@ -83,3 +84,22 @@ export const passing = (
 /** The pointer a check reads, when it reads one. */
 export const pointerOf = (check: DesktopTaskCheckInput): string | undefined =>
   "pointer" in check ? check.pointer : undefined;
+
+export const jsonStateArchive = (value: unknown) => {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  return zipView(
+    [
+      zipEntry(
+        {
+          name: "state.json",
+          size: bytes.length,
+          compressedSize: bytes.length,
+          method: 8,
+          encrypted: false,
+        },
+        bytes,
+      ),
+    ],
+    1,
+  );
+};

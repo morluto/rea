@@ -6,16 +6,21 @@ import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { isPathWithinRoot } from "../dist/domain/localPath.js";
+import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { containsText } from "./verify/clients/result-discovery.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
@@ -119,27 +124,9 @@ await withVerifierCleanup(async () => {
       validateFormats: false,
     });
     const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      return (
-        value !== null &&
-        typeof value === "object" &&
-        Object.values(value).some((item) => containsText(item, text))
-      );
-    };
     const call = (name, args) => {
       lastTool = name;
-      return {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          {
-            id: `call_grok_${turn}`,
-            type: "function",
-            function: { name, arguments: JSON.stringify(args) },
-          },
-        ],
-      };
+      return toolCallMessage(`call_grok_${turn}`, name, args);
     };
     const verifyEvidence = async (bytes) => {
       const { evidence, shapes } = await assertClientJavaScriptFixtureEvidence(
@@ -388,12 +375,6 @@ command = "unrelated-server"
 enabled = false
 `;
     await writeFile(configPath, original);
-    const rea = async (args) =>
-      commands.exec(
-        process.execPath,
-        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
-      );
     clientVersion = (
       await commands.exec(command, ["--version"], {
         env: environment,
@@ -401,61 +382,23 @@ enabled = false
         stdin: "pipe",
       })
     ).stdout.trim();
-    for (const args of [
-      ["setup", "--client", "grok_build", "--dry-run"],
-      ["setup", "--client", "grok_build", "--yes"],
-      ["doctor", "--client", "grok_build", "--skill"],
-    ]) {
-      const result = await rea(args);
-      await writeFile(
-        join(
-          lab,
-          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
-        ),
-        result.stdout,
-      );
-      const parsed = JSON.parse(result.stdout);
-      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-      else {
-        assert.equal(
-          parsed.status,
-          args.includes("--dry-run") ? "planned" : "ready",
+    await verifyClientSetup({
+      client: "grok_build",
+      commands,
+      runtimeRoot,
+      environment,
+      workspace,
+      lab,
+      configPath,
+      original,
+      skillDirectory,
+      checkConfigured: (configured) => {
+        assert(
+          configured.includes("unrelated-server") &&
+            configured.includes("# Keep unrelated settings"),
         );
-        if (args.includes("--dry-run")) {
-          assert(
-            parsed.plannedActions.some(
-              (action) => action.target === configPath,
-            ),
-          );
-          assert(
-            parsed.plannedActions.some(
-              (action) => action.target === skillDirectory,
-            ),
-          );
-          assert(
-            parsed.plannedActions.every(
-              (action) =>
-                action.target === configPath ||
-                (isAbsolute(action.target) &&
-                  isPathWithinRoot(skillDirectory, action.target)),
-            ),
-            "Refuse writes outside the owned profile/skill",
-          );
-        }
-      }
-    }
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    const configured = await readFile(configPath, "utf8");
-    assert(
-      configured.includes("unrelated-server") &&
-        configured.includes("# Keep unrelated settings"),
-    );
-    const repeated = JSON.parse(
-      (await rea(["setup", "--client", "grok_build", "--yes"])).stdout,
-    );
-    assert.deepEqual(repeated.appliedActions, []);
-    assert.equal(await readFile(configPath, "utf8"), configured);
-    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+      },
+    });
     const skill = await readFile(join(skillDirectory, "SKILL.md"), "utf8");
     expectedSkill = skill
       .trimEnd()
@@ -577,14 +520,6 @@ enabled = false
       fixtureFailure: fixture?.failure,
       verifier: lineage,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    await publishClientReceipt(lab, receipt);
   },
 ]);

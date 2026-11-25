@@ -147,6 +147,51 @@ it("reports both limits when a capped location yields five suggestions", async (
   });
 });
 
+it("reports the metadata budget and direct verification when it has no suggestions", async () => {
+  const { root, location, resourceOwner } = await fixture();
+  for (const name of ["openjdk-first", "openjdk-second"]) {
+    const home = join(root, name);
+    await installJdk(home);
+    await writeFile(
+      join(home, "release"),
+      'JAVA_VERSION="27"\n'.padEnd(65_537, " "),
+    );
+  }
+  const inspected = await installation.inspectGhidraInstallation(
+    {
+      platform: "linux",
+      installDir: "/opt/ghidra",
+      environment: {},
+      resourceOwner,
+    },
+    { ...ghidraProfileInstallationHost, probeJava: () => missingJavaProbe },
+  );
+  const inspect = vi
+    .spyOn(installation, "inspectGhidraInstallation")
+    .mockResolvedValue(inspected);
+  const locations = vi
+    .spyOn(installedJdks, "ghidraJdkLocations")
+    .mockReturnValue([location]);
+  onTestFinished(() => {
+    inspect.mockRestore();
+    locations.mockRestore();
+  });
+
+  const result = await inspectSystemGhidraProvider({}, resourceOwner);
+  const java = result.checks.find(({ name }) => name === "java");
+
+  expect(java).toMatchObject({ ok: false, code: "runtime_missing" });
+  expect(java?.remediation).toContain(
+    "skipped 2 JDK homes with a release file larger than 65536 bytes",
+  );
+  expect(java?.remediation).toContain(
+    "Set JAVA_HOME directly to the JDK you want to check and rerun doctor.",
+  );
+  expect(java?.remediation).not.toContain(
+    "Installed JDKs within the declared version bounds",
+  );
+});
+
 it("retains directory cleanup when the native close outcome is uncertain", async () => {
   const { root, location, resourceOwner } = await fixture();
   const closeFailure = new Error("directory close failed");

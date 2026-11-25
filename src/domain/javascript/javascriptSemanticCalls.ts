@@ -276,7 +276,7 @@ const directLiteral = (
     parsed.status === "unknown" &&
     parsed.resourceLimit === "primitive-bytes"
   ) {
-    state.valueResourceLimits.add(parsed.resourceLimit);
+    state.observations.valueResourceLimits.add(parsed.resourceLimit);
     return { literalResourceLimit: parsed.resourceLimit };
   }
   return {};

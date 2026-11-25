@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { registrationChildEnvironment } from "../../tests/support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../../tests/support/process/processFixture.js";
 import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
@@ -104,6 +105,8 @@ const catalogObservationsSchema = z.object({
   invalidGit: resultSchema.nullable(),
   unterminatedGit: resultSchema.nullable(),
   linkedWorktree: resultSchema.nullable(),
+  bareWorktree: resultSchema.nullable(),
+  incompleteBareWorktree: resultSchema.nullable(),
   missingTarget: resultSchema.nullable(),
   cancelledGit: resultSchema.nullable(),
   repeatedFile: resultSchema,
@@ -119,7 +122,7 @@ else if (state.unterminated) process.stdout.write(state.root);
 else if (state.hang) { fs.writeFileSync(state.hang,"ready"); setInterval(()=>{},1000); }
 else {
  const key=process.argv[3];
- process.stdout.write(key==="--show-toplevel"?state.root+"\n":key==="--git-dir"?state.git+"\n":key==="--git-common-dir"?state.common+"\n":"worktree "+state.primary+"\0HEAD inert\0\0");
+ process.stdout.write(key==="--show-toplevel"?state.root+"\n":key==="--git-dir"?state.git+"\n":key==="--git-common-dir"?state.common+"\n":(state.listing ?? "worktree "+state.primary+"\0HEAD inert\0\0"));
 }
 `;
 
@@ -209,6 +212,15 @@ const CATALOG_PROGRAM = `
       await writeFile(join(primary,'nested','.kilo','opencode.json'),'{}');
       await writeFile(gitState,JSON.stringify({...state,common:join(primary,'.git'),primary}));
       const linkedWorktree = await observeProject({cwd:nested});
+      const bare = join(home,'repository.git');
+      await mkdir(join(bare,'.kilo'),{recursive:true});
+      await writeFile(join(bare,'.kilo','kilo.json'),'{}');
+      const nul = String.fromCharCode(0);
+      const bareRecord = ['worktree '+bare,'bare'].join(nul);
+      await writeFile(gitState, JSON.stringify({...state,common:bare,listing:[bareRecord,'','worktree '+primary,'HEAD inert','',''].join(nul)}));
+      const bareWorktree = await observeProject({cwd:nested});
+      await writeFile(gitState, JSON.stringify({...state,common:bare,listing:bareRecord}));
+      const incompleteBareWorktree = await observeProject({cwd:nested});
       await writeFile(gitState,JSON.stringify(state));
       const emptyRoot = join(home,'empty-worktree');
       await mkdir(join(emptyRoot,'.git'),{recursive:true});
@@ -252,7 +264,7 @@ const CATALOG_PROGRAM = `
       const unknownDetection = await observe();
       const controller = new AbortController(); controller.abort({ fixture: 'cancel' });
       const cancelled = await observe({ agents: ['amp'], signal: controller.signal });
-      console.log(JSON.stringify({ empty, layeredKilo, layeredOpenCode, explicit, detected, project, onlyGlobal, defaultProject, projectAmp, unknown, blockedCandidate, unknownDetection, cancelled, ancestorLayers, selectedLayers, projectReadonly, noRepository, disabled, invalidInline, invalidGit, unterminatedGit, linkedWorktree, missingTarget, cancelledGit, repeatedFile, repeatedDirectory, whitespaceWorktree }));
+      console.log(JSON.stringify({ empty, layeredKilo, layeredOpenCode, explicit, detected, project, onlyGlobal, defaultProject, projectAmp, unknown, blockedCandidate, unknownDetection, cancelled, ancestorLayers, selectedLayers, projectReadonly, noRepository, disabled, invalidInline, invalidGit, unterminatedGit, linkedWorktree, bareWorktree, incompleteBareWorktree, missingTarget, cancelledGit, repeatedFile, repeatedDirectory, whitespaceWorktree }));
       } finally { await resources.close(); if(resources.hasPending) throw Error("Git cleanup remained owned."); }
     `;
 
@@ -297,22 +309,7 @@ it(
         process.execPath,
         ["--import", "tsx", "--input-type=module", "--eval", CATALOG_PROGRAM],
         {
-          env: {
-            PATH: process.env.PATH,
-            SystemRoot: process.env.SystemRoot,
-            WINDIR: process.env.WINDIR,
-            TMPDIR: process.env.TMPDIR,
-            TMP: process.env.TMP,
-            TEMP: process.env.TEMP,
-            HOME: home,
-            USERPROFILE: home,
-            XDG_CONFIG_HOME: join(home, "config"),
-            XDG_DATA_HOME: join(home, "data"),
-            XDG_CACHE_HOME: join(home, "cache"),
-            XDG_STATE_HOME: join(home, "state"),
-            APPDATA: join(home, "appdata"),
-            LOCALAPPDATA: join(home, "localappdata"),
-          },
+          env: registrationChildEnvironment(home),
         },
       );
       expect(child.exitCode, child.stderr).toBe(0);
@@ -442,7 +439,8 @@ const assertKiloNativeLayers = (
       | "ancestorLayers"
       | "selectedLayers"
       | "projectReadonly"
-      | "linkedWorktree",
+      | "linkedWorktree"
+      | "bareWorktree",
   ) => {
     const value = result[name];
     if (value === null) throw Error(`Missing POSIX ${name} observation`);
@@ -489,6 +487,10 @@ const assertKiloNativeLayers = (
       join(home, "primary", "nested", ".kilo", "opencode.json"),
       ...native.slice(4),
     ],
+  });
+  expect(client("bareWorktree")).toMatchObject({
+    configPath: native.at(-1),
+    configPaths: native,
   });
   if (result.missingTarget === null)
     throw Error("Missing POSIX planned target observation");
@@ -548,6 +550,7 @@ const assertKiloNativeLayers = (
     "invalidInline",
     "invalidGit",
     "unterminatedGit",
+    "incompleteBareWorktree",
   ] as const)
     expect(result[name]).toMatchObject({
       ok: false,

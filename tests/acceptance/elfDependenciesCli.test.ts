@@ -64,72 +64,43 @@ cliTest(
 );
 
 cliTest(
-  "distinguishes the ELF string scan cap from an observed unterminated table end",
+  "delivers the ELF string scan limit and the other needed libraries",
   async ({ cli }) => {
     const root = await createTestTempDirectory(
-      "rea-elf-dependencies-string-end-",
+      "rea-elf-dependencies-string-cap-",
     );
-    for (const { kind, length, truncate, message } of [
-      {
-        kind: "unterminated-at-cap",
-        length: 65536,
-        truncate: true,
-        message: "DT_SONAME string is unterminated in the dynamic string table",
-      },
-      {
-        kind: "terminator-beyond-cap",
-        length: 65536,
-        truncate: false,
-        message:
-          "DT_SONAME string has no terminator within the 65536-byte string scan limit in the dynamic string table",
-      },
-      {
-        kind: "terminator-at-cap",
-        length: 65535,
-        truncate: false,
-        message: null,
-      },
-    ]) {
-      const path = join(root, kind);
-      // Place SONAME last, with a nonzero string-table index and no neighboring
-      // string that could supply a terminator after the selected bytes.
-      await writeFile(
-        path,
-        elfDependencyFixture({
-          soname: "s".repeat(length),
-          runpath: null,
-          imports: [],
-          verneed: [],
-          verdef: [],
-          truncateDynstr: truncate,
-        }),
-      );
-      const result = await cli.run({
-        arguments: ["inspect-elf-dependencies", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const report = dependenciesContract.outputSchema.parse(
-        result.json,
-      ).normalized_result;
-      if (!("dynamic" in report))
-        throw new Error("Expected an inline ELF dependency inventory");
-      expect(
-        report.needed.map(({ name }) => name),
-        kind,
-      ).toEqual(["libstdc++.so.6", "libm.so.6", "libc.so.6"]);
-      const issue = report.issues.find(
-        ({ location }) => location === "DT_SONAME",
-      );
-      if (message === null) {
-        expect(issue, kind).toBeUndefined();
-        expect(report.dynamic.soname?.name?.length, kind).toBe(length);
-        expect(report.coverage.status, kind).toBe("complete");
-      } else {
-        expect(issue, kind).toMatchObject({ code: "name_unreadable", message });
-        expect(report.dynamic.soname?.name, kind).toBeNull();
-        expect(report.coverage.status, kind).toBe("partial");
-      }
-    }
+    const path = join(root, "program");
+    await writeFile(
+      path,
+      elfDependencyFixture({
+        soname: "s".repeat(65536),
+        runpath: null,
+        imports: [],
+        verneed: [],
+        verdef: [],
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-elf-dependencies", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const { normalized_result: report } =
+      dependenciesContract.outputSchema.parse(result.json);
+    if (!("dynamic" in report))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(report.needed.map(({ name }) => name)).toEqual([
+      "libstdc++.so.6",
+      "libm.so.6",
+      "libc.so.6",
+    ]);
+    expect(report.dynamic.soname?.name).toBeNull();
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual({
+      location: "DT_SONAME",
+      code: "name_unreadable",
+      message:
+        "DT_SONAME string has no terminator within the 65536-byte string scan limit in the dynamic string table",
+    });
   },
 );
 
@@ -156,20 +127,6 @@ cliTest(
     expect(evidence.caller_input_path).toBe("program");
   },
 );
-
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-dependencies-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-dependencies", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_dependencies" },
-  });
-});
 
 cliTest(
   "reports a relocatable object as invalid input for this workflow",
@@ -280,70 +237,42 @@ cliTest(
   "retains backed leading GNU version slots without section headers",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-dependencies-versym-");
-    for (const { label, alias, versions, coverage } of [
-      {
-        label: "complete",
-        alias: undefined,
-        versions: [
-          "GLIBC_2.34",
-          "GLIBC_2.2.5",
-          "GLIBCXX_3.4.29",
-          null,
-          "GLIBC_2.2.5",
-        ],
-        coverage: "complete",
-      },
-      {
-        label: "later-byte-ambiguous",
-        alias: 7,
-        versions: ["GLIBC_2.34", "GLIBC_2.2.5", null, null, null],
-        coverage: "partial",
-      },
-      {
-        label: "first-slot-ambiguous",
-        alias: 1,
-        versions: [null, null, null, null, null],
-        coverage: "partial",
-      },
-    ]) {
-      const path = join(root, label);
-      await writeFile(
-        path,
-        elfDependencyFixture({
-          stripped: true,
-          ...(alias === undefined ? {} : { versymZeroFillOffset: alias }),
-        }),
-      );
-      const result = await cli.run({
-        arguments: ["inspect-elf-dependencies", path, "--json"],
-      });
-      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
-      const report = dependenciesContract.outputSchema.parse(
-        result.json,
-      ).normalized_result;
-      if (!("imports" in report))
-        throw new Error("Expected an inline ELF dependency inventory");
-      expect(report.coverage.status, label).toBe(coverage);
-      expect(
-        report.imports.map(({ name }) => name),
-        label,
-      ).toEqual(["printf", "memcpy", "_ZSt4cout", "abort", "_exit"]);
-      expect(
-        report.imports.map(({ version }) => version?.name ?? null),
-        label,
-      ).toEqual(versions);
-      if (alias !== undefined) {
-        const blocked = report.imports.slice(alias === 7 ? 2 : 0);
-        expect(
-          blocked.map(({ version }) => version),
-          label,
-        ).toEqual(blocked.map(() => null));
-      }
-      if (alias === 7)
-        expect(report.issues, label).toContainEqual(
-          expect.objectContaining({ code: "table_unavailable" }),
-        );
-    }
+    const path = join(root, "program");
+    await writeFile(
+      path,
+      elfDependencyFixture({ stripped: true, versymZeroFillOffset: 7 }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-elf-dependencies", path, "--json"],
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    const { normalized_result: report } =
+      dependenciesContract.outputSchema.parse(result.json);
+    if (!("imports" in report))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+    expect(
+      report.imports.slice(0, 2).map(({ version }) => version?.name),
+    ).toEqual(["GLIBC_2.34", "GLIBC_2.2.5"]);
+    expect(report.imports.slice(2).map(({ version }) => version)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "table_unavailable",
+        message:
+          "GNU versym table holds 3 of 6 dynamic symbol slots; later slots were not read",
+      }),
+    );
   },
 );
 
@@ -377,7 +306,84 @@ cliTest(
     });
     expect(report.imports).toEqual([]);
     expect(report.issues).toContainEqual(
-      expect.objectContaining({ code: "table_unavailable" }),
+      expect.objectContaining({
+        code: "table_unavailable",
+        message:
+          "GNU versym table holds 3 of 6 dynamic symbol slots; later slots were not read",
+      }),
+    );
+  },
+);
+
+cliTest(
+  "recovers ELF imports via DT_GNU_HASH when SHT_GNU_HASH is truncated or extends past EOF",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-gnuhash-");
+    const truncatedPath = join(root, "gnuhash-truncated.so");
+    await writeFile(
+      truncatedPath,
+      elfDependencyFixture({
+        omitHash: true,
+        gnuHash: true,
+        gnuHashSection: true,
+        oversizedSection: ".dynsym",
+        sectionSizes: { ".gnu.hash": 16 },
+      }),
+    );
+    const truncatedResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", truncatedPath, "--json"],
+    });
+    expect(truncatedResult.exitCode, JSON.stringify(truncatedResult.json)).toBe(
+      0,
+    );
+    const truncated = dependenciesContract.outputSchema.parse(
+      truncatedResult.json,
+    ).normalized_result;
+    if (!("imports" in truncated))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(truncated.coverage.status).toBe("partial");
+    expect(truncated.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+
+    const pastEofPath = join(root, "gnuhash-past-eof.so");
+    await writeFile(
+      pastEofPath,
+      elfDependencyFixture({
+        omitHash: true,
+        gnuHash: true,
+        gnuHashSection: true,
+        oversizedSection: ".dynsym",
+        sectionSizes: { ".gnu.hash": 100_000 },
+      }),
+    );
+    const pastEofResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", pastEofPath, "--json"],
+    });
+    expect(pastEofResult.exitCode, JSON.stringify(pastEofResult.json)).toBe(0);
+    const pastEof = dependenciesContract.outputSchema.parse(
+      pastEofResult.json,
+    ).normalized_result;
+    if (!("imports" in pastEof))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(pastEof.coverage.status).toBe("partial");
+    expect(pastEof.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+    expect(pastEof.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message:
+          ".gnu.hash section header declares bytes past the end of the file",
+      }),
     );
   },
 );

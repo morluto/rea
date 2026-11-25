@@ -66,6 +66,7 @@ const makeDecoder = () =>
       identity: PWNTOOLS_PROVIDER_IDENTITY,
       operation: "test_pwntools_artifact_read",
       bridge: new URL("file:///unused-bridge.py"),
+      targetFormat: "elf",
       payloadSchema: z.string(),
       project: () => {
         throw new Error("input read should fail before decoder launch");
