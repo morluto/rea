@@ -13,6 +13,7 @@ import {
 } from "../dist/contracts/toolContracts.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -79,13 +80,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       // npm installs put only a claude.cmd shim on PATH, which Node does not spawn without a shell.
       const windowsHint =

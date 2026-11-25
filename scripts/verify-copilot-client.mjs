@@ -13,6 +13,7 @@ import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.
 import { advertiseTool } from "../dist/contracts/advertisedTool.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -102,13 +103,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       throw new Error(
         `Copilot CLI preflight failed for ${command}; install Copilot CLI or set REA_VERIFY_COPILOT_COMMAND. ${String(cause)}`,

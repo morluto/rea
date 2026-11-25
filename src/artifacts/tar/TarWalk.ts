@@ -498,11 +498,12 @@ export const walkTar = async (
     }
   } catch (cause: unknown) {
     if (!(cause instanceof TarStreamEnded)) throw cause;
-    if (stream.position === 0) throw tarFormatFailure(cause.detail, 0);
+    // Nothing of the tar stream was read: the carrier's failure is the file's.
+    if (stream.position === 0) throw artifactParseFailure(cause, signal);
     endState = cause.kind;
     endOffset = stream.position;
     limitations.push(
-      `${cause.detail}; tar members after that point were not inventoried.`,
+      `${cause.message}; tar members after that point were not inventoried.`,
     );
     // A member whose data the stream did not finish is not usable.
     while (

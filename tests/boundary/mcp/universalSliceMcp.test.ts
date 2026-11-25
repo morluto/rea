@@ -270,7 +270,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path: damaged,
-          failure_kind: "malformed",
+          failure_kind: "truncated",
           format: "macho",
           reason: "FAT architecture 0 slice range extends beyond the file",
         },

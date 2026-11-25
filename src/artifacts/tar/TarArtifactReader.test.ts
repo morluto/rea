@@ -21,8 +21,8 @@ import type {
   ArtifactTraversalOmission,
 } from "../../resources/index.js";
 import { TarArtifactReader } from "./TarArtifactReader.js";
-import { TAR_RETAINED_METADATA_BYTES } from "./TarWalk.js";
-import { GzipTarStream } from "./TarByteStream.js";
+import { TAR_RETAINED_METADATA_BYTES, walkTar } from "./TarWalk.js";
+import { GzipTarStream, TarStreamEnded } from "./TarByteStream.js";
 import {
   gzipTarFixture,
   RELEASE_TAR_MEMBERS,
@@ -268,6 +268,29 @@ describe("truncated tar", () => {
     expect(result.coverage[0]?.limitations[0]).toMatch(
       /^gzip stream ends before its end marker after \d+ decompressed byte\(s\); tar members after that point were not inventoried\.$/u,
     );
+  });
+
+  it("refuses a gzip stream that ends before the first tar block as the carrier's own failure", async () => {
+    const ended = new TarStreamEnded(
+      {
+        kind: "truncated",
+        format: "gzip",
+        detail:
+          "gzip stream ends before its end marker after 0 decompressed byte(s)",
+      },
+      undefined,
+    );
+    const stream = {
+      position: 0,
+      read: () => Promise.reject(ended),
+      skip: () => Promise.reject(ended),
+      trailingCarrierNonZero: () => Promise.reject(ended),
+      close: () => undefined,
+    };
+    await expect(walkTar(stream, undefined)).rejects.toMatchObject({
+      reason: "truncated",
+      parseFailure: { kind: "truncated", format: "gzip" },
+    });
   });
 
   it("refuses a file whose first header is invalid as malformed tar", async () => {

@@ -9,6 +9,7 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { verifyClientSetup } from "./verify/clients/setup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
@@ -301,14 +302,9 @@ await withVerifierCleanup(async () => {
         2,
       ) + "\n";
     await writeFile(configPath, original);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
     await verifyClientSetup({
       client: "commandcode",
       commands,

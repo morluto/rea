@@ -1461,11 +1461,13 @@ public registry, and checks both the primary failure and live descendant absence
 ## Pull-request test selection
 
 CI on a pull request runs static checks, the build and the portable tests the
-change affects. The complete portable suite runs on every push to `main`, on
-the scheduled and manual qualification runs, in release qualification, and on a
-PR labelled `ci:full`. Those complete runs catch a consumer that selection
-missed, after it has merged. Add `ci:full` to a PR when its effect reaches
-further than its imports show, such as runtime registration, generated files,
+change affects. By default, a push to `main` warms the shared static and build
+caches. Scheduled fast sweeps run the complete portable suite to catch
+consumers that PR selection missed. Full qualification also runs the suite on
+manual dispatch, for release qualification, and on a PR labelled `ci:full`.
+See [the CI schedule](../testing-lanes.md#native-platform-baseline-in-ci) for
+when a scheduled run can reuse an earlier result. Add `ci:full` to a PR when its
+effect reaches further than its imports show, such as runtime registration, generated files,
 subprocesses or bridges. Adding the label starts full qualification at once,
 and later pushes stay on the full tier while the label remains.
 

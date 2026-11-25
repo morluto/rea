@@ -10,6 +10,7 @@ import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -105,13 +106,7 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(command, ["--version"], {
-          env: environment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      clientVersion = await readClientVersion(commands, command, environment);
     } catch (cause) {
       throw new Error(
         `OpenCode preflight failed for ${command}; install OpenCode or set REA_VERIFY_OPENCODE_COMMAND. ${String(cause)}`,
