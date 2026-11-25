@@ -466,6 +466,22 @@ export class BinaryReader {
   }
 }
 
+/** Reuse a reader for the same byte view, byte order, and diagnostic format. */
+export const createBinaryReaderCache = (little: boolean, format: string) => {
+  const readers = new WeakMap<Uint8Array, BinaryReader>();
+  return (bytes: Uint8Array): BinaryReader => {
+    let reader = readers.get(bytes);
+    if (reader === undefined) {
+      const buffer = Buffer.isBuffer(bytes)
+        ? bytes
+        : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      reader = new BinaryReader(buffer, little, format);
+      readers.set(bytes, reader);
+    }
+    return reader;
+  };
+};
+
 /** Reject oversized structural tables before reading their bytes. */
 export const requireBinaryTableBudget = (size: bigint, label: string): void => {
   if (size > 16n * 1024n * 1024n)
