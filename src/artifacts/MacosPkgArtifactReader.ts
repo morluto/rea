@@ -403,6 +403,9 @@ export class MacosPkgArtifactReader implements ArtifactReader {
   }
 
   async #prepare(signal?: AbortSignal): Promise<void> {
+    // A retried preparation rebuilds inventory and refusals from scratch.
+    this.#entries.clear();
+    this.#refusedContent.clear();
     const { handle, initial } = await this.#source.read(signal);
     this.#expansionBudgetBytes =
       this.#expandedBytes ?? artifactExpansionBudgetBytes(initial.size);

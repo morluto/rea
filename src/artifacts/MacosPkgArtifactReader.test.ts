@@ -937,3 +937,64 @@ it("cancels a paused zlib member after its archived range is read", async () => 
     await reader.close();
   }
 });
+
+it("keeps a refusal from a cancelled preparation when another caller retries", async () => {
+  const info = (id: string) =>
+    Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8"?>\n<pkg-info identifier="${id}" version="1.0.0" install-location="/" auth="root"/>\n`,
+    );
+  const path = await writePkg(
+    "retry-refusal.pkg",
+    buildXar({
+      files: [
+        { path: "A.pkg", type: "directory" },
+        {
+          path: "A.pkg/PackageInfo",
+          bytes: info("com.rea.fixture.a"),
+          encoding: "application/x-gzip",
+          extractedSize: 1,
+        },
+        { path: "B.pkg", type: "directory" },
+        { path: "B.pkg/PackageInfo", bytes: info("com.rea.fixture.b") },
+      ],
+    }),
+  );
+  const reader = new MacosPkgArtifactReader(path);
+  const controller = new AbortController();
+  const actual = vi.mocked(inflateXarMemberBytes).getMockImplementation()!;
+  vi.mocked(inflateXarMemberBytes).mockImplementationOnce((...args) => {
+    const result = actual(...args);
+    controller.abort();
+    return result;
+  });
+  try {
+    const drain = async (signal?: AbortSignal) => {
+      const coverage: { status: string }[] = [];
+      const listed = [];
+      for await (const entry of reader.entries(signal, {
+        onCoverage: (value) => coverage.push(value),
+      }))
+        listed.push(entry);
+      return { coverage, listed };
+    };
+    const cancelled = drain(controller.signal);
+    const retried = drain();
+    await expect(cancelled).rejects.toMatchObject({ reason: "cancelled" });
+    const { coverage, listed } = await retried;
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "extracted-size-mismatch",
+        path: "A.pkg/PackageInfo",
+      }),
+    ]);
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+    expect(
+      listed.filter((entry) => entry.path === "A.pkg/PackageInfo"),
+    ).toHaveLength(1);
+    await expect(
+      reader.open(listed.find((entry) => entry.path === "A.pkg/PackageInfo")!),
+    ).rejects.toBeInstanceOf(ArtifactEntryContentUnavailable);
+  } finally {
+    await reader.close();
+  }
+});
