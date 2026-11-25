@@ -1104,23 +1104,15 @@ cliTest(
     const pairConflict =
       (reason: string) =>
       (path: string, binaryPath: string, binaryField: string) => ({
-        code: "invalid_request",
+        code: "input_conflict",
         details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message: expect.stringContaining(
-                `Selected metadata ${path} does not link to the selected binary: ${reason}:`,
-              ),
-            },
-            {
-              path: [binaryField],
-              reason: "invalid_value",
-              message: expect.stringContaining(
-                `Selected binary ${binaryPath} does not link to the metadata: ${reason}:`,
-              ),
-            },
+          failure_kind: "conflict",
+          path,
+          reason: expect.stringContaining(`${reason}:`),
+          // Both inputs, each by this adapter's spelling of its field.
+          inputs: [
+            { field: "path", path },
+            { field: binaryField, path: binaryPath },
           ],
         },
       });
