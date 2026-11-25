@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceToolArguments,
+} from "./complete-evidence.mjs";
 
 /** Verify imported entry aliases through CLI/MCP without admitting interior labels. */
 export async function verifyGhidraEntryAliases({
@@ -69,7 +73,7 @@ export async function verifyGhidraEntryAliases({
       alias.address,
     ]) {
       assert.equal(
-        await call("procedure_address", { procedure }),
+        await call("procedure_address", { detail: "complete", procedure }),
         alias.address,
       );
       assert.equal(
@@ -78,8 +82,11 @@ export async function verifyGhidraEntryAliases({
         alias.address,
       );
       assert.equal(
-        await call("procedure_pseudo_code", { procedure }),
-        await call("procedure_pseudo_code", { procedure: alias.address }),
+        await call("procedure_pseudo_code", { detail: "complete", procedure }),
+        await call("procedure_pseudo_code", {
+          detail: "complete",
+          procedure: alias.address,
+        }),
       );
     }
     // Leaf and qualified forms of the primary name must not duplicate a match.
@@ -95,7 +102,12 @@ export async function verifyGhidraEntryAliases({
       { pattern: `^${escaped}$`, mode: "regex", case_sensitive: true },
     ]) {
       assert.deepEqual(
-        (await call("search_procedures", query))
+        (
+          await call(
+            "search_procedures",
+            await completeEvidenceToolArguments("search_procedures", query),
+          )
+        )
           .filter(({ address }) => address === alias.address)
           .map(({ value, matched_aliases }) => ({ value, matched_aliases })),
         [{ value: canonical.value, matched_aliases: [alias.value] }],
@@ -108,7 +120,10 @@ export async function verifyGhidraEntryAliases({
       ),
       "Listings must not report search matches",
     );
-    const traced = await call("trace_feature", { query: alias.value });
+    const traced = await call("trace_feature", {
+      detail: "complete",
+      query: alias.value,
+    });
     assert.ok(
       traced.matches.some(
         ({ type, address, matched_aliases }) =>
@@ -124,7 +139,12 @@ export async function verifyGhidraEntryAliases({
     assert.ok(interior);
     assert.notEqual(interior.address, alias.address);
     assert.ok(
-      (await call("search_procedures", { pattern: interior.value })).every(
+      (
+        await call("search_procedures", {
+          detail: "complete",
+          pattern: interior.value,
+        })
+      ).every(
         ({ address, matched_aliases = [] }) =>
           address !== interior.address &&
           !matched_aliases.includes(interior.value),
@@ -152,7 +172,10 @@ export async function verifyGhidraEntryAliases({
       /Unknown Ghidra procedure name or address/u,
     );
     assert.equal(
-      await call("procedure_address", { procedure: interior.address }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: interior.address,
+      }),
       alias.address,
       "Explicit interior addresses keep their existing containment semantics",
     );
@@ -175,7 +198,10 @@ export async function verifyGhidraEntryAliases({
       "Selected by imported entry alias",
     );
     assert.equal(
-      await call("procedure_address", { procedure: alias.value }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: alias.value,
+      }),
       alias.address,
     );
     await call("close_binary");
@@ -183,12 +209,14 @@ export async function verifyGhidraEntryAliases({
       process.execPath,
       [
         entrypoint,
-        "function",
-        path,
-        alias.value,
-        "--provider",
-        "ghidra",
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          path,
+          alias.value,
+          "--provider",
+          "ghidra",
+          "--json",
+        ])),
       ],
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );

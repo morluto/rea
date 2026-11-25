@@ -93,15 +93,10 @@ export function reportCiFailures(options: {
 export function createGitHubApi(options?: {
   token?: string;
   fetchImpl?: typeof fetch;
+  collectedJobsDirectory?: string;
   apiRequest?: (
     method: string,
     endpoint: string,
     budget: { requests: number; startedAt: number; limitMs: number },
   ) => Promise<unknown>;
 }): FailureReportApi;
-
-export function writeFailureReport(
-  report: CiFailureReport,
-  outputDirectory?: string,
-  summaryPath?: string,
-): Promise<{ jsonPath: string; markdownPath: string }>;

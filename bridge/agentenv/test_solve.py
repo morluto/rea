@@ -12,14 +12,6 @@ def run_with(verifications, outcome="passed"):
 
 
 class SolveFactsTest(unittest.TestCase):
-    def test_matching_verifier_success_and_failure(self):
-        for passed, score, outcome in ((True, 1.0, "passed"), (False, 0.0, "scored below 1")):
-            with self.subTest(passed=passed):
-                run = run_with({"wanted": {"results": [{"id": "selected", "result": passed}],
-                                           "score": score}})
-                self.assertEqual(_solve_facts(run, "wanted"),
-                                 (outcome, [{"id": "selected", "passed": passed, "description": ""}]))
-
     def test_missing_empty_and_unscored_selected_verifier_do_not_borrow_success(self):
         other = {"results": [{"id": "unrelated", "result": True}], "score": 1.0}
         for selected in (None, {}, {"results": [], "score": 1.0},
@@ -44,12 +36,16 @@ class SolveFactsTest(unittest.TestCase):
         checks = [{"id": "0", "passed": False, "description": ""},
                   {"id": "zero", "passed": False, "description": ""},
                   {"id": "yes", "passed": True, "description": ""}]
-        for score, expected in ((0, "scored below 1"), (0.5, "scored below 1"),
-                                (1, "passed"), (1.5, "passed")):
+        for score, prior, expected in (
+            (0, "passed", "scored below 1"),
+            (0.5, "passed", "scored below 1"),
+            (1, "scored below 1", "passed"),
+            (1.5, "scored below 1", "passed"),
+        ):
             with self.subTest(score=score):
                 verifications = {"other": {"score": 0},
                                  "wanted": {"results": rows, "score": score}}
-                self.assertEqual(_solve_facts(run_with(verifications, "scored below 1"), "wanted"),
+                self.assertEqual(_solve_facts(run_with(verifications, prior), "wanted"),
                                  (expected, checks))
 
     def test_failure_and_cancellation_preserve_partial_named_checks(self):

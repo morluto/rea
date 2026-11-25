@@ -2,8 +2,8 @@ import * as t from "@babel/types";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
-  type JavaScriptSemanticObjectReference as Reference,
 } from "./javascriptSemanticObjectReferences.js";
+import type { JavaScriptSemanticObjectReference as Reference } from "./javascriptSemanticObjectReference.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import { SemanticGetterQuery } from "./javascriptSemanticGetterQueries.js";
 import { GetterResultWalker } from "./javascriptSemanticGetterResultWalker.js";
@@ -43,7 +43,7 @@ export const semanticGetterReceiverReferences = (
           containerReferences: (node, path) =>
             t.isObjectExpression(node)
               ? semanticObjectPropertyReferences(node, path, state)
-              : semanticArrayPropertyReferences(node, path),
+              : semanticArrayPropertyReferences(node, path, state),
         },
         [{ node: operand }],
       ).run(),

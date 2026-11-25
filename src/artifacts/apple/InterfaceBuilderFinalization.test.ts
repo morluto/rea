@@ -4,10 +4,12 @@ import { buildBinary } from "plist";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 
 const bundle = async () => {
   const path = await createTestTempDirectory("rea-ib-finalization-");
@@ -80,6 +82,7 @@ it.each([
       });
       const projected = translateArtifactFailure(
         "decode_interface_builder",
+        "/selected/artifact",
         outcome.cause,
       );
       if (abort) expect(projected.cause).toBe(reason);
@@ -107,6 +110,7 @@ it.each([false, true])(
     const failure = new ArtifactReaderFailure(
       "integrity",
       "controlled physical archive refusal",
+      { integrityCheck: "container-identity" },
     );
     const open = vi
       .spyOn(DirectoryArtifactReader.prototype, "open")
@@ -138,6 +142,7 @@ it.each([false, true])(
       else expect(rejected).toBe(failure);
       const projected = translateArtifactFailure(
         "decode_interface_builder",
+        "/selected/artifact",
         rejected,
       );
       expect(projected.partialObservation).toBeUndefined();

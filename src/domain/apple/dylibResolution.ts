@@ -1,6 +1,8 @@
 import { z } from "zod";
+import type { MachoReadFailure } from "./machoContainer.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
-import { AnalysisCancelledError } from "../analysisErrorCore.js";
+import { cancelledBy } from "../analysisErrorCore.js";
 
 import {
   compatibleSlice,
@@ -21,6 +23,7 @@ import {
   isLazyLoadCommand,
   type TracedRootSlice,
 } from "./dylibResolutionFindings.js";
+import { appendAll } from "../appendAll.js";
 
 /**
  * Normalized path below the analyzed root: nonempty segments joined by single
@@ -107,7 +110,7 @@ export const machoSliceSchema = z.strictObject({
 export type MachoDependency = z.infer<typeof dependencySchema>;
 export type MachoSlice = z.infer<typeof machoSliceSchema>;
 
-/** Header parse of one file; malformed and unsupported images keep their reason. */
+/** Header parse of one file; an unreadable image keeps the owner's failure. */
 export type MachoImageFacts =
   | {
       readonly status: "parsed";
@@ -115,10 +118,7 @@ export type MachoImageFacts =
       /** Apple lipo's ARM64 compatibility row, stored beyond raw nfat_arch. */
       readonly hiddenSlices?: readonly MachoSlice[];
     }
-  | {
-      readonly status: "malformed" | "unsupported";
-      readonly reason: string;
-    }
+  | { readonly status: "failed"; readonly failure: MachoReadFailure }
   | { readonly status: "not-mach-o" };
 
 /** Return every slice that can participate in architecture selection. */
@@ -228,7 +228,7 @@ export const dylibResolutionResultSchema = z.strictObject({
   edges: z.array(edgeSchema),
   findings: z.array(findingSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     unparsed_images: z.array(z.string()),
     roots_without_architecture: z.array(z.string()),
   }),
@@ -377,7 +377,10 @@ const evaluateCandidate = async (
     return { ...base, outcome: "absent", resolved_path: null };
   const facts = await imageFacts(context, lookup.path);
   let outcome: Candidate["outcome"];
-  if (facts.status !== "parsed") outcome = facts.status;
+  if (facts.status === "not-mach-o") outcome = facts.status;
+  else if (facts.status === "failed")
+    outcome =
+      facts.failure.kind === "unsupported" ? "unsupported" : "malformed";
   else {
     const selection = compatibleSlice(
       machoImageSlices(facts),
@@ -630,10 +633,7 @@ const traceProcess = async (
     { image: context.root, chain: [context.root], conditional: false },
   ];
   while (pending.length > 0) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("trace_dylib_resolution", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("trace_dylib_resolution", signal);
     const next = pending.pop();
     if (next === undefined || expanded.has(next.image)) continue;
     const loader = next.image;
@@ -713,12 +713,16 @@ const projectTraceResult = (input: {
     roots: input.roots,
     images: reported.map(([path, facts]) => ({
       path,
+      // The published status keeps its two refusal values: a form outside
+      // coverage, or bytes that cannot be read (broken, cut short or changed).
       parse_status:
-        facts.status === "not-mach-o" ? "unsupported" : facts.status,
-      reason:
-        facts.status === "parsed" || facts.status === "not-mach-o"
-          ? null
-          : facts.reason,
+        facts.status === "parsed"
+          ? "parsed"
+          : facts.status === "not-mach-o" ||
+              facts.failure.kind === "unsupported"
+            ? "unsupported"
+            : "malformed",
+      reason: facts.status === "failed" ? facts.failure.detail : null,
       slices:
         facts.status === "parsed"
           ? machoImageSlices(facts).map(withoutDependencies)
@@ -823,8 +827,9 @@ export const traceDylibLoading = async (
         environmentRoots.add(root);
       roots.push({ image: root, architecture: slice.architecture });
       rootSlices.push({ image: root, slice });
-      edges.push(
-        ...(await traceProcess(
+      appendAll(
+        edges,
+        await traceProcess(
           {
             view,
             root,
@@ -847,7 +852,7 @@ export const traceDylibLoading = async (
           },
           slice,
           request.signal,
-        )),
+        ),
       );
     }
   }

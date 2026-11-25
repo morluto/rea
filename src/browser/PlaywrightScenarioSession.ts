@@ -1,12 +1,12 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import type { BrowserContext } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -494,6 +494,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     action: BrowserScenarioAction,
     signal?: AbortSignal,
   ): Promise<void> {
+    // A policy connection lost after the previous step's check would leave
+    // this action's documents unprotected; report it before acting.
+    this.serviceWorkers?.assertConnected();
     await withPlaywrightExecutionBoundary(
       () =>
         performPlaywrightScenarioAction({
@@ -557,7 +560,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
               { cause },
             );
       failure.retainDiagnostics({
-        collected_artifacts: jsonValueSchema.parse(artifacts),
+        collected_artifacts: ownedJsonValueSchema.parse(artifacts),
       });
       throw failure;
     }

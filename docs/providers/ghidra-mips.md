@@ -18,8 +18,8 @@ explicit o32 and `EF_MIPS_ARCH_32R2` flags and no machine-specific or ASE
 encoding flags. These are header declarations, not proof that every instruction
 conforms to that ISA. ELF64, n32/n64, unspecified ABI, microMIPS,
 machine-specific variants and PSP PRX are not covered by this standard-instruction
-lane. MIPS16 shared images have the separate bounded profile below; other shared
-or compressed images remain unsupported. Their family may be identified, but provider selection returns the
+lane. MIPS16 and plain MIPS32 shared images have the separate bounded profiles
+below; other shared or compressed images remain unsupported. Their family may be identified, but provider selection returns the
 specific unsupported constraint rather than guessing a compatible profile.
 
 A second admission covers recordless legacy firmware images
@@ -33,25 +33,32 @@ structure, recorded as `mips_abi_basis` in the profile and stated as a
 limitation in Evidence, never a declared fact; floating-point ABI semantics
 stay unverified. Ghidra's own header auto-selection picks a 64-bit language
 for exactly these files, so the lane pins `-processor MIPS:<LE|BE>:32:default`
-through a `provider-pinned-v1` profile selection and checks the
+through a `provider-pinned` profile selection and checks the
 bridge-reported `language_id` after import. A caller-selected
 `REA_GHIDRA_LANGUAGE_ID`/`REA_GHIDRA_COMPILER_SPEC_ID` still wins over the
 pin; combining the pinned profile with an environment override is a typed
 refusal. A header that declares an ABI field but carries no record is still
 refused. Two further boundaries apply: an inspection that could not examine
 every ABI declaration source does not establish the recordless admission
-(target opening already refuses a carved ELF whose section table extends past
-the captured bytes, as described below), and an `EF_MIPS_ARCH_1` or
-`EF_MIPS_ARCH_32` header that _declares_ an ABI is refused rather than
-relabeled, because the declared-ABI lane is verified for
-`EF_MIPS_ARCH_32R2` headers only. The recordless MIPS-I lane pins the same
-generic 32-bit language, which also decodes later MIPS32 instructions; the
-session states that conformance to the MIPS-I subset is not established from
+(target opening refuses a carved ELF whose section table extends past the
+captured bytes, except for the recordless legacy `ET_EXEC` carve described
+below), and an `EF_MIPS_ARCH_1` or `EF_MIPS_ARCH_32` header that _declares_ an
+ABI is refused rather than relabeled, because the declared-ABI lane is verified
+for `EF_MIPS_ARCH_32R2` headers only. One carved shape is the exception to the
+first boundary: when a recordless legacy `ET_EXEC` ELF's only limitation is a
+section header table that extends past the captured bytes, and the complete
+program header table carries no `PT_MIPS_ABIFLAGS` record, the file is admitted
+on this recordless lane. The unread section headers (including any uncaptured
+`SHT_GNU_ATTRIBUTES` or `SHT_MIPS_ABIFLAGS`) stay unknown and are recorded as a
+limitation in the profile and in Evidence, beside the o32 assumption. Any other
+limitation, alone or with that one, is refused. The recordless MIPS-I lane pins
+the same generic 32-bit language, which also decodes later MIPS32 instructions;
+the session states that conformance to the MIPS-I subset is not established from
 the header alone, and names the committed language when the caller selected a
-variant instead of the pin. A committed profile is bound to the current
-target's lane and captured ELF metadata before startup; reusing a profile
-resolved for the other recordless lane is refused rather than exporting
-attribution for a target it did not describe.
+variant instead of the pin. A committed profile is bound to the current target's
+lane and captured ELF metadata before startup; reusing a profile resolved for the
+other recordless lane is refused rather than exporting attribution for a target
+it did not describe.
 
 Explicit `EF_MIPS_FP64` and `EF_MIPS_NAN2008` declarations are refused. Their
 absence is insufficient: Clang can emit identical `e_flags` for FP32, FP64 and
@@ -62,11 +69,12 @@ Program and section declarations must agree; duplicate, conflicting, truncated
 or out-of-file records are rejected. Stripped section tables and section-only
 records are supported. Extended table numbering is explicitly unsupported.
 GNU `SHT_GNU_ATTRIBUTES` sections are located by numeric section type; section
-names never control detection. REA reads at most 4096 payload bytes and parses
-format version `A`, the `gnu` vendor's file-scope `Tag_GNU_MIPS_ABI_FP` (4) and
-`Tag_GNU_MIPS_ABI_MSA` (8) only. Unknown vendors, scopes or tags, repeated
-declarations, malformed lengths, and out-of-file or oversized payloads remain
-refusals. A nonzero FP tag must match the separate ABI flags `fp_abi` record;
+names never control detection. REA validates the full declared file extent before
+applying its 4096-byte payload limit. It parses format version `A`, the `gnu`
+vendor's file-scope `Tag_GNU_MIPS_ABI_FP` (4) and `Tag_GNU_MIPS_ABI_MSA` (8)
+only. Unknown vendors, scopes or tags, repeated declarations, malformed lengths,
+and out-of-file or oversized payloads remain refusals. A nonzero FP tag must
+match the separate ABI flags `fp_abi` record;
 value 0 (`ANY`) declares no requirement. The [GNU Object Attributes v1
 format](https://sourceware.org/binutils/docs/as/Object-Attributes-v1.html) and
 [GNU MIPS tag definitions](https://sourceware.org/binutils/docs/as/GNU-Object-Attributes.html)
@@ -77,16 +85,19 @@ argument ABI and unknown nonzero MSA values remain unsupported. Without a
 separate ABI flags record, FP attribute values are admitted only when absent,
 `ANY` (0), double precision (1), or FPXX (5), the values covered by the
 recordless profile. Parsed values are retained in the MIPS analysis profile.
-A carved ELF whose section header table extends beyond the captured file is
-refused when the target is opened, before provider selection, as is every ELF
-declaration beyond EOF ([installation](../getting-started/installation.md#ghidra)). The refusal
+Except for the recordless legacy `ET_EXEC` carve admitted above, a carved ELF
+whose section header table extends beyond the captured file is refused when the
+target is opened, before provider selection, as is every ELF declaration beyond
+EOF ([installation](../getting-started/installation.md#ghidra)). The refusal
 names the declared range and the file size. It applies even when a
-program-header ABI record was captured: an uncaptured section header could
-carry an unsupported or conflicting declaration, so the captured bytes are not
-analyzed as a complete smaller program. The provider also refuses any ABI
-declaration inspection that reports unexamined headers. A missing
-program-header record does not make ABI declarations in uncaptured sections
-absent or supply a default ABI.
+program-header ABI record was captured: an uncaptured section header could carry
+an unsupported or conflicting declaration, so the captured bytes are not
+analyzed as a complete smaller program. The provider also refuses any other
+incomplete ABI declaration inspection. A missing program-header record does not
+make ABI declarations or `SHT_GNU_ATTRIBUTES` in uncaptured sections absent or
+supply a default ABI: the recordless carve admitted above keeps them as an
+unknown, recorded limitation, and its o32 basis remains an assumption, not a
+declaration.
 The field layout follows
 [`Elf_MIPS_ABIFlags_v0`](https://github.com/bminor/glibc/blob/master/elf/elf.h).
 
@@ -158,6 +169,46 @@ REA_MIPS_LD=/absolute/path/to/mips-linux-gnu-ld \
 GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra \
 npm run verify:ghidra:mips-shared
 ```
+
+### MIPS32 shared images
+
+A third profile admits plain MIPS32 position-independent shared libraries
+(`ET_DYN` with no ASE encoding flag) in either byte order, with explicit o32
+and MIPS32r2 and the same ABI flags record requirements as the executable lane.
+Images declaring `PT_INTERP` or `DF_1_PIE` require separate verification. As for MIPS16, source
+inspection must examine the complete dynamic relocation declarations. This
+profile verifies `R_MIPS_NONE`, symbol-index-zero and symbol-bearing
+`R_MIPS_REL32`, and the TLS loader slots `R_MIPS_TLS_DTPMOD32`,
+`R_MIPS_TLS_DTPREL32` and `R_MIPS_TLS_TPREL32`; other relocation types remain
+refused. Android packed relocation and legacy Android RELR declarations leave
+shared-load coverage unavailable in the MIPS profiles. Images without an ABI
+flags record remain refused, as in the executable
+lane, and so do images ending in an Android prelink trailer, whose base Ghidra
+prefers over the program headers. The support lane is
+`elf32-dyn-o32-arch32r2-standard`; Ghidra selects the language from the
+header, and the real-provider lane checks it.
+
+REA imports the image at its own ELF image base (`-loader-imagebase`, the
+lowest `PT_LOAD` address among the first 20 program headers, as Ghidra computes
+it) and commits that base in the analysis profile; the session handshake must
+report it. Ghidra's default moves a library linked at 0 to `0x10000` and then
+shifts only nonzero local GOT entries, so a GOT page entry for page zero (how
+GNU-ld-built libraries call static functions in their first 64 KiB) keeps the
+unshifted value and calls through it decompile to wrong addresses. At the link
+base nothing moves: returned addresses equal those readelf and objdump report,
+and every GOT entry is correct as stored. They are not a process's runtime
+addresses. Because the image base is an import option, checkpoint mode
+(`REA_GHIDRA_CHECKPOINT_DIR`) and caller-selected existing projects refuse this
+lane rather than open a Program placed by another import; unset the setting to
+analyze the library through REA's own import.
+
+Ghidra fills the global GOT itself. Entries for undefined symbols point into its
+`EXTERNAL` block, or, for imported functions with a `.MIPS.stubs` lazy-binding
+stub, hold the stub address as glibc does before the first call. Either way,
+calls through the GOT name the imported function without resolving its
+defining image. TLS slots hold values only the dynamic loader assigns (module
+index, TLS offsets); Ghidra reports those relocations `UNSUPPORTED` and leaves
+their bytes unchanged, and Evidence says so.
 
 MIPS header and ABI record facts are committed in the analysis profile so
 interpretation changes invalidate profile-bound snapshots. The support-lane
@@ -308,3 +359,32 @@ also calls `powf`, an external whose float prototype comes from Ghidra's C
 library archive; every variant must decompile `powf(1.5,2.5)` without FPU
 inputs, and the soft-float variant must report that the soft-float prototype
 covered it.
+
+### MIPS32 shared images
+
+```bash
+GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra npm run verify:ghidra:mips32-shared
+```
+
+It links `tests/conformance/c/mips-shared.c` with `-fPIC -shared` and LLD in
+both byte orders, plus a little-endian soft-float variant. Like GNU ld output,
+text shares the first segment and PIC calls keep `jalr $25` through the GOT, so
+the static call reads a zero-valued local GOT page entry. GNU readelf supplies
+the program headers, dynamic tags, dynamic symbols and REL entries. The lane
+requires every Ghidra block inside a `PT_LOAD` to agree on one placement offset,
+and this lane requires it to be zero, then checks every dynamic relocation and
+every non-reserved GOT entry through `read_bytes`: symbol-index-zero REL32 must
+equal the original word plus the offset; symbol-bearing REL32 must add the
+placed address of the defined symbol, or the `EXTERNAL` block address of an
+undefined one; global GOT entries must hold their symbol's placed or `EXTERNAL`
+address, or the lazy-binding stub address plus the offset for an imported
+function that has one, and local entries their original word plus the offset,
+zero included; TLS slots must stay `UNSUPPORTED` with unchanged bytes. The
+fixture covers a local, a defined and an undefined REL32 target, imported code
+and data, both local GOT page entries, general-dynamic DTPMOD32/DTPREL32 and
+initial-exec TPREL32. The lane also
+requires the entry function to name the static function called through the
+zero page entry and the import both through its GOT entry and through its REL32
+pointer, reach `__tls_get_addr`, and contain no FPU inputs, plus the committed
+link base, the shared support lane and the placement, GOT and TLS limitations
+in the snapshot and Evidence, CLI evidence and an unchanged source library.

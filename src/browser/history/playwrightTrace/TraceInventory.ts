@@ -1,6 +1,7 @@
 import { digestCanonicalValue } from "../../../domain/canonicalDigest.js";
+import { Budget } from "../../../domain/budget.js";
 import { AnalysisResourceConstraintError } from "../../../domain/analysisErrorCore.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
+import type { ArtifactEntry } from "../../../resources/index.js";
 import {
   PLAYWRIGHT_TRACE_LIMITS,
   PLAYWRIGHT_TRACE_OPERATION,
@@ -20,21 +21,23 @@ export class TraceInventory {
   readonly events: TraceEvent[] = [];
   readonly diagnostics: PlaywrightTrace["diagnostics"] = [];
   readonly #paths = new Map<string, TraceMember[]>();
-  #bytes = 0;
+  readonly #facts = new Budget(PLAYWRIGHT_TRACE_LIMITS.factsBytes);
   constructor(readonly artifact: PlaywrightTrace["artifact"]) {}
   reserve(bytes: number): void {
-    this.#bytes += bytes;
-    if (this.#bytes > PLAYWRIGHT_TRACE_LIMITS.factsBytes)
-      throw new AnalysisResourceConstraintError(
-        PLAYWRIGHT_TRACE_OPERATION,
-        "memory",
-        "Trace facts exceed the 32 MiB retained representation allowance.",
-        { retained_fact_allowance: PLAYWRIGHT_TRACE_LIMITS.factsBytes },
-        {
-          remediationAction:
-            "Select a smaller complete recorder chunk; fields and reply pagination do not increase parser allowances.",
-        },
-      );
+    this.#facts.charge(
+      bytes,
+      () =>
+        new AnalysisResourceConstraintError(
+          PLAYWRIGHT_TRACE_OPERATION,
+          "memory",
+          "Trace facts exceed the 32 MiB retained representation allowance.",
+          { retained_fact_allowance: PLAYWRIGHT_TRACE_LIMITS.factsBytes },
+          {
+            remediationAction:
+              "Select a smaller complete recorder chunk; fields and reply pagination do not increase parser allowances.",
+          },
+        ),
+    );
   }
   retain(value: unknown): void {
     this.reserve(512 + Buffer.byteLength(JSON.stringify(value)) * 4);
@@ -99,35 +102,55 @@ export class TraceInventory {
   }
   /** References establish directory presence only; payload decoding and image validity stay unknown. */
   finish(incomplete = false): PlaywrightTrace {
-    const events = this.events.map((event) => ({
-      ...event,
-      resource_references: event.resource_references.map((reference) => {
-        const matches = this.#paths.get(reference.path) ?? [];
-        const member = matches.length === 1 ? matches[0] : undefined;
-        const state: TraceEvent["resource_references"][number]["state"] =
-          matches.length === 0
-            ? "missing"
-            : matches.length > 1
-              ? "ambiguous"
-              : member?.kind !== "file" || member.encrypted
-                ? "unavailable"
-                : "present-unread";
-        return {
-          ...reference,
-          state,
-          member_id: member?.member_id ?? null,
-          matching_members: matches.length,
-        };
-      }),
-    }));
-    const unavailable = events.reduce(
-      (sum, event) =>
-        sum +
-        event.resource_references.filter(
-          (reference) => reference.state !== "present-unread",
-        ).length,
-      0,
-    );
+    let unavailable = 0;
+    let actionBefore = 0;
+    let actionAfter = 0;
+    let consoleCount = 0;
+    let networkCount = 0;
+    let screenshotCount = 0;
+    const events = this.events.map((event) => {
+      switch (event.kind) {
+        case "action-before":
+          actionBefore += 1;
+          break;
+        case "action-after":
+          actionAfter += 1;
+          break;
+        case "console":
+          consoleCount += 1;
+          break;
+        case "network":
+          networkCount += 1;
+          break;
+        case "screenshot":
+          screenshotCount += 1;
+          break;
+        default:
+          break;
+      }
+      return {
+        ...event,
+        resource_references: event.resource_references.map((reference) => {
+          const matches = this.#paths.get(reference.path) ?? [];
+          const member = matches.length === 1 ? matches[0] : undefined;
+          const state: TraceEvent["resource_references"][number]["state"] =
+            matches.length === 0
+              ? "missing"
+              : matches.length > 1
+                ? "ambiguous"
+                : member?.kind !== "file" || member.encrypted
+                  ? "unavailable"
+                  : "present-unread";
+          if (state !== "present-unread") unavailable += 1;
+          return {
+            ...reference,
+            state,
+            member_id: member?.member_id ?? null,
+            matching_members: matches.length,
+          };
+        }),
+      };
+    });
     return {
       kind: "playwright-trace",
       trace_id: traceIdentity("playwright_trace", [this.artifact.sha256, 10]),
@@ -140,13 +163,11 @@ export class TraceInventory {
       diagnostics: this.diagnostics,
       summary: {
         events: events.length,
-        action_before: events.filter((row) => row.kind === "action-before")
-          .length,
-        action_after: events.filter((row) => row.kind === "action-after")
-          .length,
-        console: events.filter((row) => row.kind === "console").length,
-        network: events.filter((row) => row.kind === "network").length,
-        screenshots: events.filter((row) => row.kind === "screenshot").length,
+        action_before: actionBefore,
+        action_after: actionAfter,
+        console: consoleCount,
+        network: networkCount,
+        screenshots: screenshotCount,
         unavailable_references: unavailable,
       },
       source_coverage: {

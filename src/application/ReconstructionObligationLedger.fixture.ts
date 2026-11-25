@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import {
   reconstructionObligationProofSchema,
   type ReconstructionObligationProof,
@@ -14,6 +15,8 @@ import {
 } from "../domain/evidenceBundle.js";
 import {
   reconstructionObligationLedgerSchema,
+  type ReconstructionObligation,
+  type ReconstructionObligationManifest,
   type ReconstructionObligationLedgerInput,
   type ReconstructionObligationLedger,
   type ReviewedReconstructionObligation,
@@ -26,7 +29,7 @@ import {
 /** Build controlled fixture Evidence used by reconstruction-ledger scenarios. */
 export const proofEvidence = (id: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: `fixture-${id}`, name: "Fixture verifier", version: "1" },
     {
       predicateType: "rea.fixture-verification",
@@ -42,7 +45,7 @@ export const proofEvidence = (id: string) =>
 export const processEvidence = (
   overrides: Partial<UnverifiedProcessCapture> = {},
 ) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},
@@ -61,7 +64,7 @@ export const boundProofEvidence = (
   authority: "shipped-artifact" | "controlled-replay" = "controlled-replay",
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: `proof-${id}`, name: "Reconstruction proof", version: "1" },
     {
       predicateType: "rea.reconstruction-proof",
@@ -97,7 +100,7 @@ export const build = (
 
 /** Create provenance for each required case from one source Evidence record. */
 export const originalCases = (
-  obligation: ReconstructionObligationLedger["obligations"][number],
+  obligation: ReconstructionObligation,
   evidenceId: string,
 ) =>
   obligation.required_case_kinds.map((caseKind) => ({
@@ -105,6 +108,50 @@ export const originalCases = (
     evidence_id: evidenceId,
     location: `/normalized_result/cases/${caseKind}`,
   }));
+
+/** The manifest binding a packaged process fixture and its verifier to one obligation. */
+export const packagedProcessManifest = (
+  obligation: ReconstructionObligation,
+  binding: {
+    readonly ownerSha256: string;
+    readonly originalCases: ReconstructionObligation["observed_cases"];
+    readonly proofEvidenceId: string;
+    readonly specification: string;
+  },
+): ReconstructionObligationManifest => ({
+  bindings: [
+    {
+      obligation_id: obligation.obligation_id,
+      owner: {
+        module_path: "src/processOwner.ts",
+        symbol: "runProcess",
+        owner_sha256: binding.ownerSha256,
+      },
+      parser_type: null,
+      original_cases: binding.originalCases,
+      fixtures: obligation.required_case_kinds.map((caseKind) => ({
+        fixture_id: `packaged.${caseKind}`,
+        case_kind: caseKind,
+        authority: "packaged-process",
+        evidence_ids: [binding.proofEvidenceId],
+      })),
+      verifier: {
+        verifier_id: "verifier.packaged",
+        claim_id: "claim.process",
+        command: "npm run verify:package -- process",
+        authority: "packaged-process",
+        status: "pass",
+        result_evidence_id: binding.proofEvidenceId,
+        enumerated_obligation_ids: [obligation.obligation_id],
+        nondeterminism: {
+          mode: "partial-order",
+          specification: binding.specification,
+        },
+      },
+    },
+  ],
+  contradictions: [],
+});
 
 /** Build a request whose packaged-process obligation closes as ready. */
 export const readyProcessLedgerRequest =
@@ -114,17 +161,14 @@ export const readyProcessLedgerRequest =
     const obligation = initial.obligations[0];
     if (obligation === undefined)
       throw new Error("Expected process obligation");
-    const fixtureIds = obligation.required_case_kinds.map(
-      (caseKind) => `packaged.${caseKind}`,
-    );
     const proof = boundProofEvidence("packaged", {
       bindings: [
         {
           obligation_id: obligation.obligation_id,
           obligation_version: obligation.obligation_version,
           owner_sha256: "2".repeat(64),
-          fixtures: obligation.required_case_kinds.map((caseKind, index) => ({
-            fixture_id: fixtureIds[index]!,
+          fixtures: obligation.required_case_kinds.map((caseKind) => ({
+            fixture_id: `packaged.${caseKind}`,
             case_kind: caseKind,
             passed: true,
           })),
@@ -139,41 +183,13 @@ export const readyProcessLedgerRequest =
       ],
     });
     return request([capture, proof], {
-      manifest: {
-        bindings: [
-          {
-            obligation_id: obligation.obligation_id,
-            owner: {
-              module_path: "src/processOwner.ts",
-              symbol: "runProcess",
-              owner_sha256: "2".repeat(64),
-            },
-            parser_type: null,
-            original_cases: originalCases(obligation, capture.evidence_id),
-            fixtures: obligation.required_case_kinds.map((caseKind) => ({
-              fixture_id: `packaged.${caseKind}`,
-              case_kind: caseKind,
-              authority: "packaged-process",
-              evidence_ids: [proof.evidence_id],
-            })),
-            verifier: {
-              verifier_id: "verifier.packaged",
-              claim_id: "claim.process",
-              command: "npm run verify:package -- process",
-              authority: "packaged-process",
-              status: "pass",
-              result_evidence_id: proof.evidence_id,
-              enumerated_obligation_ids: [obligation.obligation_id],
-              nondeterminism: {
-                mode: "partial-order",
-                specification:
-                  "Startup precedes teardown; worker completion is unordered.",
-              },
-            },
-          },
-        ],
-        contradictions: [],
-      },
+      manifest: packagedProcessManifest(obligation, {
+        ownerSha256: "2".repeat(64),
+        originalCases: originalCases(obligation, capture.evidence_id),
+        proofEvidenceId: proof.evidence_id,
+        specification:
+          "Startup precedes teardown; worker completion is unordered.",
+      }),
     });
   };
 
@@ -212,7 +228,7 @@ const authorityEvidence = (
   authority: "shipped-artifact" | "controlled-replay",
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",

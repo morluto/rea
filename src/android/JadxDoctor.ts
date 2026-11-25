@@ -1,11 +1,12 @@
+import type { HostPlatform } from "../platform/HostPlatform.js";
 import type {
   RetainedResourceScope,
   ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,
@@ -29,10 +30,12 @@ export const JADX_DOCTOR_SETTINGS = [
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
   resourceOwner: RetainedResourceScope,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   const configured = environment.REA_JADX_MCP_JAR !== undefined;
   const availability = await inspectJadxAvailability(environment, {
+    host,
     resourceOwner,
     signal,
   });
@@ -100,7 +103,7 @@ const configurationCheck = (
       code: null,
       detail: `JADX MCP bridge JAR validated at ${jarPath}; its path is recorded for agent registrations. This checks configuration, not whether a selected APK fits in the worker's memory.`,
       remediation: null,
-      classification: "config_drift",
+      classification: "healthy",
       ...(typeof operationTimeout === "number"
         ? { details: { operation_timeout_ms: operationTimeout } }
         : {}),

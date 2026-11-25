@@ -35,6 +35,7 @@ const analyzeThroughCliAndMcp = async (source: string) => {
   const evidence = parseEvidence(JSON.parse(stdout));
   const { client, call } = await connectLocalToolsMcp({ HOME: home });
   const response = await call("analyze_javascript_application", {
+    detail: "complete",
     input_path: app,
     format: "auto",
   });
@@ -99,7 +100,7 @@ stable.kill();
         family === "child-process" && reason === "ambiguous-target",
     ),
   ).toHaveLength(2);
-}, 60000);
+});
 
 it("keeps deferred instance field child ownership uncertain through CLI and MCP", async () => {
   const evidence = await analyzeThroughCliAndMcp(
@@ -140,4 +141,4 @@ stable.kill();
         family === "child-process" && reason === "ambiguous-target",
     ),
   ).toHaveLength(1);
-}, 60000);
+});

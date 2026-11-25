@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
 import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
 
 // Optional verification tool only; the runtime inspector never starts dtc.
 const dtc = process.env.REA_DTC_PATH ?? "dtc";
-const root = mkdtempSync(join(tmpdir(), "rea-dtb-verification-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-dtb-verification-",
+});
+const root = fixture.path;
 const commands = await createPackageVerifierCommands({
   workspace: {
     path: root,
-    close: async () => rmSync(root, { recursive: true, force: true }),
+    close: () => fixture.release(),
   },
 });
 const exec = async (command, args) =>
@@ -47,9 +51,11 @@ await withVerifierCleanup(async () => {
   const evidence = JSON.parse(
     await exec(process.execPath, [
       "scripts/rea.mjs",
-      "inspect-devicetree",
-      blob,
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "inspect-devicetree",
+        blob,
+        "--json",
+      ])),
     ]),
   );
   const report = evidence.normalized_result;

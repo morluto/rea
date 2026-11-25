@@ -1,29 +1,38 @@
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "../../lib/verifier-cleanup.mjs";
+  VerifierFixture,
+  onceConfirmed,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const root = await realpath(await mkdtemp(join(tmpdir(), "rea-inspector-")));
+// A plain directory, as before: this verifier also runs on Windows CI.
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-inspector-",
+  private: false,
+});
+const root = rootFixture.path;
 const environment = {
   ...process.env,
 };
-const client = new Client({
-  name: "rea-inspector-conformance",
-  version: "1.0.0",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "rea-inspector-conformance",
+    version: "1.0.0",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["scripts/rea.mjs", "mcp"],
@@ -42,7 +51,11 @@ const names = [
   ...(process.platform === "win32" ? [] : ['with"quote.cjs']),
 ];
 
-await withVerifierCleanup(async () => {
+// The MCP server may still read target files under the root: the client and
+// its transport close before the root is removed.
+rootFixture.releaseAfter(() => client.close());
+rootFixture.releaseAfter(() => transport.close());
+await withVerifierFixture(rootFixture, async () => {
   await client.connect(transport);
   for (const name of names) {
     const targetPath =
@@ -58,20 +71,17 @@ await withVerifierCleanup(async () => {
         stdio: ["ignore", "ignore", "pipe"],
       },
     );
+    // The target runs from the fixture root: the root is removed only after
+    // it is confirmed stopped, and it still stops after its own check.
+    const stop = rootFixture.releaseAfter(
+      onceConfirmed(() => terminate(child)),
+    );
     await withVerifierCleanup(
       () => verifyTarget(child, targetPath, name),
-      [() => terminate(child)],
+      [stop],
     );
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    await rm(root, { recursive: true, force: true });
-  },
-]);
+});
 
 async function verifyTarget(child, targetPath, name) {
   const socket = new URL(await inspectorUrl(child));

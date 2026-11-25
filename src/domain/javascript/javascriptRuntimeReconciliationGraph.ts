@@ -9,6 +9,15 @@ import type {
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
 import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
+import { joinCoverageStatus } from "../coverage.js";
+import {
+  known,
+  knownOrNull,
+  sumKnownCounts,
+  unknownBecause,
+  type Known,
+} from "../known.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { RuntimeProjection } from "./javascriptRuntimeReconciliationRuntime.js";
@@ -23,11 +32,54 @@ interface ReconciledGraphInput {
 
 interface GraphCoverageFacts {
   readonly projectionOmissions: number;
-  readonly knownOmissions: number;
-  readonly omissionsKnown: boolean;
-  readonly inputStatus: "complete" | "partial" | "truncated";
+  /** Projection plus source omissions; unknown when any source cannot count. */
+  readonly omissions: Known<number>;
+  readonly inputStatus: ReconciliationInputStatus;
+  readonly inputTruncated: boolean;
   readonly outputTruncated: boolean;
 }
+
+/** What the static graphs and passive captures establish about their coverage. */
+export type ReconciliationInputStatus =
+  | "complete"
+  | "partial"
+  | "truncated"
+  | "unknown";
+
+/**
+ * The one reading of reconciliation input coverage. Bounded captures report
+ * only known gaps; a static graph whose producer could not tell or could not
+ * run makes the inputs unknown, which wins over a known truncation.
+ * `truncated` keeps a known input truncation even when the status is unknown.
+ */
+export const reconciliationInputCoverage = (
+  input: Pick<ReconciledGraphInput, "layers" | "captures">,
+): {
+  readonly status: ReconciliationInputStatus;
+  readonly truncated: boolean;
+} => {
+  const coverage = joinCoverageStatus([
+    "complete",
+    ...input.layers.map(({ graph }) =>
+      applicationCoverageKnowledge(graph.coverage.status),
+    ),
+    ...input.captures.map(({ inspection }) =>
+      inspection.completeness.status === "complete_within_window"
+        ? ("complete" as const)
+        : ("partial" as const),
+    ),
+  ]);
+  const truncated =
+    input.layers.some(({ graph }) => graph.coverage.truncated) ||
+    input.captures.some(({ inspection }) =>
+      inspection.completeness.conditions.includes("truncated"),
+    );
+  return {
+    status:
+      coverage === "unknown" ? "unknown" : truncated ? "truncated" : coverage,
+    truncated,
+  };
+};
 
 /** Combined graph plus omissions introduced while merging its observations. */
 export interface ReconciledApplicationGraphProjection {
@@ -61,9 +113,14 @@ export const buildReconciledApplicationGraph = (
       "Runtime presence is bounded to passive capture windows and does not prove feature execution.",
       "Cross-layer observed_as edges are inferences; digest equality proves byte identity only.",
       "Source-map relationships retain their original static authority and are not promoted into runtime matches.",
-      ...(facts.inputStatus === "truncated"
+      ...(facts.inputTruncated
         ? [
             "One or more source graphs or passive captures were incomplete or truncated.",
+          ]
+        : []),
+      ...(facts.inputStatus === "unknown"
+        ? [
+            "One or more source graphs could not establish their coverage, so the reconciled graph's coverage is unknown.",
           ]
         : []),
       ...(facts.outputTruncated
@@ -141,33 +198,27 @@ const graphCoverageFacts = (
       inspection.completeness.attach_limited_sections.length > 0 ||
       inspection.completeness.unavailable_sections.length > 0,
   );
-  const inputTruncated =
-    input.layers.some(({ graph }) => graph.coverage.truncated) ||
-    captureTruncated;
-  const inputComplete =
-    input.layers.every(({ graph }) => graph.coverage.status === "complete") &&
-    input.captures.every(
-      ({ inspection }) =>
-        inspection.completeness.status === "complete_within_window",
-    );
   const outputTruncated = projectionOmissions > 0;
-  const sourceOmissions = input.layers.reduce(
-    (total, { graph }) => total + (graph.coverage.omitted_count ?? 0),
-    0,
-  );
-  const omissionsKnown =
-    !captureTruncated &&
-    !captureHasUnknownOmissions &&
-    input.layers.every(({ graph }) => graph.coverage.omitted_count !== null);
+  const omissions = captureTruncated
+    ? unknownBecause("a passive capture is truncated")
+    : captureHasUnknownOmissions
+      ? unknownBecause(
+          "a passive capture has attach-limited or unavailable sections",
+        )
+      : sumKnownCounts([
+          known(projectionOmissions),
+          ...input.layers.map(({ graph }) =>
+            graph.coverage.omitted_count === null
+              ? unknownBecause("a static graph did not count its omissions")
+              : known(graph.coverage.omitted_count),
+          ),
+        ]);
+  const inputCoverage = reconciliationInputCoverage(input);
   return {
     projectionOmissions,
-    knownOmissions: projectionOmissions + sourceOmissions,
-    omissionsKnown,
-    inputStatus: inputTruncated
-      ? "truncated"
-      : inputComplete
-        ? "complete"
-        : "partial",
+    omissions,
+    inputStatus: inputCoverage.status,
+    inputTruncated: inputCoverage.truncated,
     outputTruncated,
   };
 };
@@ -177,40 +228,42 @@ const graphCoverage = (
   facts: GraphCoverageFacts,
   nodeCount: number,
 ): JavaScriptApplicationGraph["coverage"] =>
-  facts.inputStatus === "complete" && !facts.outputTruncated
-    ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
-    : facts.inputStatus === "truncated" || facts.outputTruncated
-      ? {
-          status: "partial",
-          truncated: true,
-          omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
-          limits: [
-            ...(facts.inputStatus === "truncated"
-              ? [
-                  {
-                    name: "runtime-reconciliation-input-coverage",
-                    value: input.layers.length + input.captures.length,
-                    unit: "items" as const,
-                  },
-                ]
-              : []),
-            ...(facts.outputTruncated
-              ? [
-                  {
-                    name: "runtime-reconciliation-output-limits",
-                    value: nodeCount,
-                    unit: "items" as const,
-                  },
-                ]
-              : []),
-          ],
-        }
-      : {
-          status: "partial",
-          truncated: false,
-          omitted_count: facts.omissionsKnown ? facts.knownOmissions : null,
-          limits: [],
-        };
+  facts.inputStatus === "unknown"
+    ? { status: "unknown", truncated: false, omitted_count: null, limits: [] }
+    : facts.inputStatus === "complete" && !facts.outputTruncated
+      ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
+      : facts.inputStatus === "truncated" || facts.outputTruncated
+        ? {
+            status: "partial",
+            truncated: true,
+            omitted_count: knownOrNull(facts.omissions, (count) => count),
+            limits: [
+              ...(facts.inputStatus === "truncated"
+                ? [
+                    {
+                      name: "runtime-reconciliation-input-coverage",
+                      value: input.layers.length + input.captures.length,
+                      unit: "items" as const,
+                    },
+                  ]
+                : []),
+              ...(facts.outputTruncated
+                ? [
+                    {
+                      name: "runtime-reconciliation-output-limits",
+                      value: nodeCount,
+                      unit: "items" as const,
+                    },
+                  ]
+                : []),
+            ],
+          }
+        : {
+            status: "partial",
+            truncated: false,
+            omitted_count: knownOrNull(facts.omissions, (count) => count),
+            limits: [],
+          };
 
 const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] => [
   ...new Map(edges.map((edge) => [edge.edge_id, edge])).values(),

@@ -54,13 +54,16 @@ it("retains the missing-initializer diagnostic for ordinary TypeScript", () => {
   );
 });
 
-it("keeps CommonJS TypeScript angle-bracket assertions complete", async () => {
-  const source = "export const value = <number>42;\n";
-  const analysis = await analyzeFiles(new Map([["app.cts", source]]));
+it.each(["app.cts", "app.mts"])(
+  "keeps TypeScript angle-bracket assertions complete in %s",
+  async (path) => {
+    const source = "export const value = <number>42;\n";
+    const analysis = await analyzeFiles(new Map([[path, source]]));
 
-  expect(analysis.graph.coverage.status).toBe("complete");
-  expect(parseJavaScriptSource(source, "app.cts")?.errors).toEqual([]);
-});
+    expect(analysis.graph.coverage.status).toBe("complete");
+    expect(parseJavaScriptSource(source, path)?.errors).toEqual([]);
+  },
+);
 
 it("retains exported constant evidence through a type-only satisfies expression", async () => {
   const analysis = await analyzeFiles(

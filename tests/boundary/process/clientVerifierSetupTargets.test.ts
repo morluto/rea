@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each(
   (
@@ -30,14 +30,13 @@ it.each(
 )(
   "%s checks %s setup-plan targets before writing",
   async (client, kind, allowed) => {
-    const state = await mkdtemp(join(tmpdir(), "rea-client-plan-"));
-    try {
-      const commands = join(state, "commands.mjs");
-      const fixture = join(state, "fixture.mjs");
-      const hook = join(state, "hook.mjs");
-      await writeFile(
-        commands,
-        `import {writeFile} from 'node:fs/promises'; import {join} from 'node:path';
+    const state = await createTestTempDirectory("rea-client-plan-");
+    const commands = join(state, "commands.mjs");
+    const fixture = join(state, "fixture.mjs");
+    const hook = join(state, "hook.mjs");
+    await writeFile(
+      commands,
+      `import {writeFile} from 'node:fs/promises'; import {join} from 'node:path';
 export async function createVerifierCommands(){return {
  async exec(command,args,options={}){
   if(command==='git')return {stdout:'',stderr:''};
@@ -55,49 +54,41 @@ export async function createVerifierCommands(){return {
   }
   await writeFile(process.env.STATE+'/setup-advanced','yes'); throw Error('intentional stop before setup mutation');
  }, async close(){} };}`,
-      );
-      await writeFile(
-        fixture,
-        `export async function createOpenAiModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};}`,
-      );
-      await writeFile(
-        hook,
-        `import {registerHooks} from 'node:module';import{pathToFileURL}from'node:url';
+    );
+    await writeFile(
+      fixture,
+      `export { toolCallMessage } from ${JSON.stringify(new URL("../../../scripts/verify/clients/model-fixture.mjs", import.meta.url).href)};
+export async function createOpenAiModelFixture(){return {baseUrl:'http://127.0.0.1:1',async close(){}};}`,
+    );
+    await writeFile(
+      hook,
+      `import {registerHooks} from 'node:module';import{pathToFileURL}from'node:url';
 registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-'+process.env.CLIENT+'-client.mjs')){let f;if(specifier==='./lib/verify-commands.mjs')f='commands.mjs';if(specifier==='./verify/clients/model-fixture.mjs')f='fixture.mjs';if(f)return{url:pathToFileURL(process.env.STATE+'/'+f).href,shortCircuit:true};}return next(specifier,context);}});`,
-      );
-      const script = fileURLToPath(
-        new URL(
-          `../../../scripts/verify-${client}-client.mjs`,
-          import.meta.url,
-        ),
-      );
-      const result = spawnSync(process.execPath, ["--import", hook, script], {
-        encoding: "utf8",
-        timeout: 10_000,
-        env: {
-          ...process.env,
-          STATE: state,
-          CLIENT: client,
-          KIND: kind,
-          TMPDIR: state,
-          TMP: state,
-          TEMP: state,
-        },
-      });
-      expect(result.status).not.toBe(0);
-      const advanced = await readFile(
-        join(state, "setup-advanced"),
-        "utf8",
-      ).then(
-        () => true,
-        () => false,
-      );
-      expect(advanced).toBe(allowed);
-      expect(result.stderr).toContain(
-        allowed ? "intentional stop before setup mutation" : "AssertionError",
-      );
-    } finally {
-      await rm(state, { recursive: true, force: true });
-    }
+    );
+    const script = fileURLToPath(
+      new URL(`../../../scripts/verify-${client}-client.mjs`, import.meta.url),
+    );
+    const result = spawnSync(process.execPath, ["--import", hook, script], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        STATE: state,
+        CLIENT: client,
+        KIND: kind,
+        TMPDIR: state,
+        TMP: state,
+        TEMP: state,
+      },
+    });
+    expect(result.status).not.toBe(0);
+    const advanced = await readFile(join(state, "setup-advanced"), "utf8").then(
+      () => true,
+      () => false,
+    );
+    expect(advanced).toBe(allowed);
+    expect(result.stderr).toContain(
+      allowed ? "intentional stop before setup mutation" : "AssertionError",
+    );
   },
 );

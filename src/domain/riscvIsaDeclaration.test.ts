@@ -1,3 +1,4 @@
+import { vendorAttributeSection } from "../../tests/fixtures/elfVendorAttributes.js";
 import { describe, expect, it } from "vitest";
 import {
   parseRiscvAttributes,
@@ -6,40 +7,8 @@ import {
   riscvIsaDeclaration,
 } from "./riscvIsaDeclaration.js";
 
-const u32 = (value: number, little: boolean): number[] => {
-  const bytes = Buffer.alloc(4);
-  if (little) bytes.writeUInt32LE(value);
-  else bytes.writeUInt32BE(value);
-  return [...bytes];
-};
 const text = (value: string): number[] => [...Buffer.from(value, "latin1"), 0];
-
-/** One vendor subsection holding one scoped list, as toolchains emit it. */
-const section = (
-  attributes: readonly number[],
-  {
-    little = true,
-    vendor = "riscv",
-    scope = 1,
-  }: {
-    readonly little?: boolean;
-    readonly vendor?: string;
-    readonly scope?: number;
-  } = {},
-): Buffer => {
-  const scoped = [
-    scope,
-    ...u32(1 + 4 + attributes.length, little),
-    ...attributes,
-  ];
-  const name = text(vendor);
-  return Buffer.from([
-    0x41,
-    ...u32(4 + name.length + scoped.length, little),
-    ...name,
-    ...scoped,
-  ]);
-};
+const section = vendorAttributeSection("riscv");
 
 // Byte-for-byte the `.riscv.attributes` section LLVM 21 writes for
 // `-march=rv32imc -mabi=ilp32`: stack_align 16, then the ISA string.
@@ -93,18 +62,19 @@ describe("RISC-V .riscv.attributes", () => {
   });
 
   it.each([true, false])(
-    "reads lengths in the image's byte order (little=%s)",
+    "reads lengths within the caller's byte view (little=%s)",
     (little) => {
-      expect(
-        parseRiscvAttributes(
-          section([5, ...text("rv32i2p1_c2p0")], { little }),
-          little,
-        ),
-      ).toEqual({ ok: true, value: "rv32i2p1_c2p0" });
+      const bytes = section([5, ...text("rv32i2p1_c2p0")], { little });
+      const enclosing = Uint8Array.of(0, 1, ...bytes, 0);
+      const selected = enclosing.subarray(2, 2 + bytes.length);
+      expect(parseRiscvAttributes(selected, little)).toEqual({
+        ok: true,
+        value: "rv32i2p1_c2p0",
+      });
     },
   );
 
-  it("skips tags it does not use by the psABI's odd-string, even-integer rule", () => {
+  it("skips known unused tags and optional tags with their psABI value framing", () => {
     expect(
       parseRiscvAttributes(
         section([
@@ -117,10 +87,12 @@ describe("RISC-V .riscv.attributes", () => {
           0x01, // two-byte ULEB128
           5,
           ...text("rv32i2p1"),
-          7,
-          ...text("future string tag"),
+          65,
+          ...text("future optional string tag"),
           14,
           3, // Tag_RISCV_atomic_abi
+          16,
+          0, // Tag_RISCV_x3_reg_usage
         ]),
         true,
       ),

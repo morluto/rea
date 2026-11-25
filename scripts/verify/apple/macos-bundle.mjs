@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -18,9 +17,11 @@ import { verifyDyldEnvironment } from "./dyld-environment.mjs";
 import { verifyDylibResolution } from "./macos-dylib-e2e.mjs";
 import { verifyMachOOccurrences } from "./macho-occurrences.mjs";
 import { verifyNativeProvenance } from "./native-provenance.mjs";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 
 await preflightMacosBundleFixture();
-const root = await mkdtemp(join(tmpdir(), "rea-macos-bundle-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-macos-bundle-" });
+const root = fixture.path;
 
 /** Bundle roles relative to the application root, independent of the container. */
 const anatomy = (projection, applicationRoot) => {
@@ -68,7 +69,7 @@ const EXPECTED_BUNDLES = [
 const commands = await createPackageVerifierCommands({
   workspace: {
     path: root,
-    close: () => rm(root, { recursive: true, force: true }),
+    close: () => fixture.release(),
   },
 });
 const exec = (command, args) =>
@@ -121,7 +122,25 @@ await withVerifierCleanup(async () => {
       input,
     );
     const projection = evidence.normalized_result;
-    assert.equal(evidence.subject?.format, format);
+    const identity = evidence.subject?.identity;
+    // A selected .app directory is named by its complete tree digest;
+    // archives keep their file digest and format.
+    if (format === "directory")
+      assert.deepEqual(
+        {
+          kind: identity?.kind,
+          algorithm: identity?.algorithm,
+          version: identity?.version,
+          sha256: identity?.sha256,
+        },
+        {
+          kind: "directory",
+          algorithm: "rea-directory-tree",
+          version: 1,
+          sha256: inventory.subject?.identity.sha256,
+        },
+      );
+    else assert.equal(identity?.format, format);
     assert.equal(projection.root_format, format);
     assert.deepEqual(projection.platforms, ["macos"]);
     assert.deepEqual(projection.application_roots, [applicationRoot]);

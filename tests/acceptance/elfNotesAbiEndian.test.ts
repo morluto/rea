@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as descriptorHash } from "../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -17,9 +17,6 @@ const knownAbi = Buffer.from("00000000010203041020304080010203", "hex");
 const unknownAbi = Buffer.from("01000000010203041020304080010203", "hex");
 const extendedAbi = Buffer.concat([knownAbi, Buffer.from("01020304", "hex")]);
 const shortAbi = knownAbi.subarray(0, 12);
-const descriptorHash = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 for (const { bits, ownership, machine } of [
   { bits: 32, ownership: "program", machine: 20 },
   { bits: 64, ownership: "section", machine: 21 },
@@ -51,7 +48,7 @@ for (const { bits, ownership, machine } of [
       });
       await writeFile(path, bytes);
 
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: ["inspect-elf-notes", path, "--json"],
       });
       expect(output.exitCode, output.stderr).toBe(0);
@@ -64,7 +61,7 @@ for (const { bits, ownership, machine } of [
         const evidence = schema.parse(value);
         expect(evidence.subject).toMatchObject({
           local_path: path,
-          digest: { sha256: descriptorHash(bytes) },
+          identity: { sha256: descriptorHash(bytes) },
         });
         const report = evidence.normalized_result;
         expect(report).toMatchObject({

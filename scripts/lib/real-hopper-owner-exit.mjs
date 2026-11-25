@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -18,8 +16,7 @@ import {
   requireMcpEvidenceResult,
   requireMcpLifecycleResult,
 } from "./mcp-verifier-results.mjs";
-
-const execFileAsync = promisify(execFile);
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Prove actual MCP owner exit releases the demo singleton for subsequent CLI/MCP sessions. */
 export async function verifyLinuxHopperOwnerExit({
@@ -28,7 +25,12 @@ export async function verifyLinuxHopperOwnerExit({
   serverCommand,
   serverArgs,
   environment,
+  commands,
 }) {
+  if (commands === undefined)
+    throw new Error(
+      "Linux Hopper owner-exit verification requires the supervised command owner",
+    );
   const sentinel = await startUnrelatedHopperSentinel();
   const outcomes = [];
   try {
@@ -46,7 +48,9 @@ export async function verifyLinuxHopperOwnerExit({
       });
       // Drain launcher diagnostics even on the deliberately interrupted owner.
       transport.stderr?.resume();
-      const client = new Client({ name: "hopper-owner-exit", version: "1" });
+      const client = completeEvidenceClient(
+        new Client({ name: "hopper-owner-exit", version: "1" }),
+      );
       const options = { timeout: 180_000 };
       try {
         await client.connect(transport);
@@ -79,7 +83,7 @@ export async function verifyLinuxHopperOwnerExit({
         );
         const procedures = requireMcpEvidenceResult(
           await client.callTool(
-            { name: "list_procedures", arguments: {} },
+            { name: "list_procedures", arguments: { detail: "complete" } },
             options,
           ),
           "list_procedures",
@@ -132,7 +136,7 @@ export async function verifyLinuxHopperOwnerExit({
         assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
         // The SIGKILL case must recover the stale lease for both target identities.
         for (const target of [primary, secondary]) {
-          const result = await execFileAsync(
+          const result = await commands.exec(
             process.execPath,
             [
               "scripts/rea.mjs",
@@ -143,7 +147,11 @@ export async function verifyLinuxHopperOwnerExit({
               "--format",
               "json",
             ],
-            { env: environment, timeout: 180_000, maxBuffer: 16 * 1024 * 1024 },
+            {
+              env: environment,
+              timeout: 180_000,
+              maxBuffer: 16 * 1024 * 1024,
+            },
           );
           assert.ok(JSON.parse(result.stdout).normalized_result);
         }

@@ -2,6 +2,7 @@ import { lstat } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * How one MSIX-packaged client reads its AppData configuration. A package
@@ -70,7 +71,7 @@ const packagePrivateStorageFamily = (
 };
 
 /**
- * Explain why setup must not register a launcher that exists only in one
+ * Explain why automatic registration must skip a launcher that exists only in one
  * package's private storage. Other clients could not start it, and doctor
  * outside that package could not verify it.
  */
@@ -100,7 +101,7 @@ export const packagePrivateLauncherBlocker = (
     }
     const family = packagePrivateStorageFamily(resolved, packages);
     if (family !== undefined)
-      return `The REA launcher ${part} is stored at ${resolved}, inside the private storage of MSIX package ${family}. Only processes started by that app can see it at ${part}, and Windows removes it with the package, so other clients could not start this registration. Install REA from a terminal that the app did not start (for example with \`npm install -g rea-agents\`), then rerun setup from that terminal.`;
+      return `The REA launcher ${part} is stored at ${resolved}, inside the private storage of MSIX package ${family}. Only processes started by that app can see it at ${part}, and Windows removes it with the package, so other clients could not start this registration. Install REA from a terminal that the app did not start (for example with \`npm install -g rea-agents\`), then retry the registration from that terminal.`;
   }
   return undefined;
 };
@@ -132,7 +133,7 @@ const canonicalDestination = (
       }
       return err({
         path,
-        detail: cause instanceof Error ? cause.message : String(cause),
+        detail: errorMessage(cause),
       });
     }
   }
@@ -141,7 +142,7 @@ const canonicalDestination = (
 export const redirectedWriteBlocker = (
   view: MsixPackageView | undefined,
   targets: readonly string[],
-  operation: "setup" | "uninstall",
+  operation: "setup" | "uninstall" | "mcp add",
   canonicalPath: (path: string) => string = realpathSync.native,
 ): string | undefined => {
   if (view?.processView !== "redirected" || targets.length === 0)
@@ -195,7 +196,7 @@ export const packageReadTargetChanged = async (
     return err({
       _tag: "MsixReadTargetInspectionFailure",
       path: view.privateConfigPath,
-      detail: cause instanceof Error ? cause.message : String(cause),
+      detail: errorMessage(cause),
       cause,
     });
   }

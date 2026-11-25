@@ -11,7 +11,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
-import { PrivateRuntimeRoot } from "../../../dist/process/PrivateRuntimeRoot.js";
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
+import {
+  completeEvidenceClient,
+  completeEvidenceToolArguments,
+} from "../../lib/complete-evidence.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -54,10 +58,12 @@ const transport = new StdioClientTransport({
   },
   stderr: "pipe",
 });
-const client = new Client({
-  name: "javascript-module-reference-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "javascript-module-reference-verifier",
+    version: "1",
+  }),
+);
 const serialize = (value) => JSON.stringify(value);
 const bytes = (value) => Buffer.byteLength(serialize(value));
 const digest = (value) =>
@@ -82,7 +88,6 @@ const normalize = (rows) =>
     ),
   }));
 let temporary;
-let retainTemporary = false;
 await withVerifierCleanup(async () => {
   await client.connect(transport);
   transport.stderr?.resume();
@@ -115,7 +120,10 @@ await withVerifierCleanup(async () => {
   };
   const summary = await call(
     "analyze_javascript_application",
-    preparationRequest,
+    await completeEvidenceToolArguments(
+      "analyze_javascript_application",
+      preparationRequest,
+    ),
   );
   const source = {
     kind: "retained-evidence",
@@ -266,7 +274,7 @@ await withVerifierCleanup(async () => {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await PrivateRuntimeRoot.create({
+    temporary = await VerifierFixture.open({
       prefix: "rea-module-reference-verifier-",
     });
     const bundlePath = join(temporary.path, "bundle.json");
@@ -312,7 +320,7 @@ await withVerifierCleanup(async () => {
   }
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    temporary ??= await PrivateRuntimeRoot.create({
+    temporary ??= await VerifierFixture.open({
       prefix: "rea-module-reference-verifier-",
     });
     const input = join(temporary.path, "token-input.json");
@@ -357,9 +365,13 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
       // An incomplete cleanup carries its supervisor and identity resources in
       // the error. Preserve its private files for that owner instead of erasing
       // recovery data while a command may still be using it.
-      retainTemporary =
+      if (
         cause instanceof OwnedCommandFailure &&
-        cause.cleanupOwner !== undefined;
+        cause.cleanupOwner !== undefined
+      )
+        temporary.retain(
+          `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
+        );
       throw new Error(
         "Token accounting failed; inspect the owned-command outcome and cleanup status.",
         { cause },
@@ -392,15 +404,4 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
         "First query is after shared artifact analysis; subsequent queries share one MCP session. Legacy item reads are serial; a concurrent legacy baseline is unmeasured. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children.",
     })}\n`,
   );
-}, [
-  () => client.close(),
-  () => transport.close(),
-  async () => {
-    if (temporary === undefined) return;
-    if (retainTemporary)
-      throw new Error(
-        `Command cleanup is incomplete; retaining its private input/Evidence files at ${temporary.path}.`,
-      );
-    await temporary.close();
-  },
-]);
+}, [() => client.close(), () => transport.close(), () => temporary?.release()]);

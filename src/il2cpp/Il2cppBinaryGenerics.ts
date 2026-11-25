@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import type { Il2cppGenericMethodInstance } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import {
@@ -240,9 +241,7 @@ export function* linkGenericMethodsSteps(
   for (let row = 0; row < tableCount; row++) {
     if (row % BATCH === 0) yield;
     const spec = i32(rowAt(row))!;
-    const rows = specRows.get(spec);
-    if (rows === undefined) specRows.set(spec, [row]);
-    else rows.push(row);
+    appendToMapList(specRows, spec, row);
   }
   const issues: Il2cppGenericMethodIssue[] = [];
   const issue = (row: number, address: bigint, message: string) => {
@@ -366,7 +365,7 @@ export function* linkGenericMethodsSteps(
             // Capacity is a budget refusal, never a fact about this row.
             if (
               !(cause instanceof Il2cppBinaryFormatFailure) ||
-              cause.kind === "capacity"
+              cause.kind === "limit"
             )
               throw cause;
             issue(row, specAt, cause.message);

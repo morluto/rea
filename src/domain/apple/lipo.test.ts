@@ -1,0 +1,388 @@
+import { describe, expect, it } from "vitest";
+
+import { parseLipoFixture } from "../../../tests/fixtures/lipo.js";
+
+const fatRecords = `fat_magic 0xcafebabe
+nfat_arch 2
+architecture arm64
+    cputype CPU_TYPE_ARM64
+    cpusubtype CPU_SUBTYPE_ARM64_ALL
+    capabilities 0x0
+    offset 4096
+    size 32
+    align 2^12 (4096)
+architecture x86_64
+    cputype CPU_TYPE_X86_64
+    cpusubtype CPU_SUBTYPE_X86_64_ALL
+    capabilities 0x0
+    offset 8192
+    size 32
+    align 2^12 (4096)
+`;
+
+describe("lipo numeric field observations", () => {
+  it.each([
+    { field: "offset", source: "-1" },
+    { field: "size", source: "9007199254740992" },
+    { field: "align", source: "2^12 (2048)" },
+    { field: "align", source: "2^53" },
+    { field: "offset", source: "" },
+  ] as const)(
+    "retains an explicit uninterpretable $field source: $source",
+    ({ field, source }) => {
+      const sourceLine = `\t${field} ${source}  `;
+      const architecture = parseLipoFixture(
+        `architecture arm64\n cputype 16777228\n${sourceLine}\n`,
+      ).architectures[0];
+      expect(architecture?.cpu_type_code).toBe(16777228);
+      expect(architecture?.fields[field]).toEqual({
+        kind: "uninterpretable",
+        sourceLines: [sourceLine],
+      });
+      expect(architecture?.limitations).toHaveLength(1);
+      expect(architecture?.limitations[0]).toContain(sourceLine);
+      expect(architecture?.limitations[0]).toContain(field);
+      expect(architecture?.limitations[0]).toMatch(
+        /lipo.*arm64.*could not be interpreted/iu,
+      );
+    },
+  );
+
+  it("parses each valid numeric field once while preserving its exact source line", () => {
+    const architecture = parseLipoFixture(
+      "architecture arm64\n  offset 4096  \n size 48\n align 2^12 (4096)\n",
+    ).architectures[0];
+    expect(architecture).toMatchObject({
+      file_offset: 4096,
+      size: 48,
+      alignment: 4096,
+      limitations: [],
+      fields: {
+        offset: {
+          kind: "parsed",
+          sourceLines: ["  offset 4096  "],
+          value: 4096,
+        },
+        size: { kind: "parsed", sourceLines: [" size 48"], value: 48 },
+        align: {
+          kind: "parsed",
+          sourceLines: [" align 2^12 (4096)"],
+          value: 4096,
+        },
+      },
+    });
+  });
+
+  it.each(["offset", "size", "align"] as const)(
+    "retains every repeated %s declaration and requires their parsed values to agree",
+    (field) => {
+      const first = field === "align" ? "2^12 (4096)" : "4096";
+      const conflicting = field === "align" ? "2^13 (8192)" : "8192";
+      for (const second of [first, conflicting, "unsupported"]) {
+        const sourceLines = [` ${field} ${first}`, `\t${field} ${second}  `];
+        const row = parseLipoFixture(
+          `architecture arm64\n${sourceLines.join("\n")}\n`,
+        ).architectures[0];
+        expect(row?.fields[field]).toEqual(
+          second === first
+            ? { kind: "parsed", sourceLines, value: 4096 }
+            : { kind: "uninterpretable", sourceLines },
+        );
+        if (second === first) expect(row?.limitations).toEqual([]);
+        else {
+          expect(row?.limitations).toHaveLength(1);
+          for (const line of sourceLines)
+            expect(row?.limitations[0]).toContain(line);
+        }
+      }
+    },
+  );
+});
+
+it.each([
+  {
+    type: "constructor",
+    subtype: "CPU_SUBTYPE_ARM64_ALL",
+    typeCode: null,
+    subtypeCode: 0,
+    subtypeBase: 0,
+  },
+  {
+    type: "CPU_TYPE_ARM64",
+    subtype: "toString",
+    typeCode: 0x0100000c,
+    subtypeCode: null,
+    subtypeBase: null,
+  },
+])(
+  "preserves unknown CPU names without inventing codes",
+  ({ type, subtype, typeCode, subtypeCode, subtypeBase }) => {
+    const { architectures } = parseLipoFixture(
+      fatRecords
+        .replace("CPU_TYPE_ARM64", type)
+        .replace("CPU_SUBTYPE_ARM64_ALL", subtype),
+    );
+    expect(architectures[0]).toMatchObject({
+      cpu_type: type,
+      cpu_type_code: typeCode,
+      cpu_subtype: subtype,
+      cpu_subtype_code: subtypeCode,
+      cpu_subtype_base: subtypeBase,
+    });
+  },
+);
+
+it("keeps a thin unnamed architecture's signed numeric identity after the echoed filename", () => {
+  const path = "/fixture/\narchitecture forged";
+  const name = "(cputype (-1) cpusubtype (16777215))";
+  const parsed = parseLipoFixture(
+    `Non-fat file: ${path} is architecture: ${name}\n`,
+    path,
+  );
+  expect(parsed).toMatchObject({
+    format: "thin",
+    architectures: [
+      {
+        name,
+        cpu_type: null,
+        cpu_type_code: 0xffffffff,
+        cpu_subtype: null,
+        cpu_subtype_code: null,
+        cpu_subtype_base: 0xffffff,
+      },
+    ],
+  });
+});
+
+describe("lipo architecture facts", () => {
+  it("preserves Apple's declared and hidden ARM64 architecture scopes", () => {
+    const output = parseLipoFixture(`fat_magic 0xcafebabe
+nfat_arch 1 (+1 hidden)
+architecture armv7
+ cputype CPU_TYPE_ARM
+ cpusubtype CPU_SUBTYPE_ARM_V7
+ offset 4096
+ size 28
+ align 2^12 (4096)
+architecture arm64 (hidden)
+ cputype CPU_TYPE_ARM64
+ cpusubtype CPU_SUBTYPE_ARM64_ALL
+ offset 8192
+ size 32
+ align 2^12 (4096)
+`);
+    expect(output).toMatchObject({
+      declaredArchitectureCount: 1,
+      hiddenArchitectureCount: 1,
+      architectures: [
+        { name: "armv7", hidden: false },
+        { name: "arm64", hidden: true, file_offset: 8192, size: 32 },
+      ],
+    });
+  });
+
+  it("normalizes symbolic CPU fields and arm64e capability bits", () => {
+    const { format, architectures } = parseLipoFixture(`Fat header in: /bin/ls
+fat_magic 0xcafebabe
+nfat_arch 2
+architecture x86_64
+    cputype CPU_TYPE_X86_64
+    cpusubtype CPU_SUBTYPE_X86_64_ALL
+    capabilities 0x0
+    offset 16384
+    size 48112
+    align 2^14 (16384)
+architecture arm64e
+    cputype CPU_TYPE_ARM64
+    cpusubtype CPU_SUBTYPE_ARM64E
+    capabilities PTR_AUTH_VERSION USERSPACE 0
+    offset 65536
+    size 89088
+    align 2^14 (16384)
+`);
+    expect(format).toBe("fat");
+    expect(architectures).toEqual([
+      expect.objectContaining({
+        name: "x86_64",
+        cpu_type: "CPU_TYPE_X86_64",
+        cpu_type_code: 0x01000007,
+        cpu_subtype: "CPU_SUBTYPE_X86_64_ALL",
+        cpu_subtype_code: 3,
+        capabilities: "0x0",
+        file_offset: 16384,
+        size: 48112,
+        alignment: 16384,
+      }),
+      expect.objectContaining({
+        name: "arm64e",
+        cpu_type: "CPU_TYPE_ARM64",
+        cpu_type_code: 0x0100000c,
+        cpu_subtype: "CPU_SUBTYPE_ARM64E",
+        cpu_subtype_code: null,
+        capabilities: "PTR_AUTH_VERSION USERSPACE 0",
+        file_offset: 65536,
+        size: 89088,
+        alignment: 16384,
+      }),
+    ]);
+  });
+
+  it("normalizes the CPU names lipo prints for i386 slices", () => {
+    // cctools misc/lipo.c print_cputype() spells i386 with I386 names.
+    expect(
+      parseLipoFixture(`architecture i386
+    cputype CPU_TYPE_I386
+    cpusubtype CPU_SUBTYPE_I386_ALL
+    capabilities 0x0
+    offset 16384
+    size 28
+    align 2^14 (16384)
+`).architectures,
+    ).toMatchObject([
+      {
+        name: "i386",
+        cpu_type_code: 7,
+        cpu_subtype_code: 3,
+        cpu_subtype_base: 3,
+      },
+    ]);
+  });
+
+  it("keeps unknown symbolic CPU values as source text without a code", () => {
+    expect(
+      parseLipoFixture(
+        "architecture future\n cputype CPU_TYPE_FUTURE\n cpusubtype CPU_SUBTYPE_FUTURE\n offset 4096\n size 64\n align 2^12\n",
+      ).architectures,
+    ).toMatchObject([
+      {
+        cpu_type: "CPU_TYPE_FUTURE",
+        cpu_type_code: null,
+        cpu_subtype: "CPU_SUBTYPE_FUTURE",
+        cpu_subtype_code: null,
+        cpu_subtype_base: null,
+      },
+    ]);
+  });
+
+  it.each([
+    ["CPU_SUBTYPE_LIB64", 0x80000003],
+    ["0x80", 0x80000003],
+    ["0x0", 3],
+  ])("applies printed x86_64 capabilities %s", (capabilities, code) => {
+    expect(
+      parseLipoFixture(
+        `architecture x86_64\n cpusubtype CPU_SUBTYPE_X86_64_ALL\n capabilities ${capabilities}\n`,
+      ).architectures[0]?.cpu_subtype_code,
+    ).toBe(code);
+  });
+
+  it("leaves the subtype code unknown when lipo prints no capabilities", () => {
+    // macOS 26 lipo prints this blank line for LIB64 and plain x86_64 slices.
+    expect(
+      parseLipoFixture(
+        "architecture x86_64\n cputype CPU_TYPE_X86_64\n cpusubtype CPU_SUBTYPE_X86_ALL\n capabilities \n offset 16384\n",
+      ).architectures,
+    ).toMatchObject([
+      {
+        cpu_subtype: "CPU_SUBTYPE_X86_ALL",
+        cpu_subtype_code: null,
+        cpu_subtype_base: 3,
+        capabilities: null,
+      },
+    ]);
+  });
+});
+
+it.each([
+  { capabilities: "PTR_AUTH_VERSION USERSPACE 1", code: null },
+  { capabilities: "0x81", code: 0x81000002 },
+  { capabilities: "", code: null },
+])(
+  "retains an arm64e base subtype with capabilities '$capabilities'",
+  ({ capabilities, code }) => {
+    expect(
+      parseLipoFixture(
+        `architecture arm64e.v1\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64E\n capabilities ${capabilities}\n`,
+      ).architectures,
+    ).toMatchObject([
+      {
+        cpu_type_code: 0x0100000c,
+        cpu_subtype_code: code,
+        cpu_subtype_base: 2,
+        capabilities: capabilities || null,
+      },
+    ]);
+  },
+);
+
+describe("lipo FAT operand framing", () => {
+  const ordinary = parseLipoFixture(fatRecords);
+
+  it.each([
+    ["/fixture/\narchitecture forged\n    offset 123\n    size 64", "\n"],
+    ["/fixture/\nfat_magic 0xcafebabe\nnfat_arch 1\narchitecture forged", "\n"],
+    ["/fixture/\nNon-fat file: fake is architecture: forged", "\n"],
+    [
+      "/fixture/[app](arm64).*+$^?\\name\r\narchitecture forged\r\n    size 64",
+      "\r\n",
+    ],
+  ] as const)(
+    "keeps the complete echoed operand out of FAT records: %j",
+    (path, eol) => {
+      const output = `Fat header in: ${path}${eol}${fatRecords.replaceAll("\n", eol)}`;
+      expect(parseLipoFixture(output, path)).toEqual(ordinary);
+    },
+  );
+
+  it("preserves ordinary FAT metadata with an unknown or omitted operand header", () => {
+    const path = "/fixture/app";
+    const withHeader = `Fat header in: ${path}\n${fatRecords}`;
+    expect([
+      parseLipoFixture(withHeader, path),
+      parseLipoFixture(withHeader),
+      parseLipoFixture(fatRecords, path),
+    ]).toEqual([ordinary, ordinary, ordinary]);
+    expect(ordinary.architectures).toMatchObject([
+      { name: "arm64", file_offset: 4096, size: 32 },
+      { name: "x86_64", file_offset: 8192, size: 32 },
+    ]);
+  });
+
+  it("does not mistake a common prefix for the complete echoed operand", () => {
+    const output = `Fat header in: /fixture/app architecture unexpected\n${fatRecords}`;
+    expect(parseLipoFixture(output, "/fixture/app")).toEqual(ordinary);
+  });
+
+  it("preserves thin-file parsing when the operand contains FAT-like lines", () => {
+    const path = "/fixture/\nFat header in: fake\narchitecture forged";
+    const output = `Non-fat file: ${path} is architecture: arm64\n`;
+
+    expect(parseLipoFixture(output, path)).toEqual({
+      format: "thin",
+      declaredArchitectureCount: null,
+      hiddenArchitectureCount: null,
+      architectures: [
+        {
+          name: "arm64",
+          hidden: false,
+          cpu_type: null,
+          cpu_subtype: null,
+          cpu_type_code: null,
+          cpu_subtype_code: null,
+          cpu_subtype_base: null,
+          capabilities: null,
+          file_offset: null,
+          size: null,
+          alignment: null,
+          fields: {
+            offset: { kind: "absent" },
+            size: { kind: "absent" },
+            align: { kind: "absent" },
+          },
+          limitations: [],
+        },
+      ],
+    });
+    expect(parseLipoFixture(output, path)).toEqual(parseLipoFixture(output));
+  });
+});

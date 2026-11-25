@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { CliGuidanceResources } from "../../../src/cli/guidanceCommands.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { CliJavaScriptAnalysisHost } from "../../../src/cli/javascriptApplicationAnalysis.js";
 
 const originalClose = ArtifactResourceScope.prototype.close;
@@ -9,14 +8,6 @@ const originalClose = ArtifactResourceScope.prototype.close;
 afterEach(() => {
   ArtifactResourceScope.prototype.close = originalClose;
   vi.restoreAllMocks();
-});
-
-it("keeps guidance descriptors on the host that created them", () => {
-  const first = new CliGuidanceResources();
-  const second = new CliGuidanceResources();
-  expect(first.resources()).toBe(first.resources());
-  expect(second.resources()).toBe(second.resources());
-  expect(first.resources()).not.toBe(second.resources());
 });
 
 it("does not share a JavaScript worker scope or its in-flight close", async () => {

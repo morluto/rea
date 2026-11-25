@@ -55,6 +55,63 @@ it("recovers a failed post-publication run using its successful original qualifi
   });
 });
 
+it("recovers after qualification precedes tagging and requires the tag job to pass", () => {
+  const input = selection();
+  input.jobs[0] = job("Create qualified GitHub release");
+  expect(selectRecoveryRelease(input)).toMatchObject({ source_sha: sourceSha });
+  input.jobs[0] = job("Create qualified GitHub release", "failure");
+  expect(() => selectRecoveryRelease(input)).toThrow(
+    "did not pass Create qualified GitHub release",
+  );
+});
+
+it("recovers npm publication before GitHub tagging from the original qualified workflow revision", () => {
+  const existing = selection();
+  const input = {
+    repository: existing.repository,
+    version: existing.version,
+    run: {
+      ...existing.run,
+      run_attempt: 2,
+      referenced_workflows: [
+        {
+          path: `fixture/rea/.github/workflows/ci.yml@${sourceSha}`,
+          sha: sourceSha,
+        },
+      ],
+    },
+    jobs: [
+      { ...job("Authorize qualified npm publication"), run_attempt: 1 },
+      ...existing.jobs.slice(1).map((entry) => ({ ...entry, run_attempt: 1 })),
+      { ...job("Verify published npm package", "failure"), run_attempt: 2 },
+    ],
+  };
+  expect(selectRecoveryRelease(input)).toMatchObject({
+    source_sha: sourceSha,
+    run_attempt: 2,
+  });
+  expect(
+    selectRecoveryRelease({
+      ...input,
+      release: existing.release,
+      tagSha: sourceSha,
+    }),
+  ).toMatchObject({
+    source_sha: sourceSha,
+  });
+  expect(() =>
+    selectRecoveryRelease({
+      ...input,
+      release: existing.release,
+      tagSha: "b".repeat(40),
+    }),
+  ).toThrow("differs");
+  input.jobs[0]!.conclusion = "failure";
+  expect(() => selectRecoveryRelease(input)).toThrow(
+    "Authorize qualified npm publication",
+  );
+});
+
 it.each(["legacy publisher", "separate verification"])(
   "recovers a byte-verified existing version from %s when the npm write was skipped",
   (location) => {
@@ -201,8 +258,14 @@ it("limits recovery to verification and dependent MCP publication from the relea
           permissions: z.record(z.string(), z.string()),
           steps: z.array(step),
         }),
-        "publish-mcp": z.object({
+        "tag-release": z.object({
           needs: z.string(),
+          if: z.string(),
+          steps: z.array(step),
+        }),
+        "publish-mcp": z.object({
+          needs: z.array(z.string()),
+          if: z.string(),
           permissions: z.record(z.string(), z.string()),
           steps: z.array(step),
         }),
@@ -216,6 +279,7 @@ it("limits recovery to verification and dependent MCP publication from the relea
   expect(workflow.jobs.verify.permissions).toEqual({
     contents: "read",
     actions: "read",
+    "pull-requests": "read",
   });
   const steps = workflow.jobs.verify.steps;
   for (const name of ["verified-release-package", "rea-test-runtime"])
@@ -239,7 +303,19 @@ it("limits recovery to verification and dependent MCP publication from the relea
   expect(rehearsal).toBeGreaterThan(digest);
   expect(canary).toBeGreaterThan(rehearsal);
   const publisher = workflow.jobs["publish-mcp"];
-  expect(publisher.needs).toBe("verify");
+  const tag = workflow.jobs["tag-release"];
+  expect(tag.needs).toBe("verify");
+  expect(tag.if).toContain("github_published == 'false'");
+  expect(
+    tag.steps.some(({ uses }) =>
+      uses?.startsWith("googleapis/release-please-action@"),
+    ),
+  ).toBe(true);
+  expect(tag.steps.at(-1)?.run).toBe(
+    "node scripts/ci/release-attempt.mjs verify-github",
+  );
+  expect(publisher.needs).toEqual(["verify", "tag-release"]);
+  expect(publisher.if).toContain("needs.tag-release.result == 'success'");
   expect(
     publisher.steps.find(
       (candidate) => candidate.with?.path === ".cache/release-source",
