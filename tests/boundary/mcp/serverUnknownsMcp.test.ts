@@ -220,7 +220,9 @@ it("does not record capability unavailability without supporting Evidence", asyn
 
   const unavailable = await client.callTool({
     name: "procedure_pseudo_code",
-    arguments: { detail: "complete", procedure: "main" },
+    arguments: {
+      procedure: "main",
+    },
   });
   expect(unavailable.isError).toBe(true);
   expect(structured(unavailable)).toMatchObject({

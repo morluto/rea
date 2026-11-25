@@ -29,7 +29,6 @@ import {
   definedCliEnvironment,
 } from "../../support/cli/cliFixture.js";
 import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
@@ -56,7 +55,6 @@ it("preserves aioquic recovery packet-number spaces and their source records", a
   const ordinals = [1, 5, 9, 13, 17, 21, 25];
   const { call } = await sharedMcp();
   const response = await call("inspect_web_network_capture", {
-    detail: "complete",
     capture_path: path,
     format: "qlog",
     record_ordinals: ordinals,
@@ -154,7 +152,6 @@ const expectRecoveredCapture = async (
   path: string,
 ): Promise<void> => {
   const response = await call("inspect_web_network_capture", {
-    detail: "complete",
     capture_path: path,
     format: "qlog",
   });
@@ -366,7 +363,6 @@ runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(
     expect(
       parseMcpToolError(
         await call("inspect_web_network_capture", {
-          detail: "complete",
           capture_path: path,
           format: "qlog",
         }),
@@ -397,7 +393,6 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
   const mcp = parseEvidence(response.structuredContent);
   const result = await runSharedCli([
     "inspect-web-network-capture",
-    ...COMPLETE_DETAIL,
     path,
     "qlog",
     "--record",
@@ -449,14 +444,12 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
   }
   const sensitive = ["trace-local", "/traces/0", "input.qlog", "data"];
   const hidden = await call("inspect_web_network_capture", {
-    detail: "complete",
     capture_path: path,
     format: "qlog",
     sensitive_values: sensitive,
   });
   const hiddenCli = await runSharedCli([
     "inspect-web-network-capture",
-    ...COMPLETE_DETAIL,
     path,
     "qlog",
     ...sensitive.flatMap((value) => ["--sensitive-value", value]),
@@ -557,7 +550,6 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   await writeFile(path, outsideSelection);
   const failed = await runSharedCli([
     "inspect-web-network-capture",
-    ...COMPLETE_DETAIL,
     path,
     "qlog",
     "--record",
@@ -575,7 +567,6 @@ it("fails whole-capture validation before selection and survives malformed, unsu
     expect(
       parseMcpToolError(
         await call("inspect_web_network_capture", {
-          detail: "complete",
           capture_path: path,
           format: "qlog",
           record_ordinals: [0],
@@ -587,7 +578,6 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   expect(
     parseMcpToolError(
       await call("inspect_web_network_capture", {
-        detail: "complete",
         capture_path: path,
         format: "qlog",
       }),
@@ -627,7 +617,6 @@ runtimeTest.skipIf(
     await writeFile(path, dense);
     const { call, client } = await connectLocalToolsMcp();
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "qlog",
       record_ordinals: [0],
@@ -643,14 +632,7 @@ runtimeTest.skipIf(
     });
     const failed: unknown = await execute(
       process.execPath,
-      [
-        cli,
-        "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
-        path,
-        "qlog",
-        "--json",
-      ],
+      [cli, "inspect-web-network-capture", path, "qlog", "--json"],
       { timeout: 40_000, maxBuffer: 1024 * 1024 },
     ).catch((cause: unknown) => cause);
     expect(failed).toMatchObject({

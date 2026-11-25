@@ -14,7 +14,6 @@ import {
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cli/cliOutput.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
@@ -580,7 +579,6 @@ describe("compiled CLI filter results", () => {
       const result = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
           "tests/conformance/readiness/javascript-cli",
           "--format",
           "json",
@@ -597,7 +595,6 @@ describe("compiled CLI filter results", () => {
       const nested = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
           "tests/conformance/readiness/javascript-cli",
           "--format",
           "json",
@@ -613,7 +610,6 @@ describe("compiled CLI filter results", () => {
       const selected = await cli.run({
         arguments: [
           "analyze-javascript-application",
-          ...COMPLETE_DETAIL,
           "tests/conformance/readiness/javascript-cli",
           "--format",
           "json",

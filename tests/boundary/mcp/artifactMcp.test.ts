@@ -163,7 +163,7 @@ it.for([
 
       const result = await client.callTool({
         name: "inspect_artifact",
-        arguments: { detail: "complete" },
+        arguments: {},
       });
       expect(result.isError).toBe(true);
       const projected = parseMcpToolError(result);
@@ -281,7 +281,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(inspected.isError).not.toBe(true);
     const result = toolEvidence(inspected.structuredContent);
@@ -399,7 +399,6 @@ it("records an explicitly continued mismatch, preserves verified siblings, and n
     const result = await client.callTool({
       name: "inspect_artifact",
       arguments: {
-        detail: "complete",
         integrity_policy: "record-and-continue",
       },
     });
@@ -610,7 +609,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(inspected.isError).not.toBe(true);
     const inspectionResult = toolEvidence(inspected.structuredContent);
@@ -642,7 +641,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     ]);
     const inventory = await client.callTool({
       name: "inspect_artifact",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(inventory.isError).not.toBe(true);
     const inventoryResult = toolEvidence(inventory.structuredContent);
@@ -679,7 +678,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     expect(openedChanged.isError).not.toBe(true);
     const changedInventory = await client.callTool({
       name: "inspect_artifact",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     const changedResult = toolEvidence(changedInventory.structuredContent);
     const changedInspection = z
@@ -841,7 +840,7 @@ const inspectArtifactInventoryThroughMcp = async (
   expect(opened.isError).not.toBe(true);
   const reply = await client.callTool({
     name: "inspect_artifact",
-    arguments: { detail: "complete" },
+    arguments: {},
   });
   expect(reply.isError).not.toBe(true);
   const inspection = artifactInspectionResultSchema.parse(
@@ -1391,10 +1390,7 @@ it("attributes ASAR integrity contradictions to their actual inputs and withhold
       ).not.toBe(true);
       const inspected = await client.callTool({
         name: "inspect_artifact",
-        arguments: {
-          detail: "complete",
-          integrity_policy: "record-and-continue",
-        },
+        arguments: { integrity_policy: "record-and-continue" },
       });
       expect(inspected.isError).not.toBe(true);
       observations.push(toolEvidence(inspected.structuredContent));

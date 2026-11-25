@@ -35,7 +35,6 @@ const analyzeThroughCliAndMcp = async (source: string) => {
   const evidence = parseEvidence(JSON.parse(stdout));
   const { client, call } = await connectLocalToolsMcp({ HOME: home });
   const response = await call("analyze_javascript_application", {
-    detail: "complete",
     input_path: app,
     format: "auto",
   });

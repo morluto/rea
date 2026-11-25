@@ -185,15 +185,9 @@ const GDB: Debugger = {
       session,
       { recordEvidence },
     ),
-  command: {
-    name: "gdb_console",
-    arguments: { ...GDB_CONSOLE, detail: "complete" },
-  },
+  command: { name: "gdb_console", arguments: GDB_CONSOLE },
   next: {
-    call: {
-      name: "gdb_console",
-      arguments: { ...GDB_CONSOLE, detail: "complete" },
-    },
+    call: { name: "gdb_console", arguments: GDB_CONSOLE },
     runs: "execute",
   },
   close: { name: "close_gdb_session", arguments: { session_id: SESSION_ID } },

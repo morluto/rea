@@ -10,7 +10,6 @@ import { z } from "zod";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { webEventListenersSchema } from "../../src/domain/webEventListeners.js";
 import { startRuntimeBrowser } from "../fixtures/webRuntime.js";
-import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const entrypoint = fileURLToPath(
   new URL("../../scripts/rea.mjs", import.meta.url),
@@ -235,7 +234,6 @@ const cancellationCommands: readonly CliCancellationCommand[] = [
     operation: "analyze_web_bundle",
     buildArgs: (endpoint) => [
       "analyze-web-bundle",
-      ...COMPLETE_DETAIL,
       endpoint,
       "page-fixture",
       "--json",

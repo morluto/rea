@@ -873,7 +873,7 @@ mcpTest(
       for (let attempt = 0; attempt < 2; attempt++) {
         const response = await client.callTool({
           name: "inspect_rust_binary",
-          arguments: { detail: "complete", path },
+          arguments: { path },
         });
         expect(response.isError).toBe(true);
         const { error } = parseMcpToolError(response);
@@ -916,7 +916,7 @@ mcpTest(
       fault.blocked.clear();
       const recovered = await client.callTool({
         name: "inspect_rust_binary",
-        arguments: { detail: "complete", path },
+        arguments: { path },
       });
       expect(recovered.isError).not.toBe(true);
       expect(failures.map((error) => error.cleanupIncomplete)).toEqual([
@@ -1005,7 +1005,7 @@ mcpTest(
     try {
       const response = await client.callTool({
         name: "inspect_rust_binary",
-        arguments: { detail: "complete", path },
+        arguments: { path },
       });
       expect(parseMcpToolError(response).error.code).toBe("cleanup_incomplete");
       expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
