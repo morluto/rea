@@ -58,35 +58,29 @@ export const typeScriptEnumInitializer = (
 /**
  * The store around the enum's object may only publish it as a CommonJS
  * export. Another object's member may be a setter, whose code would run
- * inside the declaration that the caller's effect check skips.
+ * inside the declaration that the caller's effect check skips. So may a
+ * member of `module.exports`, which code can replace with an object that has
+ * one, so only stores on the `exports` object itself are accepted.
  */
 const isExportStore = (
   target: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  commonJsExportName(target, state) !== undefined ||
-  isFactoryExportStore(target, state);
+  t.isMemberExpression(target) &&
+  !t.isMemberExpression(unwrapJavaScriptExpression(target.object).node) &&
+  (commonJsExportName(target, state) !== undefined ||
+    isFactoryExportStore(target, state));
 
 /**
- * `exports.E` or `module.exports.E` through the module and exports
- * parameters of a factory in a recognized bundle module table. Its loader
- * supplies the exports object, as the host does for a global receiver.
+ * `exports.E` through the exports parameter of a factory in a recognized
+ * bundle module table. Its loader supplies that object, as the host does for
+ * a global receiver.
  */
 const isFactoryExportStore = (
-  target: t.Node,
+  target: t.MemberExpression,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (!t.isMemberExpression(target)) return false;
-  let receiver = unwrapJavaScriptExpression(target.object).node;
-  let position = 1;
-  if (
-    t.isMemberExpression(receiver) &&
-    semanticStaticPropertyKey(receiver.property, receiver.computed) ===
-      "exports"
-  ) {
-    receiver = unwrapJavaScriptExpression(receiver.object).node;
-    position = 0;
-  }
+  const receiver = unwrapJavaScriptExpression(target.object).node;
   if (!t.isIdentifier(receiver)) return false;
   const binding = resolveSemanticBindingState(state, receiver, receiver.name);
   // A reassigned role parameter no longer holds the loader's object.
@@ -101,7 +95,7 @@ const isFactoryExportStore = (
     node = state.parentsByNode.get(node)
   ) {
     if (!t.isFunction(node)) continue;
-    const parameter = runtimeFunctionParameters(node)[position];
+    const parameter = runtimeFunctionParameters(node)[1];
     if (
       t.isIdentifier(parameter) &&
       resolveSemanticBindingState(state, parameter, parameter.name)

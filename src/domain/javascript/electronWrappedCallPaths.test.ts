@@ -957,10 +957,6 @@ it.each([
     `var Channel;(function(e){e.Ping="app:ping"})(Channel||(exports.Channel=Channel={}));`,
   ],
   [
-    "tsc through module.exports",
-    `var Channel;(function(e){e.Ping="app:ping"})(Channel||(module.exports.Channel=Channel={}));`,
-  ],
-  [
     "Babel through exports",
     `let Channel=exports.Channel=function(e){return e.Ping="app:ping",e}({});`,
   ],
@@ -976,6 +972,42 @@ it.each([
     expect(result.electron.call_paths).toContainEqual(
       expect.objectContaining({ entry: "desktop.ping", channel: "app:ping" }),
     );
+  },
+);
+// `module.exports` may be replaced by an object whose setter rewrites the enum.
+it.each([
+  [
+    "a bundle module factory",
+    (enumeration: string) =>
+      bundle(
+        `module.exports={set Channel(value){value.Ping=runtimeChannel}};
+         ${enumeration}
+         electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+      ),
+  ],
+  [
+    "a CommonJS source",
+    (enumeration: string) => `
+      const electron=require("electron");
+      module.exports={set Channel(value){value.Ping=runtimeChannel}};
+      ${enumeration}
+      electron.contextBridge.exposeInMainWorld("desktop",{ping:()=>electron.ipcRenderer.send(Channel.Ping)});`,
+  ],
+])(
+  "keeps an enum stored on a replaced module.exports unresolved in %s",
+  (_label, source) => {
+    for (const enumeration of [
+      `let Channel=module.exports.Channel=function(e){return e.Ping="app:ping",e}({});`,
+      `var Channel;(function(e){e.Ping="app:ping"})(Channel||(module.exports.Channel=Channel={}));`,
+    ]) {
+      const result = analyzeJavaScriptStaticSource(source(enumeration));
+      expect(result.electron.call_paths ?? []).not.toContainEqual(
+        expect.objectContaining({ channel: "app:ping" }),
+      );
+      expect(result.electron.ipc).not.toContainEqual(
+        expect.objectContaining({ channel: "app:ping" }),
+      );
+    }
   },
 );
 it("keeps an enum stored through a parameter of an unknown function unresolved", () => {
