@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../dist/domain/webNetworkCapture.js";
 import {
@@ -717,9 +718,7 @@ try {
         runtime.path,
         format === "har" ? "producer.har" : "flows.mitm",
       );
-      const digest = createHash("sha256")
-        .update(await readFile(capturePath))
-        .digest("hex");
+      const digest = await sha256File(capturePath);
       for (const literal of [digest, digest.slice(0, 12)]) {
         const value = await inspect(mode, {
           capture_path: capturePath,

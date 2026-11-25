@@ -1,3 +1,4 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -391,9 +392,7 @@ try {
       );
     }
     assert.equal(
-      createHash("sha256")
-        .update(await readFile(path))
-        .digest("hex"),
+      await sha256File(path),
       sourceHash,
       "native analysis modified source executable bytes",
     );

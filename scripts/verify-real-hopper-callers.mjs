@@ -1,12 +1,13 @@
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
@@ -96,10 +97,7 @@ const large = join(directory, "long-scan");
 const source = fileURLToPath(
   new URL("./fixtures/hopper-tail-call.c", import.meta.url),
 );
-const digest = async (path) =>
-  createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+
 const sessionsBefore = (
   await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
 ).paths;
@@ -175,8 +173,8 @@ try {
     "-o",
     large,
   ]);
-  const before = await digest(fixture),
-    beforeLarge = await digest(large);
+  const before = await sha256File(fixture),
+    beforeLarge = await sha256File(large);
   await client.connect(transport);
   if (transport.pid === null)
     throw new Error("MCP process identity unavailable");
@@ -264,7 +262,7 @@ try {
     ),
   );
   await call("close_binary", {});
-  assert.equal(await digest(fixture), before);
+  assert.equal(await sha256File(fixture), before);
   console.log(
     JSON.stringify({
       event: "tail_call_verified",
@@ -329,7 +327,7 @@ try {
   const retry = await call("get_call_graph", query);
   assert(retry.normalized_result.graph, "retry did not return graph");
   await call("close_binary", {});
-  assert.equal(await digest(large), beforeLarge);
+  assert.equal(await sha256File(large), beforeLarge);
   console.log(
     JSON.stringify({
       event: "progress_cancel_retry_verified",
