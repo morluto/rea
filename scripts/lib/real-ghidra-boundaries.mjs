@@ -1,3 +1,4 @@
+import { sha256File } from "./verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import {
   requireMcpToolError,
@@ -6,7 +7,7 @@ import {
 } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -775,12 +776,7 @@ export async function verifyGhidraBoundaries(
     await call("read_bytes", { address, length: baseline.length }),
     bytes,
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(target.path))
-      .digest("hex"),
-    target.sha256,
-  );
+  assert.equal(await sha256File(target.path), target.sha256);
   const cliUpdated = await cli("annotate-native-function", name, [
     "--name",
     changes.name,
@@ -885,12 +881,7 @@ export async function verifyGhidraBoundaries(
       .comments,
     original.comments,
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(target.path))
-      .digest("hex"),
-    target.sha256,
-  );
+  assert.equal(await sha256File(target.path), target.sha256);
   await verifyStartupCancellation(client, call, target, env, options);
   return {
     mocked: false,
