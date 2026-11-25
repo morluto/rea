@@ -1,3 +1,4 @@
+import { fixtureAddressNameCapability as capability } from "../../../tests/fixtures/analysisExecution.js";
 import { describe, expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
@@ -9,7 +10,6 @@ import {
   type AnalysisClient,
   type AnalysisProviderCandidate,
   type AnalysisProviderInspectionOptions,
-  type CapabilityDescriptor,
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
@@ -992,23 +992,6 @@ const candidate = (
   };
   return { provider, created };
 };
-
-const capability = (provider: ProviderIdentity): CapabilityDescriptor => ({
-  provider,
-  operation: "address_name",
-  available: true,
-  reason: null,
-  effects: {
-    mutatesArtifact: false,
-    launchesProcess: true,
-    mayShowUi: false,
-    mayAccessNetwork: false,
-    mayWriteFilesystem: false,
-    changesPermissions: false,
-    requiresRoot: false,
-  },
-  limitations: [],
-});
 
 describe("analysis provider registry: explicit profile refusals", () => {
   const reason = "The configured extension supports x86-64 only.";
