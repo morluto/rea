@@ -6,7 +6,10 @@ import { afterAll, expect } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -153,7 +156,7 @@ cliTest(
           category: "invalid_input",
           retryable: false,
           remediation: {
-            action: expect.stringContaining("capture_browser_scenario"),
+            action: expect.stringContaining("rea capture-browser-scenario"),
           },
           recovery: {
             kind: "inspect_input_contract",
@@ -171,8 +174,17 @@ cliTest(
         });
         expect(mcpResult.structuredContent).toBeUndefined();
         const mcpError = parseMcpToolError(mcpResult).error;
+        const cliAction = z
+          .object({ remediation: z.object({ action: z.string() }) })
+          .parse(cliDiagnostic).remediation.action;
+        expect(cliAction).not.toContain("capture_browser_scenario");
+        expect(cliAction).not.toContain("tools/list");
         if (scenario.canonicalRefinement)
-          expect(mcpError).toEqual(cliDiagnostic);
+          expectAdapterErrorParity(
+            mcpError,
+            cliDiagnostic,
+            "capture_browser_scenario",
+          );
         else {
           // The SDK validates the canonical schema before invoking the handler.
           expect(mcpError).toMatchObject({

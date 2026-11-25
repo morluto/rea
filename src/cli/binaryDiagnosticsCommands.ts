@@ -147,6 +147,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_unwind_ranges"),
+    {
+      description:
+        "Inspect x64 PE exception-directory function ranges without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peUnwindRanges.js")
+        ).createPeUnwindRangesService(),
+      "rea-pe-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_apple_ips"),
     {
       description:

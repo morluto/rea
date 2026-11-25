@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { bufferByteSource } from "../../domain/byteSource.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   inspectPeRichHeaderInputSchema,
@@ -7,7 +8,7 @@ import {
 } from "../../domain/native/peRichHeader.js";
 import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
-  parsePeRichHeader,
+  parsePeRichHeaderFromHandle,
   PE_RICH_HEADER_ENTRY_ALLOWANCE,
 } from "./PeRichHeaderParser.js";
 import {
@@ -20,8 +21,8 @@ import {
 } from "./PeRichHeader.fixture.js";
 
 const parseBytes = (bytes: Buffer, max_entries = 1024, signal?: AbortSignal) =>
-  parsePeRichHeader(
-    bytes,
+  parsePeRichHeaderFromHandle(
+    bufferByteSource(bytes),
     { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
     inspectPeRichHeaderInputSchema.parse({ path: "/sample.exe", max_entries }),
     signal,
@@ -220,12 +221,41 @@ it("observes cancellation before reading", async () => {
   expect(failure).toMatchObject({ reason: "cancelled" });
 });
 
+it("reads a distant Rich header past the prefix without reading the trailing image", async () => {
+  const image = peRichHeaderImage({ stub: Buffer.alloc(0x2000, 0x90) });
+  const tail = Buffer.alloc(0x20000);
+  const full = Buffer.concat([image, tail]);
+  const reads: Array<{ offset: number; length: number }> = [];
+  const report = await parsePeRichHeaderFromHandle(
+    {
+      size: full.length,
+      prefix: full.subarray(0, 4096),
+      readRange: (offset, length) => {
+        reads.push({ offset, length });
+        return Promise.resolve(full.subarray(offset, offset + length));
+      },
+    },
+    { path: "/sample.exe", sha256: "a".repeat(64), bytes: full.length },
+    inspectPeRichHeaderInputSchema.parse({ path: "/sample.exe" }),
+  );
+  expect(report.rich_header).toMatchObject({
+    state: "present",
+    location: { offset: 0x2040 },
+    checksum: { matches: true },
+    entries: decoded,
+  });
+  expect(reads.length).toBeGreaterThan(0);
+  expect(
+    reads.every(({ offset, length }) => offset + length <= image.length),
+  ).toBe(true);
+});
+
 it("rejects an image without a PE signature", async () => {
   const bytes = peRichHeaderImage();
   bytes.write("ZZ", 0, "latin1");
   const failure = await parseBytes(bytes).catch((error: unknown) => error);
   expect(failure).toBeInstanceOf(ParseFailureError);
   expect(failure).toMatchObject({
-    failure: { kind: "malformed", format: "pe" },
+    failure: { kind: "malformed", format: "native-binary" },
   });
 });

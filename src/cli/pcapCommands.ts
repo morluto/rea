@@ -14,6 +14,7 @@ import {
   type EvidenceInspectionService,
 } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 
 /** Expose the same explicit pcap requests through one-shot CLI commands. */
 export const registerPcapCommands = (
@@ -50,8 +51,10 @@ export const registerPcapCommands = (
         "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
       positionals: ["path"],
       callerPaths: ["path"],
+      jsonText: ["producer_limits"],
       fields: {
         path: { description: "Local pcap or pcapng capture file to inspect" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
       },
       omit: {
         detail:

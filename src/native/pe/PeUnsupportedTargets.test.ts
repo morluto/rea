@@ -70,7 +70,7 @@ it("classifies a valid DOS target as unsupported for the PE Rich header", async 
     expect(projectAnalysisError(malformed.error)).toMatchObject({
       code: "unsupported_target",
       category: "unsupported_target",
-      details: { format_failure: "malformed" },
+      details: { failure_kind: "malformed" },
     });
   } finally {
     await provider.close();

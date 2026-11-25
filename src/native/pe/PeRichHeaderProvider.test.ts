@@ -65,9 +65,9 @@ describe("PE Rich header provider failures after a completed read", () => {
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason = new Error("cancel while decoding the Rich header");
-    const decode = parser.parsePeRichHeader;
+    const decode = parser.parsePeRichHeaderFromHandle;
     const spy = vi
-      .spyOn(parser, "parsePeRichHeader")
+      .spyOn(parser, "parsePeRichHeaderFromHandle")
       .mockImplementationOnce((...arguments_) => {
         const pending = decode(...arguments_);
         controller.abort(reason);

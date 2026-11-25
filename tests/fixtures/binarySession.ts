@@ -25,7 +25,11 @@ import { MANAGED_TOOL_CONTRACTS } from "../../src/contracts/managed/managedToolC
 import { ARTIFACT_TOOL_CONTRACTS } from "../../src/contracts/artifactToolContracts.js";
 
 import { err, ok as resultOk } from "../../src/domain/result.js";
-import { observed } from "./analysisExecution.js";
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+  observed,
+} from "./analysisExecution.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 type TestBinarySessionOptions = {
@@ -96,18 +100,8 @@ export const createTestProviderRouter = (
     createClient: (target, profile, context) =>
       declared.createClient(target, profile, context),
     resolveAnalysisProfile: resolve,
-    inspectAvailability: () => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectAvailability: availableFixtureProvider,
+    inspectTargetSupport: supportedFixtureTarget,
   };
   return SessionProviderRouter.selectable(
     new AnalysisProviderRegistry([candidate]),

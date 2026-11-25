@@ -418,17 +418,24 @@ const verifyInactiveJournal = async (
       if (
         before.size !== 0n &&
         (bytesRead !== header.length || header.some((byte) => byte !== 0))
-      )
+      ) {
+        if (phase === "initial") {
+          const detail = `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`;
+          throw new ArtifactReaderFailure("unsupported", detail, {
+            parseFailure: {
+              kind: "unsupported",
+              format: "sqlite",
+              detail,
+              undecodedContent: true,
+            },
+          });
+        }
         throw new ArtifactReaderFailure(
-          phase === "initial" ? "format" : "integrity",
-          phase === "initial"
-            ? `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`
-            : `Rollback journal became active or malformed during database acquisition: ${path}`,
-          {
-            integrityCheck:
-              phase === "initial" ? undefined : "container-identity",
-          },
+          "integrity",
+          `Rollback journal became active or malformed during database acquisition: ${path}`,
+          { integrityCheck: "container-identity" },
         );
+      }
     },
   );
 };

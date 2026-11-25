@@ -31,7 +31,9 @@ export const inspectPeRichHeaderInputSchema = z.strictObject({
     .min(64)
     .max(MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, DOS stub and Rich header (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
   max_entries: z
     .number()
     .int()

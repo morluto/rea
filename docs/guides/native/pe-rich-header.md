@@ -30,8 +30,9 @@ one of:
 - `absent`: no `Rich` footer ends directly before the PE signature, with only
   zero bytes between them. Other linkers omit the
   record, and it can be stripped after linking, so absence does not show how
-  the image was built. A PE header that starts inside the 64-byte DOS header
-  leaves no room for a record, so it is `absent` too.
+  the image was built. A PE header starting directly after the 64-byte DOS
+  header (below offset `0x48`) leaves no room for an 8-byte footer, so it is
+  `absent` too.
 
 Evidence locations include the record's file range, or only the footer for a
 malformed record.
@@ -73,12 +74,15 @@ image.
 Product IDs and builds are reported as stored. REA does not name the tool or
 Visual Studio release behind them.
 
-Only PE32 and PE32+ images are read. A DOS MZ executable with no PE header is
-an unsupported target, not `absent`.
+Only PE32 and PE32+ images whose PE header starts outside the 64-byte DOS
+header are read. A DOS MZ executable with no PE header, or an overlapping PE
+header inside the DOS header, is an unsupported target, not `absent`.
 
-The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB). The
-default entry budget is 1024 (`max_entries`, ceiling 65536). Exceeding either
-fails without partial success, as does a malformed PE header.
+The default read budget is 64 MiB (`max_file_bytes`, ceiling 512 MiB), bounding
+the header, stub and Rich-header bytes read (the file itself may be larger up
+to the 4 GiB - 1 PE offset ceiling; its single hashing pass is not counted).
+The default entry budget is 1024 (`max_entries`, ceiling 65536). Exceeding
+either fails without partial success, as does a malformed PE header.
 
 ## Verification
 

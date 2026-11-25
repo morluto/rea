@@ -45,11 +45,14 @@ export const runEager = async (
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
   const analysisSettings = new AnalysisSettings(environment);
+  // One MCP session serves many calls, so shared provider limitations are
+  // stated once and referenced.
   const session = createBinarySession(
     config.value,
     logger,
     environment,
     analysisSettings.read,
+    "reference",
   );
   const startup = new AbortController();
   let transport: Awaited<ReturnType<typeof startMcpTransport>> | undefined;

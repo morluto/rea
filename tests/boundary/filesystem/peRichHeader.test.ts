@@ -41,10 +41,10 @@ describe("PE Rich header stable filesystem boundary", () => {
     await writeFile(path, peRichHeaderImage());
     const service = createPeRichHeaderService();
     const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
-    if (tooSmall.ok) throw new Error("Expected file-size failure");
+    if (tooSmall.ok) throw new Error("Expected read-budget failure");
     expect(tooSmall.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      resource: "file-size",
+      resource: "capacity",
     });
     const entries = await service.inspect({ path, max_entries: 2 });
     if (entries.ok) throw new Error("Expected entry budget failure");

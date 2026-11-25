@@ -1,7 +1,10 @@
 import { afterEach, describe, expect } from "vitest";
 import { z } from "zod";
 
+import { join } from "node:path";
+
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../../../src/domain/browserScenarioCaptureLimits.js";
 import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "../../../src/domain/browserScenarioCaptureValues.js";
 import { browserScenarioDiffSchema } from "../../../src/domain/browserScenarioDiffValues.js";
@@ -34,6 +37,54 @@ const partialScriptEvents: FakeOptions["commandEvents"] = (
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
+
+cliTest(
+  "delivers an inspect-web-page summary only with its Evidence bundle",
+  async ({ cli }) => {
+    const browser = await startFakeCdpBrowser({});
+    browsers.push(browser);
+    const run = (extra: readonly string[]) =>
+      cli.run({
+        arguments: [
+          "inspect-web-page",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "0",
+          "--allowed-origins",
+          browser.allowedOrigin,
+          ...extra,
+          "--json",
+        ],
+        environment: process.env,
+      });
+    const complete = await run([]);
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    expect(complete.json).toMatchObject({ operation: "inspect_web_page" });
+
+    const unbundled = await run(["--detail", "summary"]);
+    expect(unbundled.exitCode).not.toBe(0);
+
+    const directory = await createTestTempDirectory("rea-web-page-summary-");
+    const bundle = join(directory, "bundle.json");
+    const summary = await run([
+      "--detail",
+      "summary",
+      "--evidence_output",
+      bundle,
+    ]);
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    expect(summary.json).toMatchObject({
+      summary: {
+        operation: "inspect_analysis_view",
+        normalized_result: {
+          kind: "summary",
+          parent_operation: "inspect_web_page",
+        },
+      },
+    });
+  },
+);
 
 cliTest(
   "compares source-map declaration omissions through the public CLI",

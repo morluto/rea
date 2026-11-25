@@ -327,8 +327,6 @@ export const artifactParseFailure = (
       ...(boundary === undefined ? {} : { boundary }),
     });
   }
-  if (failure.kind === "unsupported")
-    return new ArtifactReaderFailure(failure.kind, cause.message, { cause });
   return new ArtifactReaderFailure(failure.kind, cause.message, {
     cause,
     parseFailure: failure,

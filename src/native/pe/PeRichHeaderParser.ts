@@ -15,7 +15,8 @@ import {
   BinaryReader,
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
-import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
+import { readPeImageFromReader } from "../../domain/native/peImage.js";
 
 /**
  * The caller's entry budget, named on the failure. Consumers read it with
@@ -207,25 +208,42 @@ const richRecord = async (
 };
 
 /** Read the Rich header between the DOS stub and the PE signature without executing the image. */
-export const parsePeRichHeader = async (
-  bytes: Buffer,
+export const parsePeRichHeaderFromHandle = async (
+  source: PrefixedByteSource,
   artifact: PeRichHeader["artifact"],
   input: InspectPeRichHeaderInput,
   signal?: AbortSignal,
 ): Promise<PeRichHeader> => {
   assertArtifactReadActive(signal);
-  const { machine, format, optionalHeaderOffset } = readPeImageHeaders(bytes);
-  const peOffset = optionalHeaderOffset - 24;
-  const record = await richRecord(
-    new BinaryReader(bytes, true, "pe"),
-    peOffset,
-    input,
-    signal,
-  );
+  const image = await readPeImageFromReader(source, "headers");
+  assertArtifactReadActive(signal);
+  const peOffset = image.pe_optional_header_file_offset - 24;
+  let record: PeRichHeaderRecord;
+  if (peOffset < DOS_HEADER_BYTES + PE_RICH_HEADER_FOOTER_BYTES) {
+    record = { state: "absent" };
+  } else {
+    const headerBytes =
+      peOffset <= source.prefix.length
+        ? source.prefix.subarray(0, peOffset)
+        : Buffer.concat([
+            source.prefix,
+            await source.readRange(
+              source.prefix.length,
+              peOffset - source.prefix.length,
+            ),
+          ]);
+    assertArtifactReadActive(signal);
+    record = await richRecord(
+      new BinaryReader(headerBytes, true, "pe"),
+      peOffset,
+      input,
+      signal,
+    );
+  }
   return {
     artifact,
-    format,
-    machine,
+    format: image.bits === 64 ? "pe32-plus" : "pe32",
+    machine: image.pe_machine,
     pe_header_offset: peOffset,
     rich_header: record,
     limitations:

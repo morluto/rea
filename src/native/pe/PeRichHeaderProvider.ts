@@ -1,9 +1,11 @@
+import {
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
-  projectArtifactCloseFailure,
-  imageFileSizeRemediation,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  closeArtifactResources,
+  withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
@@ -18,55 +20,73 @@ import {
   MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
   MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
   type InspectPeRichHeaderInput,
+  type PeRichHeader,
 } from "../../domain/native/peRichHeader.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_RICH_HEADER_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  parsePeRichHeader,
+  parsePeRichHeaderFromHandle,
   PE_RICH_HEADER_ENTRY_ALLOWANCE,
 } from "./PeRichHeaderParser.js";
 
 const OPERATION = "inspect_pe_rich_header";
+const PE_HEADER_PREFIX_BYTES = 4096;
 
 /** Portable Rich header reader over one bounded, identity-checked regular file. */
 export class PeRichHeaderProvider implements PeRichHeaderPort {
   readonly identity = PE_RICH_HEADER_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_RICH_HEADER_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_RICH_HEADER_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeRichHeaderInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
+    // A verified report stays with a failure raised by final cleanup.
+    let completed: PeRichHeader | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle<PeRichHeader>(
           input.path,
-          input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        const report = await parsePeRichHeader(
-          snapshot.bytes,
+          PE_FILE_CEILING_BYTES,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
+            ),
+            retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              observed = identity;
+            },
+            onVerifiedResult: (value) => {
+              completed = value;
+            },
           },
-          input,
-          options?.signal,
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const parsed = await parsePeRichHeaderFromHandle(
+              handle,
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            );
+            assertArtifactReadActive(options?.signal);
+            return parsed;
+          },
         );
-        assertArtifactReadActive(options?.signal);
         return ok(report);
       });
     } catch (cause) {
@@ -78,16 +98,16 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
           {
             operation: OPERATION,
             providerId: PE_RICH_HEADER_PROVIDER.id,
-            fileSizeRemediation: () =>
-              imageFileSizeRemediation(
-                input.max_file_bytes,
-                MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
-              ),
+            fileCeiling: {
+              name: "The PE whole-file ceiling (32-bit file offsets)",
+              bytes: PE_FILE_CEILING_BYTES,
+            },
             limits: [PE_RICH_HEADER_ENTRY_ALLOWANCE],
             limitRecovery: (limit, ceiling) =>
               limitRecovery(limit, input, ceiling),
+            ...(completed === undefined ? {} : { completed }),
           },
-          snapshot,
+          observed,
         ),
       );
     }

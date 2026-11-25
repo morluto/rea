@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
+import { bufferByteSource } from "../../domain/byteSource.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   inspectPeRichHeaderInputSchema,
   type PeRichHeader,
@@ -13,7 +15,7 @@ import {
 import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import { peRichHeaderImage } from "../../native/pe/PeRichHeader.fixture.js";
-import { parsePeRichHeader } from "../../native/pe/PeRichHeaderParser.js";
+import { parsePeRichHeaderFromHandle } from "../../native/pe/PeRichHeaderParser.js";
 import { PeRichHeaderService } from "./PeRichHeaderService.js";
 
 const identity = PE_RICH_HEADER_PROVIDER;
@@ -23,8 +25,8 @@ const parsedReport = async (
   options: Parameters<typeof peRichHeaderImage>[0] = {},
 ): Promise<PeRichHeader> => {
   const bytes = peRichHeaderImage(options);
-  return parsePeRichHeader(
-    bytes,
+  return parsePeRichHeaderFromHandle(
+    bufferByteSource(bytes),
     {
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -106,6 +108,16 @@ it.each([
   },
 );
 
+it("accepts a report whose file size exceeds the read budget", async () => {
+  const report = await parsedReport();
+  const result = await serviceFor(report).inspect({
+    path,
+    max_file_bytes: 64,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toEqual(report);
+});
+
 it("locates the whole record in observed Evidence", async () => {
   const report = await parsedReport();
   const result = await serviceFor(report).inspect({ path });
@@ -121,16 +133,26 @@ it("locates the whole record in observed Evidence", async () => {
   });
 });
 
-it("reports no record when the PE header overlaps the DOS header", async () => {
-  // e_lfanew 0x30 is a valid image that leaves no room for a Rich footer.
-  const report = await parsedReport({ block: false, peOffset: 0x30 });
+it("reports no record when the PE header immediately follows the DOS header and refuses an overlapping PE header", async () => {
+  // e_lfanew 0x40 leaves no room for an 8-byte Rich footer.
+  const report = await parsedReport({ block: false, peOffset: 0x40 });
   expect(report).toMatchObject({
-    pe_header_offset: 0x30,
+    pe_header_offset: 0x40,
     rich_header: { state: "absent" },
   });
   const result = await serviceFor(report).inspect({ path });
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(report);
+
+  // The shared PE header owner rejects overlapping headers inside the 64-byte DOS header.
+  const overlapping = await parsedReport({
+    block: false,
+    peOffset: 0x30,
+  }).catch((error: unknown) => error);
+  expect(overlapping).toBeInstanceOf(ParseFailureError);
+  expect(overlapping).toMatchObject({
+    failure: { kind: "unsupported", format: "native-binary" },
+  });
 });
 
 it.each([
@@ -178,6 +200,13 @@ it.each([
     (value: PeRichHeader) => {
       if (value.rich_header.state === "present")
         value.rich_header.checksum.matches = false;
+    },
+  ],
+  [
+    "a PE header inside the DOS header",
+    (value: PeRichHeader) => {
+      value.pe_header_offset = 0x30;
+      value.rich_header = { state: "absent" };
     },
   ],
   [

@@ -254,9 +254,10 @@ describe("active-target availability over MCP", () => {
       await client.connect(clientTransport);
       const listed = await client.listTools();
       const before = await readStatus(client);
+      // inspect_artifact can inspect a selected path without a target.
       expect(activeTargetReasons(before)).toEqual({
         inspect_macho: "target_required",
-        inspect_artifact: "target_required",
+        inspect_artifact: "available",
         inspect_managed_artifact: "available",
       });
       const call = await client.callTool({

@@ -4,6 +4,8 @@ import type { ElfDebugLink } from "./native/elfDebugLink.js";
 import type { ElfDependencies } from "./native/elfDependencies.js";
 import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { PeRichHeader } from "./native/peRichHeader.js";
+import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
 import type { V8CodeCache } from "./v8/v8CodeCache.js";
@@ -29,8 +31,7 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
-  "AnalysisUnsupportedTargetError",
-  "AnalysisMalformedTargetError",
+  "AnalysisTargetFailureError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
   "AnalysisResourceConstraintError",
@@ -87,6 +88,9 @@ export interface AnalysisCapturedOutput {
   readonly stderr_bytes?: number;
   readonly exit_code?: number | null;
   readonly signal?: string | null;
+  /** Set when the runner reported invalid UTF-8, decoded as replacement characters. */
+  readonly stdout_invalid_utf8?: true;
+  readonly stderr_invalid_utf8?: true;
 }
 
 /** Cleanup uncertainty attached to the original typed analysis failure. */
@@ -94,6 +98,18 @@ export interface AnalysisCleanupObservation {
   readonly reason: string;
   readonly resources: readonly string[];
 }
+
+/** Append a later cleanup failure, keeping resource labels in first-seen order. */
+export const appendCleanupObservation = (
+  previous: AnalysisCleanupObservation | undefined,
+  next: AnalysisCleanupObservation,
+): AnalysisCleanupObservation =>
+  previous === undefined
+    ? next
+    : {
+        reason: `${previous.reason}; ${next.reason}`,
+        resources: [...new Set([...previous.resources, ...next.resources])],
+      };
 
 /** Publication stopped after a workflow produced its Evidence. Counts describe
  * question occurrences, not distinct Unknown identities. */
@@ -137,6 +153,8 @@ export interface AnalysisContinuingCallerGuidance {
 export interface AnalysisRelatedInputs {
   readonly parameters?: readonly string[];
   readonly operations?: readonly string[];
+  /** Providers, by ID, that offer the operation for this target. */
+  readonly providers?: readonly string[];
 }
 
 /** Optional provider-neutral context that must survive typed error projection. */
@@ -308,6 +326,9 @@ export abstract class AnalysisError extends Error {
             ...(options.related.operations === undefined
               ? {}
               : { operations: Object.freeze([...options.related.operations]) }),
+            ...(options.related.providers === undefined
+              ? {}
+              : { providers: Object.freeze([...options.related.providers]) }),
           });
     this.diagnostics =
       options?.diagnostics === undefined
@@ -705,6 +726,8 @@ export type AnalysisPartialObservation =
   | ElfDependencies
   | ElfNotes
   | ElfUnwindRanges
+  | PeRichHeader
+  | PeUnwindRanges
   | KernelBuildConfig
   | KernelModule
   | V8CodeCache

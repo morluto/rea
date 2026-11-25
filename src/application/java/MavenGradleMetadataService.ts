@@ -1,7 +1,7 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { MavenGradleMetadataPort } from "../../ports/java/MavenGradleMetadataPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectMavenGradleMetadataInputSchema,
   mavenGradleMetadataSchema,
@@ -9,6 +9,7 @@ import {
 } from "../../domain/java/mavenGradleMetadata.js";
 import type { Result } from "../../domain/result.js";
 import { callerAnalysisParameters } from "../AnalysisInput.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_maven_gradle_metadata";
@@ -39,28 +40,18 @@ export class MavenGradleMetadataService {
           report.artifact.path === parameters.path &&
           validReport(report, parameters),
         buildEvidence: (value, identity, parameters) =>
-          createEvidence(
-            {
-              path: value.artifact.path,
-              format: "file",
-              sha256: value.artifact.sha256,
-            },
+          observedFileEvidence(
+            value,
             identity,
-            {
-              operation: OPERATION,
-              parameters: selectedParameters(parameters),
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-                {
-                  kind: "file-offset-range" as const,
-                  start: 0,
-                  end: value.artifact.bytes,
-                },
-              ],
-            },
+            OPERATION,
+            selectedParameters(parameters),
+            [
+              {
+                kind: "file-offset-range",
+                start: 0,
+                end: value.artifact.bytes,
+              },
+            ],
           ),
       },
       rawInput,

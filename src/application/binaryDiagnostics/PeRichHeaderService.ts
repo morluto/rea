@@ -1,7 +1,7 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeRichHeaderPort } from "../../ports/binaryDiagnostics/PeRichHeaderPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeRichHeaderInputSchema,
   PE_RICH_HEADER_ENTRY_BYTES,
@@ -10,7 +10,7 @@ import {
   peRichHeaderSchema,
   type PeRichHeader,
 } from "../../domain/native/peRichHeader.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
 import type { Result } from "../../domain/result.js";
 import { callerAnalysisParameters } from "../AnalysisInput.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
@@ -36,44 +36,28 @@ export class PeRichHeaderService {
         inputSchema: inspectPeRichHeaderInputSchema,
         outputSchema: peRichHeaderSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "PE Rich header provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,
         validateReport: (report, input) =>
           report.artifact.path === input.path && validReport(report, input),
         buildEvidence: (value, identity, parameters) => {
-          const architecture = peSubjectArchitecture(
-            value.machine,
-            value.format,
-          );
           const record = recordRange(value);
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "pe",
-              sha256: value.artifact.sha256,
-              ...(architecture === undefined ? {} : { architecture }),
-            },
+          return observedPeEvidence(
+            value,
             identity,
-            {
-              operation: OPERATION,
-              parameters: callerAnalysisParameters(rawInput)(parameters),
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-                ...(record === null
-                  ? []
-                  : [
-                      {
-                        kind: "file-offset-range" as const,
-                        start: record.offset,
-                        end: record.offset + record.bytes,
-                      },
-                    ]),
-              ],
-            },
+            OPERATION,
+            callerAnalysisParameters(rawInput)(parameters),
+            record === null
+              ? []
+              : [
+                  {
+                    kind: "file-offset-range",
+                    start: record.offset,
+                    end: record.offset + record.bytes,
+                  },
+                ],
           );
         },
       },
@@ -94,16 +78,10 @@ const recordRange = (
 
 const validReport = (
   report: PeRichHeader,
-  input: { max_entries: number; max_file_bytes: number },
+  input: { max_entries: number },
 ): boolean => {
-  // A PE header may start inside the DOS header. It then leaves no room for a
-  // footer, and the footer checks below reject any record reported there.
   const pe = report.pe_header_offset;
-  if (
-    report.artifact.bytes > input.max_file_bytes ||
-    pe > report.artifact.bytes - 24
-  )
-    return false;
+  if (pe < DOS_HEADER_BYTES || pe > report.artifact.bytes - 24) return false;
   const record = report.rich_header;
   if (record.state === "absent") return true;
   const footer = record.footer_location;

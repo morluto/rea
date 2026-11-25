@@ -6,7 +6,10 @@ import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingPro
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
-import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../../src/resources/ArtifactReader.js";
 import { withArtifactRegularFile } from "../../../src/resources/ArtifactFileOperation.js";
 import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -66,7 +69,7 @@ const physicalFailure = (failure: FileOutcomeControl["failure"]): Error =>
   failure === "denied"
     ? Object.assign(new Error("controlled read denial"), { code: "EACCES" })
     : failure === "format"
-      ? new ArtifactReaderFailure("format", "controlled physical file failure")
+      ? malformedArtifact("fixture", "controlled physical file failure")
       : failure === "limit"
         ? // The stable reader names the bound it refused, as production does.
           new ArtifactReaderFailure(

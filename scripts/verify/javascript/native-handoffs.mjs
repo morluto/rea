@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -104,11 +104,6 @@ const client = new Client({
 const serialize = (value) => JSON.stringify(value);
 const digest = (value) =>
   createHash("sha256").update(serialize(value)).digest("hex");
-const fileDigest = async (path) => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-};
 const simulatedNativeEvidence = (path, sha256) =>
   createEvidence(
     { path, sha256, format: "raw-binary" },
@@ -151,11 +146,11 @@ const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
   }
 };
 await withVerifierCleanup(async () => {
-  const archiveSha256 = await fileDigest(values.artifact);
+  const archiveSha256 = await sha256File(values.artifact);
   const companion = join(`${values.artifact}.unpacked`, values["addon-path"]);
   let companionSha256 = null;
   try {
-    companionSha256 = await fileDigest(companion);
+    companionSha256 = await sha256File(companion);
   } catch (cause) {
     if (cause?.code !== "ENOENT") throw cause;
   }

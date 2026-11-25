@@ -51,12 +51,12 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
   type AbortedSignal,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import {
@@ -94,7 +94,10 @@ import {
   EVM_WORKER_HEAP_MIB,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
-import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
+import {
+  EVMOLE_PROVIDER_IDENTITY,
+  EVMOLE_VERSION,
+} from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -250,7 +253,7 @@ export const evmLimiterAvailability = async (
 const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
-    version: z.literal("0.9.3"),
+    version: z.literal(EVMOLE_VERSION),
     bytecode: z.strictObject({
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       bytes: z.int().nonnegative(),
@@ -261,7 +264,7 @@ const replySchema = z.discriminatedUnion("ok", [
   }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum(["format", "decoder", "output-limit", "unsupported"]),
+    reason: z.enum(["malformed", "decoder", "output-limit", "unsupported"]),
     message: z.string(),
   }),
 ]);
@@ -755,20 +758,25 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            "evm-bytecode",
             reply.message,
             { capturedOutput },
           );
-        if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+        // The worker rejected the selected bytecode, not the request.
+        if (reply.reason === "malformed")
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: "malformed",
+              format: "evm-bytecode",
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "output-limit")
           throw evmReplyBudgetFailure(
             reply.message,
