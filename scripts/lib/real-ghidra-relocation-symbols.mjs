@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sha256File } from "./verifier-file-sha256.mjs";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { PrivateRuntimeRoot } from "../../dist/process/PrivateRuntimeRoot.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
@@ -47,11 +46,8 @@ export async function verifyGhidraRelocationSymbols({ clang, lld, env }) {
       object,
     ]);
     await run(lld, ["-shared", object, "-o", target]);
-    const hash = async () =>
-      createHash("sha256")
-        .update(await readFile(target))
-        .digest("hex");
-    const before = await hash();
+
+    const before = await sha256File(target);
     const { stdout } = await run(process.execPath, [
       "scripts/rea.mjs",
       ...(await completeEvidenceCliArguments([
@@ -76,7 +72,7 @@ export async function verifyGhidraRelocationSymbols({ clang, lld, env }) {
       relocations.some(({ symbol }) => symbol === ""),
       "The provider's empty symbol must remain distinct from an unrecorded field",
     );
-    assert.equal(await hash(), before);
+    assert.equal(await sha256File(target), before);
     return {
       source,
       target_sha256: before,

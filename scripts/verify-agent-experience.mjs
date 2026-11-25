@@ -1,7 +1,7 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { closeAgentEvaluation } from "./lib/agent-evaluation-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
-import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -491,9 +491,7 @@ async function createTargets(root, includeManaged) {
     managed: join(managedOutput, "AgentEval.dll"),
     ...(includeManaged
       ? {
-          managedSha256: createHash("sha256")
-            .update(await readFile(join(managedOutput, "AgentEval.dll")))
-            .digest("hex"),
+          managedSha256: await sha256File(join(managedOutput, "AgentEval.dll")),
         }
       : {}),
   };
