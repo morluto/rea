@@ -49,8 +49,7 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  unsupportedTarget,
-  AnalysisTargetFailureError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
@@ -483,7 +482,9 @@ class ArtifactClient implements AnalysisClient {
       return err(
         translateArtifactFailure(
           operation as ArtifactAnalysisOperation,
-          artifactTargetSelectedPath(this.target),
+          // The caller's spelling, not the resolved file the reader opened.
+          this.target.callerInputPath ??
+            artifactTargetSelectedPath(this.target),
           cause,
         ),
       );
@@ -498,11 +499,10 @@ class ArtifactClient implements AnalysisClient {
   private unsupportedTarget(
     operation: string,
     reason: string,
-  ): AnalysisTargetFailureError {
-    return unsupportedTarget(
+  ): AnalysisUnsupportedTargetError {
+    return new AnalysisUnsupportedTargetError(
       operation,
       this.target.sourcePath ?? this.target.path,
-      this.target.format,
       reason,
     );
   }
