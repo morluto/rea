@@ -120,7 +120,7 @@ it("delivers ordered GDB records once and queries their retained parent after cl
   );
   const input = { session_id: sessionId, command: capture.command };
   const full = await client.callTool(
-    { name: "gdb_console", arguments: input },
+    { name: "gdb_console", arguments: { ...input, detail: "complete" } },
     { toolDefinition: schemas.toolDefinition },
   );
   const summary = await client.callTool(
@@ -191,7 +191,10 @@ it("keeps pathless objdump observations subjectless and preserves the default co
     }),
   ).toBe(true);
   const full = await client.callTool(
-    { name: "inspect_with_objdump", arguments: { operation: "architectures" } },
+    {
+      name: "inspect_with_objdump",
+      arguments: { detail: "complete", operation: "architectures" },
+    },
     { toolDefinition: schemas.toolDefinition },
   );
   const selected = await client.callTool(

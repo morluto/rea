@@ -14,6 +14,7 @@ import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.j
 import { createAnalysisProfile } from "../../dist/domain/analysisProfile.js";
 import { serializeAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
 import { createLegacyGhidraSnapshot } from "./ghidra-legacy-snapshot-e2e.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 /** Reject a valid older snapshot whose instruction-only collector omitted a real edge. */
 export async function verifyLegacyGhidraReferenceSnapshot(
@@ -124,14 +125,16 @@ export async function verifyLegacyGhidraReferenceSnapshot(
         process.execPath,
         [
           entrypoint,
-          "function",
-          target.path,
-          procedure,
-          "--provider",
-          "ghidra",
-          "--snapshot",
-          path,
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            target.path,
+            procedure,
+            "--provider",
+            "ghidra",
+            "--snapshot",
+            path,
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
       ),

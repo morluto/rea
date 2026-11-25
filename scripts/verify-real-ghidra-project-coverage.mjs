@@ -28,6 +28,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 export async function verifyProjectCoverage(run) {
   const installDir = process.env.GHIDRA_INSTALL_DIR;
@@ -86,10 +87,12 @@ export async function verifyProjectCoverage(run) {
     return files.flat().sort((a, b) => a[0].localeCompare(b[0]));
   }
   async function connect(environment) {
-    const client = new Client({
-      name: "selected-project-coverage-verifier",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "selected-project-coverage-verifier",
+        version: "1",
+      }),
+    );
     const transport = new VerifierStdioTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],

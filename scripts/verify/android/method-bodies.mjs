@@ -3,6 +3,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { sha256File } from "../../lib/verifier-file-sha256.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const initializers = [
   {
@@ -127,14 +131,16 @@ export const verifyAndroidMethodBodies = async ({
       process.execPath,
       [
         entrypoint,
-        "inspect-android-method",
-        apk,
-        scenario.class_name,
-        scenario.method_name,
-        "--overload-index",
-        String(scenario.overload_index),
-        "--format",
-        "json",
+        ...(await completeEvidenceCliArguments([
+          "inspect-android-method",
+          apk,
+          scenario.class_name,
+          scenario.method_name,
+          "--overload-index",
+          String(scenario.overload_index),
+          "--format",
+          "json",
+        ])),
       ],
       {
         cwd: repository,
@@ -156,10 +162,12 @@ export const verifyAndroidMethodBodies = async ({
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const client = new Client({
-    name: "rea-real-android-method-bodies",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-android-method-bodies",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport, { timeout: 30_000 });
     for (const scenario of cases) {
@@ -167,6 +175,7 @@ export const verifyAndroidMethodBodies = async ({
         {
           name: "inspect_android_method",
           arguments: {
+            detail: "complete",
             path: apk,
             class_name: scenario.class_name,
             method_name: scenario.method_name,

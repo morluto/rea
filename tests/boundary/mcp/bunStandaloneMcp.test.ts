@@ -87,7 +87,10 @@ it("keeps a budget-limited Bun layout unresolved through MCP", async () => {
   for (const moduleCount of [9, 13]) {
     const reply = await client.callTool({
       name: "inspect_artifact",
-      arguments: { artifact_limits: { bun: { module_count: moduleCount } } },
+      arguments: {
+        detail: "complete",
+        artifact_limits: { bun: { module_count: moduleCount } },
+      },
     });
     expect(reply.isError).toBe(true);
     expect(parseMcpToolError(reply).error).toMatchObject({

@@ -384,7 +384,7 @@ describe.skipIf(process.platform !== "darwin")(
 
         const complete = await client.callTool({
           name: "inspect_macho",
-          arguments: {},
+          arguments: { detail: "complete" },
         });
         expect(complete.isError, JSON.stringify(complete.content)).not.toBe(
           true,

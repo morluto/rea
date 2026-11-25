@@ -56,7 +56,10 @@ it("validates source-location delivery and retains Evidence without a binary tar
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
-    { name: "trace_web_source_location", arguments: args },
+    {
+      name: "trace_web_source_location",
+      arguments: { ...args, detail: "complete" },
+    },
     { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
@@ -148,7 +151,7 @@ it("preserves missing Linux ps capability and recovery through source-map tracin
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const response = await harness.client.callTool({
       name: "trace_web_source_location",
-      arguments: args,
+      arguments: { ...args, detail: "complete" },
     });
     const { error } = parseMcpToolError(response);
     expect(error).toMatchObject({

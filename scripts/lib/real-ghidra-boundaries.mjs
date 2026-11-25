@@ -175,6 +175,7 @@ export async function verifyGhidraBoundaries(
       available: true,
     });
   const externalEntry = await call("resolve_containing_procedure", {
+    detail: "complete",
     address: external.address,
   });
   assert.equal(externalEntry.found, true);
@@ -196,7 +197,10 @@ export async function verifyGhidraBoundaries(
     .reduce((maximum, offset) => (offset > maximum ? offset : maximum), 0n);
   const unknownExternal = `${externalSpace}:0x${(lastExternalOffset + 1n).toString(16)}`;
   assert.deepEqual(
-    await call("resolve_containing_procedure", { address: unknownExternal }),
+    await call("resolve_containing_procedure", {
+      detail: "complete",
+      address: unknownExternal,
+    }),
     {
       query_address: unknownExternal,
       found: false,
@@ -239,6 +243,7 @@ export async function verifyGhidraBoundaries(
     ),
   );
   const incoming = await call("procedure_references", {
+    detail: "complete",
     procedure: leaf.address,
     direction: "incoming",
   });
@@ -290,7 +295,10 @@ export async function verifyGhidraBoundaries(
       /Unknown|invalid/u,
     );
     assert.equal(
-      await call("procedure_address", { procedure: address }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: address,
+      }),
       address,
       "Invalid selectors must preserve the live provider connection",
     );
@@ -332,12 +340,19 @@ export async function verifyGhidraBoundaries(
     );
     assert.equal(await call("address_name", { address: spelling }), name);
     assert.equal(
-      await call("procedure_address", { procedure: spelling }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: spelling,
+      }),
       address,
     );
     assert.equal(
-      (await call("resolve_containing_procedure", { address: spelling }))
-        .procedure.address,
+      (
+        await call("resolve_containing_procedure", {
+          detail: "complete",
+          address: spelling,
+        })
+      ).procedure.address,
       address,
     );
   }
@@ -396,6 +411,7 @@ export async function verifyGhidraBoundaries(
   );
   assert.ok(indirectProcedure);
   const references = await call("procedure_references", {
+    detail: "complete",
     procedure: indirectProcedure.address,
   });
   assert.ok(
@@ -413,7 +429,10 @@ export async function verifyGhidraBoundaries(
   const strings = await call("list_strings");
   assert.ok(strings.length > 0);
   assert.deepEqual(
-    await call("list_strings", { address: strings[0].address }),
+    await call("list_strings", {
+      detail: "complete",
+      address: strings[0].address,
+    }),
     [strings[0]],
   );
   const marker = strings.find(
@@ -427,12 +446,16 @@ export async function verifyGhidraBoundaries(
   });
   assert.ok(
     (
-      await call("search_strings", { pattern: marker.value.toLowerCase() })
+      await call("search_strings", {
+        detail: "complete",
+        pattern: marker.value.toLowerCase(),
+      })
     ).some((item) => item.address === marker.address),
   );
   assert.equal(
     (
       await call("search_strings", {
+        detail: "complete",
         pattern: marker.value.toLowerCase(),
         case_sensitive: true,
       })
@@ -441,6 +464,7 @@ export async function verifyGhidraBoundaries(
   );
   assert.deepEqual(
     await call("search_strings", {
+      detail: "complete",
       pattern: `REA_GHIDRA_ABSENT_${randomUUID()}`,
     }),
     [],
@@ -559,7 +583,7 @@ export async function verifyGhidraBoundaries(
   const regexFailure = await client.callTool(
     {
       name: "search_strings",
-      arguments: { pattern: regexPattern, mode: "regex" },
+      arguments: { detail: "complete", pattern: regexPattern, mode: "regex" },
     },
     options,
   );
@@ -585,7 +609,7 @@ export async function verifyGhidraBoundaries(
   const compileFailure = await client.callTool(
     {
       name: "search_procedures",
-      arguments: { pattern: nestedPattern, mode: "regex" },
+      arguments: { detail: "complete", pattern: nestedPattern, mode: "regex" },
     },
     options,
   );
@@ -608,15 +632,21 @@ export async function verifyGhidraBoundaries(
     true,
   );
   assert.ok(
-    (await call("search_procedures", { pattern: changes.name })).some(
-      (item) => item.address === address,
-    ),
+    (
+      await call("search_procedures", {
+        detail: "complete",
+        pattern: changes.name,
+      })
+    ).some((item) => item.address === address),
     "Regex compiler exhaustion must preserve edited names and search availability",
   );
   const longLiteral = "a".repeat(3 * 16 ** 3) + "!";
   const longString = strings.find((item) => item.value === longLiteral);
   assert.ok(longString, "The provider must retain the full regression literal");
-  const literalMatches = await call("search_strings", { pattern: longLiteral });
+  const literalMatches = await call("search_strings", {
+    detail: "complete",
+    pattern: longLiteral,
+  });
   assert.deepEqual(literalMatches, [longString]);
   assert.deepEqual(await cli("search", longLiteral), literalMatches);
   await assert.rejects(
@@ -637,7 +667,10 @@ export async function verifyGhidraBoundaries(
   });
   assert.equal(updated.dossier.procedure.name, changes.name);
   assert.equal(
-    await call("procedure_address", { procedure: changes.name }),
+    await call("procedure_address", {
+      detail: "complete",
+      procedure: changes.name,
+    }),
     address,
   );
   assert.equal(
@@ -667,7 +700,11 @@ export async function verifyGhidraBoundaries(
     );
   assert.ok(
     (
-      await call("search_procedures", { pattern: "dead", case_sensitive: true })
+      await call("search_procedures", {
+        detail: "complete",
+        pattern: "dead",
+        case_sensitive: true,
+      })
     ).some((item) => item.address === address),
   );
 
@@ -760,7 +797,10 @@ export async function verifyGhidraBoundaries(
       name: renamed,
     });
     assert.equal(
-      await call("procedure_address", { procedure: renamed }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: renamed,
+      }),
       address,
     );
     assert.equal(await call("address_name", { address }), renamed);
@@ -782,7 +822,10 @@ export async function verifyGhidraBoundaries(
       "Ambiguity diagnostics must retain every matching entry address",
     );
     assert.equal(
-      await call("procedure_address", { procedure: selected }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: selected,
+      }),
       selected,
     );
   }
@@ -825,10 +868,16 @@ export async function verifyGhidraBoundaries(
   });
   await assert.rejects(access(socketRoot), { code: "ENOENT" });
   await assert.rejects(access(runtimeRoot), { code: "ENOENT" });
-  assert.equal(await call("procedure_address", { procedure: name }), address);
+  assert.equal(
+    await call("procedure_address", { detail: "complete", procedure: name }),
+    address,
+  );
   assert.equal(await call("address_name", { address }), name);
   assert.equal(
-    await call("procedure_address", { procedure: indirectProcedure.value }),
+    await call("procedure_address", {
+      detail: "complete",
+      procedure: indirectProcedure.value,
+    }),
     indirectProcedure.address,
   );
   assert.deepEqual(
@@ -884,7 +933,10 @@ async function verifyStartupCancellation(client, call, target, env, options) {
   // so persisted immutable snapshots cannot bypass actual provider startup.
   const request = {
     name: "search_procedures",
-    arguments: { pattern: `startup-cancellation-${randomUUID()}` },
+    arguments: {
+      detail: "complete",
+      pattern: `startup-cancellation-${randomUUID()}`,
+    },
   };
   const controller = new AbortController();
   let settled = false;

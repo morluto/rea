@@ -74,6 +74,7 @@ it("retains failed JavaScript inventory cleanup through server shutdown retries"
     const response = await client.callTool({
       name: "analyze_javascript_application",
       arguments: {
+        detail: "complete",
         input_path: archive,
         integrity_policy: "record-and-continue",
       },
@@ -212,7 +213,7 @@ it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR byte
 
   const rejected = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { input_path: archive },
+    arguments: { detail: "complete", input_path: archive },
   });
   expect(parseMcpToolError(rejected)).toMatchObject({
     error: {
@@ -226,6 +227,7 @@ it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR byte
   const continued = await client.callTool({
     name: "analyze_javascript_application",
     arguments: {
+      detail: "complete",
       input_path: archive,
       integrity_policy: "record-and-continue",
     },
@@ -376,7 +378,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   );
   const analyzed = await client.callTool({
     name: "analyze_javascript_application",
-    arguments: { input_path: root },
+    arguments: { detail: "complete", input_path: root },
   });
   expect(analyzed.isError).not.toBe(true);
   expect(analyzed.structuredContent).toMatchObject({
@@ -661,7 +663,7 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   const analyzed = await client.callTool(
     {
       name: "analyze_javascript_application",
-      arguments: { input_path: root },
+      arguments: { detail: "complete", input_path: root },
     },
     { onprogress: (update) => progress.push(update.progress) },
   );
@@ -763,13 +765,13 @@ it.skipIf(process.platform === "win32")(
     await client.connect(clientTransport);
     const initial = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: join(root, "app") },
+      arguments: { detail: "complete", input_path: join(root, "app") },
     });
     expect(initial.isError, JSON.stringify(initial)).not.toBe(true);
     const initialEvidence = parseEvidence(initial.structuredContent);
     const refused = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: `${root}/file/../app` },
+      arguments: { detail: "complete", input_path: `${root}/file/../app` },
     });
     expect(refused.isError).toBe(true);
     expect(parseMcpToolError(refused)).toMatchObject({
@@ -781,7 +783,7 @@ it.skipIf(process.platform === "win32")(
     const selected = `${root}/link/../app`;
     const admitted = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: selected },
+      arguments: { detail: "complete", input_path: selected },
     });
     expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
     const evidence = parseEvidence(admitted.structuredContent);
