@@ -7,8 +7,13 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { readPyzArchive } from "./PyzArchive.js";
+import { observePyInstallerCookie, readCArchiveToc } from "./CArchiveLayout.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { PYTHON_39_MAGIC, pyzArchive } from "./CArchive.fixture.js";
+import {
+  cArchiveExecutable,
+  PYTHON_39_MAGIC,
+  pyzArchive,
+} from "./CArchive.fixture.js";
 
 it("lists modules from a supported PYZ and leaves an unknown magic opaque", async () => {
   const body = Buffer.from("module");
@@ -72,7 +77,7 @@ it("reports an entry that extends outside the PYZ as an integrity error", async 
 
 it.each([
   ["PYZ\0", "limit", /table exceeds/iu],
-  ["BAD\0", "format", /magic does not match/iu],
+  ["BAD\0", "malformed", /magic does not match/iu],
 ] as const)(
   "charges the table budget only after PYZ signature admission (%j)",
   async (signature, reason, message) => {
@@ -212,18 +217,18 @@ it.each([0, 0xffffffff])(
 );
 
 it.each([
-  ["PYZ\0", /table.*truncated/iu],
-  ["BAD\0", /magic does not match/iu],
+  ["PYZ\0", "truncated", /table.*truncated/iu],
+  ["BAD\0", "malformed", /magic does not match/iu],
 ] as const)(
   "reads a table only after PYZ signature admission (%j)",
-  async (signature, message) => {
+  async (signature, reason, message) => {
     const header = Buffer.alloc(12);
     header.write(signature);
     PYTHON_39_MAGIC.copy(header, 4);
     header.writeUInt32BE(12, 8);
     expect(await readImage(header, 16)).toMatchObject({
       ok: false,
-      error: { reason: "format", message: expect.stringMatching(message) },
+      error: { reason, message: expect.stringMatching(message) },
     });
   },
 );
@@ -263,5 +268,68 @@ it.each([
       expect(parsed.value.entries).toMatchObject([
         { name: "module", typeCode: 0, role: "module" },
       ]);
+  },
+);
+
+it("reports read-coverage integrity instead of truncation when a CArchive shrinks before reading its TOC", async () => {
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: "main",
+        typeCode: "s",
+        payload: Buffer.from("pass\n"),
+        compress: false,
+      },
+    ],
+  });
+  const root = await createTestTempDirectory("rea-pyinstaller-toc-shrink-");
+  const path = join(root, "app");
+  await writeFile(path, bytes);
+  const handle = await open(path, "r+");
+  try {
+    const observed = await observePyInstallerCookie(handle, bytes.length);
+    expect(observed).toMatchObject({ ok: true, value: { state: "located" } });
+    if (!observed.ok || observed.value.state !== "located")
+      throw new Error("Expected a located CArchive cookie");
+    const { cookie } = observed.value;
+    await handle.truncate(cookie.archiveStart + cookie.tocOffset + 4);
+    await expect(
+      readCArchiveToc(handle, cookie, undefined, bytes.length),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "read-coverage",
+    });
+  } finally {
+    await handle.close();
+  }
+});
+
+it.each([
+  ["header", 4],
+  ["table", 12],
+] as const)(
+  "reports read-coverage integrity instead of truncation when a PYZ shrinks before reading its %s",
+  async (_stage, shrunkBytes) => {
+    const image = pyzArchive({
+      magic: PYTHON_39_MAGIC,
+      modules: [{ name: "app", typeCode: 0, body: Buffer.from("module body") }],
+    });
+    const root = await createTestTempDirectory("rea-pyz-shrink-");
+    const path = join(root, "image.pyz");
+    await writeFile(path, image);
+    const handle = await open(path, "r+");
+    try {
+      await handle.truncate(shrunkBytes);
+      await expect(
+        readPyzArchive(handle, 0, image.length, undefined, image.length),
+      ).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "read-coverage",
+      });
+    } finally {
+      await handle.close();
+    }
   },
 );

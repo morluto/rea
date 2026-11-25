@@ -242,8 +242,10 @@ it("keeps the refusal for unretained sensitive declarations on SAZ parents", () 
   expect(project([{ request }], 1)).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: "sensitive_values_unretained",
+      _tag: "AnalysisTargetFailureError",
+      failure: {
+        detail: expect.stringContaining("sensitive_values_unretained"),
+      },
     },
   });
 });

@@ -91,9 +91,15 @@ it.each(["har", "saz"] as const)(
       expect(result).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
+          _tag: "AnalysisTargetFailureError",
           operation: "compare_static_and_observed_endpoints",
-          reason: "api-surface does not support capture format saz.",
+          failure: {
+            kind: "unsupported",
+            format: "evidence",
+            detail: expect.stringContaining(
+              "api-surface does not support capture format saz.",
+            ),
+          },
         },
       });
   },

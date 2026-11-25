@@ -14,7 +14,6 @@ import {
 import {
   AnalysisInputError,
   AnalysisTargetFailureError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 
 const selectNativeImage = (
@@ -400,7 +399,7 @@ describe.each(Object.entries(MAPPERS))(
       const file = fat([[CPU_ARM64, 0]]);
       file.bytes.writeUInt32BE(60, 8 + 16);
       const refused = await refusal(file.bytes, "arm64");
-      expect(refused).toBeInstanceOf(AnalysisUnsupportedTargetError);
+      expect(refused).toBeInstanceOf(AnalysisTargetFailureError);
       expect(refused).toMatchObject({ path: "/a.dylib" });
     });
   },

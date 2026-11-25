@@ -9,7 +9,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
@@ -144,7 +144,10 @@ it("accepts padding after the assumed v108 header", async () => {
   const result = await inspectMetadata(path);
   expect(result.ok).toBe(false);
   if (result.ok) return;
-  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisTargetFailureError",
+    failure: { kind: "unsupported", format: "il2cpp-metadata" },
+  });
   expect(result.error.partialObservation).toMatchObject({
     normalized_result: {
       version_108_partial_inventory: {
@@ -192,7 +195,7 @@ it.each([
     const result = await inspectMetadata(path);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: { artifact: { path, bytes: bytes.length } },
     });
@@ -870,10 +873,12 @@ it.each([false, true])(
       expect(result).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisUnsupportedTargetError",
-          reason: expect.stringContaining(
-            "generic method instances are not decoded for metadata version 39",
-          ),
+          _tag: "AnalysisTargetFailureError",
+          failure: {
+            detail: expect.stringContaining(
+              "generic method instances are not decoded for metadata version 39",
+            ),
+          },
         },
       });
       const ordinary = await provider.inspect({ path, binary_path }, options);
@@ -970,31 +975,20 @@ it("retains both observed file identities and the selected architecture when nat
     if (result.ok) throw new Error("Unresolved registration accepted");
     // Both files parse; neither is called malformed. The conflict lists each
     // selecting field and keeps each file's identity.
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      conformsToInputContract: true,
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: expect.stringContaining(
-            `Selected metadata ${path} does not link to the selected binary: code-registration-not-found:`,
-          ),
-        },
-        {
-          path: ["binary_path"],
-          reason: "invalid_value",
-          message: expect.stringContaining(
-            `Selected binary ${binary_path} does not link to the metadata: code-registration-not-found:`,
-          ),
-        },
-      ],
-    });
     expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "invalid_request",
+      code: "input_conflict",
       retryable: false,
       remediation: {
         action: expect.stringContaining("from the same build"),
+      },
+      details: {
+        failure_kind: "conflict",
+        path,
+        reason: expect.stringContaining("code-registration-not-found:"),
+        inputs: [
+          { field: "path", path },
+          { field: "binary_path", path: binary_path },
+        ],
       },
     });
     expect(projectAnalysisError(result.error)).not.toHaveProperty("recovery");

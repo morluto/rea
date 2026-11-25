@@ -448,7 +448,7 @@ describe("Electron fuse path and container admission", () => {
       const result = await provider.inspect({ path });
       expect(result.ok, path).toBe(false);
       if (!result.ok)
-        expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+        expect(result.error._tag).toBe("AnalysisTargetFailureError");
     }
   });
 

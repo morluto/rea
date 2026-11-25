@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
-import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
+import { unsupportedTarget } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok, type Result } from "../result.js";
@@ -161,9 +161,10 @@ export const projectEnvironmentManifestView = (
   );
   if (view === undefined)
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         "inspect_analysis_view",
         parent.evidenceId,
+        "evidence",
         `View ${admitted.kind} is unsupported for parent operation ${parent.operation}; environment-manifest requires inspect_web_network_capture or capture_browser_scenario.`,
       ),
     );

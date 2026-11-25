@@ -102,10 +102,13 @@ cliTest(
     });
     section.writeBigUInt64LE(BigInt(payload.length + 1));
     expect(await inspect()).toMatchObject({
+      code: "unsupported_target",
       retryable: false,
+      retry: "none",
       details: {
-        reason: "format",
-        detail: expect.stringContaining("truncated"),
+        path: source,
+        failure_kind: "truncated",
+        format: "bun-standalone",
       },
     });
   },

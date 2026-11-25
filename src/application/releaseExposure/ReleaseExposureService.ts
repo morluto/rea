@@ -15,8 +15,8 @@ import { providerCleanupErrorFromCloseRejections } from "../../domain/analysisEr
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
+  targetFailureOfKind,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
@@ -353,7 +353,10 @@ export class ReleaseExposureService {
     }
     if (!result.ok) {
       if (stopsAudit(result.error)) return err(result.error);
-      if (result.error instanceof AnalysisUnsupportedTargetError)
+      if (
+        targetFailureOfKind(result.error, "unsupported", "unrecognized") !==
+        undefined
+      )
         return ok({
           kind: "unsupported",
           role: candidate.role,
@@ -421,9 +424,14 @@ export class ReleaseExposureService {
       const result = await run();
       if (!result.ok) {
         if (stopsAudit(result.error)) return err(result.error);
+        const form = targetFailureOfKind(
+          result.error,
+          "unsupported",
+          "unrecognized",
+        );
         if (
-          result.error instanceof AnalysisUnsupportedTargetError &&
-          !result.error.undecodedContent
+          form !== undefined &&
+          !(form.kind === "unsupported" && form.undecodedContent)
         )
           return ok({ kind: "unsupported", path });
         return ok(failedMetadata(result.error.message, path));

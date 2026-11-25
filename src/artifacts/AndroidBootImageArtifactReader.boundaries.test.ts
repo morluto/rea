@@ -9,6 +9,7 @@ import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  malformedArtifact,
 } from "../resources/index.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
@@ -67,8 +68,8 @@ it.each(["invalid", "cancelled"] as const)(
         if (refuse) {
           refuse = false;
           if (mode === "invalid")
-            throw new ArtifactReaderFailure(
-              "malformed",
+            throw malformedArtifact(
+              "android-boot-image",
               "injected preparation failure",
             );
           controller.abort(new Error("cancel final preparation validation"));

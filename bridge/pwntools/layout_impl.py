@@ -38,13 +38,13 @@ def file_range(offset, size, length):
 
 def location(offset, size, length):
     if not file_range(offset, size, length):
-        raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+        raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
     return {"offset": address(offset), "bytes": address(size)}
 
 
 def _name_in_validated_table(display, table_start, table_size, offset, content, length, cache=None):
     if not 0 <= offset < table_size:
-        raise LayoutFailure("format", f"ELF name offset {offset} lies outside its declared string table of {table_size} bytes at file offset {table_start}.")
+        raise LayoutFailure("malformed", f"ELF name offset {offset} lies outside its declared string table of {table_size} bytes at file offset {table_start}.")
     if cache is not None:
         cached = cache.get(offset)
         if cached is not None:
@@ -64,11 +64,11 @@ def _name_in_validated_table(display, table_start, table_size, offset, content, 
     limit = table_start + table_size
     end = content.find(b"\0", start, limit)
     if end < 0:
-        raise LayoutFailure("format", "ELF name lacks a terminator within its reported string table.")
+        raise LayoutFailure("malformed", "ELF name lacks a terminator within its reported string table.")
     raw = content[start:end]
     raw_size = len(raw) + 1
     if not file_range(start, raw_size, length):
-        raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+        raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
     b64 = base64.b64encode(raw).decode("ascii")
     off_hex = address(start)
     bytes_hex = address(raw_size)
@@ -90,15 +90,15 @@ def inspect_elf(path, cache):
     content = path.read_bytes()
     length = len(content)
     if length < 4 or content[:4] != b"\x7fELF":
-        raise LayoutFailure("format", "Selected object does not contain an ELF header.")
+        raise LayoutFailure("malformed", "Selected object does not contain an ELF header.")
     if length < 16:
-        raise LayoutFailure("format", "Selected ELF identification is truncated.")
+        raise LayoutFailure("truncated", "Selected ELF identification is truncated.")
     if content[4] not in (1, 2) or content[5] not in (1, 2):
         raise LayoutFailure("unsupported-target", "Selected ELF declares an unknown class or byte order.")
     bits, header_size = (32, 52) if content[4] == 1 else (64, 64)
     order = "little" if content[5] == 1 else "big"
     if length < header_size:
-        raise LayoutFailure("format", f"Selected ELF{bits} header is truncated.")
+        raise LayoutFailure("truncated", f"Selected ELF{bits} header is truncated.")
     profile = (int.from_bytes(content[18:20], order), bits, order)
     if profile not in PROFILES:
         raise LayoutFailure("unsupported-target", PROFILE_SCOPE)
@@ -118,9 +118,9 @@ def inspect_elf(path, cache):
             compressed_strtabs = []
             if section_count:
                 if headers.header.e_shentsize < headers.structs.Elf_Shdr.sizeof():
-                    raise LayoutFailure("format", "ELF section-header entry is shorter than the required structure.")
+                    raise LayoutFailure("malformed", "ELF section-header entry is shorter than the required structure.")
                 if not file_range(headers.header.e_shoff, section_count * headers.header.e_shentsize, length):
-                    raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                    raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
             # Upstream symbol, relocation and dynamic access reads stored stream
             # bytes, while this profile reports logical names and file coordinates.
             # A string table is read only when it names sections or symbols.
@@ -141,29 +141,29 @@ def inspect_elf(path, cache):
                     consumed_strings.add(raw_header.sh_link)
             segment_count = headers.num_segments()
             if segment_count and not file_range(headers.header.e_phoff, segment_count * headers.header.e_phentsize, length):
-                raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
             if headers.header.e_shstrndx == 0xffff and section_count == 0:
-                raise LayoutFailure("format", "ELF extended section-name index requires a declared section-zero header.")
+                raise LayoutFailure("malformed", "ELF extended section-name index requires a declared section-zero header.")
             raw_name_index = headers.header.e_shstrndx
             if 0xff00 <= raw_name_index < 0xffff:
-                raise LayoutFailure("format", f"ELF section-name index {raw_name_index} is reserved and cannot directly reference a section.")
+                raise LayoutFailure("malformed", f"ELF section-name index {raw_name_index} is reserved and cannot directly reference a section.")
             section_name_index = headers.get_shstrndx()
             if raw_name_index == 0xffff and section_name_index < 0xff00:
-                raise LayoutFailure("format", f"ELF SHN_XINDEX resolves to ordinary index {section_name_index}; the escape requires an index at least SHN_LORESERVE (0xff00).")
+                raise LayoutFailure("malformed", f"ELF SHN_XINDEX resolves to ordinary index {section_name_index}; the escape requires an index at least SHN_LORESERVE (0xff00).")
             if section_name_index != 0:
                 if section_name_index >= section_count:
-                    raise LayoutFailure("format", f"ELF section-name table index {section_name_index} lies outside the declared section count {section_count}.")
+                    raise LayoutFailure("malformed", f"ELF section-name table index {section_name_index} lies outside the declared section count {section_count}.")
                 names_header = headers._get_section_header(section_name_index)
                 if names_header.sh_type != "SHT_STRTAB":
-                    raise LayoutFailure("format", f"ELF section-name table {section_name_index} is not SHT_STRTAB.")
+                    raise LayoutFailure("malformed", f"ELF section-name table {section_name_index} is not SHT_STRTAB.")
                 consumed_strings.add(section_name_index)
             for index in compressed_strtabs:
                 if index in consumed_strings:
                     raise LayoutFailure("unsupported-target", f"ELF section {index} (SHT_STRTAB) is SHF_COMPRESSED; logical metadata and its source coordinates are not decoded by this profile.")
             if section_name_index != 0 and not file_range(names_header.sh_offset, names_header.sh_size, length):
-                raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
         except (ELFError, ValueError, OverflowError, AssertionError, IndexError) as error:
-            raise LayoutFailure("format", str(error)) from error
+            raise LayoutFailure("malformed", str(error)) from error
         class LayoutELF(ELF):
             def search(self, needle, writable=False, executable=False):
                 # This adapter exposes structural facts, GOT/PLT and mitigation
@@ -237,7 +237,7 @@ def inspect_elf(path, cache):
             shstr_header = getattr(shstrings, "header", None) if shstrings is not None else None
             shstr_valid = shstr_header is not None and shstr_header.sh_type == "SHT_STRTAB"
             if shstr_valid and not file_range(shstr_header.sh_offset, shstr_header.sh_size, length):
-                raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
             shstr_start = shstr_header.sh_offset if shstr_valid else 0
             shstr_size = shstr_header.sh_size if shstr_valid else 0
             shstr_cache = {} if shstr_valid else None
@@ -256,10 +256,10 @@ def inspect_elf(path, cache):
                 sh_type = h.sh_type
                 backing = sh_type not in ("SHT_NOBITS", "SHT_NULL")
                 if backing and not file_range(h.sh_offset, h.sh_size, length):
-                    raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                    raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                 hdr_off = e_shoff + index * e_shentsize
                 if not file_range(hdr_off, e_shentsize, length):
-                    raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                    raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                 if shstrings is None:
                     sec_name = {"display": "", "bytes_base64": None, "location": None,
                                 "unknown_reason": "ELF declares no section-name table (SHN_UNDEF index 0)."}
@@ -280,10 +280,10 @@ def inspect_elf(path, cache):
                 if sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
                     entsize = h.sh_entsize
                     if entsize < sym_sizeof:
-                        raise LayoutFailure("format", f"ELF symbol entry is smaller than the decoded Elf{bits}_Sym structure.")
+                        raise LayoutFailure("malformed", f"ELF symbol entry is smaller than the decoded Elf{bits}_Sym structure.")
                     sh_link = h.sh_link
                     if sh_link >= num_sections or all_sections[sh_link].header.sh_type != "SHT_STRTAB":
-                        raise LayoutFailure("format", f"ELF symbol table {index} links to invalid string table {sh_link}.")
+                        raise LayoutFailure("malformed", f"ELF symbol table {index} links to invalid string table {sh_link}.")
                     strings_hdr = all_sections[sh_link].header
                     str_start = strings_hdr.sh_offset
                     str_size = strings_hdr.sh_size
@@ -297,13 +297,13 @@ def inspect_elf(path, cache):
                     for entry, symbol in enumerate(section.iter_symbols()):
                         if not strtab_checked:
                             if not file_range(str_start, str_size, length):
-                                raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                                raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                             validated_strtabs.add(sh_link)
                             strtab_checked = True
                         raw = symbol.entry
                         entry_off = sym_base_off + entry * entsize
                         if not file_range(entry_off, entsize, length):
-                            raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                            raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                         raw_info = raw.st_info
                         sym_type = raw_info.type
                         shndx = raw.st_shndx
@@ -337,17 +337,17 @@ def inspect_elf(path, cache):
                     entsize = h.sh_entsize
                     if h.sh_size % entsize != 0:
                         raise LayoutFailure(
-                            "format",
+                            "malformed",
                             f"ELF relocation section {index} size is not a multiple of its {entsize}-byte entries.",
                         )
                     sh_info = h.sh_info
                     if is_et_rel and sh_info >= num_sections:
-                        raise LayoutFailure("format", f"ELF relocation section {index} references missing target section {sh_info}.")
+                        raise LayoutFailure("malformed", f"ELF relocation section {index} references missing target section {sh_info}.")
                     sh_link = h.sh_link
                     symbol_table = None
                     if sh_link != 0:
                         if sh_link >= num_sections or all_sections[sh_link].header.sh_type not in ("SHT_SYMTAB", "SHT_DYNSYM"):
-                            raise LayoutFailure("format", f"ELF relocation section {index} links to invalid symbol table {sh_link}.")
+                            raise LayoutFailure("malformed", f"ELF relocation section {index} links to invalid symbol table {sh_link}.")
                         symbol_table = all_sections[sh_link]
                     num_symbols = 0 if symbol_table is None else symbol_table.num_symbols()
                     entsize_hex = address(entsize)
@@ -359,10 +359,10 @@ def inspect_elf(path, cache):
                         raw = relocation.entry
                         sym_idx = raw.r_info_sym
                         if sym_idx != 0 and (symbol_table is None or sym_idx >= num_symbols):
-                            raise LayoutFailure("format", f"ELF relocation section {index} entry {entry} references missing symbol {sym_idx} in table {sh_link}.")
+                            raise LayoutFailure("malformed", f"ELF relocation section {index} entry {entry} references missing symbol {sym_idx} in table {sh_link}.")
                         entry_off = rel_base_off + entry * entsize
                         if not file_range(entry_off, entsize, length):
-                            raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                            raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                         offset_hex = address(raw.r_offset)
                         if not is_et_rel:
                             target = {"kind": "linked-virtual-address", "address": offset_hex}
@@ -400,12 +400,12 @@ def inspect_elf(path, cache):
                 p_type = h.p_type
                 backing = p_type != "PT_NULL" and h.p_filesz != 0
                 if backing and not file_range(h.p_offset, h.p_filesz, length):
-                    raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                    raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                 if p_type == "PT_LOAD" and h.p_memsz < h.p_filesz:
-                    raise LayoutFailure("format", "ELF load segment memory size is smaller than its file size.")
+                    raise LayoutFailure("malformed", "ELF load segment memory size is smaller than its file size.")
                 phdr_off = e_phoff + index * e_phentsize
                 if not file_range(phdr_off, e_phentsize, length):
-                    raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                    raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                 segments.append({
                     "index": index, "type": p_type, "offset": address(h.p_offset),
                     "header_location": {"offset": address(phdr_off), "bytes": e_phentsize_hex},
@@ -431,10 +431,10 @@ def inspect_elf(path, cache):
                         elif d_tag == "DT_NEEDED":
                             dt_needed.append(tag.d_val)
                     else:
-                        raise LayoutFailure("format", f"ELF dynamic segment {index} has no complete DT_NULL terminator within its reported file range.")
+                        raise LayoutFailure("malformed", f"ELF dynamic segment {index} has no complete DT_NULL terminator within its reported file range.")
                     if dt_needed:
                         if not dt_strtab or not dt_strsz:
-                            raise LayoutFailure("format", "ELF dependency requires DT_STRTAB and DT_STRSZ.")
+                            raise LayoutFailure("malformed", "ELF dependency requires DT_STRTAB and DT_STRSZ.")
                         if len(dt_strtab) != 1 or len(dt_strsz) != 1:
                             raise LayoutFailure("unsupported-target", "ELF dependency string-table tags are ambiguous: " + repr({"DT_STRTAB": dt_strtab, "DT_STRSZ": dt_strsz}))
                         dyn_start, dyn_size = dt_strtab[0], dt_strsz[0]
@@ -442,7 +442,7 @@ def inspect_elf(path, cache):
                         dyn_cache = {}
                         for needed_offset in dt_needed:
                             if not 0 <= needed_offset < dyn_size:
-                                raise LayoutFailure("format", f"ELF dependency name offset {needed_offset} lies outside declared DT_STRSZ {dyn_size}.")
+                                raise LayoutFailure("malformed", f"ELF dependency name offset {needed_offset} lies outside declared DT_STRSZ {dyn_size}.")
                             if dynstr_offset is None:
                                 offsets = {
                                     lh.p_offset + dyn_start - lh.p_vaddr
@@ -453,13 +453,13 @@ def inspect_elf(path, cache):
                                     raise LayoutFailure("unsupported-target", "Dynamic string table lacks a unique file-backed mapping: " + repr({"DT_STRTAB": dt_strtab, "DT_STRSZ": dt_strsz, "candidate_file_offsets": sorted(offsets)}))
                                 dynstr_offset = offsets.pop()
                                 if not file_range(dynstr_offset, dyn_size, length):
-                                    raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+                                    raise LayoutFailure("malformed", "ELF contains a file-backed range outside the selected snapshot.")
                             needed.append(_name_in_validated_table(None, dynstr_offset, dyn_size, needed_offset, content, length, dyn_cache))
                 elif p_type == "PT_INTERP":
                     raw = content[h.p_offset:h.p_offset + h.p_filesz]
                     end = raw.find(b"\0")
                     if end < 0:
-                        raise LayoutFailure("format", "ELF interpreter lacks a reported terminator.")
+                        raise LayoutFailure("malformed", "ELF interpreter lacks a reported terminator.")
                     interp_raw = raw[:end]
                     interpreters.append({"display": interp_raw.decode("utf-8", "replace"), "bytes_base64": base64.b64encode(interp_raw).decode("ascii"), "location": location(h.p_offset, end + 1, length), "unknown_reason": None})
             return {
@@ -493,7 +493,7 @@ def inspect_elf(path, cache):
         except LayoutFailure:
             raise
         except (ELFError, ValueError, OverflowError, AssertionError, IndexError) as error:
-            raise LayoutFailure("format", "Selected ELF failed unchanged upstream structural parsing: " + str(error)) from error
+            raise LayoutFailure("malformed", "Selected ELF failed unchanged upstream structural parsing: " + str(error)) from error
 
 
 

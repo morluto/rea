@@ -70,8 +70,13 @@ it("retains and extracts a high-address S28 region and projects a reserved-recor
     expect(invalidTarget.isError, JSON.stringify(invalidTarget)).not.toBe(true);
     const invalid = parseMcpToolError(await call("inspect_artifact", {}));
     expect(invalid.error).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { operation: "inspect_artifact", reason: "format" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_artifact",
+        path: invalidPath,
+        reason: expect.stringContaining("line 2: reserved record type S4"),
+        failure_kind: "malformed",
+      },
     });
     expect(JSON.stringify(invalid)).toContain(
       "line 2: reserved record type S4",

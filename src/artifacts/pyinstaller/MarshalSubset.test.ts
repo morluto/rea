@@ -87,7 +87,7 @@ it.each([
   ).toMatchObject({
     ok: false,
     error: {
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("UTF-8"),
     },
   });
@@ -131,7 +131,7 @@ it.each(["6c0200000003000000", "6cfeffffff03000000"])(
     expect(readMarshalSubset(bytes(hex))).toMatchObject({
       ok: false,
       error: {
-        reason: "format",
+        reason: "malformed",
         message: expect.stringMatching(/long.*not normalized/iu),
       },
     });
@@ -165,7 +165,7 @@ it("rejects a marshal type outside the subset", () => {
   const parsed = readMarshalSubset(Buffer.from([0x4e]));
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
-  expect(parsed.error.reason).toBe("format");
+  expect(parsed.error.reason).toBe("malformed");
 });
 
 it.each([
@@ -176,7 +176,7 @@ it.each([
   const parsed = readMarshalSubset(bytes(hex));
   expect(parsed).toMatchObject({
     ok: false,
-    error: { reason: "format" },
+    error: { reason: "malformed" },
   });
 });
 

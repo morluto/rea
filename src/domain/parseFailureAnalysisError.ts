@@ -2,7 +2,6 @@ import {
   type ANALYSIS_RESOURCE_KINDS,
   AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   type ResourceConstraintRecovery,
 } from "./analysisErrorCore.js";
 import type { AnalysisErrorOptions } from "./analysisErrorBase.js";
@@ -67,19 +66,13 @@ export const parseFailureAnalysisError = (
   operation: string,
   path: string,
   cause: unknown,
-): AnalysisTargetFailureError | AnalysisUnsupportedTargetError | undefined => {
+): AnalysisTargetFailureError | undefined => {
   if (!(cause instanceof ParseFailureError)) return undefined;
   const { failure } = cause;
   switch (failure.kind) {
     case "limit":
       return undefined;
     case "unsupported":
-      return new AnalysisUnsupportedTargetError(
-        operation,
-        path,
-        failure.detail,
-        { cause, undecodedContent: failure.undecodedContent },
-      );
     case "malformed":
     case "truncated":
       return new AnalysisTargetFailureError(operation, path, failure, {
