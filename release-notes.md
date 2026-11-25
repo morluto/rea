@@ -751,6 +751,7 @@
 * **config:** extract ClientConfigurationToml from ClientConfigurationDocument ([#13724](https://github.com/morluto/rea/issues/13724)) ([b42f7c2](https://github.com/morluto/rea/commit/b42f7c24afd5b19c19312c8e893ac3ef62f3cc93))
 * **config:** return Result for ConfigurationError in IdaConfiguration and KiloClientLocation ([#14053](https://github.com/morluto/rea/issues/14053)) ([15790f7](https://github.com/morluto/rea/commit/15790f786fe73d2e720c9fa9776af9cbf75a3d5e))
 * **config:** return Result from resolveKiloRegistrationWorktree ([#14055](https://github.com/morluto/rea/issues/14055)) ([b2ae356](https://github.com/morluto/rea/commit/b2ae356f646350d2a1e469a806d4ebffe7df160c))
+* **config:** share defaulted numeric setting parsers ([#14437](https://github.com/morluto/rea/issues/14437)) ([69a5601](https://github.com/morluto/rea/commit/69a56016f3aa58820e7a0f7f825b8f493859300a))
 * **config:** share optional launch setting validation ([#14310](https://github.com/morluto/rea/issues/14310)) ([ba9b10f](https://github.com/morluto/rea/commit/ba9b10f04864549a88f11d13cc43bbaaaca4f721))
 * **desktop:** project captured drafts through the guest schema ([#14338](https://github.com/morluto/rea/issues/14338)) ([57ae5dc](https://github.com/morluto/rea/commit/57ae5dcbc4f9ed131e536e6fd5655bcd90165be6))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), refs [#11865](https://github.com/morluto/rea/issues/11865)
