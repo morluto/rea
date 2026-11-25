@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -26,9 +27,6 @@ import { cliTest } from "../support/cli/cliFixture.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const DRIVER_GUID = "9e21fd93-9c72-4c15-8c4b-e77f9db8d4d2";
 const PAD_GUID = "fff12b8d-d7da-47f8-b4cf-1a0a2a1c1b1c";

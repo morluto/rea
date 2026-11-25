@@ -7,6 +7,7 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
 import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -100,13 +101,7 @@ await withVerifierCleanup(async () => {
           })
         : "# Keep caller settings.\nmcp_servers:\n  other:\n    command: unrelated-server\n    enabled: false\n";
     await writeFile(configPath, original);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment);
     for (const args of [
       ["setup", "--client", client, "--dry-run"],
       ["setup", "--client", client, "--yes"],

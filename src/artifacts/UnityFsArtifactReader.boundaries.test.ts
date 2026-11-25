@@ -1,27 +1,22 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
-import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import {
+  artifactPreparationRecoveryCases,
+  boundedArchiveStreamCases,
+} from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { buildUnityFs } from "../../tests/fixtures/unityfs.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { ArtifactFileSource } from "../resources/index.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-unity-boundary-"),
-    "bundle",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-unity-boundary-", "bundle", bytes);
 
 // A valid two-sequence LZ4 block: one literal, a distance-one match, five final
 // literals. The decoder yields after the large match, before the last sequence.
@@ -404,61 +399,6 @@ it.each([1, 2])(
 );
 
 describe("UnityFS stream ownership and immutable cache", () => {
-  it("preserves a pending read failure when cancellation overlaps it", async () => {
-    const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
-    const admitted = await openRegularFile(path, { symlinks: "reject" });
-    const reader = new UnityFsArtifactReader(path, admitted);
-    const reached = createDeferred<void>();
-    const release = createDeferred<void>();
-    const failure = new Error("member read failed");
-    const controller = new AbortController();
-    const [entry] = await collectEntries(reader);
-    const reads = vi
-      .spyOn(admitted.handle, "read")
-      .mockImplementation((async () => {
-        reached.resolve();
-        await release.promise;
-        throw failure;
-      }) as typeof admitted.handle.read);
-    let consumed: Promise<Buffer> | undefined;
-    try {
-      consumed = buffer(await reader.open(entry!, controller.signal));
-      await awaitAcknowledgement(reached.promise, consumed, "member read");
-      controller.abort(new Error("caller cancelled"));
-      release.resolve();
-      await expect(consumed).rejects.toBe(failure);
-    } finally {
-      release.resolve();
-      await consumed?.catch(() => undefined);
-      reads.mockRestore();
-      await reader.close();
-      await admitted.handle.close();
-    }
-  });
-
-  it("retains descriptor ownership after cleanup fails and permits retry", async () => {
-    const reader = new UnityFsArtifactReader(
-      await fixture(buildUnityFs([{ path: "x", data: "bytes" }])),
-    );
-    const [entry] = await collectEntries(reader);
-    const stream = await reader.open(entry!);
-    const failure = new Error("descriptor close denied");
-    const close = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockRejectedValueOnce(failure);
-    try {
-      await expect(reader.close()).rejects.toBe(failure);
-      expect(stream.closed).toBe(true);
-      await expect(reader.open(entry!)).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-      await reader.close();
-      expect(close).toHaveBeenCalledTimes(2);
-    } finally {
-      close.mockRestore();
-      await reader.close();
-    }
-  });
   it("joins an outstanding positional read before close completes", async () => {
     const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
     const admitted = await openRegularFile(path, { symlinks: "reject" });
@@ -613,54 +553,14 @@ describe("UnityFS stream capacity and cache ownership", () => {
       await reader.close();
     }
   });
-
-  it("bounds active streams and releases capacity after abandonment", async () => {
-    const reader = new UnityFsArtifactReader(
-      await fixture(buildUnityFs([{ path: "x", data: "bytes" }])),
-    );
-    try {
-      const [entry] = await collectEntries(reader);
-      const streams = await Promise.all(
-        Array.from({ length: 4 }, () => reader.open(entry!)),
-      );
-      await expect(reader.open(entry!)).rejects.toMatchObject({
-        reason: "limit",
-        boundary: "capacity",
-      });
-      const closed = new Promise<void>((resolve) => {
-        streams[0]!.once("close", resolve);
-      });
-      streams[0]!.destroy();
-      await closed;
-      expect(await text(await reader.open(entry!))).toBe("bytes");
-    } finally {
-      await reader.close();
-    }
-  });
-
-  it("does not turn a paused inventory into complete coverage when closed", async () => {
-    const reader = new UnityFsArtifactReader(
-      await fixture(
-        buildUnityFs([
-          { path: "x", data: "bytes" },
-          { path: "y", data: "bytes" },
-        ]),
-      ),
-    );
-    const iterator = reader.entries()[Symbol.asyncIterator]();
-    try {
-      expect((await iterator.next()).done).toBe(false);
-      await reader.close();
-      await expect(iterator.next()).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-    } finally {
-      await reader.close();
-    }
-  });
 });
 
 artifactPreparationRecoveryCases({
   image: () => buildUnityFs([{ path: "a", data: "x" }]),
   createReader: (path, admitted) => new UnityFsArtifactReader(path, admitted),
 });
+
+boundedArchiveStreamCases(
+  buildUnityFs,
+  (path, admitted) => new UnityFsArtifactReader(path, admitted),
+);

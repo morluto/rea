@@ -287,8 +287,7 @@ const executableRoots = async (
         if (observed === undefined) return;
         view.seedImage(entry.path, observed.facts, observed.identity);
         const { facts } = observed;
-        if (facts.status === "malformed" || facts.status === "unsupported")
-          unclassified.push(entry.path);
+        if (facts.status === "failed") unclassified.push(entry.path);
         else if (
           facts.status === "parsed" &&
           machoImageSlices(facts).some(

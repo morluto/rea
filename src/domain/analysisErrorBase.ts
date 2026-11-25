@@ -98,6 +98,18 @@ export interface AnalysisCleanupObservation {
   readonly resources: readonly string[];
 }
 
+/** Append a later cleanup failure, keeping resource labels in first-seen order. */
+export const appendCleanupObservation = (
+  previous: AnalysisCleanupObservation | undefined,
+  next: AnalysisCleanupObservation,
+): AnalysisCleanupObservation =>
+  previous === undefined
+    ? next
+    : {
+        reason: `${previous.reason}; ${next.reason}`,
+        resources: [...new Set([...previous.resources, ...next.resources])],
+      };
+
 /** Publication stopped after a workflow produced its Evidence. Counts describe
  * question occurrences, not distinct Unknown identities. */
 export interface WorkflowUnknownPublication {

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   readTsharkJsonPackets,
@@ -296,16 +297,6 @@ const joinDnsPackets = (
   return joinedIndices;
 };
 
-const appendFieldValue = (
-  values: Map<string, string[]>,
-  key: string,
-  item: string,
-): void => {
-  const list = values.get(key);
-  if (list === undefined) values.set(key, [item]);
-  else list.push(item);
-};
-
 const appendFieldArray = (
   values: Map<string, string[]>,
   key: string,
@@ -340,7 +331,7 @@ const collectTargetFieldsFromNodes = (
       if (key.endsWith("_raw")) continue;
       const child = value[key];
       if (typeof child === "string") {
-        if (TARGET_FIELD_KEYS.has(key)) appendFieldValue(values, key, child);
+        if (TARGET_FIELD_KEYS.has(key)) appendToMapList(values, key, child);
       } else if (Array.isArray(child)) {
         if (isStringArray(child)) {
           if (TARGET_FIELD_KEYS.has(key)) appendFieldArray(values, key, child);
@@ -1041,44 +1032,4 @@ export const finalizeTsharkWithDns = async (
   }
   assertOutputReadActive(signal);
   return projectTsharkFields(prepared.state, dnsState);
-};
-
-/** Decode each bounded acquisition, then join DNS PDUs by unique capture frame. */
-export const parseTsharkJsonOutput = async (
-  stdout: string,
-  signal?: AbortSignal,
-  dnsStdout?: string,
-  outputBytes: number = PCAP_PRODUCER_LIMITS.output_bytes,
-): Promise<TsharkFields> => {
-  const budget: TsharkJsonBudget = {
-    maxBytes: outputBytes,
-    maxDecodedBytes: PCAP_TSHARK_DECODED_BYTES,
-    decodedBytes: 0,
-  };
-  const packets = await decodeTsharkPackets(stdout, budget, signal, "");
-  validateSelectedLayerFields(packets);
-  if (dnsStdout !== undefined) {
-    const dnsPackets = await decodeTsharkPackets(
-      dnsStdout,
-      budget,
-      signal,
-      "DNS ",
-    );
-    joinDnsPackets(packets, dnsPackets);
-  }
-  const state = createNonDnsAccumulator(packets.length);
-  const dnsState = createDnsAccumulator();
-  const hasDnsAcquisition = dnsStdout !== undefined;
-  for (let index = 0; index < packets.length; index += 1) {
-    if (index % 256 === 0) {
-      await yieldToEventLoop();
-      assertOutputReadActive(signal);
-    }
-    const layers = packets[index]!;
-    const hasDns = processPacketNonDns(state, index, layers);
-    if (hasDns || hasDnsAcquisition)
-      processPacketDns(state, dnsState, index, layers, hasDnsAcquisition);
-  }
-  assertOutputReadActive(signal);
-  return projectTsharkFields(state, dnsState);
 };

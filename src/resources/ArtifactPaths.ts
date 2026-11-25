@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import { posix } from "node:path";
 
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
@@ -328,9 +329,7 @@ const englishUnicodeCaseCollisions = (
       let child = node.bySpelling.get(part);
       if (child === undefined) {
         const folded = englishCaseFold(part);
-        const spellings = node.spellingsByFold.get(folded);
-        if (spellings === undefined) node.spellingsByFold.set(folded, [part]);
-        else spellings.push(part);
+        appendToMapList(node.spellingsByFold, folded, part);
         child = emptyCaseNode();
         node.bySpelling.set(part, child);
       }

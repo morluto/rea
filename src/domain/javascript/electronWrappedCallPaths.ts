@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
@@ -183,9 +184,7 @@ const indexIpcFinding = (
       facts.reached.get(valueKey) ?? new Map<string, ReachedChain[]>();
     facts.reached.set(valueKey, byLast);
     const last = reached.calls.at(-1) ?? "";
-    const chains = byLast.get(last);
-    if (chains === undefined) byLast.set(last, [reached]);
-    else chains.push(reached);
+    appendToMapList(byLast, last, reached);
   }
 };
 

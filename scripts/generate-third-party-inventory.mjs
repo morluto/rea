@@ -78,7 +78,9 @@ if (arguments_.has("--check")) {
       ),
     );
   }
-  for (const entry of runtime) {
+  for (const entry of entries) {
+    // The direct build compiler emits helper code into the shipped bundles.
+    if (entry.dev && entry.path !== "node_modules/rolldown") continue;
     const identity = `${entry.name}@${entry.version}`;
     const section = sections.get(identity);
     if (section === undefined)
