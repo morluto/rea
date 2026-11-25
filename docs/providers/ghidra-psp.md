@@ -112,7 +112,7 @@ semantics or arbitrary PSP compatibility. Independently published PSP binaries
 are supplemental calibration targets after payload classification and license
 review; unsupported PRX/PBP must not count as a successful static-ELF case.
 
-### Computed indirect-branch conformance (depends on #2977)
+### Computed indirect-branch conformance
 
 The optional source-owned control-flow fixture exercises two computed Allegrex
 `jr $t9` sites (dispatch and indirect-tail control), a `jr $ra` return, and a

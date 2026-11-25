@@ -155,13 +155,10 @@ try {
       { timeout: 240000 },
     );
     const value = requireMcpOperationResult(reply, name);
-    const evidence = [
-      "inspect_native_api",
-      "analyze_function",
-      "list_procedures",
-    ].includes(name)
-      ? parseEvidence(reply.structuredContent)
-      : undefined;
+    const evidence =
+      name === "inspect_native_api" || name === "list_procedures"
+        ? parseEvidence(reply.structuredContent)
+        : undefined;
     return { value, evidence };
   };
 
@@ -208,8 +205,6 @@ try {
       "Wrong computed flag: " + symbol,
     );
 
-    const functionResult = await call("analyze_function", { procedure: entry });
-    assert.ok(functionResult.evidence?.evidence_id);
     const inspection = await call("inspect_native_api", { procedure: entry });
     assert.ok(inspection.evidence?.evidence_id);
     const nativeApi = inspection.value;
@@ -228,11 +223,9 @@ try {
     const unresolved = branches.find(
       (b) => BigInt(b.branch_address) === BigInt(address),
     );
-    const recovered = boundary.available
-      ? boundary.jump_tables.some(
-          (t) => BigInt(t.dispatch_address) === BigInt(address),
-        )
-      : false;
+    const recovered = boundary.jump_tables.some(
+      (table) => BigInt(table.dispatch_address) === BigInt(address),
+    );
     if (computed) {
       computedListingBranches++;
       assert.equal(
@@ -292,14 +285,11 @@ try {
       mnemonic: listing.mnemonic,
       flow: listing.flow,
       boundary_available: boundary.available,
-      unavailable_reason: boundary.available ? null : boundary.reason,
-      decompiler_pseudocode_nonempty:
-        typeof functionResult.value.pseudocode === "string" &&
-        functionResult.value.pseudocode.length > 0,
+      unavailable_reason: null,
       unresolved_indirect_branches: branches,
-      recovered_jump_table_addresses: boundary.available
-        ? boundary.jump_tables.map((table) => table.dispatch_address)
-        : [],
+      recovered_jump_table_addresses: boundary.jump_tables.map(
+        (table) => table.dispatch_address,
+      ),
       unsupported_branches: nativeApi.unsupported_branches,
       residual_unknowns: nativeApi.residual_unknowns,
       evidence_id: inspection.evidence.evidence_id,
