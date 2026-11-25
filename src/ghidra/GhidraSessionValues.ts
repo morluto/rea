@@ -13,6 +13,7 @@ import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
 import {
   GHIDRA_RISCV_CALLING_CONVENTION_IDS,
   GHIDRA_RISCV_LOAD_PREPARATION,
+  GHIDRA_RISCV_REFUSAL_MAX_LENGTH,
 } from "./GhidraRiscvProfile.js";
 import { isRecord } from "../kernel/isRecord.js";
 
@@ -113,12 +114,17 @@ const sessionInfoSchema = z
       .strict()
       .optional(),
     riscv_calling_convention: z
-      .object({
-        policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
-        functions: z.int().nonnegative(),
-        definitions: z.int().nonnegative(),
-      })
-      .strict()
+      .union([
+        z.strictObject({
+          policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
+          functions: z.int().nonnegative(),
+          definitions: z.int().nonnegative(),
+        }),
+        z.strictObject({
+          policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
+          refused: z.string().min(1).max(GHIDRA_RISCV_REFUSAL_MAX_LENGTH),
+        }),
+      ])
       .optional(),
     // Written by ReaGhidraPrepareElfLoad before auto-analysis.
     elf_load_preparation: z

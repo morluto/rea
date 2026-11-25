@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { writeFile } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { join } from "node:path";
@@ -43,7 +44,7 @@ it("rejects malformed UTF-8 instead of inventing a replacement-character member 
   await writeFile(path, bytes);
   try {
     await expect(collectEntries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("UTF-8"),
     });
   } finally {
@@ -89,19 +90,13 @@ it.each(['{"files":', '\uFEFF{"files":{}}'])(
     await writeFile(path, asarHeaderBytes(json));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();
     }
   },
 );
-
-async function collectEntries(reader: AsarArtifactReader) {
-  const entries = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
-}
 
 it("reuses admitted ASAR header extents from root classification without duplicating admitAsarHeader", async () => {
   const root = await createTestTempDirectory("rea-asar-admitted-extents-");

@@ -198,17 +198,17 @@ than ignored.
 A damaged universal file is a target refusal, not a request to correct:
 overlapping slices, a slice range outside the file, or a selected slice whose
 header disagrees with its FAT entry return `unsupported_target` with
-`details.format` `macho`, `details.format_failure` `malformed` (`truncated`
+`details.format` `macho`, `details.failure_kind` `malformed` (`truncated`
 when the selected slice ends inside its Mach-O header), and `details.path`
 naming the universal file. A file that ends inside its FAT header or
-architecture table was cut short rather than corrupted: `format_failure` is
+architecture table was cut short rather than corrupted: `details.failure_kind` is
 `truncated`, `details.available_bytes` is the file's size and
 `details.required_bytes` is the length that header or table needs, so
 acquire the complete file again. A CAFEBABE file whose architecture count
 reads as a Java class-file version is not read as a truncated
 universal file. A FAT form outside REA's coverage, such as an
-alignment exponent above 52, is `unsupported_target` without
-`format_failure`. The same rules apply to `inspect_rust_binary`,
+alignment exponent above 52, is `unsupported_target` with `details.failure_kind`
+`unsupported`. The same rules apply to `inspect_rust_binary`,
 `inspect_dwarf_units` and `inspect_native_initializers`.
 
 For ELF images without a named build-info section, discovery checks each

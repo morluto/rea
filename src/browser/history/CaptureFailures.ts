@@ -34,6 +34,7 @@ import {
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -450,9 +451,19 @@ export const historicalCaptureFailure = (
     phase !== "decoder" &&
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
-    (cause.reason === "limit" ||
-      cause.reason === "format" ||
-      cause.reason === "path")
+    cause.parseFailure !== undefined
+  )
+    return new AnalysisTargetFailureError(
+      OPERATION,
+      input.capture_path,
+      cause.parseFailure,
+      { cause },
+    );
+  if (
+    phase !== "decoder" &&
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    (cause.reason === "limit" || cause.reason === "path")
   )
     return new AnalysisInputError(
       OPERATION,

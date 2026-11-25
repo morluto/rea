@@ -48,11 +48,13 @@ it.each(["plist", "pe"] as const)(
     expect(result).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "extract_artifact",
-        reason: expect.stringContaining(
-          "Artifact format has no extraction reader:",
-        ),
+        failure: {
+          detail: expect.stringContaining(
+            "Artifact format has no extraction reader:",
+          ),
+        },
       },
     });
     await expect(access(output)).rejects.toThrow();
@@ -139,10 +141,10 @@ describe("artifact extraction format support", () => {
     expect(await extract()).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "extract_artifact",
         path: alias,
-        reason: "Artifact format has no extraction reader: dmg",
+        failure: { detail: "Artifact format has no extraction reader: dmg" },
       },
     });
     const controller = new AbortController();
@@ -169,10 +171,10 @@ describe("artifact extraction executable formats", () => {
     ).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "extract_artifact",
         path: binary,
-        reason: "Artifact format has no extraction reader: mach-o",
+        failure: { detail: "Artifact format has no extraction reader: mach-o" },
       },
     });
     await expect(access(output)).rejects.toThrow();

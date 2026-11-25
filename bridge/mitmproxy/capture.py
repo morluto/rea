@@ -40,7 +40,7 @@ class BoundedReader:
 
     def read(self, count):
         if count < 0 or count > self.size - self.handle.tell():
-            raise CaptureFailure("format", "Native record declares bytes beyond the retained capture.")
+            raise CaptureFailure("malformed", "Native record declares bytes beyond the retained capture.")
         return self.handle.read(count)
 
 
@@ -295,7 +295,7 @@ def project_record(state, secrets, max_depth):
                 result = []
                 for index, field in enumerate(value):
                     if not isinstance(field, (list, tuple)) or len(field) != 2 or not isinstance(field[0], bytes):
-                        raise CaptureFailure("format", "Native header/trailer is not an ordered byte pair.", pointer(path, index))
+                        raise CaptureFailure("malformed", "Native header/trailer is not an ordered byte pair.", pointer(path, index))
                     result.append([visit(field[0], pointer(pointer(path, index), 0), depth + 2), visit(field[1], pointer(pointer(path, index), 1), depth + 2, field[0].lower() in CREDENTIALS, field[0].lower() in {b"location", b"referer", b"origin"}, base_scheme if field[0].lower() == b"location" else None)])
                 return result
             return [visit(item, pointer(path, index), depth + 1, base_scheme=base_scheme) for index, item in enumerate(value)]
@@ -309,7 +309,7 @@ def project_record(state, secrets, max_depth):
             result = {}
             for key, item in value.items():
                 if not isinstance(key, str):
-                    raise CaptureFailure("format", "Native record has a non-string dictionary key.", path)
+                    raise CaptureFailure("malformed", "Native record has a non-string dictionary key.", path)
                 if any(secret in key for secret in secrets):
                     # Validate the omitted subtree too, then discard all of its
                     # coordinates rather than inventing a replacement identity.
@@ -340,9 +340,9 @@ def decode(request):
             except RecursionError:
                 raise CaptureFailure("unsupported", "Native parser reached Python's recursion limit at byte offset " + str(start) + ". max_nesting_depth does not raise that upstream limit.") from None
             except (ValueError, IndexError, UnicodeError, EOFError):
-                raise CaptureFailure("format", "Malformed native record at byte offset " + str(start) + ".") from None
+                raise CaptureFailure("malformed", "Malformed native record at byte offset " + str(start) + ".") from None
             if not isinstance(state, dict):
-                raise CaptureFailure("format", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
+                raise CaptureFailure("malformed", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
             records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"], request["budgets"]["depth"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
     return {"decoder": {"id": "mitmproxy-native-tnetstring", "name": "REA offline native mitmproxy adapter", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
 

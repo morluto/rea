@@ -23,7 +23,10 @@ import {
 import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const connectLocalToolsMcp = lazyLocalToolsMcp();
@@ -317,7 +320,7 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       const mcp = parseMcpToolError(await call(name, { path: duplicate }));
-      expect(mcp.error).toEqual(result.json);
+      expectAdapterErrorParity(mcp.error, result.json, name);
       expect(mcp.error).toMatchObject({
         code: "invalid_request",
         details: { issues: [{ message: expect.stringContaining(duplicate) }] },

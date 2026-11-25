@@ -6,11 +6,8 @@ import {
   type ZeroFillMapping,
 } from "./virtualFileMapping.js";
 import type { PeDataDirectory } from "./peOptionalHeader.js";
-import {
-  decodeLimit,
-  ParseFailureError,
-  type TruncatedExtent,
-} from "./parseFailure.js";
+import { decodeLimit, ParseFailureError } from "./parseFailure.js";
+import type { TruncatedExtent } from "./targetFailure.js";
 
 /** Return whether the leading bytes begin with the 4-byte ELF magic (`\x7fELF`). */
 export const hasElfMagic = (bytes: Uint8Array): boolean =>

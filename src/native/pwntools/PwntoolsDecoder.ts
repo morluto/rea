@@ -45,12 +45,12 @@ import type {
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
+  unsupportedTarget,
 } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -126,6 +126,8 @@ export interface PwntoolsDecoderProfile<
   readonly identity: ProviderIdentity;
   readonly operation: string;
   readonly bridge: URL;
+  /** The format the worker reads, named in a malformed-target refusal. */
+  readonly targetFormat: string;
   readonly payloadSchema: z.ZodType<Payload>;
   readonly project: (context: {
     readonly input: Input;
@@ -319,7 +321,8 @@ export class PwntoolsDecoder<
       z.strictObject({
         ok: z.literal(false),
         reason: z.enum([
-          "format",
+          "malformed",
+          "truncated",
           "unsupported",
           "unsupported-target",
           "unavailable",
@@ -576,9 +579,10 @@ export class PwntoolsDecoder<
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported-target")
-          throw new AnalysisUnsupportedTargetError(
+          throw unsupportedTarget(
             OPERATION,
             input.path,
+            this.profile.targetFormat,
             reply.message,
             { capturedOutput },
           );
@@ -593,14 +597,19 @@ export class PwntoolsDecoder<
               remediationAction: `Review reported limits and available host memory; allocation failure alone does not prove exhaustion. ${pwntoolsBudgetRecovery(producerLimits)}`,
             },
           );
-        if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
+        // The worker's ELF owner raised the kind: bytes that break the
+        // format, or end inside a header it measured.
+        if (reply.reason === "malformed" || reply.reason === "truncated")
+          throw new AnalysisTargetFailureError(
+            OPERATION,
+            input.path,
             {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
+              kind: reply.reason,
+              format: this.profile.targetFormat,
+              detail: reply.message,
             },
-          ]);
+            { capturedOutput },
+          );
         if (reply.reason === "unavailable")
           throw pwntoolsUnavailable(
             reply.message,

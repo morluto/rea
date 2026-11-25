@@ -519,6 +519,11 @@ export const documentationSections = [
         route: "/wxapkg",
       },
       {
+        text: "ISO 9660 disc images",
+        source: "guides/firmware/iso9660-images.md",
+        route: "/iso9660-images",
+      },
+      {
         text: "tar and gzip-compressed tar archives",
         source: "tar-archives.md",
         route: "/tar-archives",
@@ -667,6 +672,16 @@ export const documentationSections = [
         text: "MCP runtime contracts",
         source: "reference/mcp-contracts.md",
         route: "/mcp-contracts",
+      },
+      {
+        text: "Target failures",
+        source: "reference/target-failures.md",
+        route: "/target-failures",
+      },
+      {
+        text: "Directory identity",
+        source: "reference/directory-identity.md",
+        route: "/directory-identity",
       },
       {
         text: "Reconstruction obligation ledgers",

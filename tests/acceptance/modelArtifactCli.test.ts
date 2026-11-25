@@ -32,7 +32,7 @@ const MALFORMED_MODEL = {
   category: "unsupported_target",
   details: {
     operation: "inspect_model_artifact",
-    format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+    failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
   },
 } as const;
 
@@ -540,7 +540,7 @@ cliTest(
         operation: "inspect_model_artifact",
         path,
         reason: "Declared extent is outside the file",
-        format_failure: "malformed",
+        failure_kind: "malformed",
       },
     });
     expect(offsetFailure.error).not.toHaveProperty("recovery");

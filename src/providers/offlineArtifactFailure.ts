@@ -2,6 +2,7 @@ import {
   ArtifactReaderFailure,
   projectOwnedArtifactInputFailure,
   type ArtifactFilePrimaryFacts,
+  artifactOperationReason,
 } from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
@@ -88,7 +89,7 @@ export const offlineArtifactFailureDialect = (
               options.operation,
               origin === "owned-or-classified" &&
                 failure instanceof ArtifactReaderFailure
-                ? failure.reason
+                ? artifactOperationReason(failure)
                 : "io",
               undefined,
               failure instanceof Error

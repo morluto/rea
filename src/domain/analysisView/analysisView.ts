@@ -53,7 +53,10 @@ import { projectBrowserScenarioView } from "./browserScenarioView.js";
 import { projectNativeLoadImageView } from "./nativeLoadImageView.js";
 import { projectDesktopApplicationView } from "./desktopApplicationView.js";
 
-import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
+import {
+  unsupportedTarget,
+  AnalysisTargetFailureError,
+} from "../analysisErrorCore.js";
 import {
   INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
@@ -155,14 +158,16 @@ const readFunctionDossierParent = createAnalysisViewResultReader(
 
 const unsupportedParent = (
   parent: AnalysisViewParent,
-): AnalysisUnsupportedTargetError =>
-  new AnalysisUnsupportedTargetError(
+): AnalysisTargetFailureError =>
+  unsupportedTarget(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views.`,
+    "evidence",
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. For an analysis view, select completed Evidence from a supported parent operation and a compatible view; for a summary receipt, use normalized_result.parent_evidence_id. To read this record, use the complete Evidence directly; complete bundle delivery may exceed the MCP response budget.`,
     {
-      remediationAction:
-        "For an analysis view, select completed Evidence from a supported parent operation and a compatible view. For a summary receipt, use normalized_result.parent_evidence_id. To read this record, use the original complete Evidence directly; for session-retained records, request get_evidence_bundle with detail complete or use export_evidence_bundle. Complete bundle delivery may exceed the MCP response budget.",
+      related: {
+        operations: ["get_evidence_bundle", "export_evidence_bundle"],
+      },
     },
   );
 

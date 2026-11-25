@@ -2,6 +2,19 @@ import type { z } from "zod";
 
 import { recordedControlSchemas } from "../domain/analysisSettingDefinitions.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  MCP_TARGET_FAILURE_SPELLING,
+  renderTargetFailureRecovery,
+  TARGET_FAILURE_KINDS,
+  type TargetFailureKind,
+  type TargetFailureRecoveryFacts,
+  type TargetFailureSpelling,
+} from "../domain/targetFailure.js";
+import {
+  MCP_INPUT_SCHEMA_SPELLING,
+  renderInputSchemaRemediation,
+  type InputSchemaRemediationSpelling,
+} from "../domain/analysisErrorPresentation.js";
 import type { Result } from "../domain/result.js";
 import {
   cliCommandForOperation,
@@ -80,19 +93,29 @@ export const projectCliInputFields = <Output>(
       ? [{ name: binding.operation, flags: binding.flags }]
       : orderedOperations(binding.operations, error.details.operation);
   const issues = renamedIssues(error, error.details, binding);
+  const remediation = cliConflictRemediation(error, error.details, binding);
+  const inputs = renamedTargetInputs(error.details, binding);
   const limit = flaggedLimit(error.details.limit, operations);
   const relatedFlags =
     binding.operations === undefined &&
     error.details.operation !== binding.operation
       ? undefined
       : relatedCliFlagsFromOperations(error.details, operations);
-  if (issues === undefined && limit === undefined && relatedFlags === undefined)
+  if (
+    issues === undefined &&
+    remediation === undefined &&
+    inputs === undefined &&
+    limit === undefined &&
+    relatedFlags === undefined
+  )
     return output;
   return {
     ...error,
+    ...(remediation === undefined ? {} : { remediation }),
     details: {
       ...error.details,
       ...(issues === undefined ? {} : { issues }),
+      ...(inputs === undefined ? {} : { inputs }),
       ...(limit === undefined ? {} : { limit }),
       ...(relatedFlags === undefined
         ? {}
@@ -149,15 +172,20 @@ const projectErrorRecord = (
     details.secondary_failures,
     context,
   );
+  const remediation =
+    cliTargetFailureRemediation(error, details, context) ??
+    cliInputSchemaRemediation(error, details, context);
   if (
     limit === undefined &&
     relatedFlags === undefined &&
     relatedCommands === undefined &&
-    secondaryFailures === undefined
+    secondaryFailures === undefined &&
+    remediation === undefined
   )
     return error;
   return {
     ...error,
+    ...(remediation === undefined ? {} : { remediation }),
     details: {
       ...details,
       ...(limit === undefined ? {} : { limit }),
@@ -172,6 +200,193 @@ const projectErrorRecord = (
         : { secondary_failures: secondaryFailures }),
     },
   };
+};
+
+const stringList = (value: JsonValue | undefined): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+
+const isTargetFailureKind = (
+  value: JsonValue | undefined,
+): value is TargetFailureKind =>
+  typeof value === "string" &&
+  (TARGET_FAILURE_KINDS as readonly string[]).includes(value);
+
+const targetInputFields = (details: Record<string, JsonValue>): string[] =>
+  Array.isArray(details.inputs)
+    ? details.inputs.flatMap((input) =>
+        isObject(input) && typeof input.field === "string" ? [input.field] : [],
+      )
+    : [];
+
+/**
+ * Rewrite a conflict failure's recovery text with CLI input spellings before
+ * `renamedTargetInputs` replaces the source field names in `details.inputs`.
+ */
+const cliConflictRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    details.operation !== binding.operation ||
+    details.failure_kind !== "conflict" ||
+    typeof details.format !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const inputFields = targetInputFields(details);
+  if (inputFields.length === 0) return undefined;
+  const mcpFacts: TargetFailureRecoveryFacts = {
+    operation: binding.operation,
+    kind: "conflict",
+    format: details.format,
+    inputFields,
+  };
+  const mcp = renderTargetFailureRecovery(
+    mcpFacts,
+    MCP_TARGET_FAILURE_SPELLING,
+  );
+  if (!remediation.action.startsWith(mcp)) return undefined;
+  const cliInputFields = inputFields.map((field) => {
+    const flag = cliFlagForFlags(field, binding.flags);
+    if (flag !== undefined) return flag;
+    return Object.hasOwn(binding.fields, field)
+      ? (binding.fields[field] ?? field)
+      : field;
+  });
+  const cli = renderTargetFailureRecovery(
+    { ...mcpFacts, inputFields: cliInputFields },
+    MCP_TARGET_FAILURE_SPELLING,
+  );
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
+};
+
+/**
+ * A target failure's recovery in CLI spelling: the projection table renders
+ * the same facts with commands and options in place of MCP tool names. Only
+ * the table's own MCP text is replaced, so appended guidance survives.
+ */
+const cliTargetFailureRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation, retry } = error;
+  // `io` is the only kind whose table text depends on the retry hint.
+  // cleanup_incomplete keeps the target recovery and drops `retry`, so the
+  // other kinds still rewrite when the action starts with that table text.
+  if (
+    !isObject(remediation) ||
+    typeof remediation.action !== "string" ||
+    !isTargetFailureKind(details.failure_kind) ||
+    typeof details.format !== "string" ||
+    typeof details.operation !== "string" ||
+    (details.failure_kind === "io" && typeof retry !== "string")
+  )
+    return undefined;
+  const inputFields = targetInputFields(details);
+  const facts: TargetFailureRecoveryFacts = {
+    operation: details.operation,
+    kind: details.failure_kind,
+    format: details.format,
+    inputFields,
+    transient: retry === "backoff",
+    alternatives: {
+      operations: stringList(details.related_operations),
+      providers: stringList(details.related_providers),
+    },
+  };
+  const mcp = renderTargetFailureRecovery(facts, MCP_TARGET_FAILURE_SPELLING);
+  if (!remediation.action.startsWith(mcp)) return undefined;
+  const cliName = context.cliName ?? "rea";
+  const mappedOperation = (operation: string): string | undefined =>
+    cliCommandForOperation(
+      operation,
+      context.commands,
+      cliName,
+      context.recordedCommands,
+    );
+  const spelling: TargetFailureSpelling = {
+    operation: (operation) => mappedOperation(operation) ?? operation,
+    provider: (providerId) => `--provider ${providerId}`,
+  };
+  const operations = orderedOperations(context.operations, details.operation);
+  const cliInputFields = inputFields.map(
+    (field) => cliFlagForOperations(field, operations) ?? field,
+  );
+  const cliOperations = facts.alternatives?.operations?.filter(
+    (operation) => mappedOperation(operation) !== undefined,
+  );
+  const cliProviders = facts.alternatives?.providers;
+  const cliFacts: TargetFailureRecoveryFacts = {
+    ...facts,
+    inputFields: cliInputFields,
+    alternatives: {
+      ...(cliOperations === undefined ? {} : { operations: cliOperations }),
+      ...(cliProviders === undefined ? {} : { providers: cliProviders }),
+    },
+  };
+  const cli = renderTargetFailureRecovery(cliFacts, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${cli}${remediation.action.slice(mcp.length)}`,
+      };
+};
+
+/**
+ * An input refusal's recovery in CLI spelling. Presentation renders the MCP
+ * sentence from the same facts; this replaces that rendering with the command
+ * and drops the catalog-refresh clause. A prefixed argument hint stays ahead
+ * of the sentence.
+ */
+const cliInputSchemaRemediation = (
+  error: Record<string, JsonValue>,
+  details: Record<string, JsonValue>,
+  context: CliCommandOutputProjectionContext,
+): Record<string, JsonValue> | undefined => {
+  const { remediation } = error;
+  if (
+    typeof details.operation !== "string" ||
+    !isObject(remediation) ||
+    typeof remediation.action !== "string"
+  )
+    return undefined;
+  const operation = details.operation;
+  const mcp = renderInputSchemaRemediation(
+    operation,
+    MCP_INPUT_SCHEMA_SPELLING,
+  );
+  const index = remediation.action.indexOf(mcp);
+  if (index < 0) return undefined;
+  const command = cliCommandForOperation(
+    operation,
+    context.commands,
+    context.cliName ?? "rea",
+    context.recordedCommands,
+  );
+  if (command === undefined) return undefined;
+  const spelling: InputSchemaRemediationSpelling = {
+    subject: () => command,
+    includeCatalogRefresh: false,
+  };
+  const cli = renderInputSchemaRemediation(operation, spelling);
+  return cli === mcp
+    ? undefined
+    : {
+        ...remediation,
+        action: `${remediation.action.slice(0, index)}${cli}${remediation.action.slice(index + mcp.length)}`,
+      };
 };
 
 const projectedSecondaryFailures = (
@@ -258,6 +473,29 @@ const renamedIssues = (
   // Keep retained output, partial Evidence and cleanup history by reference;
   // their source fields are not CLI parameter names.
   return changed ? issues : undefined;
+};
+
+/**
+ * A target conflict's inputs, each named by the request field that selected
+ * it, take this command's CLI spelling of that field.
+ */
+const renamedTargetInputs = (
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): JsonValue[] | undefined => {
+  if (details.operation !== binding.operation || !Array.isArray(details.inputs))
+    return undefined;
+  let changed = false;
+  const inputs = details.inputs.map((input) => {
+    if (!isObject(input) || typeof input.field !== "string") return input;
+    const alias = Object.hasOwn(binding.fields, input.field)
+      ? binding.fields[input.field]
+      : undefined;
+    if (alias === undefined || alias === input.field) return input;
+    changed = true;
+    return { ...input, field: alias };
+  });
+  return changed ? inputs : undefined;
 };
 
 /**
