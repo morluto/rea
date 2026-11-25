@@ -31,13 +31,14 @@ cliTest(
     });
     expect(result.exitCode, result.stdout + result.stderr).toBe(1);
     expect(result.json).toMatchObject({
-      code: "artifact_operation_failed",
-      category: "execution_failure",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retryable: false,
       details: {
         operation: "inspect_artifact",
-        reason: "format",
+        reason: "malformed",
+        failure_kind: "malformed",
+        format: "zip",
         detail: expect.stringContaining("extends beyond"),
       },
     });

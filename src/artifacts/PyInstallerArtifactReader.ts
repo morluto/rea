@@ -67,6 +67,7 @@ const carrierPathDialect = async (
   signal?: AbortSignal,
 ): Promise<CarrierPathDialect> => {
   const prefixRead = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: 0,
     length: Math.min(fileSize, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
     label: "carrier header",
@@ -77,6 +78,7 @@ const carrierPathDialect = async (
   let windowsHeader = observeMzWindowsHeader(prefix, fileSize);
   if (windowsHeader.state === "signature-needed") {
     const signatureRead = await readPyInstallerBytes(handle, {
+      measuredEnd: fileSize,
       position: windowsHeader.offset,
       length: 4,
       label: "PE signature",
@@ -214,7 +216,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const read = stored.read;
       if (read === undefined)
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry has no readable bytes: ${entry.path}`,
         );
       const { handle } = await this.#source.readSelectedPath();
@@ -471,7 +473,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const observed = found.value;
     if (observed.state === "absent")
       throw new ArtifactReaderFailure(
-        "format",
+        "unsupported",
         "PyInstaller CArchive cookie was not found",
       );
     if (observed.state === "rejected-candidates")

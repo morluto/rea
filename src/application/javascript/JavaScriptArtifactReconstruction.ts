@@ -133,7 +133,7 @@ export const reconstructJavaScriptArtifact = async (
     );
     if (snapshot.manifest.root_format !== format)
       throw new ArtifactReaderFailure(
-        "format",
+        "unsupported",
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
     const reader = createReader(

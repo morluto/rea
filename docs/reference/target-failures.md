@@ -21,6 +21,8 @@ The four target refusals share `unsupported_target` because the caller cannot us
 
 The list of kinds can grow. Handle the kinds you know, and treat any other kind by its `code`.
 
+Inventory operations report a container, member or read range that changed during the read as `changed`, with `details.integrity_check` naming the check (`container-identity`, `member-identity`, `unpacked-entry-identity`, `read-coverage` or `traversal-coverage`). A selected target that no longer matches the one the session opened (`integrity_check: admitted-identity`) is not `changed`: reopen the target instead of repeating the request.
+
 A caller's cancellation (`cancelled`) and an admission limit (`resource_constraint`) describe the operation, not the target, so they keep their own error shapes. A result cut short by a delivery or decode limit reports code `partial`. `truncated` names only a target whose bytes end early.
 
 ## Retry
@@ -63,5 +65,10 @@ This model replaces `details.format_failure` with `failure_kind`. It also change
 - `invalid_request` to `input_conflict`, for a pair of inputs that disagree.
 
 The remaining operations move to this vocabulary area by area, and each release note lists the operations whose `code` changes. The plan is tracked in [#14239](https://github.com/morluto/rea/issues/14239).
+
+Container and inventory readers (ZIP, ASAR, PyInstaller, .NET bundles, Node SEA, Deno and Bun standalones, Godot PCK, UnityFS, wxapkg, FIT, uImage, iNES, Android OTA payloads, ESP images, NTFS `$MFT` streams, firmware record files and others) now report damaged bytes as `malformed` or `truncated`, with the reader's `format`. Before, they reported `artifact_operation_failed` with `details.reason: "format"`. Two other things changed:
+
+- The Playwright trace, NTFS journal, release exposure and web capture operations report a damaged selected file as `unsupported_target`, not `invalid_request`.
+- A short read after REA measured the file is now an integrity failure with `details.integrity_check: "read-coverage"` (the file changed during the read), not a format error.
 
 Related: [settings, limits and recovery](limits-and-recovery.md) for limit failures, and `docs/user-visible-errors.csv` for every error case and its code.

@@ -14,7 +14,10 @@ import {
   type ProviderErrorTag,
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
-import { ArtifactOperationError } from "./artifactOperationError.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "./artifactOperationError.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import type { BrowserObservationFailureReason } from "./browserObservationErrors.js";
 import {
@@ -121,7 +124,6 @@ const ARTIFACT_OPERATION_CLASSIFICATIONS = {
   malformed: kindClassification("malformed"),
   truncated: kindClassification("truncated"),
   unsupported: kindClassification("unsupported"),
-  format: classified("artifact_operation_failed", "execution_failure"),
   integrity: classified("artifact_operation_failed", "integrity_mismatch"),
   limit: classified("partial", "partial"),
   path: classified("artifact_operation_failed", "execution_failure"),
@@ -307,10 +309,15 @@ export const classifyAnalysisError = (
     return error.userCategory === "cancelled"
       ? CANCELLED
       : BROWSER_OBSERVATION_CLASSIFICATIONS[error.reason];
-  if (error instanceof ArtifactOperationError)
-    return error.reason === "integrity" && error.artifactDetails !== undefined
-      ? ARTIFACT_IDENTITY_MISMATCH
-      : ARTIFACT_OPERATION_CLASSIFICATIONS[error.reason];
+  if (error instanceof ArtifactOperationError) {
+    if (error.reason !== "integrity")
+      return ARTIFACT_OPERATION_CLASSIFICATIONS[error.reason];
+    if (error.artifactDetails !== undefined) return ARTIFACT_IDENTITY_MISMATCH;
+    // A target that changed during the read is the model's `changed` kind.
+    return integrityCheckMeansChanged(error.integrityCheck)
+      ? kindClassification("changed")
+      : ARTIFACT_OPERATION_CLASSIFICATIONS.integrity;
+  }
   if (error instanceof BinaryTargetError)
     return binaryTargetClassification(
       error.constraint ?? "unconstrained",
@@ -395,6 +402,11 @@ export const analysisErrorCatalogue =
       "ArtifactOperationError",
       "reason=integrity; artifact identity reported",
       ARTIFACT_IDENTITY_MISMATCH,
+    ),
+    catalogueRow(
+      "ArtifactOperationError",
+      "reason=integrity; target changed during the read",
+      kindClassification("changed"),
     ),
     ...Object.keys(BINARY_TARGET_CLASSIFICATIONS).flatMap((key) => {
       const constraint = key as BinaryTargetConstraintKey;

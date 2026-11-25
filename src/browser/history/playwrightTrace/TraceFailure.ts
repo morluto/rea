@@ -1,5 +1,6 @@
 import { AnalysisError } from "../../../domain/analysisErrorBase.js";
 import {
+  AnalysisTargetFailureError,
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -48,7 +49,16 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
             cause.fixedAllowance,
             { cause },
           );
-    if (cause.reason === "format" || cause.reason === "path")
+    // The archive owner established malformed or truncated bytes: a target
+    // refusal. Only a path-kind refusal is the caller's selection.
+    if (cause.parseFailure !== undefined)
+      return new AnalysisTargetFailureError(
+        operation,
+        path,
+        cause.parseFailure,
+        { cause },
+      );
+    if (cause.reason === "path")
       return stableArtifactInputFailure(cause, operation);
     return new ArtifactOperationError(
       operation,

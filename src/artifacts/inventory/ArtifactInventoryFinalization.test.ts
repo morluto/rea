@@ -176,7 +176,7 @@ it("keeps an earlier inventory failure primary when cleanup is cancelled", async
   const scope = new ArtifactResourceScope();
   const controller = new AbortController();
   const primary = new ArtifactReaderFailure(
-    "format",
+    "malformed",
     "member enumeration failed",
   );
   const enumeration = vi

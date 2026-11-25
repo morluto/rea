@@ -139,10 +139,11 @@ test("rejects malformed directory dimensions before suggesting a budget increase
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
+    code: "unsupported_target",
     retryable: false,
     details: {
-      reason: "format",
+      reason: "truncated",
+      failure_kind: "truncated",
     },
   });
   const failure = result.json as {

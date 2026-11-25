@@ -379,7 +379,7 @@ it.each([false, true] as const)(
 vi.mock("../pyinstaller/CArchiveLayout.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   observePyInstallerCookie: () =>
-    Promise.reject(new ArtifactReaderFailure("format", "detection failed")),
+    Promise.reject(new ArtifactReaderFailure("malformed", "detection failed")),
 }));
 
 vi.mock("../../filesystem/RegularFile.js", async (importOriginal) => {
@@ -414,7 +414,7 @@ it("keeps the detection error primary and reports a failed detection close", asy
         resourceScope,
       }),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: "detection failed",
       cleanup: { reason: closeFailure.message },
     });

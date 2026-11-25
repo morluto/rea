@@ -388,8 +388,8 @@ cliTest(
     });
     expect(response.exitCode).toBe(1);
     expect(response.json).toMatchObject({
-      code: "artifact_operation_failed",
-      details: { reason: "format" },
+      code: "unsupported_target",
+      details: { reason: "unsupported" },
     });
   },
 );

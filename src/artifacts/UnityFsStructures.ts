@@ -2,6 +2,8 @@ import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   assertArtifactReadActive,
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
@@ -98,7 +100,10 @@ export interface UnityFsBlocksInfo {
 }
 
 export const unityFsFormatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", `UnityFS is malformed: ${detail}`);
+  malformedArtifact("unityfs", `UnityFS is malformed: ${detail}`);
+
+const unityFsTruncatedFailure = (detail: string): ArtifactReaderFailure =>
+  truncatedArtifact("unityfs", `UnityFS is malformed: ${detail}`);
 
 const align16 = (value: number): number => (value + 15) & ~15;
 
@@ -109,6 +114,7 @@ export const readUnityFsHeader = async (
   signal?: AbortSignal,
 ): Promise<UnityFsHeader | undefined> => {
   const prefix = await readArtifactFileBytes(
+    "unityfs",
     handle,
     0,
     Math.min(size, UNITYFS_HEADER_PREFIX_BYTES),
@@ -244,10 +250,10 @@ export const decodeUnityFsLz4 = async (
         { cause, boundary: "memory" },
       );
     if (cause instanceof BinaryFormatFailure)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "unityfs",
         "UnityFS is malformed: LZ4 block does not decode to its declared size",
-        { cause },
+        { cause, field: "block" },
       );
     throw cause;
   }
@@ -260,7 +266,7 @@ const parseBlocks = async (
   signal?: AbortSignal,
 ): Promise<UnityFsBlock[]> => {
   if (table.bytes.length < 24)
-    throw unityFsFormatFailure("blocks-info table is truncated");
+    throw unityFsTruncatedFailure("blocks-info table is truncated");
   const blockCount = table.u32(16);
   if (20 + blockCount * 10 + 4 > table.bytes.length)
     throw unityFsFormatFailure("declared block count exceeds the table");
@@ -351,7 +357,7 @@ const parseNodes = async (
     if (index % 256 === 0) await setImmediate();
     assertArtifactReadActive(signal);
     if (cursor + 20 > table.bytes.length)
-      throw unityFsFormatFailure("node fixed fields are truncated");
+      throw unityFsTruncatedFailure("node fixed fields are truncated");
     const offsetBig = table.word(cursor, 64);
     const sizeBig = table.word(cursor + 8, 64);
     const flags = table.u32(cursor + 16);
@@ -365,10 +371,14 @@ const parseNodes = async (
     try {
       path = UTF8.decode(name);
     } catch (cause: unknown) {
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "unityfs",
         "UnityFS node path is not valid UTF-8",
-        { cause },
+        {
+          cause,
+          offset: cursor,
+          field: "node-path",
+        },
       );
     }
     cursor = nameEnd + 1;
@@ -421,6 +431,7 @@ export const readUnityFsBlocksInfo = async (
   if (header.compression !== UNITYFS_COMPRESSION_NONE)
     budget.charge(header.uncompressedBlocksInfoSize, directoryLimit);
   const compressed = await readArtifactFileBytes(
+    "unityfs",
     handle,
     layout.blocksInfoOffset,
     header.compressedBlocksInfoSize,

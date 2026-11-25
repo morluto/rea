@@ -20,8 +20,17 @@ import {
 import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
 import { readAssemblyReferenceName } from "../domain/managed/managedMetadataInventoryRows.js";
-import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
-import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
+import {
+  isManagedCoverageGap,
+  MANAGED_PE_CLI_FORMAT,
+  ManagedReaderFailure,
+} from "../domain/managed/managedReaderFailure.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  malformedArtifact,
+  truncatedArtifact,
+} from "../resources/index.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {
   hasUnityFsHeader,
@@ -96,9 +105,12 @@ export const inspectDesktopFile = async (
       offset > size ||
       bytes > size - offset
     )
-      throw new ArtifactReaderFailure(
-        "format",
+      throw truncatedArtifact(
+        "file",
         "Declared byte range lies outside the file",
+        {
+          ...(Number.isSafeInteger(offset) && offset >= 0 ? { offset } : {}),
+        },
       );
     if (bytes > budget.maximum - budget.bytes) throw new DesktopProbeLimit();
     // Reserve the retained range before reading its bytes.
@@ -250,7 +262,9 @@ export const inspectDesktopFile = async (
     } catch (cause: unknown) {
       if (
         !(cause instanceof ArtifactReaderFailure) ||
-        (cause.reason !== "format" && cause.reason !== "limit")
+        (cause.parseFailure === undefined &&
+          cause.reason !== "limit" &&
+          cause.reason !== "unsupported")
       )
         throw cause;
       if (!row.issues.includes(cause.message)) row.issues.push(cause.message);
@@ -310,9 +324,10 @@ const inspectPeFile = async (
   }
   const optionalSize = header.value.optionalHeaderSize;
   if (optionalSize > 4096)
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      "pe",
       "PE optional header exceeds the supported format bound",
+      { offset: peOffset + 24, field: "optional-header" },
     );
   const optional = await read(peOffset + 24, optionalSize);
   const parsed = parsePeRecordFacts(Buffer.concat([coff, optional]), undefined);
@@ -348,22 +363,25 @@ const inspectPeFile = async (
     );
   const cliOffset = mapped(cliRva, 16);
   if (cliOffset === undefined || cliSize < 72)
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      MANAGED_PE_CLI_FORMAT,
       "CLI metadata directory cannot be mapped",
+      { field: "cli-directory" },
     );
   const cli = readManagedCliHeaderPrefix(await read(cliOffset, 16));
   if (!cli.ok || cli.value.headerSize < 72)
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      MANAGED_PE_CLI_FORMAT,
       "CLI header declares a truncated runtime header",
+      { offset: cliOffset, field: "cli-header" },
     );
   const metadataBytes = cli.value.metadata.size;
   const metadataOffset = mapped(cli.value.metadata.rva, metadataBytes);
   if (metadataOffset === undefined)
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      MANAGED_PE_CLI_FORMAT,
       "CLI metadata range cannot be mapped",
+      { field: "metadata-directory" },
     );
   const bytes = await read(metadataOffset, metadataBytes);
   try {
@@ -394,16 +412,19 @@ const inspectPeFile = async (
     }
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
-    throw new ArtifactReaderFailure(
-      cause.issue.code === "resource-limit" ? "limit" : "format",
-      cause.message,
-      {
+    const { code, scope, offset } = cause.issue;
+    if (code === "resource-limit")
+      throw new ArtifactReaderFailure("limit", cause.message, {
         cause,
-        ...(cause.issue.code === "resource-limit"
-          ? { boundary: "memory" as const }
-          : {}),
-      },
-    );
+        boundary: "memory",
+      });
+    if (isManagedCoverageGap(code))
+      throw new ArtifactReaderFailure("unsupported", cause.message, { cause });
+    throw malformedArtifact(MANAGED_PE_CLI_FORMAT, cause.message, {
+      cause,
+      field: scope,
+      ...(offset === undefined || offset === null ? {} : { offset }),
+    });
   }
 };
 
@@ -414,14 +435,16 @@ const inspectPckTrailer = async (
 ): Promise<void> => {
   const observation = await observeEmbeddedGodotPck(size, 20, read);
   if (observation.state === "invalid-extent")
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      "godot-pck",
       "Embedded PCK trailer declares an invalid pack extent",
+      { field: "trailer" },
     );
   if (observation.state === "header-mismatch")
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      "godot-pck",
       "Embedded PCK trailer does not locate a pack header",
+      { field: "trailer" },
     );
   if (observation.state === "located") {
     const offset = observation.start;

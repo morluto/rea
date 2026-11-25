@@ -340,7 +340,7 @@ const requireMachoRoots = async (
   const resolved: string[] = [];
   for (const [index, path] of roots.entries()) {
     const reject = (
-      reason: "path" | "format",
+      reason: "path" | "unsupported",
       message: string,
     ): AnalysisInputError | ArtifactReaderFailure =>
       callerSelected
@@ -362,7 +362,7 @@ const requireMachoRoots = async (
         `Root ${path} is not a regular file in the analyzed root`,
       );
     if ((await view.image(lookup.path)).status === "not-mach-o")
-      throw reject("format", `Root ${path} is not a Mach-O image`);
+      throw reject("unsupported", `Root ${path} is not a Mach-O image`);
     if (!resolved.includes(lookup.path)) resolved.push(lookup.path);
   }
   return resolved;

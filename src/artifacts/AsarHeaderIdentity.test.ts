@@ -44,7 +44,7 @@ it("rejects malformed UTF-8 instead of inventing a replacement-character member 
   await writeFile(path, bytes);
   try {
     await expect(collectEntries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("UTF-8"),
     });
   } finally {
@@ -90,7 +90,7 @@ it.each(['{"files":', '\uFEFF{"files":{}}'])(
     await writeFile(path, asarHeaderBytes(json));
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
       });
     } finally {
       await reader.close();

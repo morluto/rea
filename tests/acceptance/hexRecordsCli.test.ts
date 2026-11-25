@@ -152,8 +152,13 @@ cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
-    details: { operation: "inspect_artifact", reason: "format" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_artifact",
+      reason: "malformed",
+      failure_kind: "malformed",
+      format: "intel-hex",
+    },
   });
   expect(result.stdout + result.stderr).toMatch(
     /line 4.*record type 00.*checksum 0xc4.*computed 0xc3/iu,

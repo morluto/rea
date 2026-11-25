@@ -138,7 +138,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const parsed = parseLipoOutputResult(captured.value.stdout, this.path);
     if (!parsed.ok)
       throw new ArtifactReaderFailure(
-        parsed.error instanceof LipoFieldRetentionError ? "limit" : "format",
+        parsed.error instanceof LipoFieldRetentionError ? "limit" : "io",
         `lipo did not produce readable architecture records: ${parsed.error.message}`,
         {
           cause: parsed.error,
