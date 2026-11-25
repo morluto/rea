@@ -104,7 +104,12 @@ cliTest(
     });
     expect(result.exitCode, result.stdout + result.stderr).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "inspect_artifact", reason: "malformed" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_artifact",
+        failure_kind: "malformed",
+        reason: expect.stringContaining("revisits the extent"),
+      },
     });
   },
 );
