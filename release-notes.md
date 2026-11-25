@@ -853,6 +853,7 @@
 * **python:** extract PycReportProjection from PythonPycParser ([#13773](https://github.com/morluto/rea/issues/13773)) ([70045e6](https://github.com/morluto/rea/commit/70045e6ffddcdda03564ac8c783cba97a6809d1f))
 * **readers:** reuse byte sources for buffered native inspection ([#14504](https://github.com/morluto/rea/issues/14504)) ([290c273](https://github.com/morluto/rea/commit/290c273c7abdb6d28415b6f492b9a840773b20cc))
 * **recordings:** share inspection and catalog Evidence validation ([#14439](https://github.com/morluto/rea/issues/14439)) ([c6a6430](https://github.com/morluto/rea/commit/c6a64307e180863a48a0d2d42c941026e67f0bf6))
+* **recordings:** share producer failure classification ([#14470](https://github.com/morluto/rea/issues/14470)) ([8e49a4f](https://github.com/morluto/rea/commit/8e49a4f8b9176b2190aa35117c5642288a439cbd))
 * **regex:** consolidate worker input and deadline proofs ([#13732](https://github.com/morluto/rea/issues/13732)) ([588b257](https://github.com/morluto/rea/commit/588b257e486a3cdb3a02c98681da20375434f02d))
 * remove internal re-export shims and guard against new ones ([#14009](https://github.com/morluto/rea/issues/14009)) ([88dfad5](https://github.com/morluto/rea/commit/88dfad5bb7eb1dd673143acc0405ed802537592c))
 * **resources:** share artifact cleanup error composition ([#14457](https://github.com/morluto/rea/issues/14457)) ([79f0f2f](https://github.com/morluto/rea/commit/79f0f2f3fdc866dd3657704b917f27819fdb9421))
