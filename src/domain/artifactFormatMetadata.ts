@@ -40,6 +40,8 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  avbVbmetaDescriptorEntryMetadataSchema,
+  avbVbmetaImageMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -90,6 +92,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   fitImageMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  avbVbmetaImageMetadataSchema,
+  avbVbmetaDescriptorEntryMetadataSchema,
   iso9660MetadataSchema,
   iso9660EntryMetadataSchema,
   ddsMetadataSchema,
@@ -238,6 +242,14 @@ const declarationsByKind: {
   "android-boot-image-entry": {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
+  },
+  "avb-vbmeta-image": {
+    notCompared:
+      "Its header facts and descriptors come from the image's own bytes, which content comparison covers. The hash and signature are recorded, not verified.",
+  },
+  "avb-vbmeta-descriptor": {
+    notCompared:
+      "tag and index restate the entry's path; its stored bytes are compared by content.",
   },
   iso9660: {
     notCompared:

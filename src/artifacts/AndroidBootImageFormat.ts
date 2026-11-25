@@ -3,6 +3,7 @@ import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ANDROID_BOOT_MAGIC,
+  AVB_VBMETA_MAGIC,
   VENDOR_BOOT_MAGIC,
 } from "../domain/androidBootImageFormat.js";
 import {
@@ -1257,3 +1258,713 @@ export const inspectAvbFooter = (input: {
   readonly tail: Buffer | null;
 }): Result<AvbFooterFacts, ParseFailureError> =>
   parsed(() => readAvbFooter(input));
+
+// ---------------------------------------------------------------------------
+// Standalone vbmeta images (`AVB0`)
+// ---------------------------------------------------------------------------
+//
+// Layout follows AOSP `libavb` (`avb_vbmeta_image.h`, `avb_descriptor.h` and
+// the per-descriptor headers). All multi-byte fields are big-endian. The
+// image is header (256 bytes), authentication block, then auxiliary block;
+// the descriptor table lives inside the auxiliary block. Nothing here is
+// verified: the hash and signature are recorded as offsets and sizes, the
+// public key bytes are not decoded, and descriptors are target-derived.
+
+/** The ParseFailure format of a standalone vbmeta image. */
+export const AVB_VBMETA_FORMAT = "avb-vbmeta-image";
+export const AVB_VBMETA_HEADER_SIZE = 256;
+/** Whole-file bound the reader enforces before parsing a vbmeta image. */
+export const AVB_VBMETA_MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+const AVB_VBMETA_MAGIC_BYTES = Buffer.from(AVB_VBMETA_MAGIC);
+const AVB_DESCRIPTOR_HEADER_SIZE = 16;
+const AVB_RELEASE_STRING_SIZE = 48;
+const AVB_HASH_ALGORITHM_SIZE = 32;
+const AVB_HASHTREE_FIXED_SIZE = 164;
+const AVB_HASH_FIXED_SIZE = 116;
+const AVB_CHAIN_PARTITION_FIXED_SIZE = 76;
+const MAX_AVB_DESCRIPTORS = 4096;
+
+const AVB_DESCRIPTOR_COUNT_LIMIT = {
+  name: "AVB vbmeta descriptor count",
+  maximum: MAX_AVB_DESCRIPTORS,
+  unit: "descriptors",
+};
+const AVB_VBMETA_IMAGE_SIZE_LIMIT = {
+  name: "AVB vbmeta image size",
+  maximum: AVB_VBMETA_MAX_IMAGE_BYTES,
+  unit: "bytes",
+};
+/** Parser-owned fixed ceilings and their units for artifact recovery. */
+export const AVB_VBMETA_FIXED_LIMITS: ReadonlyMap<
+  string,
+  LimitRef & { readonly unit: string }
+> = new Map([
+  [AVB_DESCRIPTOR_COUNT_LIMIT.name, AVB_DESCRIPTOR_COUNT_LIMIT],
+  [AVB_VBMETA_IMAGE_SIZE_LIMIT.name, AVB_VBMETA_IMAGE_SIZE_LIMIT],
+]);
+
+export const AVB_ALGORITHM_NAMES: Readonly<Record<number, string>> = {
+  0: "none",
+  1: "sha256-rsa2048",
+  2: "sha256-rsa4096",
+  3: "sha256-rsa8192",
+  4: "sha512-rsa2048",
+  5: "sha512-rsa4096",
+  6: "sha512-rsa8192",
+};
+
+export const AVB_DESCRIPTOR_TAG_NAMES: Readonly<Record<number, string>> = {
+  0: "property",
+  1: "hashtree",
+  2: "hash",
+  3: "kernel-cmdline",
+  4: "chain-partition",
+};
+
+export type AvbDescriptorKind =
+  | "property"
+  | "hashtree"
+  | "hash"
+  | "kernel-cmdline"
+  | "chain-partition"
+  | "unknown";
+
+interface AvbDescriptorBase {
+  readonly index: number;
+  readonly tag: number;
+  readonly kind: AvbDescriptorKind;
+  readonly tagName: string;
+  /** File offset of the 16-byte descriptor header. */
+  readonly offset: number;
+  /** Total descriptor bytes: 16-byte header plus num_bytes_following. */
+  readonly size: number;
+  readonly numBytesFollowing: number;
+}
+
+export interface AvbPropertyDescriptor extends AvbDescriptorBase {
+  readonly kind: "property";
+  readonly key: string | null;
+  readonly keyBytesHex: string;
+  readonly value: string | null;
+  readonly valueBytesHex: string;
+}
+
+export interface AvbHashtreeDescriptor extends AvbDescriptorBase {
+  readonly kind: "hashtree";
+  readonly dmVerityVersion: number;
+  readonly imageSize: number;
+  readonly treeOffset: number;
+  readonly treeSize: number;
+  readonly dataBlockSize: number;
+  readonly hashBlockSize: number;
+  readonly fecNumRoots: number;
+  readonly fecOffset: number;
+  readonly fecSize: number;
+  readonly hashAlgorithm: string | null;
+  readonly hashAlgorithmBytesHex: string;
+  readonly partitionName: string | null;
+  readonly partitionNameBytesHex: string;
+  readonly saltHex: string;
+  readonly rootDigestHex: string;
+  readonly flags: number;
+}
+
+export interface AvbHashDescriptor extends AvbDescriptorBase {
+  readonly kind: "hash";
+  readonly imageSize: number;
+  readonly hashAlgorithm: string | null;
+  readonly hashAlgorithmBytesHex: string;
+  readonly partitionName: string | null;
+  readonly partitionNameBytesHex: string;
+  readonly saltHex: string;
+  readonly digestHex: string;
+  readonly flags: number;
+}
+
+export interface AvbKernelCmdlineDescriptor extends AvbDescriptorBase {
+  readonly kind: "kernel-cmdline";
+  readonly flags: number;
+  readonly cmdline: string | null;
+  readonly cmdlineBytesHex: string;
+}
+
+export interface AvbChainPartitionDescriptor extends AvbDescriptorBase {
+  readonly kind: "chain-partition";
+  readonly rollbackIndexLocation: number;
+  readonly partitionName: string | null;
+  readonly partitionNameBytesHex: string;
+  readonly publicKeySize: number;
+  readonly publicKeyHex: string;
+  readonly flags: number;
+}
+
+export interface AvbUnknownDescriptor extends AvbDescriptorBase {
+  readonly kind: "unknown";
+}
+
+export type AvbDescriptor =
+  | AvbPropertyDescriptor
+  | AvbHashtreeDescriptor
+  | AvbHashDescriptor
+  | AvbKernelCmdlineDescriptor
+  | AvbChainPartitionDescriptor
+  | AvbUnknownDescriptor;
+
+export interface AvbVbmetaParse {
+  readonly magic: typeof AVB_VBMETA_MAGIC;
+  readonly requiredLibavbVersionMajor: number;
+  readonly requiredLibavbVersionMinor: number;
+  readonly authenticationDataBlockSize: number;
+  readonly auxiliaryDataBlockSize: number;
+  readonly algorithmType: number;
+  readonly algorithmTypeName: string;
+  readonly hashOffset: number;
+  readonly hashSize: number;
+  readonly signatureOffset: number;
+  readonly signatureSize: number;
+  readonly publicKeyOffset: number;
+  readonly publicKeySize: number;
+  readonly publicKeyMetadataOffset: number;
+  readonly publicKeyMetadataSize: number;
+  readonly descriptorsOffset: number;
+  readonly descriptorsSize: number;
+  readonly rollbackIndex: number;
+  readonly flags: number;
+  readonly flagNames: readonly string[];
+  readonly rollbackIndexLocation: number;
+  readonly releaseString: string | null;
+  readonly releaseStringBytesHex: string;
+  readonly descriptors: readonly AvbDescriptor[];
+  /** Declared image bytes: header plus authentication and auxiliary blocks. */
+  readonly imageSize: number;
+  /** File bytes past the declared image; zero for a standalone vbmeta file. */
+  readonly trailingBytes: number;
+  readonly limitations: readonly string[];
+}
+
+const avbFormatError = (message: string): never => {
+  throw malformedInput(AVB_VBMETA_FORMAT, message);
+};
+
+const be32 = (buffer: Buffer, offset: number): number => {
+  requireBytes(buffer, offset + 4, "vbmeta header");
+  return cachedBootReader(buffer, false).u32(offset);
+};
+
+const avbFlagNames = (flags: number): string[] => {
+  const names: string[] = [];
+  if ((flags & 1) !== 0) names.push("hashtree-disabled");
+  if ((flags & 2) !== 0) names.push("verification-disabled");
+  return names;
+};
+
+/** A byte range inside a block; both ends must fit and ranges must not overlap. */
+const requireBlockRange = (
+  block: { readonly offset: number; readonly size: number },
+  range: { readonly offset: number; readonly size: number },
+  what: string,
+): void => {
+  if (range.offset > block.size || range.size > block.size - range.offset)
+    avbFormatError(`${what} is outside its block`);
+};
+
+const requireNoOverlap = (
+  first: { readonly offset: number; readonly size: number },
+  second: { readonly offset: number; readonly size: number },
+  what: string,
+): void => {
+  if (
+    first.size > 0 &&
+    second.size > 0 &&
+    first.offset < second.offset + second.size &&
+    second.offset < first.offset + first.size
+  )
+    avbFormatError(`${what} overlap`);
+};
+
+const requireNulTerminated = (bytes: Buffer, what: string): Buffer => {
+  if (bytes.length === 0 || bytes[bytes.length - 1] !== 0)
+    avbFormatError(`${what} is not NUL-terminated`);
+  return bytes.subarray(0, bytes.length - 1);
+};
+
+const readDescriptorText = (
+  body: Buffer,
+  offset: number,
+  length: number,
+  what: string,
+): { readonly text: string | null; readonly hex: string } => {
+  if (offset > body.length || length > body.length - offset)
+    avbFormatError(`${what} overruns its descriptor`);
+  const bytes = body.subarray(offset, offset + length);
+  return {
+    text: decodeText(requireNulTerminated(bytes, what)),
+    hex: bytes.toString("hex"),
+  };
+};
+
+const readDescriptorBytes = (
+  body: Buffer,
+  offset: number,
+  length: number,
+  what: string,
+): Buffer => {
+  if (offset > body.length || length > body.length - offset)
+    avbFormatError(`${what} overruns its descriptor`);
+  return body.subarray(offset, offset + length);
+};
+
+const descriptorBase = (
+  index: number,
+  tag: number,
+  offset: number,
+  numBytesFollowing: number,
+): AvbDescriptorBase => ({
+  index,
+  tag,
+  kind:
+    tag === 0
+      ? "property"
+      : tag === 1
+        ? "hashtree"
+        : tag === 2
+          ? "hash"
+          : tag === 3
+            ? "kernel-cmdline"
+            : tag === 4
+              ? "chain-partition"
+              : "unknown",
+  tagName: AVB_DESCRIPTOR_TAG_NAMES[tag] ?? "unknown",
+  offset,
+  size: AVB_DESCRIPTOR_HEADER_SIZE + numBytesFollowing,
+  numBytesFollowing,
+});
+
+const parsePropertyDescriptor = (
+  base: AvbDescriptorBase,
+  body: Buffer,
+): AvbPropertyDescriptor => {
+  if (body.length < 16)
+    avbFormatError("property descriptor is shorter than its key/value sizes");
+  const keySize = u64be(body, 0, "property key size");
+  const valueSize = u64be(body, 8, "property value size");
+  if (keySize > body.length - 16 || valueSize > body.length - 16 - keySize)
+    avbFormatError("property descriptor key/value overruns its descriptor");
+  const key = readDescriptorText(body, 16, keySize, "property key");
+  const value = readDescriptorText(
+    body,
+    16 + keySize,
+    valueSize,
+    "property value",
+  );
+  return {
+    ...base,
+    kind: "property",
+    key: key.text,
+    keyBytesHex: key.hex,
+    value: value.text,
+    valueBytesHex: value.hex,
+  };
+};
+
+const parseHashtreeDescriptor = (
+  base: AvbDescriptorBase,
+  body: Buffer,
+): AvbHashtreeDescriptor => {
+  if (body.length < AVB_HASHTREE_FIXED_SIZE)
+    avbFormatError(
+      `hashtree descriptor is ${body.length} bytes, expected at least ${AVB_HASHTREE_FIXED_SIZE}`,
+    );
+  const partitionNameLength = be32(body, 88);
+  const saltLength = be32(body, 92);
+  const rootDigestLength = be32(body, 96);
+  const fixed = AVB_HASHTREE_FIXED_SIZE;
+  if (
+    partitionNameLength > body.length - fixed ||
+    saltLength > body.length - fixed - partitionNameLength ||
+    rootDigestLength > body.length - fixed - partitionNameLength - saltLength
+  )
+    avbFormatError(
+      "hashtree descriptor partition name, salt, or root digest overruns its descriptor",
+    );
+  const partitionName = readDescriptorText(
+    body,
+    fixed,
+    partitionNameLength,
+    "hashtree partition name",
+  );
+  const salt = readDescriptorBytes(
+    body,
+    fixed + partitionNameLength,
+    saltLength,
+    "hashtree salt",
+  );
+  const rootDigest = readDescriptorBytes(
+    body,
+    fixed + partitionNameLength + saltLength,
+    rootDigestLength,
+    "hashtree root digest",
+  );
+  const algorithm = decodeField(
+    body.subarray(56, 56 + AVB_HASH_ALGORITHM_SIZE),
+  );
+  return {
+    ...base,
+    kind: "hashtree",
+    dmVerityVersion: be32(body, 0),
+    imageSize: u64be(body, 4, "hashtree image size"),
+    treeOffset: u64be(body, 12, "hashtree tree offset"),
+    treeSize: u64be(body, 20, "hashtree tree size"),
+    dataBlockSize: be32(body, 28),
+    hashBlockSize: be32(body, 32),
+    fecNumRoots: be32(body, 36),
+    fecOffset: u64be(body, 40, "hashtree fec offset"),
+    fecSize: u64be(body, 48, "hashtree fec size"),
+    hashAlgorithm: algorithm.text,
+    hashAlgorithmBytesHex: algorithm.hex,
+    partitionName: partitionName.text,
+    partitionNameBytesHex: partitionName.hex,
+    saltHex: salt.toString("hex"),
+    rootDigestHex: rootDigest.toString("hex"),
+    flags: be32(body, 100),
+  };
+};
+
+const parseHashDescriptor = (
+  base: AvbDescriptorBase,
+  body: Buffer,
+): AvbHashDescriptor => {
+  if (body.length < AVB_HASH_FIXED_SIZE)
+    avbFormatError(
+      `hash descriptor is ${body.length} bytes, expected at least ${AVB_HASH_FIXED_SIZE}`,
+    );
+  const partitionNameLength = be32(body, 40);
+  const saltLength = be32(body, 44);
+  const digestLength = be32(body, 48);
+  const fixed = AVB_HASH_FIXED_SIZE;
+  if (
+    partitionNameLength > body.length - fixed ||
+    saltLength > body.length - fixed - partitionNameLength ||
+    digestLength > body.length - fixed - partitionNameLength - saltLength
+  )
+    avbFormatError(
+      "hash descriptor partition name, salt, or digest overruns its descriptor",
+    );
+  const partitionName = readDescriptorText(
+    body,
+    fixed,
+    partitionNameLength,
+    "hash partition name",
+  );
+  const salt = readDescriptorBytes(
+    body,
+    fixed + partitionNameLength,
+    saltLength,
+    "hash salt",
+  );
+  const digest = readDescriptorBytes(
+    body,
+    fixed + partitionNameLength + saltLength,
+    digestLength,
+    "hash digest",
+  );
+  const algorithm = decodeField(body.subarray(8, 8 + AVB_HASH_ALGORITHM_SIZE));
+  return {
+    ...base,
+    kind: "hash",
+    imageSize: u64be(body, 0, "hash image size"),
+    hashAlgorithm: algorithm.text,
+    hashAlgorithmBytesHex: algorithm.hex,
+    partitionName: partitionName.text,
+    partitionNameBytesHex: partitionName.hex,
+    saltHex: salt.toString("hex"),
+    digestHex: digest.toString("hex"),
+    flags: be32(body, 52),
+  };
+};
+
+const parseKernelCmdlineDescriptor = (
+  base: AvbDescriptorBase,
+  body: Buffer,
+): AvbKernelCmdlineDescriptor => {
+  if (body.length < 8)
+    avbFormatError("kernel cmdline descriptor is shorter than its sizes");
+  const cmdlineSize = be32(body, 4);
+  if (cmdlineSize > body.length - 8)
+    avbFormatError("kernel cmdline overruns its descriptor");
+  const cmdline = readDescriptorText(body, 8, cmdlineSize, "kernel cmdline");
+  return {
+    ...base,
+    kind: "kernel-cmdline",
+    flags: be32(body, 0),
+    cmdline: cmdline.text,
+    cmdlineBytesHex: cmdline.hex,
+  };
+};
+
+const parseChainPartitionDescriptor = (
+  base: AvbDescriptorBase,
+  body: Buffer,
+): AvbChainPartitionDescriptor => {
+  if (body.length < AVB_CHAIN_PARTITION_FIXED_SIZE)
+    avbFormatError(
+      `chain partition descriptor is ${body.length} bytes, expected at least ${AVB_CHAIN_PARTITION_FIXED_SIZE}`,
+    );
+  const partitionNameLength = be32(body, 4);
+  const publicKeyLength = be32(body, 8);
+  const fixed = AVB_CHAIN_PARTITION_FIXED_SIZE;
+  if (
+    partitionNameLength > body.length - fixed ||
+    publicKeyLength > body.length - fixed - partitionNameLength
+  )
+    avbFormatError(
+      "chain partition descriptor partition name or public key overruns its descriptor",
+    );
+  const partitionName = readDescriptorText(
+    body,
+    fixed,
+    partitionNameLength,
+    "chain partition name",
+  );
+  const publicKey = readDescriptorBytes(
+    body,
+    fixed + partitionNameLength,
+    publicKeyLength,
+    "chain partition public key",
+  );
+  return {
+    ...base,
+    kind: "chain-partition",
+    rollbackIndexLocation: be32(body, 0),
+    partitionName: partitionName.text,
+    partitionNameBytesHex: partitionName.hex,
+    publicKeySize: publicKeyLength,
+    publicKeyHex: publicKey.toString("hex"),
+    flags: be32(body, 12),
+  };
+};
+
+const parseDescriptor = (
+  index: number,
+  tag: number,
+  offset: number,
+  numBytesFollowing: number,
+  body: Buffer,
+): AvbDescriptor => {
+  const base = descriptorBase(index, tag, offset, numBytesFollowing);
+  if (tag === 0) return parsePropertyDescriptor(base, body);
+  if (tag === 1) return parseHashtreeDescriptor(base, body);
+  if (tag === 2) return parseHashDescriptor(base, body);
+  if (tag === 3) return parseKernelCmdlineDescriptor(base, body);
+  if (tag === 4) return parseChainPartitionDescriptor(base, body);
+  return { ...base, kind: "unknown" };
+};
+
+const readAvbVbmetaImage = (
+  bytes: Buffer,
+  fileSize: number,
+): AvbVbmetaParse => {
+  if (!Number.isSafeInteger(fileSize) || fileSize < 0)
+    avbFormatError("file size is not a safe nonnegative integer");
+  if (bytes.length !== fileSize)
+    avbFormatError("vbmeta bytes do not cover the whole file");
+  requireBytes(bytes, AVB_VBMETA_HEADER_SIZE, "vbmeta header");
+  if (!bytes.subarray(0, 4).equals(AVB_VBMETA_MAGIC_BYTES))
+    avbFormatError("magic is not AVB0");
+  const requiredMajor = be32(bytes, 4);
+  const requiredMinor = be32(bytes, 8);
+  if (requiredMajor !== 1)
+    throw unsupportedInput(
+      AVB_VBMETA_FORMAT,
+      `required libavb version ${requiredMajor}.${requiredMinor} is unsupported; only v1.x headers are decoded`,
+      {
+        offset: 4,
+        field: "required_libavb_version_major",
+        undecodedContent: true,
+      },
+    );
+  const authSize = u64be(bytes, 12, "authentication data block size");
+  const auxSize = u64be(bytes, 20, "auxiliary data block size");
+  if (authSize % 64 !== 0)
+    avbFormatError(
+      `authentication data block size ${authSize} is not a multiple of 64`,
+    );
+  if (auxSize % 64 !== 0)
+    avbFormatError(
+      `auxiliary data block size ${auxSize} is not a multiple of 64`,
+    );
+  const imageSize = endOf(AVB_VBMETA_HEADER_SIZE + authSize, auxSize);
+  if (imageSize > fileSize)
+    throw truncatedInput(
+      AVB_VBMETA_FORMAT,
+      `vbmeta image is truncated: declared ${imageSize} bytes but the file is ${fileSize} bytes`,
+      { offset: fileSize, field: "vbmeta image" },
+    );
+  const algorithmType = be32(bytes, 28);
+  const hash = {
+    offset: u64be(bytes, 32, "hash offset"),
+    size: u64be(bytes, 40, "hash size"),
+  };
+  const signature = {
+    offset: u64be(bytes, 48, "signature offset"),
+    size: u64be(bytes, 56, "signature size"),
+  };
+  const publicKey = {
+    offset: u64be(bytes, 64, "public key offset"),
+    size: u64be(bytes, 72, "public key size"),
+  };
+  const publicKeyMetadata = {
+    offset: u64be(bytes, 80, "public key metadata offset"),
+    size: u64be(bytes, 88, "public key metadata size"),
+  };
+  const descriptors = {
+    offset: u64be(bytes, 96, "descriptors offset"),
+    size: u64be(bytes, 104, "descriptors size"),
+  };
+  const authBlock = { offset: AVB_VBMETA_HEADER_SIZE, size: authSize };
+  const auxBlock = {
+    offset: AVB_VBMETA_HEADER_SIZE + authSize,
+    size: auxSize,
+  };
+  requireBlockRange(authBlock, hash, "hash");
+  requireBlockRange(authBlock, signature, "signature");
+  requireNoOverlap(hash, signature, "hash and signature");
+  requireBlockRange(auxBlock, publicKey, "public key");
+  requireBlockRange(auxBlock, publicKeyMetadata, "public key metadata");
+  requireBlockRange(auxBlock, descriptors, "descriptors");
+  requireNoOverlap(publicKey, publicKeyMetadata, "public key and its metadata");
+  requireNoOverlap(publicKey, descriptors, "public key and descriptors");
+  requireNoOverlap(
+    publicKeyMetadata,
+    descriptors,
+    "public key metadata and descriptors",
+  );
+  const rollbackIndex = u64be(bytes, 112, "rollback index");
+  const flags = be32(bytes, 120);
+  const rollbackIndexLocation = be32(bytes, 124);
+  const release = decodeField(
+    bytes.subarray(128, 128 + AVB_RELEASE_STRING_SIZE),
+  );
+  const limitations: string[] = [
+    "The vbmeta hash and signature are recorded and not verified; descriptors are target-derived and untrusted.",
+    "Authentication and auxiliary block contents other than the descriptor table are recorded as offsets and sizes; the public key and signature bytes are not decoded.",
+  ];
+  const algorithmTypeName = AVB_ALGORITHM_NAMES[algorithmType] ?? "unknown";
+  if (algorithmTypeName === "unknown")
+    limitations.push(
+      `Algorithm type ${algorithmType} is not a known AvbAlgorithmType; the hash and signature layout was not interpreted.`,
+    );
+  const unknownFlagBits = flags & ~0b11;
+  if (unknownFlagBits !== 0)
+    limitations.push(
+      `Flags carry unrecognized bits 0x${unknownFlagBits.toString(16)}; only hashtree-disabled and verification-disabled are decoded.`,
+    );
+  const tableStart = auxBlock.offset + descriptors.offset;
+  const tableEnd = endOf(tableStart, descriptors.size);
+  if (descriptors.size % 8 !== 0)
+    avbFormatError(
+      `descriptors size ${descriptors.size} is not a multiple of 8`,
+    );
+  const parsedDescriptors: AvbDescriptor[] = [];
+  let cursor = tableStart;
+  while (cursor < tableEnd) {
+    if (tableEnd - cursor < AVB_DESCRIPTOR_HEADER_SIZE)
+      throw truncatedInput(
+        AVB_VBMETA_FORMAT,
+        `descriptor ${parsedDescriptors.length} header is truncated: ${tableEnd - cursor} bytes remain in the descriptor table`,
+        { offset: cursor, field: "descriptor header" },
+      );
+    const tag = u64be(bytes, cursor, "descriptor tag");
+    const numBytesFollowing = u64be(
+      bytes,
+      cursor + 8,
+      "descriptor num_bytes_following",
+    );
+    if (numBytesFollowing % 8 !== 0)
+      avbFormatError(
+        `descriptor ${parsedDescriptors.length} num_bytes_following ${numBytesFollowing} is not a multiple of 8`,
+      );
+    const total = endOf(AVB_DESCRIPTOR_HEADER_SIZE, numBytesFollowing);
+    if (total > tableEnd - cursor)
+      throw truncatedInput(
+        AVB_VBMETA_FORMAT,
+        `descriptor ${parsedDescriptors.length} of ${total} bytes overruns the ${descriptors.size}-byte descriptor table`,
+        { offset: cursor, field: "descriptor" },
+      );
+    if (parsedDescriptors.length >= MAX_AVB_DESCRIPTORS)
+      capacityError(
+        `descriptor table declares more than ${MAX_AVB_DESCRIPTORS} descriptors`,
+        AVB_DESCRIPTOR_COUNT_LIMIT,
+      );
+    const index = parsedDescriptors.length;
+    const body = bytes.subarray(
+      cursor + AVB_DESCRIPTOR_HEADER_SIZE,
+      cursor + total,
+    );
+    const descriptor = parseDescriptor(
+      index,
+      tag,
+      cursor,
+      numBytesFollowing,
+      body,
+    );
+    if (descriptor.kind === "unknown")
+      limitations.push(
+        `Descriptor ${index} has unrecognized tag ${tag} and was not decoded; its ${total} stored bytes are exposed as-is.`,
+      );
+    parsedDescriptors.push(descriptor);
+    cursor += total;
+  }
+  const trailingBytes = fileSize - imageSize;
+  if (trailingBytes > 0) {
+    const footer =
+      trailingBytes >= 4 &&
+      bytes.subarray(imageSize, imageSize + 4).equals(AVB_FOOTER_MAGIC_BYTES);
+    limitations.push(
+      footer
+        ? `${trailingBytes} trailing bytes follow the vbmeta image and start with an AVBf footer; the footer was not decoded as part of this image.`
+        : `${trailingBytes} trailing bytes follow the vbmeta image and were not decoded.`,
+    );
+  }
+  return {
+    magic: AVB_VBMETA_MAGIC,
+    requiredLibavbVersionMajor: requiredMajor,
+    requiredLibavbVersionMinor: requiredMinor,
+    authenticationDataBlockSize: authSize,
+    auxiliaryDataBlockSize: auxSize,
+    algorithmType,
+    algorithmTypeName,
+    hashOffset: hash.offset,
+    hashSize: hash.size,
+    signatureOffset: signature.offset,
+    signatureSize: signature.size,
+    publicKeyOffset: publicKey.offset,
+    publicKeySize: publicKey.size,
+    publicKeyMetadataOffset: publicKeyMetadata.offset,
+    publicKeyMetadataSize: publicKeyMetadata.size,
+    descriptorsOffset: descriptors.offset,
+    descriptorsSize: descriptors.size,
+    rollbackIndex,
+    flags,
+    flagNames: avbFlagNames(flags),
+    rollbackIndexLocation,
+    releaseString: release.text,
+    releaseStringBytesHex: release.hex,
+    descriptors: parsedDescriptors,
+    imageSize,
+    trailingBytes,
+    limitations,
+  };
+};
+
+/**
+ * Decode a standalone `AVB0` vbmeta image: the v1.x header, the
+ * authentication/auxiliary block bounds, and the descriptor table (property,
+ * hashtree, hash, kernel cmdline, chain partition). `bytes` must hold the
+ * whole file. The hash and signature are recorded, never verified.
+ */
+export const parseAvbVbmetaImage = (
+  bytes: Buffer,
+  fileSize: number,
+): Result<AvbVbmetaParse, ParseFailureError> =>
+  parsed(() => readAvbVbmetaImage(bytes, fileSize));

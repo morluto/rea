@@ -19,6 +19,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AvbVbmetaArtifactReader } from "./AvbVbmetaArtifactReader.js";
 import {
   AsarArtifactReader,
   type AsarAdmission,
@@ -425,6 +426,16 @@ const NON_ZIP_FORMATS = {
       "Android boot image inventory establishes header facts and stored component bytes. Payloads are not decompressed, the v4 signature and AVB footer are not verified, and the image is not executed.",
     createReader: (path, options) =>
       new AndroidBootImageArtifactReader(path, sourceOf(options)),
+  }),
+  "avb-vbmeta-image": container("avb-vbmeta-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "AVB vbmeta inventory establishes the v1.x header facts and the descriptor table. The hash and signature are recorded and not verified, the public key bytes are not decoded, and the image is not executed.",
+    createReader: (path, options) =>
+      new AvbVbmetaArtifactReader(path, sourceOf(options)),
   }),
   "android-ota-payload": container("android-ota-payload", {
     roleContainer: true,

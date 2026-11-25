@@ -272,6 +272,153 @@ export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
 
+/** One descriptor of a standalone vbmeta image, keyed by its tag. */
+export const avbVbmetaPropertyDescriptorMetadataSchema = z.strictObject({
+  kind: z.literal("property"),
+  index: uint32,
+  tag: offset,
+  offset,
+  size: offset,
+  key: z.string().nullable(),
+  key_bytes_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  value: z.string().nullable(),
+  value_bytes_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+});
+
+export const avbVbmetaHashtreeDescriptorMetadataSchema = z.strictObject({
+  kind: z.literal("hashtree"),
+  index: uint32,
+  tag: offset,
+  offset,
+  size: offset,
+  dm_verity_version: uint32,
+  image_size: offset,
+  tree_offset: offset,
+  tree_size: offset,
+  data_block_size: uint32,
+  hash_block_size: uint32,
+  fec_num_roots: uint32,
+  fec_offset: offset,
+  fec_size: offset,
+  hash_algorithm: z.string().nullable(),
+  hash_algorithm_bytes_hex: z.string().regex(/^[0-9a-f]{64}$/u),
+  partition_name: z.string().nullable(),
+  partition_name_bytes_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  salt_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  root_digest_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  flags: uint32,
+});
+
+export const avbVbmetaHashDescriptorMetadataSchema = z.strictObject({
+  kind: z.literal("hash"),
+  index: uint32,
+  tag: offset,
+  offset,
+  size: offset,
+  image_size: offset,
+  hash_algorithm: z.string().nullable(),
+  hash_algorithm_bytes_hex: z.string().regex(/^[0-9a-f]{64}$/u),
+  partition_name: z.string().nullable(),
+  partition_name_bytes_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  salt_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  digest_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  flags: uint32,
+});
+
+export const avbVbmetaKernelCmdlineDescriptorMetadataSchema = z.strictObject({
+  kind: z.literal("kernel-cmdline"),
+  index: uint32,
+  tag: offset,
+  offset,
+  size: offset,
+  flags: uint32,
+  cmdline: z.string().nullable(),
+  cmdline_bytes_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+});
+
+export const avbVbmetaChainPartitionDescriptorMetadataSchema = z.strictObject({
+  kind: z.literal("chain-partition"),
+  index: uint32,
+  tag: offset,
+  offset,
+  size: offset,
+  rollback_index_location: uint32,
+  partition_name: z.string().nullable(),
+  partition_name_bytes_hex: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
+  public_key_size: offset,
+  flags: uint32,
+});
+
+export const avbVbmetaUnknownDescriptorMetadataSchema = z.strictObject({
+  kind: z.literal("unknown"),
+  index: uint32,
+  tag: offset,
+  offset,
+  size: offset,
+});
+
+export const avbVbmetaDescriptorMetadataSchema = z.discriminatedUnion("kind", [
+  avbVbmetaPropertyDescriptorMetadataSchema,
+  avbVbmetaHashtreeDescriptorMetadataSchema,
+  avbVbmetaHashDescriptorMetadataSchema,
+  avbVbmetaKernelCmdlineDescriptorMetadataSchema,
+  avbVbmetaChainPartitionDescriptorMetadataSchema,
+  avbVbmetaUnknownDescriptorMetadataSchema,
+]);
+export type AvbVbmetaDescriptorMetadata = z.infer<
+  typeof avbVbmetaDescriptorMetadataSchema
+>;
+
+/**
+ * Standalone vbmeta (`AVB0`) header facts and descriptors. The hash and
+ * signature are recorded and not verified; the public key bytes are not
+ * decoded. Descriptors are target-derived and untrusted.
+ */
+export const avbVbmetaImageMetadataSchema = z.strictObject({
+  kind: z.literal("avb-vbmeta-image"),
+  required_libavb_version_major: uint32,
+  required_libavb_version_minor: uint32,
+  authentication_data_block_size: offset,
+  auxiliary_data_block_size: offset,
+  algorithm_type: uint32,
+  algorithm_type_name: z.string(),
+  hash_offset: offset,
+  hash_size: offset,
+  signature_offset: offset,
+  signature_size: offset,
+  public_key_offset: offset,
+  public_key_size: offset,
+  public_key_metadata_offset: offset,
+  public_key_metadata_size: offset,
+  descriptors_offset: offset,
+  descriptors_size: offset,
+  rollback_index: offset,
+  flags: uint32,
+  flag_names: z.array(z.string()),
+  rollback_index_location: uint32,
+  release_string: z.string().nullable(),
+  release_string_bytes_hex: z.string().regex(/^[0-9a-f]{96}$/u),
+  descriptors: z.array(avbVbmetaDescriptorMetadataSchema),
+  descriptor_count: uint32,
+  image_size: offset,
+  trailing_bytes: offset,
+});
+export type AvbVbmetaImageMetadata = z.infer<
+  typeof avbVbmetaImageMetadataSchema
+>;
+
+/** One stored vbmeta descriptor, exposed as an entry with its raw bytes. */
+export const avbVbmetaDescriptorEntryMetadataSchema = z.strictObject({
+  kind: z.literal("avb-vbmeta-descriptor"),
+  index: uint32,
+  tag: offset,
+  tag_name: z.string(),
+  descriptor_size: offset,
+});
+export type AvbVbmetaDescriptorEntryMetadata = z.infer<
+  typeof avbVbmetaDescriptorEntryMetadataSchema
+>;
+
 /**
  * ISO 9660 primary volume descriptor facts, with what the rest of the
  * descriptor set declares. The identifiers, sizes, set and sequence numbers,

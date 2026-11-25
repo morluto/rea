@@ -66,6 +66,30 @@ Nothing in this reader decompresses a payload. A kernel that starts with the
 ELF magic is classified as `elf` by the existing content check. A `dtb` child
 stays a file; extract it and run `inspect-devicetree` on the extracted file.
 
+## Standalone vbmeta images
+
+`inspect-artifact` and `extract-artifact` also recognize standalone vbmeta
+images (`vbmeta.img`, `vbmeta_system.img`, `vbmeta_vendor.img`, and the AVB
+metadata appended to `boot`/`init_boot`/`vendor_boot`/`dtbo` images when it
+stands alone): files whose first four bytes are `AVB0`. They read local
+stored bytes without verifying, executing, or modifying the image.
+
+The reader decodes the 256-byte `AvbVBMetaImageHeader` (required libavb
+version 1.x, algorithm type, rollback index and location, flags, release
+string) and the descriptor table inside the auxiliary block: property,
+hashtree, hash, kernel cmdline, and chain partition descriptors. Each
+descriptor becomes a child named `descriptor-<index>-<kind>.bin` holding its
+stored bytes. The hash and signature are recorded as offsets and sizes and
+are never verified; the public key bytes are not decoded. Descriptors with
+an unrecognized tag stay undecoded and are exposed as-is. The
+authentication and auxiliary blocks must be multiples of 64 bytes, each
+descriptor's size a multiple of 8 bytes, and the hash, signature, public
+key, and descriptor ranges must stay inside their blocks without
+overlapping. A vbmeta image larger than 16 MiB, or a descriptor table with
+more than 4,096 descriptors, exceeds a capacity limit. Trailing bytes after
+the declared image are reported as a limitation; a trailing `AVBf` footer
+is named, not decoded as part of the image.
+
 ## AVB footer
 
 The reader checks the final 64 bytes for an `AVBf` footer when those bytes
@@ -106,7 +130,12 @@ logical paths, batches of occurrence/content IDs, selected fields and pages.
 
 Source and compiled CLI/MCP tests cover stored component bytes, compression
 magics, unsupported revisions, truncation, overlapping ranges, capacity,
-cancellation, and cleanup. An independent offline check used AOSP
+cancellation, and cleanup. Standalone vbmeta coverage is synthetic fixtures
+only: one descriptor of each tag (0 through 4), truncated headers and
+descriptor tables, overlapping authentication/auxiliary ranges, and `AVB0`
+images with a trailing `AVBf` footer. No `avbtool info_image` cross-check
+was run (avbtool is not installed in the test environment), and no
+device-dumped vbmeta image was checked. An independent offline check used AOSP
 `mkbootimg.py` and `unpack_bootimg.py` at commit
 `d2bb0af5ba6d3198a3e99529c97eda1be0b5a093`: boot versions 0 through 4 and
 vendor_boot versions 3 and 4 had component ranges and digests matching their
