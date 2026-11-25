@@ -300,19 +300,22 @@ const retainOverBudgetEvidence = async (
 > => {
   const { retention } = cliPublicationInvocation();
   if (retention === undefined) return undefined;
+  const sensitiveCachePathReason =
+    "The retained-Evidence cache path contains a value marked sensitive, so nothing was retained.";
   // A cache under a path that holds a value marked sensitive is never used,
   // so neither its path nor a failure naming it reaches the output.
   if (revealsSensitiveValue(retention.directory, input))
-    return err({
-      reason:
-        "The retained-Evidence cache path contains a value marked sensitive, so nothing was retained.",
-    });
+    return err({ reason: sensitiveCachePathReason });
   const { retainCliEvidence, retainedEvidenceDigest } =
     await import("./cliEvidenceRetention.js");
   const kept = await retainCliEvidence<AnalysisError>({
     sha256: retainedEvidenceDigest(complete),
     completeBytes,
     retention,
+    rejectResolvedDirectory: (resolved) =>
+      revealsSensitiveValue(resolved, input)
+        ? sensitiveCachePathReason
+        : undefined,
     write: async (path) => {
       // The bundle writer creates the file exclusively and never overwrites.
       const published = await publishDeliveredEvidence(
@@ -338,7 +341,13 @@ const retainOverBudgetEvidence = async (
   if (!kept.ok) {
     if (kept.error.committed === undefined && kept.error.fileRemains !== true)
       clearCliEvidencePublication();
-    return kept;
+    return err({
+      ...kept.error,
+      reason: redactExplicitText(
+        kept.error.reason,
+        input.sensitiveValues ?? [],
+      ),
+    });
   }
   const receipt = {
     ...bundleReceipt(kept.value.path, kept.value.bytes, input),

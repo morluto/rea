@@ -189,6 +189,7 @@ export const retainCliEvidence = async <Committed>(input: {
   readonly completeBytes: number;
   readonly retention: CliEvidenceRetention;
   readonly write: (path: string) => Promise<RetentionWrite<Committed>>;
+  readonly rejectResolvedDirectory?: (directory: string) => string | undefined;
   readonly now?: number;
 }): Promise<Result<RetainedEvidenceFile, RetentionStop<Committed>>> => {
   const { directory, capBytes } = input.retention;
@@ -208,6 +209,8 @@ export const retainCliEvidence = async <Committed>(input: {
         reason:
           "The retained-Evidence cache directory is not a private directory this user owns.",
       });
+    const rejected = input.rejectResolvedDirectory?.(admitted);
+    if (rejected !== undefined) return err({ reason: rejected });
     const path = join(admitted, name);
     const reuse = async (): Promise<
       Result<RetainedEvidenceFile, RetentionStop<Committed>> | undefined

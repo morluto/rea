@@ -353,6 +353,32 @@ it("never uses a cache whose path holds a value marked sensitive", async () => {
   expect(output.delivery.retention_failure).toEqual(expect.any(String));
   expect(JSON.stringify(output)).not.toContain(marked);
   expect(await files(join(root, marked))).toEqual([]);
+
+  // A symlinked cache root whose resolved target holds a marked value is also refused.
+  const secretRoot = join(root, marked);
+  const linkRoot = join(root, "cache-link");
+  await mkdir(secretRoot, { recursive: true, mode: 0o700 });
+  await symlink(secretRoot, linkRoot);
+  const linked = (await withCliEvidencePublication(
+    () =>
+      publishCliAnalysisEvidence(inspected, {
+        operation: "inspect_byte_entropy",
+        signal: new AbortController().signal,
+        detail: undefined,
+        evidenceOutput: undefined,
+        sensitiveValues: [marked],
+      }),
+    {
+      retention: {
+        directory: join(linkRoot, "evidence"),
+        capBytes: 1024 * 1024 * 1024,
+      },
+    },
+  )) as Output;
+  expect(linked.delivery).toMatchObject({ retained: "not-retained" });
+  expect(linked.delivery.retention_failure).toEqual(expect.any(String));
+  expect(JSON.stringify(linked)).not.toContain(marked);
+  expect(await files(join(secretRoot, "evidence"))).toEqual([]);
 });
 
 it("withdraws the publication receipt of a bundle the cache discards", async () => {
