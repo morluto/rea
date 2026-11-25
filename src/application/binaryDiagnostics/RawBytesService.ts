@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { z } from "zod";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { RAW_BYTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -23,8 +23,8 @@ import {
   type SearchRawBytes,
 } from "../../domain/native/rawBytes.js";
 import { err, type Result } from "../../domain/result.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   withArtifactFileHandle,
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
@@ -32,11 +32,12 @@ import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import {
   matchContext,
@@ -49,8 +50,6 @@ export { RAW_BYTES_SCAN_CHUNK_BYTES } from "./RawBytesScan.js";
 const INSPECT = "inspect_raw_bytes";
 const SEARCH = "search_raw_bytes";
 
-const SUBJECT_UNAVAILABLE =
-  "The whole file is not hashed: only the selected bytes were read, and the observation records the file size at read time.";
 const OFFSET_LIMITATION =
   "Offsets are absolute positions in the file on disk, not program memory addresses; a loader-adjusted address from an analyzed program generally differs.";
 const ZERO_SIZE_LIMITATION =
@@ -260,16 +259,19 @@ export class RawBytesService {
     const invalid = (field: string, message: string) =>
       invalidInput(operation, field, message);
     const evidenceFromReport = (report: Report): Evidence =>
-      createEvidence(undefined, RAW_BYTES_PROVIDER, {
-        operation,
-        parameters: observation.parameters,
-        result: report,
-        rawResult: null,
-        confidence: "observed",
-        limitations: report.limitations,
-        subjectUnavailableReason: SUBJECT_UNAVAILABLE,
-        locations: [{ kind: "artifact-path", path }],
-      });
+      createEvidence(
+        { kind: "unknown", reason: "not-observed" },
+        RAW_BYTES_PROVIDER,
+        {
+          operation,
+          parameters: observation.parameters,
+          result: report,
+          rawResult: null,
+          confidence: "observed",
+          limitations: report.limitations,
+          locations: [{ kind: "artifact-path", path }],
+        },
+      );
     // Cleanup errors erase the callback's generic type. Validate their completed
     // value before publishing it as this operation's observation.
     const completedObservation = (value: unknown): Evidence | undefined => {
@@ -279,43 +281,55 @@ export class RawBytesService {
         : undefined;
     };
     let admitted = false;
-    const readFailure = (cause: unknown): AnalysisError => {
-      if (cause instanceof AnalysisError) return cause;
-      if (cause instanceof Error && "code" in cause) {
-        if (cause.code === "EACCES" || cause.code === "EPERM")
-          return new AnalysisAccessDeniedError(operation, path, cause.code, {
-            cause,
-          });
-        const pathErrno = artifactSelectedPathErrno(cause);
-        if (pathErrno !== undefined)
-          return admitted
-            ? new AnalysisArtifactChangedError(
+    const readFailure = (rawCause: unknown) =>
+      classifyProviderFailure(rawCause, {
+        providerId: RAW_BYTES_PROVIDER.id,
+        operation,
+        recognise: (cause, details) => {
+          if (cause instanceof Error && "code" in cause) {
+            if (cause.code === "EACCES" || cause.code === "EPERM")
+              return new AnalysisAccessDeniedError(
                 operation,
                 path,
-                "Selected file path changed during raw byte inspection.",
-                { cause },
-              )
-            : new AnalysisInputError(operation, { cause }, [
+                cause.code,
                 {
-                  path: ["path"],
-                  reason: "invalid_value",
-                  message:
-                    pathErrno === "ENOENT" || pathErrno === "ENOTDIR"
-                      ? "Selected file could not be found."
-                      : pathErrno === "ELOOP"
-                        ? `Selected file path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${path}`
-                        : `Selected file path exceeds the host path or component length limit (ENAMETOOLONG): ${path}`,
+                  ...details,
+                  cause,
                 },
-              ]);
-      }
-      return new AnalysisOutputError(
-        operation,
-        cause instanceof ArtifactReaderFailure
-          ? cause.message
-          : "Could not read complete raw byte evidence.",
-        { cause },
-      );
-    };
+              );
+            const pathErrno = artifactSelectedPathErrno(cause);
+            if (pathErrno !== undefined)
+              return admitted
+                ? new AnalysisArtifactChangedError(
+                    operation,
+                    path,
+                    "Selected file path changed during raw byte inspection.",
+                    { ...details, cause },
+                  )
+                : new AnalysisInputError(operation, { ...details, cause }, [
+                    {
+                      path: ["path"],
+                      reason: "invalid_value",
+                      message:
+                        pathErrno === "ENOENT" || pathErrno === "ENOTDIR"
+                          ? "Selected file could not be found."
+                          : pathErrno === "ELOOP"
+                            ? `Selected file path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${path}`
+                            : `Selected file path exceeds the host path or component length limit (ENAMETOOLONG): ${path}`,
+                    },
+                  ]);
+          }
+          return undefined;
+        },
+        unclassified: (cause, details) =>
+          new AnalysisOutputError(
+            operation,
+            cause instanceof ArtifactReaderFailure
+              ? cause.message
+              : "Could not read complete raw byte evidence.",
+            { ...details, cause },
+          ),
+      });
     try {
       const before = await this.files.stat(path, { bigint: true });
       if (!before.isFile()) throw invalid("path", "Expected a regular file.");

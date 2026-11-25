@@ -7,7 +7,7 @@ import {
   type searchRawBytesInputSchema,
 } from "../../domain/native/rawBytes.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 
 /** Bytes read from the file per physical scan step; matches may straddle two steps. */
 export const RAW_BYTES_SCAN_CHUNK_BYTES = 65_536;

@@ -410,22 +410,20 @@ export const registerBinaryDiagnosticsCommands = (
         },
         context_lines: {
           name: "contextLines",
-          description: "Hex dump context lines before and after each match (0 to 8)",
+          description:
+            "Hex dump context lines before and after each match (0 to 8)",
         },
       },
     },
-    inspectWithService(
-      async () => {
-        const service = (
-          await import("../composition/binaryDiagnostics/rawBytes.js")
-        ).createRawBytesService();
-        return {
-          inspect: (input, options) => service.search(input, options),
-          close: () => service.close(),
-        };
-      },
-      RAW_BYTES_PROVIDER.id,
-    ),
+    inspectWithService(async () => {
+      const service = (
+        await import("../composition/binaryDiagnostics/rawBytes.js")
+      ).createRawBytesService();
+      return {
+        inspect: (input, options) => service.search(input, options),
+        close: () => service.close(),
+      };
+    }, RAW_BYTES_PROVIDER.id),
   );
   registerContractCommand(
     cli,
