@@ -401,7 +401,12 @@ export const ENTRY_FILES = Object.freeze(
       signals: ["SigrokProviderIdentity.ts", "SigrokRecordingProvider.ts"],
       sqlite: ["SqliteDatabaseProvider.ts"],
       v8: ["V8CodeCacheProvider.ts", "V8CodeCacheProviderIdentity.ts"],
-      wasm: ["WabtArtifactProvider.ts", "WabtRelease.ts"],
+      wasm: [
+        "WabtArtifactProvider.ts",
+        "WabtRelease.ts",
+        "WasmComponentProvider.ts",
+        "WasmComponentProviderIdentity.ts",
+      ],
     }).map(([unit, files]) => [unit, Object.freeze(files)]),
   ),
 );

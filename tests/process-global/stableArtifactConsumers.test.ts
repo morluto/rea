@@ -123,6 +123,7 @@ import { NugetNupkgService } from "../../src/application/nuget/NugetNupkgService
 import { nugetNupkgFixture } from "../../src/nuget/NugetNupkg.fixture.js";
 import { inspectNugetNupkgInputSchema } from "../../src/domain/nuget/nupkg.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
+import { WasmComponentProvider } from "../../src/wasm/WasmComponentProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
 import { DwarfUnitsProvider } from "../../src/native/dwarf/DwarfUnitsProvider.js";
@@ -183,6 +184,7 @@ const staticProviders = [
   ["Go", () => new GoBinaryProvider()],
   ["PE", () => new PeResourcesProvider()],
   ["IL2CPP metadata", () => new Il2cppMetadataProvider()],
+  ["WASM component", () => new WasmComponentProvider()],
 ] as const;
 
 it("preserves opaque NuGet decoder failures and the completed file identity", async () => {

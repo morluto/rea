@@ -252,6 +252,11 @@ export const analysisErrorRemediationAction = (
   )
     return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })}. This separate lane requires caller-supplied ${WABT_RELEASE_LINE} via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
   if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "wasm_component_requires_static_inspection"
+  )
+    return `For static inspection, call inspect_wasm_component with ${JSON.stringify({ path: error.path })}. It decodes the component in process, needs no WABT and never executes it; the header alone does not establish that the component is valid.`;
+  if (
     error instanceof AnalysisAccessDeniedError ||
     (error instanceof BinaryTargetError && error.systemCode !== undefined)
   )
@@ -506,6 +511,11 @@ const outcomeUserMessage = (error: AnalysisError): string => {
     error.constraint === "wasm_requires_static_inspection"
   )
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "wasm_component_requires_static_inspection"
+  )
+    return `${error.message}. WebAssembly components use REA's in-process component decoder, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
       ? `This operation opens a file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}); this target is another directory. Directory-capable operations are inspect_desktop_application, audit_release_exposure, and analyze_javascript_application for JavaScript/Electron applications.`
@@ -653,6 +663,8 @@ const presentedRelatedInputs = (
       };
     if (error.constraint === "wasm_requires_static_inspection")
       return { operations: ["inspect_wasm_artifact"] };
+    if (error.constraint === "wasm_component_requires_static_inspection")
+      return { operations: ["inspect_wasm_component"] };
   }
   if (
     error instanceof ArtifactOperationError &&

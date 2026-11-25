@@ -119,6 +119,14 @@ const DEFERRED_IMPORTS = [
     path: "/dist/application/ReconstructionObligationLedgerService.js",
   },
   {
+    name: "wasm-component-composition",
+    path: "/dist/composition/wasmComponent.js",
+  },
+  {
+    name: "wasm-component-decoder",
+    path: "/dist/wasm/WasmComponentDecoder.js",
+  },
+  {
     name: "environment-source",
     path: "/dist/application/environment/environmentSource.js",
   },

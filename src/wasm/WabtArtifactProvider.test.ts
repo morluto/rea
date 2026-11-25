@@ -60,6 +60,8 @@ function samePath(left: string, right: string): boolean {
 
 const fileCloseFailure = vi.hoisted(() => ({
   selectedPath: "",
+  /** Opens of `selectedPath` left untouched first, such as the component probe. */
+  passThroughOpens: 0,
   attempts: 0,
   failFirst: false,
   toolCloseFailures: new Set<string>(),
@@ -101,6 +103,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       if (!samePath(String(args[0]), fileCloseFailure.selectedPath))
         return handle;
+      if (fileCloseFailure.passThroughOpens > 0) {
+        fileCloseFailure.passThroughOpens -= 1;
+        return handle;
+      }
       const close = handle.close.bind(handle);
       const failure = fileCloseFailure.failRead;
       if (failure !== undefined) {
@@ -1199,6 +1205,8 @@ it("retries a retained input descriptor before admitting the next WABT operation
   fileCloseFailure.selectedPath = path;
   fileCloseFailure.attempts = 0;
   fileCloseFailure.failFirst = true;
+  // The component probe opens the selection before the stable read does.
+  fileCloseFailure.passThroughOpens = 1;
   try {
     const first = await provider.inspect({
       path,
@@ -1242,6 +1250,7 @@ it("retries a retained input descriptor before admitting the next WABT operation
     });
 
     fileCloseFailure.failFirst = true;
+    fileCloseFailure.passThroughOpens = 1;
     const closeRetry = await provider.inspect({
       path,
       candidate_paths: [],
@@ -1255,6 +1264,44 @@ it("retries a retained input descriptor before admitting the next WABT operation
     await provider.close();
     expect(fileCloseFailure.attempts).toBeGreaterThan(beforeClose);
     expect(closeRetry).toMatchObject({
+      error: { cleanupIncomplete: false, cleanupResources: [] },
+    });
+  } finally {
+    fileCloseFailure.selectedPath = "";
+    fileCloseFailure.passThroughOpens = 0;
+    fileCloseFailure.failFirst = false;
+    await provider.close();
+  }
+});
+
+it("retains a component probe descriptor whose close failed until the provider closes", async () => {
+  const root = await createTestTempDirectory("rea-wabt-probe-cleanup-");
+  const path = join(root, "selected.wasm");
+  await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+  const provider = new WabtArtifactProvider({}, undefined, () => {
+    throw new Error("Must not allocate");
+  });
+  fileCloseFailure.selectedPath = path;
+  fileCloseFailure.attempts = 0;
+  fileCloseFailure.failFirst = true;
+  try {
+    const result = await provider.inspect({
+      path,
+      candidate_paths: [],
+      glue_paths: [],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        cleanupIncomplete: true,
+        cleanupResources: [path],
+        cause: { message: "injected WABT input close failure" },
+      },
+    });
+    expect(fileCloseFailure.attempts).toBe(1);
+    await provider.close();
+    expect(fileCloseFailure.attempts).toBe(2);
+    expect(result).toMatchObject({
       error: { cleanupIncomplete: false, cleanupResources: [] },
     });
   } finally {
@@ -2038,5 +2085,63 @@ it("does not blame the input when a version probe exceeds the budget", () => {
   ).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     reportedLimits: { max_output_bytes: WASM_RESOURCE_DEFAULTS.outputBytes },
+  });
+});
+
+it("routes a selected component before any WABT configuration or command", async () => {
+  const selectedRoot = await createTestTempDirectory("rea-wabt-component-");
+  const path = join(selectedRoot, "component.wasm");
+  await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 0x0d, 0, 1, 0]));
+  for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
+    await writeFile(
+      join(selectedRoot, tool + (process.platform === "win32" ? ".exe" : "")),
+      "source-owned executable seam",
+      { mode: 0o700 },
+    );
+  const commands: string[][] = [];
+  let runtimePath = "";
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: selectedRoot },
+    async (input) => {
+      commands.push([...input.arguments]);
+      return await spawnOwnedProviderProcess({
+        ...input,
+        command: process.execPath,
+        arguments: ["-e", 'process.stdout.write("1.0.42\\n")'],
+        expectedCommand: null,
+      });
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-wabt-component-test-",
+      });
+      runtimePath = root.path;
+      return root;
+    },
+  );
+  expect(
+    await provider.inspect({ path, glue_paths: [], candidate_paths: [] }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisTargetFailureError",
+      failure: { kind: "unsupported" },
+      related: { operations: ["inspect_wasm_component"] },
+    },
+  });
+  expect(commands).toEqual([]);
+  expect(runtimePath).toBe("");
+
+  const unconfigured = new WabtArtifactProvider({}, undefined, () => {
+    throw new Error("Must not allocate");
+  });
+  expect(
+    await unconfigured.inspect({ path, glue_paths: [], candidate_paths: [] }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisTargetFailureError",
+      failure: { kind: "unsupported" },
+    },
   });
 });

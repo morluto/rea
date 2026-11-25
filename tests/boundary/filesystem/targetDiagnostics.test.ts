@@ -388,6 +388,40 @@ describe("raw-binary load rejection diagnostics", () => {
   });
 });
 
+describe("component route diagnostics", () => {
+  it("routes a WebAssembly component header to the in-process component decoder", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-wasm-component-target-",
+    );
+    const path = join(directory, "component.wasm");
+    await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 0x0d, 0, 1, 0]));
+    const result = await parseBinaryTarget(path);
+    if (result.ok)
+      throw new Error("A component was admitted to native opening");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "target_unavailable",
+      category: "unsupported_target",
+      retryable: false,
+      details: {
+        path: await realpath(path),
+        constraint: "wasm_component_requires_static_inspection",
+      },
+    });
+    expect(projected.message).toContain("in-process component decoder");
+    expect(projected.remediation.action).toContain("inspect_wasm_component");
+    expect(projected.remediation.action).not.toContain(
+      "REA_WABT_BIN_DIRECTORY",
+    );
+    expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+      ok: false,
+      classification: "unsupported_target",
+      details: { constraint: "wasm_component_requires_static_inspection" },
+      remediation: projected.remediation.action,
+    });
+  });
+});
+
 describe("caller-selected and inferred target interpretation", () => {
   it.each(["archive.hop", "archive.HOP"])(
     "preserves inferred database routing for ZIP content named %s",

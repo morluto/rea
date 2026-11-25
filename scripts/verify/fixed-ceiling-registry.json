@@ -615,5 +615,22 @@
       "issue": 14237,
       "reason": "SQLite worker diagnostic capture is a producer budget."
     }
+  },
+  "src/wasm/WasmComponentProvider.ts": {
+    "\"The decoded component entry allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "WebAssembly component input, decoded-entry and inline-report allowances are resource policies without a per-call control."
+    },
+    "\"The inline component report allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "WebAssembly component input, decoded-entry and inline-report allowances are resource policies without a per-call control."
+    },
+    "\"the component input allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "WebAssembly component input, decoded-entry and inline-report allowances are resource policies without a per-call control."
+    }
   }
 }

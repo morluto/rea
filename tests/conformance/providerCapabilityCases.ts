@@ -158,6 +158,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   sqliteDatabase: { cases: ["tests/acceptance/sqliteDatabaseCli.test.ts"] },
   v8CodeCache: { cases: ["tests/acceptance/v8CodeCacheCli.test.ts"] },
   wasmArtifact: { cases: ["tests/boundary/mcp/wasmArtifactMcp.test.ts"] },
+  wasmComponent: { cases: ["tests/acceptance/wasmComponentCli.test.ts"] },
   webModuleTrace: { cases: ["tests/boundary/mcp/webModuleTraceMcp.test.ts"] },
   webNetworkCapture: {
     cases: ["tests/boundary/mcp/webNetworkCaptureMcp.test.ts"],

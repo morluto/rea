@@ -38,6 +38,11 @@ import { constants, type Stats } from "node:fs";
 import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
+import {
+  isCoreWasmModule,
+  isWasmComponent,
+  readWasmPreamble,
+} from "../domain/wasm/wasmPreamble.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   classifyTargetFilesystemFailure,
@@ -740,21 +745,18 @@ const detectArtifactFormat = async (
     throw cause;
   }
   throwIfTargetResolutionCancelled(signal);
-  if (
-    magic.length >= 8 &&
-    magic[0] === 0 &&
-    magic[1] === 0x61 &&
-    magic[2] === 0x73 &&
-    magic[3] === 0x6d &&
-    magic[4] === 1 &&
-    magic[5] === 0 &&
-    magic[6] === 0 &&
-    magic[7] === 0
-  )
+  const wasm = readWasmPreamble(magic);
+  if (isCoreWasmModule(wasm))
     throw new BinaryTargetError(
       path,
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
+    );
+  if (isWasmComponent(wasm))
+    throw new BinaryTargetError(
+      path,
+      "WebAssembly components are not supported by the native opening route",
+      { constraint: "wasm_component_requires_static_inspection" },
     );
   const readCachedRange = createCachedPrefixReader(
     handle,

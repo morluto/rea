@@ -76,6 +76,14 @@ import {
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
+import {
+  rejectWasmComponent,
+  wasmComponentSelected,
+} from "./WabtComponentRouting.js";
+import {
+  isWasmComponent,
+  readWasmPreamble,
+} from "../domain/wasm/wasmPreamble.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -280,6 +288,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
     try {
       if (isAborted(options?.signal))
         throw cancelledBy(OPERATION, options.signal);
+      await rejectWasmComponent(input.path, this.#resources);
       const directory = environment.REA_WABT_BIN_DIRECTORY;
       if (directory === undefined || !isAbsolute(directory))
         throw new WabtAdmissionError("directory_not_absolute", {
@@ -495,6 +504,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         artifact = observed;
         candidates.push(observed);
       });
+      // The early probe can race a replaced file; the stable read decides.
+      if (isWasmComponent(readWasmPreamble(selected.bytes)))
+        throw wasmComponentSelected(input.path);
       const seenCandidates = new Set([input.path]);
       for (const [index, path] of input.candidate_paths.entries()) {
         if (seenCandidates.has(path)) continue;

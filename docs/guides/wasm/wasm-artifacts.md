@@ -12,6 +12,9 @@ returns `target_unavailable` with category `unsupported_target` and constraint
 Check `binary_session` for configured capability availability. A recognized
 header is not validation of the complete module; missing WABT is reported
 separately as an unavailable capability, not as missing native engine support.
+A [component](#webassembly-components) header returns the constraint
+`wasm_component_requires_static_inspection` from `open_binary`, and
+`unsupported_target` from `inspect_wasm_artifact` before any WABT command runs.
 
 The recognized WASM header is checked before automatic database routing from a
 .hop filename. Renaming a module to .hop therefore keeps the static-inspection
@@ -199,6 +202,81 @@ Both CLI and MCP use the same typed port and application service. MCP publishes
 SDK-compatible schemas and records Evidence for `get_evidence_bundle` readback.
 See [WABT provenance](https://github.com/morluto/rea/blob/main/third_party/wabt/README.md) and
 [testing lanes](../../testing-lanes.md#offline-wasm-artifacts) for real-tool verification.
+
+## WebAssembly components
+
+`inspect_wasm_component` / `inspect-wasm-component` decodes one explicitly
+selected component-model binary in process. It needs no WABT or other tool, no
+active binary target and no network, and it never instantiates or executes the
+component or its embedded modules.
+
+```bash
+rea inspect-wasm-component /artifacts/component.wasm --json
+```
+
+```json
+{
+  "name": "inspect_wasm_component",
+  "arguments": { "path": "/artifacts/component.wasm" }
+}
+```
+
+The decoder admits only the preamble `00 61 73 6D 0D 00 01 00` (version `0xd`,
+layer `1`). Its grammar is pinned to component-model
+[`Binary.md` at `06e3db0`](https://github.com/WebAssembly/component-model/blob/06e3db039e38588e2643a9417bf5d03100feafde/design/mvp/Binary.md).
+Other versions or layers return `unsupported_target` with the observed bytes. A
+core module returns `unsupported_target` and points to `inspect_wasm_artifact`.
+
+The result keeps the selected file's SHA-256 and size and an exclusive byte
+range for every decoded entry. It lists:
+
+- sections with their payload ranges and status;
+- imports and exports, with name attributes (`implements`, `versionsuffix`,
+  `external-id`) and extern types;
+- type definitions, with component, instance and core module type declarations
+  in the flat `type_scopes` list;
+- embedded core modules, by range, SHA-256, header version and their import
+  and export names only;
+- core and component instances, aliases, canonical definitions and their
+  options, the start function and value sections;
+- the `component-name` section and other custom sections by name;
+- nested components as further entries in `components`, linked by `parent`.
+
+Every definition reports the index it defines in its sort. `lifts` trace each
+canonical lift to the core export it wraps, and `lowers` trace each lower to its
+component import and to the core module imports it is bound to.
+`declared_by_module` says whether the module's own import or export section
+declares that name; it is null when that interface was not decoded. Tracing
+follows export re-aliases and aliases out of core and component inline-export
+instances back to the defining entry.
+
+`validation` is always `not_performed`. Decoding checks LEB128 encodings,
+lengths, UTF-8 and opcodes, not type correctness, name uniqueness, index bounds
+or the canonical ABI. A decoded component can still be invalid. Malformed
+framing fails with `unsupported_target`, `failure_kind: "malformed"` and the
+file offset, and keeps the file's SHA-256 and size as a partial observation. A
+well-framed construct
+the decoder does not handle, such as a GC core type, an unknown section or an
+unknown opcode, is listed in `coverage.not_decoded` with its range and kind
+`unsupported`. Decoding continues with the next section. Indices that later
+definitions add to the affected sorts are null, because their positions are
+unknown; earlier indices stay known and traceable. Malformed bytes inside an
+embedded core module's interface or the `component-name` section are listed
+with kind `malformed` instead, keeping the names read before them, and the
+component itself is still decoded. `gated_features`
+lists the feature gates of encodings actually present, such as `async` or
+`fixed-size-list`.
+
+Inputs are limited to 8 MiB, nested components to 16 levels and nested type
+declarations to 32 levels. Complete results are inline and limited to 8 MiB.
+Every decoded section and vector entry is counted before it is decoded; more
+than 524,288 of them fail with a resource-constraint error before the result is
+built. Lifts and lowers repeat names, so each traced fact's serialized size is
+charged as it is created, and tracing stops with the output-budget error once
+those facts alone exceed 8 MiB.
+Relationship tracing is linear in the decoded entries, and cancellation is
+checked between sections. Apart from the stable file read, the decoder owns
+no processes, temporary files or other resources.
 
 ## Compare core-module interfaces
 

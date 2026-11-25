@@ -453,7 +453,9 @@ read a single object.
 
 ## Offline WASM
 
-Use `inspect_wasm_artifact` with caller-supplied WABT for selected local bytes.
+Use `inspect_wasm_component` for a component binary (layer 1); it decodes in
+process without WABT. For core modules (layer 0), use `inspect_wasm_artifact`
+with caller-supplied WABT for selected local bytes.
 For counts, validation and WAT identity, select `detail: "summary"` on the first
 MCP call. The complete original Evidence stays retained; use
 `normalized_result.parent_evidence_id` for exact exports or text pages. Omitted

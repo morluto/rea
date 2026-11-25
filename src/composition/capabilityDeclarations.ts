@@ -107,6 +107,7 @@ import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
 import { SIGROK_PROVIDER_IDENTITY } from "../signals/SigrokProviderIdentity.js";
 import { WABT_PROVIDER_IDENTITY } from "../wasm/WabtRelease.js";
+import { WASM_COMPONENT_PROVIDER_IDENTITY } from "../wasm/WasmComponentProviderIdentity.js";
 
 type CanonicalOperationName = (typeof TOOL_CONTRACTS)[number]["name"];
 
@@ -582,6 +583,13 @@ export const CAPABILITY_DECLARATIONS = {
   wasmArtifact: {
     providers: [
       providerBinding(WABT_PROVIDER_IDENTITY, ["inspect_wasm_artifact"]),
+    ],
+  },
+  wasmComponent: {
+    providers: [
+      providerBinding(WASM_COMPONENT_PROVIDER_IDENTITY, {
+        group: "WASM_COMPONENT_TOOL_CONTRACTS",
+      }),
     ],
   },
   webModuleTrace: {

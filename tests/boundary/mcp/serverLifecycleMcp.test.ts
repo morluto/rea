@@ -38,6 +38,7 @@ import { z } from "zod";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
+import { WasmComponentService } from "../../../src/application/wasm/WasmComponentService.js";
 import { unsupportedTarget } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
@@ -344,11 +345,13 @@ it("awaits SQLite cleanup and retries its retained owner after failed server shu
   expect(attempts).toBe(2);
 });
 
-it("closes the bound Go, IL2CPP and web-capture services and retries failed shutdown", async () => {
+it("closes the bound Go, IL2CPP, web-capture, scenario and component services and retries failed shutdown", async () => {
   let goCalls = 0;
   let goCloseAttempts = 0;
   let il2cppCloseAttempts = 0;
   let captureCloseAttempts = 0;
+  let componentCalls = 0;
+  let componentCloseAttempts = 0;
   let scenarioCloseAttempts = 0;
   let cleanupAllowed = false;
   const goBinary = new GoBinaryService({
@@ -388,12 +391,35 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
       if (!cleanupAllowed) throw new Error("Capture cleanup refused");
     },
   });
+  const wasmComponent = new WasmComponentService({
+    identity: {
+      id: "component-fixture",
+      name: "Component fixture",
+      version: "1",
+    },
+    inspect: async ({ path }) => {
+      componentCalls += 1;
+      return err(
+        unsupportedTarget(
+          "inspect_wasm_component",
+          path,
+          "wasm-component",
+          "fixture rejection",
+        ),
+      );
+    },
+    close: async () => {
+      componentCloseAttempts += 1;
+      if (!cleanupAllowed) throw new Error("Component cleanup refused");
+    },
+  });
   const server = createServer(
     { kind: "fixed", analysis: { execute: async () => ok(null) } },
     {
       goBinary,
       il2cppMetadata,
       webNetworkCapture,
+      wasmComponent,
       browserScenarioCapture: {
         identity: () => ({
           id: "scenario-fixture",
@@ -426,6 +452,12 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     });
     expect(result.isError).toBe(true);
     expect(goCalls).toBe(1);
+    const component = await client.callTool({
+      name: "inspect_wasm_component",
+      arguments: { path: "/tmp/component-fixture.wasm" },
+    });
+    expect(component.isError).toBe(true);
+    expect(componentCalls).toBe(1);
 
     await expect(server.close()).rejects.toMatchObject({
       errors: expect.arrayContaining([
@@ -435,6 +467,7 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     expect(goCloseAttempts).toBe(1);
     expect(il2cppCloseAttempts).toBe(1);
     expect(captureCloseAttempts).toBe(1);
+    expect(componentCloseAttempts).toBe(1);
     expect(scenarioCloseAttempts).toBe(1);
 
     cleanupAllowed = true;
@@ -442,6 +475,7 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     expect(goCloseAttempts).toBe(2);
     expect(il2cppCloseAttempts).toBe(2);
     expect(captureCloseAttempts).toBe(2);
+    expect(componentCloseAttempts).toBe(2);
     expect(scenarioCloseAttempts).toBe(2);
   } finally {
     cleanupAllowed = true;

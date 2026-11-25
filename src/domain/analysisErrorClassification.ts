@@ -187,6 +187,10 @@ const BINARY_TARGET_CLASSIFICATIONS = {
     "target_unavailable",
     "unsupported_target",
   ),
+  wasm_component_requires_static_inspection: classified(
+    "target_unavailable",
+    "unsupported_target",
+  ),
   file_format_rejected: classified("target_unavailable", "unsupported_target"),
   load_selection_rejected: classified("invalid_request", "invalid_input"),
   bundle_type_unsupported: classified(

@@ -68,6 +68,7 @@ export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
   readonly constraint?:
     | "directory_requires_file"
     | "wasm_requires_static_inspection"
+    | "wasm_component_requires_static_inspection"
     | "file_format_rejected"
     | "load_selection_rejected"
     | BundleTargetConstraint;

@@ -4,6 +4,7 @@ import { GPU_TOOL_CONTRACTS } from "./gpu/gpuToolContracts.js";
 import { CAPTURE_TOOL_CONTRACTS } from "./captures/captureToolContracts.js";
 import { SIGNAL_TOOL_CONTRACTS } from "./signals/signalToolContracts.js";
 import { WASM_TOOL_CONTRACTS } from "./wasm/wasmToolContracts.js";
+import { WASM_COMPONENT_TOOL_CONTRACTS } from "./wasm/wasmComponentToolContracts.js";
 import { APK_SIGNATURE_TOOL_CONTRACTS } from "./apkSignature/apkSignatureToolContracts.js";
 import { EVM_TOOL_CONTRACTS } from "./evm/evmToolContracts.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolContracts.js";
@@ -78,6 +79,7 @@ const CATALOG_CONTRACT_GROUPS = {
   V8_CODE_CACHE_TOOL_CONTRACTS,
   MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   WASM_TOOL_CONTRACTS,
+  WASM_COMPONENT_TOOL_CONTRACTS,
   APK_SIGNATURE_TOOL_CONTRACTS,
   SQLITE_TOOL_CONTRACTS,
   CAPTURE_TOOL_CONTRACTS,

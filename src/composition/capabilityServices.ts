@@ -28,6 +28,7 @@ import { tsharkHostSupported } from "../captures/TsharkCaptureProvider.js";
 import { createSignalRecordingService } from "./signals.js";
 import { sigrokHostSupported } from "../signals/SigrokRecordingProvider.js";
 import { wasmArtifactModule } from "./wasm.js";
+import { createWasmComponentService } from "./wasmComponent.js";
 import { apkSignatureModule } from "./apkSignature.js";
 import { evmInterfaceModule } from "./evm.js";
 import {
@@ -103,6 +104,7 @@ import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import type { WasmComponentService } from "../application/wasm/WasmComponentService.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabaseService.js";
@@ -140,6 +142,7 @@ export interface CapabilityServiceOptions {
   readonly packetCapture?: PacketCaptureService;
   readonly signalRecording?: SignalRecordingService;
   readonly wasmArtifact?: WasmArtifactService;
+  readonly wasmComponent?: WasmComponentService;
   readonly apkSignature?: ApkSignatureService;
   readonly evmInterface?: EvmInterfaceService;
   readonly sqliteDatabase?: SqliteDatabaseService;
@@ -272,6 +275,9 @@ const modules = {
           isAbsolute(environment.REA_WABT_BIN_DIRECTORY ?? ""),
       },
     }),
+  ),
+  wasmComponent: service(
+    ({ options }) => options.wasmComponent ?? createWasmComponentService(),
   ),
   apkSignature: service(({ environment, options }) =>
     apkSignatureModule.create(environment, options.apkSignature),

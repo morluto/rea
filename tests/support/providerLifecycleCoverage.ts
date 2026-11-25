@@ -2143,6 +2143,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "wasm-component-binary": inProcess(
+    covered(
+      test(
+        "tests/acceptance/wasmComponentCli.test.ts",
+        "decodes a component's interface and canonical relationships through the public CLI",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/providers/artifactReadCleanupRetry.test.ts",
+        "%s provider retains a failed descriptor close and retries that owner before the next read",
+      ),
+    ),
+  ),
   wakaru: {
     ownership: "process",
     stages: {

@@ -209,6 +209,10 @@ explicit path or endpoint and do not need it.
   - WebAssembly: `inspect_wasm_artifact` with WABT through
     `REA_WABT_BIN_DIRECTORY`; select JavaScript glue and candidate paths
     explicitly ([WASM guide](https://github.com/morluto/rea/blob/main/docs/guides/wasm/wasm-artifacts.md)).
+  - WebAssembly component (preamble version `0xd`, layer 1):
+    `inspect_wasm_component`, without WABT or execution; use `lifts`/`lowers` to
+    connect component functions to core modules. Validation is not performed;
+    `coverage.not_decoded` and null indices mark what is unknown.
   - APK, ZIP or AAB signing: `inspect_apk_signature`, identity and integrity
     rather than a trust verdict ([APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md)).
   - EVM bytecode: `inspect_evm_interface`; selectors, arguments and mutability

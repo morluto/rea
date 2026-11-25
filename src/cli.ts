@@ -20,6 +20,7 @@ import * as userConfigModule from "./cli/userConfigCommands.js";
 import * as utilityModule from "./cli/utilityCommands.js";
 import * as binaryDiagnosticsModule from "./cli/binaryDiagnosticsCommands.js";
 import * as wasmModule from "./cli/wasmCommands.js";
+import * as wasmComponentModule from "./cli/wasmComponentCommands.js";
 import * as apkSignatureModule from "./cli/apkSignatureCommands.js";
 import * as captureModule from "./cli/captureCommands.js";
 import * as signalModule from "./cli/signalCommands.js";
@@ -82,6 +83,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   userConfig: userConfigModule,
   binaryDiagnostics: binaryDiagnosticsModule,
   wasm: wasmModule,
+  wasmComponent: wasmComponentModule,
   apkSignature: apkSignatureModule,
   capture: captureModule,
   signal: signalModule,

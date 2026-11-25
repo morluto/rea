@@ -81,6 +81,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.environment,
       ),
   ),
+  wasmComponent: plain(
+    () => import("./wasmComponentCommands.js"),
+    (module, context) =>
+      module.registerWasmComponentCommands(context.cli, context.logger),
+  ),
   apkSignature: plain(
     () => import("./apkSignatureCommands.js"),
     (module, context) =>
@@ -469,6 +474,7 @@ const CLI_FAMILY_REGISTRATIONS: {
   native: ["reverseEngineering", "cutter", "utility", "binaryDiagnostics"],
   artifact: [
     "wasm",
+    "wasmComponent",
     "apkSignature",
     "capture",
     "signal",

@@ -7,6 +7,10 @@ import { describe, expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
+import {
+  gatedFeatureComponent,
+  representativeComponent,
+} from "../../../src/wasm/WasmComponentBinary.fixture.js";
 import { createGoBinaryFixture } from "../../fixtures/go/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -81,6 +85,39 @@ describe.skipIf(process.platform === "win32")(
           expect(result.exitCode, result.stderr).toBe(0);
           const evidence = toolContract(
             "inspect_pe_resources",
+          ).outputSchema.parse(result.json);
+          expect(fileIdentity(evidence.subject).sha256, path).toBe(
+            selectedDigest,
+          );
+        }
+      },
+    );
+
+    cliTest(
+      "decodes the WebAssembly component the filesystem selects",
+      async ({ cli }) => {
+        const root = await createTestTempDirectory(
+          "rea-symlink-parent-component-",
+        );
+        await mkdir(join(root, "target/child"), { recursive: true });
+        await symlink("target/child", join(root, "link"));
+        const selected = representativeComponent();
+        await writeFile(join(root, "target/sample.wasm"), selected);
+        await writeFile(join(root, "sample.wasm"), gatedFeatureComponent());
+        const selectedDigest = createHash("sha256")
+          .update(selected)
+          .digest("hex");
+        for (const path of [
+          "link/../sample.wasm",
+          `${root}/link/../sample.wasm`,
+        ]) {
+          const result = await cli.run({
+            arguments: ["inspect-wasm-component", path, "--json"],
+            cwd: root,
+          });
+          expect(result.exitCode, result.stderr).toBe(0);
+          const evidence = toolContract(
+            "inspect_wasm_component",
           ).outputSchema.parse(result.json);
           expect(fileIdentity(evidence.subject).sha256, path).toBe(
             selectedDigest,
