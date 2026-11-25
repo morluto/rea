@@ -5,7 +5,7 @@ inputs:
     description: Space-separated package names from the already selected signed sources.
     required: true
   download-timeout-seconds:
-    description: Outer download deadline in seconds, before the five-second termination grace.
+    description: Positive whole-second download deadline, before the five-second termination grace.
     default: "180"
   install-recommends:
     description: Leave APT's recommendation policy in effect when true.
@@ -22,6 +22,10 @@ runs:
         read -r -a packages <<< "$REA_APT_PACKAGES"
         if (( ${#packages[@]} == 0 )); then
           echo '::error::No hosted Ubuntu packages were supplied'
+          exit 1
+        fi
+        if [[ ! "$REA_APT_DOWNLOAD_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+          echo '::error::APT package download deadline must be a positive integer'
           exit 1
         fi
         options=(--yes)

@@ -218,3 +218,32 @@ it.for([
     );
   },
 );
+
+it("configures the shared APT action for signal prerequisites", () => {
+  const workflow = z
+    .object({
+      jobs: z.object({
+        sigrok: z.object({
+          steps: z.array(
+            z.object({
+              uses: z.string().optional(),
+              with: z.record(z.string(), z.unknown()).optional(),
+            }),
+          ),
+        }),
+      }),
+    })
+    .parse(
+      parse(
+        readFileSync(".github/workflows/real-signal-recording.yml", "utf8"),
+      ),
+    );
+  expect(
+    workflow.jobs.sigrok.steps.find(
+      (step) => step.uses === "./.github/actions/host-apt-packages",
+    )?.with,
+  ).toMatchObject({
+    packages: "sigrok-cli util-linux python3",
+    "download-timeout-seconds": "90",
+  });
+});
