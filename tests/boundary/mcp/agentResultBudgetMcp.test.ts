@@ -32,7 +32,10 @@ const connect = async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Entropy inspection must not start a deep provider");
   });
-  const server = createServer({ kind: "session", session });
+  // Exercise the default budget, not the complete-delivery seed the test
+  // environment gives spawned processes.
+  const { REA_AGENT_RESULT_BUDGET_BYTES: _seed, ...environment } = process.env;
+  const server = createServer({ kind: "session", session }, { environment });
   const client = new Client(
     { name: "agent-result-budget", version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
