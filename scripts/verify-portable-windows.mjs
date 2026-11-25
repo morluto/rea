@@ -313,10 +313,11 @@ if ($Mode -eq 'argv') {
   exit 0
 }
 if ($Mode -eq 'stdin') {
-  # The documented pipeline form must deliver the request to the CLI's stdin.
-  $request = '{ "view": "summary" }'
-  $pipedRequest = $request | & $Launcher inspect-analysis-view -
-  [Console]::Out.WriteLine((@{ exit = $LASTEXITCODE; output = (($pipedRequest | Out-String).Trim()) } | ConvertTo-Json -Compress))
+  # The documented pipeline form must deliver this exact request to the CLI.
+  $document = Get-Content -LiteralPath $Sample -Raw -Encoding UTF8
+  $pipedRequest = $document | & $Launcher inspect-analysis-view -
+  $requestExit = $LASTEXITCODE
+  [Console]::Out.WriteLine((@{ exit = $requestExit; output = (($pipedRequest | Out-String).Trim()) } | ConvertTo-Json -Compress))
   exit 0
 }
 Set-Location -LiteralPath $Sample
@@ -381,16 +382,35 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
     piped: true,
   });
   reportStage("PowerShell pipeline input forwarding");
-  const pipedRequest = JSON.parse((await sessionPowerShell("stdin")).stdout);
-  assert.equal(
-    typeof pipedRequest.exit,
-    "number",
-    "A piped request must reach the CLI instead of waiting for console input",
+  const pipedEvidence = join(workspace, "piped-evidence.json");
+  await writeFile(pipedEvidence, JSON.stringify(cli), "utf8");
+  const pipedRequestPath = join(workspace, "piped-request.json");
+  await writeFile(
+    pipedRequestPath,
+    JSON.stringify({
+      source: { kind: "evidence-file", path: pipedEvidence },
+      view: { kind: "summary" },
+    }),
+    "utf8",
   );
+  const piped = JSON.parse(
+    (await sessionPowerShell("stdin", directory, pipedRequestPath)).stdout,
+  );
+  assert.equal(
+    piped.exit,
+    0,
+    `The piped request must succeed:\n${piped.output}`,
+  );
+  const pipedResult = JSON.parse(piped.output);
   assert.match(
-    pipedRequest.output,
-    /view|evidence|document|json/iu,
-    "The CLI must answer the piped request",
+    pipedResult.evidence_id,
+    /^ev_[0-9a-f]{64}$/u,
+    "The piped request must read the evidence it named",
+  );
+  assert.equal(
+    pipedResult.operation,
+    cli.operation,
+    "The piped request must project the evidence it named",
   );
   for (const invocation of [
     { command: node, args: [entry, "mcp"] },
