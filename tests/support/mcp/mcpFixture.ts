@@ -3,8 +3,8 @@ import {
   InMemoryTransport,
   type ClientOptions,
 } from "@modelcontextprotocol/client";
-import type { McpServer } from "@modelcontextprotocol/server";
-import { test as base } from "vitest";
+import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import { expect, test as base } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** Client identity used during an in-memory MCP negotiation. */
@@ -189,3 +189,15 @@ export const mcpTest = base.extend<{ mcp: TestMcp }>({
     }
   },
 });
+
+export const successfulTool = async (
+  client: Client,
+  name: string,
+  arguments_: Record<string, unknown> = {},
+): Promise<CallToolResult> => {
+  const reply = await client.callTool({ name, arguments: arguments_ });
+  expect(reply.isError, `${name}: ${JSON.stringify(reply.content)}`).not.toBe(
+    true,
+  );
+  return reply;
+};
