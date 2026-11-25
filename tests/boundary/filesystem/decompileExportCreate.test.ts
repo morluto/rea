@@ -13,6 +13,10 @@ const failChmodFor = vi.hoisted(() => ({
   cleanupPath: undefined as string | undefined,
   beforeLeasePath: undefined as string | undefined,
   beforeLease: undefined as (() => Promise<void>) | undefined,
+  // Models a macOS virtiofs share: lstat reports a new inode for a directory
+  // after chmod changes its mode.
+  renumberDirectories: false,
+  renumbered: new Set<string>(),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -52,10 +56,27 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       return actual.unlink(...args);
     },
+    lstat: (async (
+      path: Parameters<typeof actual.lstat>[0],
+      options?: { bigint?: boolean },
+    ) => {
+      const metadata = await actual.lstat(path, options);
+      if (metadata.isDirectory() && failChmodFor.renumbered.has(String(path)))
+        metadata.ino =
+          typeof metadata.ino === "bigint"
+            ? metadata.ino + 1n
+            : metadata.ino + 1;
+      return metadata;
+    }) as typeof actual.lstat,
     chmod: async (path: Parameters<typeof actual.chmod>[0], mode: number) => {
       if (path === failChmodFor.path)
         throw Object.assign(new Error("denied"), { code: "EPERM" });
       await actual.chmod(path, mode);
+      if (
+        failChmodFor.renumberDirectories &&
+        (await actual.lstat(path)).isDirectory()
+      )
+        failChmodFor.renumbered.add(String(path));
       if (path === failChmodFor.beforeLeasePath) {
         const hook = failChmodFor.beforeLease;
         failChmodFor.beforeLease = undefined;
@@ -93,6 +114,8 @@ afterEach(() => {
   failChmodFor.cleanupPath = undefined;
   failChmodFor.beforeLeasePath = undefined;
   failChmodFor.beforeLease = undefined;
+  failChmodFor.renumberDirectories = false;
+  failChmodFor.renumbered.clear();
   vi.restoreAllMocks();
 });
 
@@ -180,6 +203,25 @@ describe("decompile export creation", () => {
     expect(resumed.ok).toBe(true);
     if (resumed.ok) expect((await resumed.value.close()).ok).toBe(true);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "removes its functions directory after failed initialization on a mount that renumbers directories on chmod",
+    async () => {
+      const parent = await createTestTempDirectory("rea-decompile-renumber-");
+      const root = join(parent, "out");
+      failChmodFor.renumberDirectories = true;
+      failChmodFor.path = join(root, "decompile-journal.jsonl");
+      const opened = await DecompileExport.open({
+        placement: { mode: "create", root },
+        identity,
+      });
+      expect(opened.ok).toBe(false);
+      if (opened.ok) return;
+      expect(opened.error.cleanupIncomplete).toBe(false);
+      expect(failChmodFor.renumbered).not.toContain(join(root, "functions"));
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 
   it("preserves unexpected files and keeps initialization cleanup owned until a retry", async () => {
     const parent = await createTestTempDirectory("rea-decompile-cleanup-");

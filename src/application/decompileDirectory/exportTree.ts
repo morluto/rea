@@ -585,10 +585,8 @@ const prepareFunctionsDirectory = async (
         "The functions directory could not be created.",
       ),
     );
-  const stat = await lstat(directory, { bigint: true }).catch(
-    (cause: unknown) => cause,
-  );
-  if (!isDirectoryStat(stat) || !hasFileIdentity(stat))
+  const stat = await lstat(directory, { bigint: true }).catch(() => undefined);
+  if (stat === undefined || !stat.isDirectory())
     return err(
       decompileInputError(
         "output_directory",
@@ -596,6 +594,10 @@ const prepareFunctionsDirectory = async (
       ),
     );
   resources.ownFunctionsDirectory(stat);
+  // Repair only a mode the umask or an inherited bit altered: macOS virtiofs
+  // shares give a directory a new inode after chmod, and cleanup compares the
+  // identity recorded above.
+  if ((stat.mode & 0o7777n) === 0o700n) return ok(undefined);
   const secured = await chmod(directory, 0o700).catch(
     (cause: unknown) => cause,
   );
