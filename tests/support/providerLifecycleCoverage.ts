@@ -2098,6 +2098,58 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  unicorn: {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "src/unicorn/UnicornDoctor.test.ts",
+          "degrades to a failed check when the launcher throws",
+        ),
+        test(
+          "src/unicorn/UnicornClient.test.ts",
+          "maps a bridge crash to an output error carrying stderr",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "src/unicorn/UnicornClient.test.ts",
+          "maps a successful run to an AnalysisExecution with baseline limitations",
+        ),
+        test(
+          "tests/acceptance/unicornEmulateFunction.test.ts",
+          "runs the contract example through the client and validates the output",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "src/unicorn/UnicornClient.test.ts",
+          "maps mid-run cancellation to a cancelled error",
+        ),
+        test(
+          "tests/boundary/providers/UnicornBridgeBoundary.test.ts",
+          "converts a mid-run abort into a cancelled error",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "src/unicorn/UnicornClient.test.ts",
+          "removes its run directory after a bridge crash",
+        ),
+        test(
+          "tests/boundary/providers/UnicornBridgeBoundary.test.ts",
+          "removes the run directory when the bridge crashes",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/providers/UnicornBridgeBoundary.test.ts",
+          "retries a retained cleanup owner instead of dropping it",
+        ),
+      ),
+    },
+  },
   "wabt-artifact": {
     ownership: "process",
     stages: {

@@ -104,6 +104,9 @@ describe("UnicornClient", () => {
       expect(result.value.provider.id).toBe("unicorn");
       expect(result.value.limitations.join(" ")).toMatch(/No operating system/);
       expect(result.value.limitations.join(" ")).not.toMatch(/stopped early/);
+      // Register and return values are hex strings, so the 2^53 JSON
+      // precision warning no longer applies (Greptile 2026-11-24 P1).
+      expect(result.value.limitations.join(" ")).not.toMatch(/2\^53/);
       expect(await readdir(dir)).toEqual([]);
     });
   });
@@ -400,6 +403,69 @@ describe("UnicornClient lifecycle", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+  });
+
+  it("reports an unconfigured Python as unavailable without spawning", async () => {
+    // Tool calls run the provider's setup inspection before launching:
+    // an unset Python must be reported as unavailable, not as a bridge
+    // crash (Greptile 2026-11-24 P1).
+    const client = new UnicornClient(
+      {},
+      {
+        launcher: () => {
+          throw new Error("must not spawn when unconfigured");
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+  });
+
+  it("reports a relative Python path as unavailable without spawning", async () => {
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "relative/python3" },
+      {
+        launcher: () => {
+          throw new Error("must not spawn on a relative path");
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+  });
+
+  it("reports a missing Python executable as unavailable without spawning", async () => {
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/nonexistent/python3" },
+      {
+        launcher: () => {
+          throw new Error("must not spawn on a missing executable");
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+  });
+
+  it("reports a non-file Python path as unavailable without spawning", async () => {
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: tmpdir() },
+      {
+        launcher: () => {
+          throw new Error("must not spawn on a directory");
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
   });
 
   it("removes its run directory after a bridge crash", async () => {

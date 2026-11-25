@@ -63,6 +63,9 @@ const analysisExecutionEvidenceInput = (
   ...(execution.authority === undefined
     ? {}
     : { authority: execution.authority }),
+  ...(execution.environment === undefined
+    ? {}
+    : { environment: execution.environment }),
   locations: execution.locations,
   confidence,
 });
@@ -102,16 +105,10 @@ export const createAnalysisExecutionEvidence = (
       evidenceLinks:
         execution.sourceEvidence?.map(({ evidence_id }) => evidence_id) ?? [],
     },
-    {
-      ...options,
-      ...(execution.authority === undefined
-        ? {}
-        : { authority: execution.authority }),
-      ...(execution.environment === undefined
-        ? {}
-        : { environment: execution.environment }),
-      ...(execution.subjectUnavailableReason === undefined
-        ? {}
-        : { subjectUnavailableReason: execution.subjectUnavailableReason }),
-    },
+    // The observation input above carries authority and environment;
+    // EvidenceCreationOptions holds only immutable/callerTarget, so
+    // nothing else belongs here. (Greptile 2026-11-24 P1: environment
+    // and subjectUnavailableReason were passed here and silently dropped,
+    // so the committed Evidence lost the execution environment.)
+    options,
   );

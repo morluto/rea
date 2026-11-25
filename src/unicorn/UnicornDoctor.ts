@@ -7,8 +7,12 @@ import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   runUnicornBridge,
   UNICORN_OPERATION,
@@ -39,8 +43,8 @@ const REMEDIATION = `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute caller-supplie
  */
 export const inspectUnicornProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
-  arch: string = process.arch,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  arch: string = HOST_PLATFORM.architecture,
   options: UnicornDoctorOptions = {},
 ): Promise<DoctorProviderInspection> => {
   const pythonPath = environment[UNICORN_PYTHON_ENV_VAR] ?? "";
@@ -185,9 +189,15 @@ export const inspectUnicornProvider = async (
         details: { unicorn_version: providerVersion },
       });
     } else {
+      // Cancellation is the caller's, not a broken setup: preserve it
+      // instead of reporting it as a failed check.
+      if (!probe.ok && probe.error instanceof AnalysisCancelledError)
+        throw probe.error;
       available = false;
       const detail = !probe.ok
-        ? probe.error.message
+        ? probe.error.cleanup === undefined
+          ? probe.error.message
+          : `${probe.error.message} Cleanup incomplete: ${probe.error.cleanup.reason}`
         : "Unicorn probe returned an unexpected reply.";
       checks.push({
         name: "unicorn_importable",

@@ -420,7 +420,7 @@ export const createServer = (
       // without session admission (no binary needs to be open).
       registerServiceTools(
         server,
-        { unicorn: new UnicornEmulationService(environment) },
+        { unicorn: new UnicornEmulationService(environment, host) },
         { logger: toolLogger, recordEvidence, evidenceById },
       );
     },

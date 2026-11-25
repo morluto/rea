@@ -1,7 +1,3 @@
-import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
-
 import type {
   AnalysisClient,
   AnalysisProfileResolution,
@@ -16,15 +12,13 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ok, type Result } from "../domain/result.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { UnicornClient } from "./UnicornClient.js";
 import {
+  inspectUnicornAvailability,
   unicornCapabilities,
   UNICORN_PROVIDER_IDENTITY,
 } from "./UnicornProviderMetadata.js";
-import {
-  UNICORN_PYTHON_ENV_VAR,
-  unicornHostSupported,
-} from "./UnicornRelease.js";
 
 const UNICORN_ANALYSIS_PROFILE = createAnalysisProfile(
   {
@@ -48,12 +42,12 @@ const UNICORN_ANALYSIS_PROFILE = createAnalysisProfile(
 export class UnicornProvider implements AnalysisProviderCandidate {
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #platform: NodeJS.Platform;
-  readonly #arch: string;
+  readonly #arch: NodeJS.Architecture;
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
-    platform: NodeJS.Platform = process.platform,
-    arch: string = process.arch,
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
+    arch: NodeJS.Architecture = HOST_PLATFORM.architecture,
   ) {
     this.#environment = environment;
     this.#platform = platform;
@@ -79,61 +73,13 @@ export class UnicornProvider implements AnalysisProviderCandidate {
         remediation: "Retry the availability inspection.",
         diagnostics: {},
       };
-    if (!unicornHostSupported(this.#platform, this.#arch))
-      return {
-        status: "unavailable",
-        code: "unsupported_host",
-        reason:
-          "Unicorn emulation Phase 1 runs on Linux x64 hosts only, inheriting the pwntools lane's verified matrix.",
-        remediation: "Run on a Linux x64 host.",
-        diagnostics: { platform: this.#platform, arch: this.#arch },
-      };
-    const pythonPath = this.#environment[UNICORN_PYTHON_ENV_VAR] ?? "";
-    if (pythonPath.length === 0)
-      return {
-        status: "unavailable",
-        code: "not_configured",
-        reason: "No caller-supplied Python is configured.",
-        remediation: `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2; REA never installs Python or packages.`,
-        diagnostics: {},
-      };
-    if (!isAbsolute(pythonPath))
-      return {
-        status: "unavailable",
-        code: "not_configured",
-        reason: `${UNICORN_PYTHON_ENV_VAR} is not an absolute path.`,
-        remediation: `Set ${UNICORN_PYTHON_ENV_VAR} to an absolute path.`,
-        diagnostics: { python_path: pythonPath },
-      };
-    try {
-      await access(pythonPath, constants.X_OK);
-      if (!(await stat(pythonPath)).isFile())
-        return {
-          status: "unavailable",
-          code: "executable_missing",
-          reason: `Selected Python path is not a regular file: ${pythonPath}`,
-          remediation: `Point ${UNICORN_PYTHON_ENV_VAR} at a regular executable Python file with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2.`,
-          diagnostics: { python_path: pythonPath },
-        };
-    } catch {
-      return {
-        status: "unavailable",
-        code: "executable_missing",
-        reason: `Selected Python executable is not executable: ${pythonPath}`,
-        remediation: `Point ${UNICORN_PYTHON_ENV_VAR} at a regular executable Python file with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2.`,
-        diagnostics: { python_path: pythonPath },
-      };
-    }
-    return {
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {
-        python_path: pythonPath,
-        platform: this.#platform,
-        arch: this.#arch,
-      },
-    };
+    // The setup check is shared with the client: tool calls run the same
+    // inspection instead of launching a bridge that can only crash.
+    return inspectUnicornAvailability(
+      this.#environment,
+      this.#platform,
+      this.#arch,
+    );
   }
 
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport {
@@ -159,7 +105,9 @@ export class UnicornProvider implements AnalysisProviderCandidate {
   }
 
   createClient(): AnalysisClient {
-    return new UnicornClient(this.#environment);
+    return new UnicornClient(this.#environment, {
+      host: { platform: this.#platform, architecture: this.#arch },
+    });
   }
 
   async closeOwnedResources(): Promise<Result<null, AnalysisError>> {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { inspectUnicornProvider } from "./UnicornDoctor.js";
 import type { UnicornBridgeLauncher } from "./UnicornBridge.js";
 import { UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
@@ -168,6 +169,27 @@ describe("inspectUnicornProvider", () => {
       expect(check(inspection, "unicorn_importable")?.detail).toMatch(
         /launcher exploded/,
       );
+    } finally {
+      await python.cleanup();
+    }
+  });
+
+  it("throws caller cancellation instead of reporting broken setup", async () => {
+    // A probe cancelled by the caller is not a broken setup: the doctor
+    // preserves the cancellation instead of degrading it to a failed
+    // check (Greptile 2026-11-24 P1).
+    const python = await makeExecutable();
+    try {
+      const controller = new AbortController();
+      controller.abort(new Error("test abort"));
+      await expect(
+        inspectUnicornProvider(
+          { [UNICORN_PYTHON_ENV_VAR]: python.path },
+          "linux",
+          "x64",
+          { signal: controller.signal },
+        ),
+      ).rejects.toThrow(AnalysisCancelledError);
     } finally {
       await python.cleanup();
     }

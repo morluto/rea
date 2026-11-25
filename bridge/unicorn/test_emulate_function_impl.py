@@ -310,6 +310,177 @@ class UnicornEngineTests(unittest.TestCase):
         self.assertEqual(len(reply["calls_hit"]), 1)
         self.assertEqual(reply["calls_hit"][0]["returned"], "0x7")
 
+    def test_undeclared_import_stop_policy_stops_instead_of_returning(self):
+        # call IMPORT; mov eax, 42; ret — with stub_policy "stop" an
+        # undeclared import stops like a declared stub does (Greptile
+        # 2026-11-24 P1): the unfixed bridge returned zero and ran the
+        # continuation instead.
+        req = base_request(
+            function_bytes=call_bytes(IMPORT) + "b82a000000c3",
+            stub_policy="stop",
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "stubbed_call")
+        self.assertEqual(len(reply["calls_hit"]), 1)
+        self.assertEqual(reply["calls_hit"][0]["address"], "0x3000000")
+        self.assertIsNone(reply["return_value"])
+
+    def test_repeat_call_to_first_dynamic_import_records_again(self):
+        # call IMPORT; call IMPORT; mov eax, 42; ret — a repeat call to the
+        # first mapped dynamic stub records again (Greptile 2026-11-24 P1):
+        # the unfixed bridge executed its xor/ret silently and the second
+        # call disappeared from calls_hit.
+        second = "e8" + (IMPORT - (CODE + 10)).to_bytes(
+            4, "little", signed=True
+        ).hex()
+        req = base_request(
+            function_bytes=call_bytes(IMPORT) + second + "b82a000000c3"
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertEqual(reply["return_value"], "0x2a")
+        self.assertEqual(
+            [call["address"] for call in reply["calls_hit"]],
+            ["0x3000000", "0x3000000"],
+        )
+
+    def test_undeclared_import_on_declared_stub_page_records(self):
+        # A declared stub at IMPORT returns 7; an undeclared call to
+        # IMPORT+0x10 lands on the same page and must record as its own
+        # import instead of stopping with escaped_code_region (Greptile
+        # 2026-11-24 P1).
+        second = "e8" + (IMPORT + 0x10 - (CODE + 10)).to_bytes(
+            4, "little", signed=True
+        ).hex()
+        req = base_request(
+            function_bytes=call_bytes(IMPORT) + second + "b82a000000c3",
+            stubs={"0x3000000": "0x7"},
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertEqual(reply["return_value"], "0x2a")
+        self.assertEqual(
+            [call["address"] for call in reply["calls_hit"]],
+            ["0x3000000", "0x3000010"],
+        )
+        self.assertEqual(reply["calls_hit"][0]["returned"], "0x7")
+        self.assertEqual(reply["calls_hit"][1]["returned"], "0x0")
+
+    def test_prefixed_indirect_call_to_import_is_recognized(self):
+        # mov eax, 0x2000000; call [eax] with a 0x67 address-size prefix
+        # (67 ff 10), where declared memory at 0x2000000 holds the import
+        # address 0x3000000: the prefixed indirect call must record and
+        # stub the import instead of reporting unmapped_access (Greptile
+        # 2026-11-24 P1). The old reader only recognized a bare FF /2 or
+        # E8 and read six bytes unconditionally.
+        req = base_request(
+            function_bytes="b8"
+            + (0x2000000).to_bytes(4, "little").hex()
+            + "67ff10"
+            + "b82a000000c3",
+            memory=[
+                {
+                    "address": "0x2000000",
+                    "bytes": (0x3000000).to_bytes(8, "little").hex(),
+                }
+            ],
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertEqual(reply["return_value"], "0x2a")
+        self.assertEqual(len(reply["calls_hit"]), 1)
+        self.assertEqual(reply["calls_hit"][0]["address"], "0x3000000")
+
+    def test_call_at_code_page_end_is_recognized(self):
+        # A direct call as the last instruction of the code page: the old
+        # reader always read six bytes, so the byte past the page made it
+        # miss the call and report unmapped_access without recording it
+        # (Greptile 2026-11-24 P1). The call must still record; the stub
+        # then returns past the page, so the run stops with
+        # escaped_code_region once control leaves the declared bytes.
+        call = "e8" + (IMPORT - (CODE + impl.PAGE_SIZE)).to_bytes(
+            4, "little", signed=True
+        ).hex()
+        req = base_request(
+            function_bytes="90" * (impl.PAGE_SIZE - 5) + call,
+        )
+        reply = self.run_request(req)
+        self.assertEqual(len(reply["calls_hit"]), 1)
+        self.assertEqual(reply["calls_hit"][0]["address"], "0x3000000")
+        self.assertEqual(reply["stop_reason"], "escaped_code_region")
+
+    def test_write_to_declared_stub_page_is_reported(self):
+        # mov byte ptr [rdi+1], 0xab; ret with rdi on a declared stub page:
+        # stub pages are writable, so the write must appear in
+        # memory_writes (Greptile 2026-11-24 P1): the unfixed bridge never
+        # snapshotted stub pages and the write went missing.
+        req = base_request(
+            function_bytes="c64701abc3",
+            registers={"rdi": "0x3000000"},
+            stubs={"0x3000000": "0x7"},
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        writes = {
+            write["address"]: write for write in reply["memory_writes"]
+        }
+        self.assertIn("0x3000001", writes)
+        self.assertEqual(writes["0x3000001"]["after"], "ab")
+
+    def test_write_to_dynamic_import_page_is_reported(self):
+        # call IMPORT; mov byte ptr [rdi+1], 0xab; mov eax, 42; ret — the
+        # write lands on the dynamically mapped import page, which
+        # snapshots when it is mapped (Greptile 2026-11-24 P1).
+        req = base_request(
+            function_bytes=call_bytes(IMPORT) + "c64701ab" + "b82a000000c3",
+            registers={"rdi": "0x3000000"},
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertEqual(reply["return_value"], "0x2a")
+        writes = {
+            write["address"]: write for write in reply["memory_writes"]
+        }
+        self.assertIn("0x3000001", writes)
+        self.assertEqual(writes["0x3000001"]["after"], "ab")
+
+    def test_large_contiguous_diff_is_truncated(self):
+        # mov rcx, 2 MiB; mov al, 0xab; rep stosb; ret over a 2 MiB region:
+        # the single run exceeds the 1 MiB diff budget, so the reply flags
+        # truncation instead of carrying it. The instruction cap is raised
+        # because Unicorn counts each rep iteration as an instruction.
+        req = base_request(
+            function_bytes="48c7c100002000b0abf3aac3",
+            registers={"rdi": "0x2000000"},
+            memory=[{"address": "0x2000000", "bytes": "00" * (2 * 1024 * 1024)}],
+            budgets={
+                "instruction_cap": 10_000_000,
+                "timeout_ms": 30_000,
+                "address_space_bytes": 3 * 1024 * 1024 * 1024,
+            },
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertTrue(reply["memory_diff_truncated"])
+        self.assertEqual(reply["memory_writes"], [])
+
+
+class DiffRunsTests(unittest.TestCase):
+    def test_diff_runs_yields_incrementally(self):
+        # The diff must yield runs as they are found so the caller can stop
+        # scanning once the retained budget is exhausted (Greptile
+        # 2026-11-24 P2): a list-building version allocates every run's hex
+        # strings first and only then discards them.
+        before = bytes(100_000)
+        after = bytearray(before)
+        for index in range(0, 100_000, 2):
+            after[index] = 1
+        runs = impl._diff_runs(bytes(before), bytes(after))
+        first = next(runs)
+        self.assertEqual(first, (0, "00", "01"))
+        second = next(runs)
+        self.assertEqual(second, (2, "00", "01"))
+
 
 class UnicornValidationTests(unittest.TestCase):
     def test_small_stack_rejected(self):

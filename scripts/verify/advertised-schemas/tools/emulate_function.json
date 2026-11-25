@@ -1,0 +1,13 @@
+{
+  "schemas": {
+    "input compact": "705375e6a52d7c5d",
+    "output compact": "4bda7c3651bfc579"
+  },
+  "patterns": {
+    "input": [
+      "^(?:[0-9A-Fa-f]{2})*$",
+      "^0x[0-9A-Fa-f]{1,16}$",
+      "^[0-9a-f]{64}$"
+    ]
+  }
+}

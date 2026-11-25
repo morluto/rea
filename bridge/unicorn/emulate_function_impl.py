@@ -265,8 +265,12 @@ def validate_request(request):
 
 
 def _diff_runs(before, after):
-    """Maximal contiguous changed runs as (offset, before_hex, after_hex)."""
-    runs = []
+    """Maximal contiguous changed runs as (offset, before_hex, after_hex).
+
+    Yields runs as they are found so the caller can stop scanning once the
+    retained diff budget is exhausted, instead of building every run (and
+    its hex strings) only to discard most of them.
+    """
     index = 0
     size = len(before)
     while index < size:
@@ -274,10 +278,9 @@ def _diff_runs(before, after):
             start = index
             while index < size and before[index] != after[index]:
                 index += 1
-            runs.append((start, before[start:index].hex(), after[start:index].hex()))
+            yield (start, before[start:index].hex(), after[start:index].hex())
         else:
             index += 1
-    return runs
 
 
 def _apply_resource_limits(timeout_ms):
@@ -356,6 +359,14 @@ def run_emulation(uc_module, x86, req):
     snapshot_regions.append(
         (req["stack_address"], bytes(uc.mem_read(req["stack_address"], _align_up(req["stack_size"]))))
     )
+    # Stub pages are writable, so a function write to one is a real effect
+    # and must appear in the diff. Snapshot declared stub pages after
+    # their setup writes (the `ret` at each declared stub address);
+    # dynamic pages snapshot when they are mapped, in hook_mem_invalid.
+    snapshot_regions += [
+        (page, bytes(uc.mem_read(page, PAGE_SIZE)))
+        for page in sorted(req["stub_pages"])
+    ]
 
     for name, value in req["registers"].items():
         uc.reg_write(REGISTER_IDS[name], value)
@@ -375,6 +386,15 @@ def run_emulation(uc_module, x86, req):
         # instruction addresses inside them (entry and its ret).
         "dynamic_pages": set(),
         "dynamic_code": set(),
+        # Entry addresses of dynamic stubs (the xor, not its ret): a repeat
+        # call to one records again instead of disappearing from calls_hit.
+        "dynamic_entries": set(),
+        # Entry whose first-touch record the next xor execution belongs to:
+        # the xor runs immediately after its page is mapped, so that
+        # hook_code event must not record the same call a second time.
+        # It is always consumed by that xor (or the run ends), so a later
+        # repeat call to the same entry records again.
+        "dynamic_entry_just_recorded": None,
         # Address space already mapped by setup, plus pages mapped on
         # demand for undeclared imports; the declared budget covers both.
         "mapped_total": req["mapped_total"],
@@ -396,24 +416,71 @@ def run_emulation(uc_module, x86, req):
     def _pending_call_target(u, import_address):
         """True if the last in-code instruction was a call to import_address.
 
-        Direct calls (E8 rel32, always 5 bytes) are verified against the
-        address. Indirect calls (FF /2, with an optional REX prefix) cannot
-        be verified without an operand decode; a fetch fault immediately
-        after such a call names its target by control-flow construction.
+        Decodes the actual instruction instead of guessing from its first
+        byte: legacy prefixes (including the 0x67 address-size prefix, so
+        `67 ff 10` calls through a 32-bit pointer), an optional REX prefix,
+        then E8 rel32 (rel16 with a 0x66 prefix, verified against the
+        address) or FF /2 (indirect: verified by control-flow
+        construction). Bytes are read one at a time so a call at a
+        mapped-page boundary is still recognized.
         """
         last = state["last_code_address"]
         if last is None:
             return False
-        try:
-            opcode = bytes(u.mem_read(last, 6))
-        except Exception:
+
+        def read_byte(offset):
+            try:
+                return bytes(u.mem_read(last + offset, 1))[0]
+            except Exception:
+                return None
+
+        offset = 0
+        operand_16 = False
+        while offset < 15:
+            byte = read_byte(offset)
+            if byte is None:
+                return False
+            if byte == 0x66:
+                operand_16 = True
+                offset += 1
+            elif byte in (
+                0x67,
+                0xF0,
+                0xF2,
+                0xF3,
+                0x2E,
+                0x36,
+                0x3E,
+                0x26,
+                0x64,
+                0x65,
+            ):
+                offset += 1
+            else:
+                break
+        byte = read_byte(offset)
+        if byte is None:
             return False
-        if opcode[0] == 0xE8:
-            target = last + 5 + int.from_bytes(opcode[1:5], "little", signed=True)
-            return target == import_address
-        offset = 1 if 0x40 <= opcode[0] <= 0x4F else 0
-        if len(opcode) > offset + 1 and opcode[offset] == 0xFF:
-            modrm = opcode[offset + 1]
+        if 0x40 <= byte <= 0x4F:
+            offset += 1
+            byte = read_byte(offset)
+            if byte is None:
+                return False
+        if byte == 0xE8:
+            width = 2 if operand_16 else 4
+            displacement = 0
+            for index in range(width):
+                next_byte = read_byte(offset + 1 + index)
+                if next_byte is None:
+                    return False
+                displacement |= next_byte << (8 * index)
+            if displacement >= 1 << (8 * width - 1):
+                displacement -= 1 << (8 * width)
+            return last + offset + 1 + width + displacement == import_address
+        if byte == 0xFF:
+            modrm = read_byte(offset + 1)
+            if modrm is None:
+                return False
             if (modrm >> 3) & 0x7 == 2:
                 return True
         return False
@@ -496,19 +563,44 @@ def run_emulation(uc_module, x86, req):
                 return
             u.reg_write(x86.UC_X86_REG_RAX, stubs[address])
             return
+        if address in state["dynamic_entries"]:
+            # Repeat call to a recorded undeclared import: record it again
+            # instead of letting it disappear from calls_hit, apply the
+            # stub policy, then let the xor/ret run and return zero. The
+            # xor execution that immediately follows a first-touch mapping
+            # belongs to the record hook_mem_invalid just made, so it is
+            # not recorded again.
+            if state["dynamic_entry_just_recorded"] == address:
+                state["dynamic_entry_just_recorded"] = None
+                return
+            _record_call(_import_call_record(u, address))
+            if req["stub_policy"] == "stop":
+                state["stop"] = "stubbed_call"
+                u.emu_stop()
+                return
+            return
         if address in state["dynamic_code"]:
             # xor/ret of a recorded undeclared import: executes normally and
             # returns zero, exactly like a declared stub's ret.
             return
         if (
-            _align_down(address) in state["dynamic_pages"]
+            (
+                _align_down(address) in state["dynamic_pages"]
+                or _align_down(address) in req["stub_pages"]
+            )
             and _pending_call_target(u, address)
         ):
-            # A second, distinct undeclared import on an already-mapped
-            # dynamic page: no fault fires, so record it here and redirect
-            # to the caller's return address. The instruction itself (page
-            # padding) is skipped, never executed.
+            # A distinct undeclared import on an already-mapped page (a
+            # dynamic page, or a declared stub's page): no fault fires, so
+            # record it here and apply the stub policy. Under "record" the
+            # return is synthesized — the page padding at the address is
+            # not an instruction — so the caller's return address is
+            # consumed exactly once, as in the first-touch case.
             _record_call(_import_call_record(u, address))
+            if req["stub_policy"] == "stop":
+                state["stop"] = "stubbed_call"
+                u.emu_stop()
+                return
             ret = _read_return_address(u)
             if ret is None:
                 state["stop"] = "unmapped_access"
@@ -531,11 +623,11 @@ def run_emulation(uc_module, x86, req):
             state["stop"] = "returned"
             return False
         if access == UC_MEM_FETCH_UNMAPPED and _pending_call_target(u, address):
-            # Undeclared import, first touch on this page: record a
-            # zero-return stub and map the page with xor eax,eax; ret at
-            # the fault address, so this and repeat calls return zero.
-            # A 3-byte entry must fit inside the page; a tail-straddling
-            # import stops the run instead of writing across the boundary.
+            # Undeclared import, first touch on this page: map the page
+            # with xor eax,eax; ret at the fault address, so this and
+            # repeat calls return zero. A 3-byte entry must fit inside the
+            # page; a tail-straddling import stops the run instead of
+            # writing across the boundary.
             page = _align_down(address)
             if address - page > PAGE_SIZE - 3:
                 state["stop"] = "unmapped_access"
@@ -547,7 +639,13 @@ def run_emulation(uc_module, x86, req):
             if state["mapped_total"] + PAGE_SIZE > req["address_space_bytes"]:
                 state["stop"] = "unmapped_access"
                 return False
+            # Record the call and apply the stub policy like every other
+            # import entry: a "stop" policy stops here instead of mapping
+            # a stub and running the continuation.
             _record_call(_import_call_record(u, address))
+            if req["stub_policy"] == "stop":
+                state["stop"] = "stubbed_call"
+                return False
             u.reg_write(x86.UC_X86_REG_RAX, 0)
             u.mem_map(page, PAGE_SIZE, UC_PROT_ALL)
             u.mem_write(address, b"\x31\xc0\xc3")
@@ -555,6 +653,11 @@ def run_emulation(uc_module, x86, req):
             state["dynamic_pages"].add(page)
             state["dynamic_code"].add(address)
             state["dynamic_code"].add(address + 2)
+            state["dynamic_entries"].add(address)
+            state["dynamic_entry_just_recorded"] = address
+            # Snapshot the page as mapped so a later function write to it
+            # appears in the diff, like the declared stub pages do.
+            snapshot_regions.append((page, bytes(u.mem_read(page, PAGE_SIZE))))
             return True
         state["stop"] = "unmapped_access"
         return False

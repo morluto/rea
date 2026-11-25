@@ -7,9 +7,6 @@ export const UNICORN_PROVIDER_IDENTITY = Object.freeze({
   version: "2.1.2",
 }) satisfies ProviderIdentity;
 
-/** Budgets shared with the contract layer; re-exported for adapters. */
-export { UNICORN_LIMITS } from "../contracts/unicorn/unicornToolContracts.js";
-
 /** Phase 1 runs only on Linux x64 hosts: it reuses the pwntools lane's verified matrix. */
 export const unicornHostSupported = (
   platform: NodeJS.Platform,

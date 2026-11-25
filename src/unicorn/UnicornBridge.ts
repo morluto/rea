@@ -4,19 +4,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { UNICORN_LIMITS } from "../contracts/unicorn/unicornToolContracts.js";
 import type {
+  AnalysisCleanupObservation,
   AnalysisError,
   AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
+  fixedCeilingConstraint,
+  isAborted,
+  measuredExhaustionConstraint,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -24,8 +31,9 @@ import {
 import type {
   OwnedProviderProcessSpawnOptions,
   ProviderProcessSnapshot,
+  ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
-import { UNICORN_LIMITS, UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
+import { UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
 
 export const UNICORN_OPERATION = "emulate_function";
 
@@ -149,19 +157,12 @@ export interface UnicornBridgeRunOptions {
   readonly launcher?: UnicornBridgeLauncher;
   /** Test hook: parent directory for the per-run directory. */
   readonly runtimeDirBase?: string;
+  /**
+   * Receives a supervisor whose stop stayed incomplete, so the owning
+   * close path can retry it instead of the run dropping the owner.
+   */
+  readonly onRetainedCleanup?: (owner: ProviderProcessSupervisor) => void;
 }
-
-const captured = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated === true,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  ...(snapshot.exitCode === undefined ? {} : { exit_code: snapshot.exitCode }),
-  ...(snapshot.signal === undefined ? {} : { signal: snapshot.signal }),
-});
 
 const mapFailureReply = (
   reply: z.output<typeof unicornBridgeFailureReplySchema>,
@@ -212,16 +213,17 @@ const mapFailureReply = (
  * timeout, and cancellation. Bridge resource exits 75/76 map to resource
  * constraint errors; any other nonzero exit without a reply is an output
  * error carrying the bounded captured output.
+ *
+ * The run directory has one owner: the outcome is computed first, the
+ * directory is removed best-effort (a removal failure never replaces the
+ * outcome), and the signal is checked after that last cleanup step, so a
+ * cancellation during final cleanup still cancels a success.
  */
 export const runUnicornBridge = async (
   options: UnicornBridgeRunOptions,
 ): Promise<Result<UnicornBridgeReply, AnalysisError>> => {
-  if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(UNICORN_OPERATION, {
-        cause: options.signal.reason,
-      }),
-    );
+  if (isAborted(options.signal))
+    return err(cancelledBy(UNICORN_OPERATION, options.signal));
   // Setup failures are typed errors, not throws: a caller that probes the
   // bridge (notably the doctor) must be able to degrade, not abort.
   let runDir: string;
@@ -231,22 +233,33 @@ export const runUnicornBridge = async (
     );
   } catch (error) {
     return err(
-      new AnalysisResourceConstraintError(
+      measuredExhaustionConstraint(
         UNICORN_OPERATION,
         "capacity",
-        `Unicorn bridge could not create its run directory: ${error instanceof Error ? error.message : String(error)}`,
-        null,
+        `Unicorn bridge could not create its run directory: ${errorMessage(error)}`,
         {
           remediationAction:
             "Check disk space and write permission for the temporary directory and retry.",
+          retryable: true,
         },
       ),
     );
   }
+  return runInDirectory(runDir, options);
+};
+
+const runInDirectory = async (
+  runDir: string,
+  options: UnicornBridgeRunOptions,
+): Promise<Result<UnicornBridgeReply, AnalysisError>> => {
+  // The success is only reported after the run directory is removed: a
+  // cancellation during the final read/parse or removal still cancels it,
+  // and a removal failure never replaces the run's outcome.
+  let completed: UnicornBridgeReply | undefined;
+  const requestPath = join(runDir, "request.json");
+  const replyPath = join(runDir, "reply.json");
+  const failureMarkerPath = join(runDir, "failure.marker");
   try {
-    const requestPath = join(runDir, "request.json");
-    const replyPath = join(runDir, "reply.json");
-    const failureMarkerPath = join(runDir, "failure.marker");
     try {
       await writeFile(
         requestPath,
@@ -255,14 +268,14 @@ export const runUnicornBridge = async (
       );
     } catch (error) {
       return err(
-        new AnalysisResourceConstraintError(
+        measuredExhaustionConstraint(
           UNICORN_OPERATION,
           "capacity",
-          `Unicorn bridge could not write its request file: ${error instanceof Error ? error.message : String(error)}`,
-          null,
+          `Unicorn bridge could not write its request file: ${errorMessage(error)}`,
           {
             remediationAction:
               "Check disk space and write permission for the temporary directory and retry.",
+            retryable: true,
           },
         ),
       );
@@ -281,21 +294,36 @@ export const runUnicornBridge = async (
       );
     } catch (error) {
       if (error instanceof OwnedCommandFailure) {
-        // Best effort: an incomplete stop retains its owner so cleanup can
-        // be retried. Retry the stop once; a secondary failure must not
-        // replace the primary bridge error.
+        // A stop that stays incomplete retains its owner: the owning
+        // close path retries it, and the primary error carries the
+        // cleanup observation so the failure is reported, not dropped.
+        // A secondary failure must not replace the primary bridge error.
+        let incompleteCleanup: AnalysisCleanupObservation | undefined;
         if (error.cleanupOwner !== undefined) {
           try {
-            await error.cleanupOwner.stop();
+            const stopped = await error.cleanupOwner.stop();
+            if (stopped.status === "incomplete") {
+              incompleteCleanup = {
+                reason: stopped.reason,
+                resources: error.resources,
+              };
+              options.onRetainedCleanup?.(error.cleanupOwner);
+            }
           } catch {
             // The primary bridge error below stays the reported outcome.
           }
         }
         if (error.reason === "cancelled")
           return err(
-            new AnalysisCancelledError(UNICORN_OPERATION, {
-              cause: error.cancellation?.reason,
-            }),
+            cancelledBy(
+              UNICORN_OPERATION,
+              error.cancellation === undefined
+                ? options.signal === undefined
+                  ? carriedReason(undefined)
+                  : options.signal
+                : carriedReason(error.cancellation.reason),
+              { cleanup: incompleteCleanup },
+            ),
           );
         if (error.reason === "timeout")
           return err(
@@ -304,6 +332,7 @@ export const runUnicornBridge = async (
               options.budgetMs ?? options.timeoutMs,
               {
                 userMessage: `Unicorn emulation exceeded its ${String(options.budgetMs ?? options.timeoutMs)} ms budget.`,
+                cleanup: incompleteCleanup,
               },
             ),
           );
@@ -313,40 +342,46 @@ export const runUnicornBridge = async (
             `Unicorn bridge failed: ${error.message}`,
             {
               capturedOutput:
-                error.snapshot === null ? undefined : captured(error.snapshot),
+                error.snapshot === null
+                  ? undefined
+                  : capturedProviderOutput(error.snapshot),
+              cleanup: incompleteCleanup,
             },
           ),
         );
       }
       throw error;
     }
-    const output = captured(snapshot);
+    const output = capturedProviderOutput(snapshot);
     if (snapshot.exitCode === 75)
       return err(
-        new AnalysisResourceConstraintError(
+        measuredExhaustionConstraint(
           UNICORN_OPERATION,
           "memory",
           "Unicorn bridge ran out of memory (exit 75).",
-          null,
           {
             capturedOutput: output,
             remediationAction:
               "Reduce the function size, memory image, or stack size and retry.",
+            retryable: true,
           },
         ),
       );
     if (snapshot.exitCode === 76)
       return err(
-        new AnalysisResourceConstraintError(
+        fixedCeilingConstraint(
           UNICORN_OPERATION,
           "file-size",
           "Unicorn bridge exceeded its output size (exit 76).",
-          null,
           {
-            capturedOutput: output,
-            remediationAction:
+            name: "The Unicorn bridge reply budget",
+            kind: "bytes",
+            limit: UNICORN_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
               "Reduce the function size, memory image, or stack size and retry.",
           },
+          { capturedOutput: output },
         ),
       );
     if (snapshot.exitCode !== 0)
@@ -373,16 +408,19 @@ export const runUnicornBridge = async (
     // reply is only trusted after its size is checked, not read blind.
     if (replyStat.size > UNICORN_LIMITS.outputBytes)
       return err(
-        new AnalysisResourceConstraintError(
+        fixedCeilingConstraint(
           UNICORN_OPERATION,
           "file-size",
           "Unicorn bridge reply exceeded its output size.",
-          null,
           {
-            capturedOutput: output,
-            remediationAction:
+            name: "The Unicorn bridge reply budget",
+            kind: "bytes",
+            limit: UNICORN_LIMITS.outputBytes,
+            unit: "bytes",
+            narrowing:
               "Reduce the function size, memory image, or stack size and retry.",
           },
+          { capturedOutput: output },
         ),
       );
     let replyText: string;
@@ -420,16 +458,20 @@ export const runUnicornBridge = async (
       );
     if (reply.data.ok === false)
       return err(mapFailureReply(reply.data, output));
-    // A cancellation that lands during the final read/parse must not be
-    // reported as a success just because the reply arrived first.
-    if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(UNICORN_OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
-    return ok(reply.data);
+    completed = reply.data;
   } finally {
-    await rm(runDir, { recursive: true, force: true });
+    try {
+      await rm(runDir, { recursive: true, force: true });
+    } catch {
+      // Removing the run directory is best effort: a failure here must
+      // not replace the run's outcome.
+    }
   }
+  if (completed === undefined)
+    throw new Error("Unicorn bridge finished without a reply or an error.");
+  // The success is decided here, after cleanup: a cancellation that
+  // landed during the final read/parse or removal still cancels it.
+  if (isAborted(options.signal))
+    return err(cancelledBy(UNICORN_OPERATION, options.signal));
+  return ok(completed);
 };

@@ -286,7 +286,87 @@ describe("Unicorn bridge boundary fixes", () => {
     if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
     expect(stops).toBe(1);
   });
+});
 
+describe("Unicorn bridge cleanup retention", () => {
+  it("reports an incomplete cleanup owner on the primary error and retries it on close", async () => {
+    // A stop that stays incomplete retains its owner: the primary error
+    // carries the cleanup observation, and the client retries the owner
+    // on close instead of dropping it (Greptile 2026-11-24 P1).
+    let stops = 0;
+    const cleanupOwner = {
+      stop: async () => {
+        stops += 1;
+        return stops === 1
+          ? { status: "incomplete", reason: "process group still alive" }
+          : { status: "verified-cleanup" };
+      },
+    } as unknown as ProviderProcessSupervisor;
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+      {
+        launcher: () => {
+          throw new OwnedCommandFailure(
+            "process",
+            "boom",
+            null,
+            null,
+            undefined,
+            ["run:abc", "pid:123"],
+            cleanupOwner,
+          );
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisOutputError");
+      expect(result.error.cleanup?.reason).toBe("process group still alive");
+      expect(result.error.cleanup?.resources).toEqual(["run:abc", "pid:123"]);
+    }
+    expect(stops).toBe(1);
+    const closed = await client.close();
+    expect(closed.ok).toBe(true);
+    expect(stops).toBe(2);
+  });
+
+  it("keeps reporting a failed close while the cleanup owner stays incomplete", async () => {
+    let stops = 0;
+    const cleanupOwner = {
+      stop: async () => {
+        stops += 1;
+        return { status: "incomplete", reason: "process group still alive" };
+      },
+    } as unknown as ProviderProcessSupervisor;
+    const client = new UnicornClient(
+      { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+      {
+        launcher: () => {
+          throw new OwnedCommandFailure(
+            "process",
+            "boom",
+            null,
+            null,
+            undefined,
+            [],
+            cleanupOwner,
+          );
+        },
+      },
+    );
+    const result = await client.execute("emulate_function", addInput());
+    expect(result.ok).toBe(false);
+    const firstClose = await client.close();
+    expect(firstClose.ok).toBe(false);
+    expect(stops).toBe(2);
+    const secondClose = await client.close();
+    expect(secondClose.ok).toBe(false);
+    expect(stops).toBe(3);
+  });
+});
+
+describe("Unicorn bridge resource failures", () => {
   it("rejects an oversize reply without reading it blind", async () => {
     const client = new UnicornClient(
       { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },

@@ -11,13 +11,23 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import {
   emulateFunctionInputSchema,
+  UNICORN_LIMITS,
   type EmulateFunctionOutput,
 } from "../contracts/unicorn/unicornToolContracts.js";
+import type {
+  ProviderProcessStopResult,
+  ProviderProcessSupervisor,
+} from "../process/ProviderProcess.js";
 import {
   runUnicornBridge,
   UNICORN_OPERATION,
@@ -25,10 +35,11 @@ import {
 } from "./UnicornBridge.js";
 import { validateEmulationHarness } from "./UnicornHarness.js";
 import {
+  inspectUnicornAvailability,
   UNICORN_BASELINE_LIMITATIONS,
   UNICORN_PROVIDER_IDENTITY,
 } from "./UnicornProviderMetadata.js";
-import { UNICORN_LIMITS, UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
+import { UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
 
 /**
  * Startup allowance added to the emulation budget for the outer bridge
@@ -44,6 +55,11 @@ export interface UnicornClientOptions {
   readonly launcher?: UnicornBridgeLauncher;
   /** Test hook: parent directory for per-run directories. */
   readonly runtimeDirBase?: string;
+  /**
+   * Host the client reports in its environment descriptor. Defaults to
+   * the running host; composition passes the host it already holds.
+   */
+  readonly host?: HostPlatform;
 }
 
 /**
@@ -57,6 +73,8 @@ export class UnicornClient implements AnalysisClient {
   readonly #bridgePath: string;
   readonly #launcher: UnicornBridgeLauncher | undefined;
   readonly #runtimeDirBase: string | undefined;
+  readonly #host: HostPlatform;
+  #retainedCleanup: ProviderProcessSupervisor[] = [];
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
@@ -70,6 +88,7 @@ export class UnicornClient implements AnalysisClient {
       );
     this.#launcher = options.launcher;
     this.#runtimeDirBase = options.runtimeDirBase;
+    this.#host = options.host ?? HOST_PLATFORM;
   }
 
   async execute(
@@ -113,6 +132,32 @@ export class UnicornClient implements AnalysisClient {
     if (harnessIssues.length > 0)
       return err(new AnalysisInputError(UNICORN_OPERATION, {}, harnessIssues));
 
+    // Cancellation outranks the setup check: an already-aborted caller
+    // gets a cancelled error without spawning or probing the host.
+    const signal = options?.signal;
+    if (isAborted(signal)) return err(cancelledBy(UNICORN_OPERATION, signal));
+
+    // Tool calls run the same setup inspection as the provider's own
+    // availability check: an unset, relative, or missing Python must be
+    // reported as unavailable, not as a bridge crash.
+    const availability = await inspectUnicornAvailability(
+      this.#environment,
+      this.#host.platform,
+      this.#host.architecture,
+    );
+    if (availability.status === "unavailable")
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          UNICORN_PROVIDER_IDENTITY.id,
+          UNICORN_OPERATION,
+          availability.reason,
+          {
+            userMessage: availability.reason,
+            remediationAction: availability.remediation,
+          },
+        ),
+      );
+
     const pythonPath = this.#environment[UNICORN_PYTHON_ENV_VAR] ?? "";
     const result = await runUnicornBridge({
       pythonPath,
@@ -132,11 +177,14 @@ export class UnicornClient implements AnalysisClient {
       },
       timeoutMs: input.budgets.timeout_ms + BRIDGE_STARTUP_ALLOWANCE_MS,
       budgetMs: input.budgets.timeout_ms,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      ...(signal === undefined ? {} : { signal }),
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),
       ...(this.#runtimeDirBase === undefined
         ? {}
         : { runtimeDirBase: this.#runtimeDirBase }),
+      onRetainedCleanup: (owner) => {
+        this.#retainedCleanup.push(owner);
+      },
     });
     if (!result.ok) return err(result.error);
     const reply = result.value;
@@ -186,7 +234,7 @@ export class UnicornClient implements AnalysisClient {
         authority: "controlled-replay",
         environment: {
           id: "unicorn-2.1.2",
-          platform: process.platform,
+          platform: this.#host.platform,
           architecture: input.architecture,
           isolation: "process",
         },
@@ -197,8 +245,36 @@ export class UnicornClient implements AnalysisClient {
   }
 
   async close(): Promise<Result<null, AnalysisError>> {
-    // The client holds no persistent resources: every run owns and removes
-    // its own directory, and the bridge subprocess is supervised per run.
+    // Retry supervisors whose earlier stop stayed incomplete; a close
+    // that still cannot prove the stop keeps reporting it and keeps the
+    // owner for the next close. Every run still owns and removes its own
+    // directory, and the bridge subprocess is supervised per run.
+    const pending = this.#retainedCleanup;
+    this.#retainedCleanup = [];
+    for (let index = 0; index < pending.length; index += 1) {
+      const owner = pending[index]!;
+      let stopped: ProviderProcessStopResult;
+      try {
+        stopped = await owner.stop();
+      } catch (error) {
+        this.#retainedCleanup.push(...pending.slice(index));
+        return err(
+          new AnalysisOutputError(
+            UNICORN_OPERATION,
+            `Unicorn bridge cleanup failed: ${errorMessage(error)}.`,
+          ),
+        );
+      }
+      if (stopped.status === "incomplete") {
+        this.#retainedCleanup.push(...pending.slice(index));
+        return err(
+          new AnalysisOutputError(
+            UNICORN_OPERATION,
+            `Unicorn bridge cleanup incomplete: ${stopped.reason}.`,
+          ),
+        );
+      }
+    }
     return ok(null);
   }
 }

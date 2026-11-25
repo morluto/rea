@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
-
 import type { AnalysisInputIssue } from "../domain/analysisErrorCore.js";
-import { UNICORN_LIMITS } from "./UnicornRelease.js";
-import type { EmulateFunctionInput } from "../contracts/unicorn/unicornToolContracts.js";
+import {
+  UNICORN_LIMITS,
+  type EmulateFunctionInput,
+} from "../contracts/unicorn/unicornToolContracts.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const PAGE_SIZE = 0x1000;
 
@@ -187,7 +188,7 @@ export const validateEmulationHarness = (
     );
 
   if (input.function_sha256 !== undefined) {
-    const digest = createHash("sha256").update(functionBytes).digest("hex");
+    const digest = sha256Hex(functionBytes);
     if (digest !== input.function_sha256)
       issues.push(
         issue(

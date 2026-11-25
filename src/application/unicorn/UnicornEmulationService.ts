@@ -5,6 +5,7 @@ import type { Evidence } from "../../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, type Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import { UnicornClient } from "../../unicorn/UnicornClient.js";
 import { UNICORN_OPERATION } from "../../unicorn/UnicornBridge.js";
 
@@ -17,8 +18,11 @@ import { UNICORN_OPERATION } from "../../unicorn/UnicornBridge.js";
 export class UnicornEmulationService {
   readonly #client: UnicornClient;
 
-  constructor(environment: Readonly<NodeJS.ProcessEnv>) {
-    this.#client = new UnicornClient(environment);
+  constructor(environment: Readonly<NodeJS.ProcessEnv>, host?: HostPlatform) {
+    this.#client = new UnicornClient(
+      environment,
+      host === undefined ? {} : { host },
+    );
   }
 
   async emulate(
