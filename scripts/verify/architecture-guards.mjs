@@ -8,6 +8,7 @@ import {
   reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
+import { adhocCompletenessTernaryCount } from "./completeness-ternary-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
@@ -1081,10 +1082,6 @@ checkCounted(
 // or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
 // src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
 // so the count can only shrink.
-const adhocCompletenessTernaryCount = (content) =>
-  (content.match(/\?\s*["']complete["']\s*:/gu)?.length ?? 0) +
-  (content.match(/\?[^?\n;{}]+:\s*["']complete["'](?!\s*\|)/gu)?.length ?? 0);
-
 checkCounted(
   'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
   "adhoc-completeness-ternary",
