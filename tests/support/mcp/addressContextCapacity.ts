@@ -10,6 +10,7 @@ import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -23,11 +24,7 @@ export const inspectCapacityContext = async (
   environment: NodeJS.ProcessEnv,
   facets: { procedureName: string; comment?: string; inline_comment?: string },
 ) => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
+  const identity = createFixtureProviderIdentity();
   const directory = await createTestTempDirectory("rea-context-capacity-");
   const target = join(directory, "fixture.com");
   await writeFile(target, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));

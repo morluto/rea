@@ -24,7 +24,10 @@ import type {
   ProviderAvailability,
 } from "../../../src/ports/AnalysisProvider.js";
 import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
 import {
@@ -50,7 +53,7 @@ import {
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
-  { id: "fixture", name: "Fixture analysis provider", version: "1" },
+  createFixtureProviderIdentity(),
   { fixture: true },
 );
 
@@ -831,11 +834,7 @@ const client = (path: string, closed: string[]): AnalysisClient => ({
 });
 
 const provider = (closed: string[]): AnalysisProvider => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  };
+  const identity = createFixtureProviderIdentity();
   const capability: CapabilityDescriptor = {
     provider: identity,
     operation: "current_document",

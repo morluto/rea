@@ -10,7 +10,10 @@ import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContra
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
@@ -19,22 +22,14 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
-    createAnalysisExecution(
-      value,
-      {
-        id: "fixture",
-        name: "Fixture analysis provider",
-        version: "1",
+    createAnalysisExecution(value, createFixtureProviderIdentity(), {
+      subject: {
+        path: "/fixture.app",
+        sha256: "a".repeat(64),
+        format: "mach-o",
+        architecture: "arm64",
       },
-      {
-        subject: {
-          path: "/fixture.app",
-          sha256: "a".repeat(64),
-          format: "mach-o",
-          architecture: "arm64",
-        },
-      },
-    ),
+    }),
   );
 
 const functionDossier = {
