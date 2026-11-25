@@ -274,13 +274,16 @@ const cliTargetFailureRemediation = (
   context: CliCommandOutputProjectionContext,
 ): Record<string, JsonValue> | undefined => {
   const { remediation, retry } = error;
+  // `io` is the only kind whose table text depends on the retry hint.
+  // cleanup_incomplete keeps the target recovery and drops `retry`, so the
+  // other kinds still rewrite when the action starts with that table text.
   if (
-    typeof retry !== "string" ||
     !isObject(remediation) ||
     typeof remediation.action !== "string" ||
     !isTargetFailureKind(details.failure_kind) ||
     typeof details.format !== "string" ||
-    typeof details.operation !== "string"
+    typeof details.operation !== "string" ||
+    (details.failure_kind === "io" && typeof retry !== "string")
   )
     return undefined;
   const inputFields = targetInputFields(details);

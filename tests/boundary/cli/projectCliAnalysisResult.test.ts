@@ -351,6 +351,37 @@ it("names a target failure's alternative operations and providers in each adapte
   expect(cliProjected.remediation.action).toContain("--provider ghidra");
 });
 
+it("rewrites target recovery when cleanup drops the retry hint", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-artifact");
+  if (entry === undefined) throw new Error("Expected inspect-artifact");
+  const projected = projectAnalysisError(
+    new AnalysisTargetFailureError(
+      "inspect_artifact",
+      "/selected/app",
+      {
+        kind: "malformed",
+        format: "zip",
+        detail: "ZIP archive is malformed: bad crc",
+      },
+      { cleanup: { reason: "close failed", resources: ["/selected/app"] } },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { failure_kind: "malformed", format: "zip" },
+  });
+  expect(projected.retry).toBeUndefined();
+  expect(projected.remediation.action).toContain("inspect_artifact");
+  const cliProjected = projectCliCommandOutput(projected, {
+    operations: entry.operations,
+    commands: entries,
+  }) as { remediation: { action: string } };
+  expect(cliProjected.remediation.action).toContain("rea inspect-artifact");
+  expect(cliProjected.remediation.action).not.toContain("inspect_artifact");
+});
+
 it("omits MCP-only alternative operations from CLI target failure recovery", () => {
   const cli = createCli();
   const entries = cliCommands(cli);
