@@ -150,7 +150,9 @@ export class ArtifactProvider implements AnalysisProvider {
         options,
       );
     } catch (cause: unknown) {
-      inspected = err(translateArtifactFailure("inspect_artifact", path, cause));
+      inspected = err(
+        translateArtifactFailure("inspect_artifact", path, cause),
+      );
     }
     // A completed inspection still fails when its readers could not be
     // released. The caller's lifetime keeps this scope, so a later close of
