@@ -5,7 +5,6 @@ AnalysisInputError,,invalid_request,invalid_input,false
 AnalysisAccessDeniedError,,access_denied,unavailable,false
 AnalysisArtifactChangedError,,artifact_changed,integrity_mismatch,true
 AnalysisCapabilityUnavailableError,,capability_unavailable,unsupported_provider,false
-AnalysisUnsupportedTargetError,,unsupported_target,unsupported_target,false
 AnalysisCancelledError,,cancelled,cancelled,true
 AnalysisTimeoutError,,provider_timeout,timeout,true
 AnalysisResourceConstraintError,,resource_constraint,resource_constraint,false

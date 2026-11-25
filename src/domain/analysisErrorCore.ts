@@ -5,33 +5,14 @@ import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
 import {
   TARGET_FAILURE_PROJECTIONS,
   type TargetFailure,
+  type TargetFailureFacts,
+  type TargetFailureKind,
+  type TargetFailureOf,
 } from "./targetFailure.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
-
-/** A readable supplied artifact lies outside this operation's supported target formats. */
-export class AnalysisUnsupportedTargetError extends AnalysisError {
-  readonly _tag = "AnalysisUnsupportedTargetError";
-  /** Refusal-specific recovery, when the producer knows an available workflow. */
-  readonly remediationAction: string | undefined;
-  /** The target holds the content, so unsupported does not make it inapplicable. */
-  readonly undecodedContent: boolean;
-  constructor(
-    readonly operation: string,
-    readonly path: string,
-    readonly reason: string,
-    options?: AnalysisErrorOptions & {
-      readonly remediationAction?: string;
-      readonly undecodedContent?: boolean;
-    },
-  ) {
-    super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
-    this.remediationAction = options?.remediationAction;
-    this.undecodedContent = options?.undecodedContent ?? false;
-  }
-}
 
 /**
  * The selected target at `path` could not be read, for the reason its owner
@@ -54,6 +35,66 @@ export class AnalysisTargetFailureError extends AnalysisError {
     this.failure = Object.freeze({ ...failure });
   }
 }
+
+/** Where an unsupported or unrecognized target's owner located the failure. */
+type TargetFormSite = Pick<TargetFailureFacts, "offset" | "field">;
+
+/**
+ * The target at `path` holds `format` in a form outside what `operation`
+ * reads. `undecodedContent` says the target holds the content in that form.
+ * Name the operations or providers that read it in `options.related`.
+ */
+export const unsupportedTarget = (
+  operation: string,
+  path: string,
+  format: string,
+  detail: string,
+  {
+    undecodedContent = false,
+    offset,
+    field,
+    ...options
+  }: AnalysisErrorOptions &
+    TargetFormSite & { readonly undecodedContent?: boolean } = {},
+): AnalysisTargetFailureError =>
+  new AnalysisTargetFailureError(
+    operation,
+    path,
+    {
+      kind: "unsupported",
+      format,
+      detail,
+      undecodedContent,
+      ...(offset === undefined ? {} : { offset }),
+      ...(field === undefined ? {} : { field }),
+    },
+    options,
+  );
+
+/** No reader of `format` claims the target at `path` for `operation`. */
+export const unrecognizedTarget = (
+  operation: string,
+  path: string,
+  format: string,
+  detail: string,
+  options: AnalysisErrorOptions = {},
+): AnalysisTargetFailureError =>
+  new AnalysisTargetFailureError(
+    operation,
+    path,
+    { kind: "unrecognized", format, detail },
+    options,
+  );
+
+/** The failure of `error` when it is a target failure of one of `kinds`. */
+export const targetFailureOfKind = <Kind extends TargetFailureKind>(
+  error: unknown,
+  ...kinds: readonly Kind[]
+): TargetFailureOf<Kind> | undefined =>
+  error instanceof AnalysisTargetFailureError &&
+  (kinds as readonly TargetFailureKind[]).includes(error.failure.kind)
+    ? (error.failure as TargetFailureOf<Kind>)
+    : undefined;
 
 /** An analysis or transport resource failure, distinct from malformed input or unsupported coverage. */
 export const ANALYSIS_RESOURCE_KINDS = [

@@ -47,10 +47,10 @@ import { projectApktoolStringTables } from "./ApktoolStringTables.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   OwnerCancellation,
   carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -259,9 +259,10 @@ const apktoolCommandFailure = (
         exit.output?.truncated !== false
       )
         return unclassified({ userMessage, diagnostics });
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         targetPath,
+        "apk",
         ellipsisExcerpt(
           exit.output.snapshot.stderr.text.trim(),
           STDERR_EXCERPT_CHARACTERS,
