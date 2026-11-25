@@ -591,8 +591,13 @@ it("keeps a non-cleanup close failure primary once its owner confirmed release",
   const exportFailure = released.bind(
     new ProviderAdapterError(identity.id, "diagnostic_export"),
   );
+  let closes = 0;
   const client = new DeferredAnalysisClient(
-    async () => child(async () => err(exportFailure)),
+    async () =>
+      child(async () => {
+        closes += 1;
+        return err(exportFailure);
+      }),
     identity.id,
   );
   expect((await client.execute("analyze_function", {})).ok).toBe(true);
@@ -601,6 +606,9 @@ it("keeps a non-cleanup close failure primary once its owner confirmed release",
   expect(closed.error).toBe(exportFailure);
   expect(closed.error.cleanupIncomplete).toBe(false);
   expect(closed.error.cleanupResources).toEqual([]);
+  // Reported once: a later close succeeds without closing the child again.
+  expect((await client.close()).ok).toBe(true);
+  expect(closes).toBe(1);
 });
 
 it("settles deferred client close failure when the underlying owned resource lease releases", async () => {

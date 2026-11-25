@@ -97,7 +97,6 @@ export class AnalysisClientCreation {
     if (this.#clientLease?.released === true) {
       this.#client = undefined;
       this.#clientLease = undefined;
-      this.#confirmedCloseFailure = undefined;
     }
     let attempt = this.#attempt;
     const draining = attempt?.signal.aborted === true;
@@ -267,9 +266,10 @@ export class AnalysisClientCreation {
     });
     try {
       await this.#clientLease.release();
-      return this.#confirmedCloseFailure === undefined
-        ? ok(null)
-        : err(this.#confirmedCloseFailure);
+      // Reported once: the released client is never closed or blamed again.
+      const confirmed = this.#confirmedCloseFailure;
+      this.#confirmedCloseFailure = undefined;
+      return confirmed === undefined ? ok(null) : err(confirmed);
     } catch (cause: unknown) {
       const clientLease = this.#clientLease;
       const failure = new ProviderCleanupError(
