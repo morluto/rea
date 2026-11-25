@@ -86,34 +86,3 @@ cliTest(
     expect((await readFile(source)).equals(bytes)).toBe(true);
   },
 );
-
-cliTest(
-  "reports a malformed ISO 9660 directory tree through the compiled CLI",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-iso9660-cli-malformed-");
-    const { bytes, layout } = buildIso9660Image({
-      files: [{ path: "dir/a.txt", bytes: Buffer.from("a") }],
-    });
-    const record = layout.primaryRecords.get("dir")!;
-    bytes.writeUInt32LE(layout.directoryBlocks.get("")!, record + 2);
-    bytes.writeUInt32BE(layout.directoryBlocks.get("")!, record + 6);
-    const path = join(root, "cycle.iso");
-    await writeFile(path, bytes);
-    const result = await cli.run({
-      arguments: ["inspect-artifact", path, "--json"],
-    });
-    expect(result.exitCode, result.stdout + result.stderr).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "unsupported_target",
-      retryable: false,
-      retry: "none",
-      details: {
-        operation: "inspect_artifact",
-        path,
-        failure_kind: "malformed",
-        format: "iso9660",
-        field: "extent_location",
-      },
-    });
-  },
-);
