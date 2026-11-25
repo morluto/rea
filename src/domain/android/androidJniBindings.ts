@@ -1,3 +1,4 @@
+import { appendToBucket } from "../../kernel/appendToBucket.js";
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
 import { excludedValues } from "../schemaConstraints.js";
@@ -307,13 +308,8 @@ export const projectAndroidJniBindings = (input: {
     );
     return retained <= ANDROID_JNI_REPORT_BYTES;
   };
-  const append = (map: Map<string, string[]>, key: string, value: string) => {
-    const old = map.get(key);
-    if (old === undefined) map.set(key, [value]);
-    else old.push(value);
-  };
   for (const method of declarations) {
-    append(
+    appendToBucket(
       byPair,
       JSON.stringify([method.method_name, method.descriptor]),
       method.declaration_id,
@@ -328,8 +324,8 @@ export const projectAndroidJniBindings = (input: {
     names.set(method.declaration_id, expected.ok ? expected.value : null);
     if (expected.ok) {
       if (!charge(expected.value)) return err({ kind: "capacity" });
-      append(byExport, expected.value.short, method.declaration_id);
-      append(byExport, expected.value.long, method.declaration_id);
+      appendToBucket(byExport, expected.value.short, method.declaration_id);
+      appendToBucket(byExport, expected.value.long, method.declaration_id);
     }
   }
   const libraries: AndroidJniReport["libraries"] = [];

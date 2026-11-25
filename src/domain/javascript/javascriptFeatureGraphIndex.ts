@@ -1,3 +1,4 @@
+import { appendToBucket } from "../../kernel/appendToBucket.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -85,13 +86,13 @@ export const buildFeatureAdjacency = (
   const adjacency = new Map<string, FeatureAdjacencyEntry[]>();
   for (const edge of edges) {
     if (direction !== "incoming")
-      addAdjacency(adjacency, edge.source_node_id, {
+      appendToBucket(adjacency, edge.source_node_id, {
         edge,
         nextNodeId: edge.target_node_id,
         ascends: false,
       });
     if (direction !== "outgoing")
-      addAdjacency(adjacency, edge.target_node_id, {
+      appendToBucket(adjacency, edge.target_node_id, {
         edge,
         nextNodeId: edge.source_node_id,
         ascends: direction === "both" && edge.relation === "contains",
@@ -105,14 +106,4 @@ export const buildFeatureAdjacency = (
           compareUnicodeCodePoints(left.nextNodeId, right.nextNodeId),
       );
   return adjacency;
-};
-
-const addAdjacency = (
-  adjacency: Map<string, FeatureAdjacencyEntry[]>,
-  nodeId: string,
-  entry: FeatureAdjacencyEntry,
-): void => {
-  const entries = adjacency.get(nodeId);
-  if (entries === undefined) adjacency.set(nodeId, [entry]);
-  else entries.push(entry);
 };
