@@ -79,6 +79,13 @@ type StoredEntry = ArtifactEntry & {
     | { readonly kind: "memory"; readonly bytes: Buffer };
 };
 
+const xarExpansionCharge = (entry: StoredEntry): number =>
+  entry.origin.kind === "xar" &&
+  entry.origin.archivedLength > 0 &&
+  isXarZlibEncoding(entry.origin.encoding)
+    ? (entry.declaredSize ?? 0)
+    : 0;
+
 const emptyMetadata = (): MacosPkgMetadata => ({
   kind: "macos-pkg",
   xar: {
@@ -548,9 +555,22 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         this.#addXarDeclaration(file, index);
       else this.#addXarFile(file, index, header.heapOffset);
     }
+    let chargedXarBytes = 0;
+    for (const entry of this.#entries.values()) {
+      const charge = xarExpansionCharge(entry);
+      const remaining = this.#expansionBudgetBytes - chargedXarBytes;
+      if (charge > remaining) {
+        const message = `${entry.path} declares ${String(charge)} expanded bytes, exceeding the ${String(remaining)} bytes remaining in the ${String(this.#expansionBudgetBytes)}-byte artifact_limits.expanded_bytes allowance.`;
+        this.#refusedContent.set(entry.adapterKey, message);
+        metadata.refusals.push({ code: "oversize", message, path: entry.path });
+        continue;
+      }
+      chargedXarBytes += charge;
+    }
     const skipped = await this.#decodeInstallerDocuments(
       handle,
       metadata,
+      chargedXarBytes,
       signal,
     );
     this.#metadata = metadata;
@@ -672,6 +692,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
   async #decodeInstallerDocuments(
     handle: Parameters<typeof readArtifactFileBytes>[0],
     metadata: MacosPkgMetadata,
+    chargedXarBytes: number,
     signal?: AbortSignal,
   ): Promise<readonly string[]> {
     // Only records with a heap body can carry installer documents.
@@ -772,15 +793,18 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         : metadata.packages.length > 0
           ? "component"
           : "unknown";
-    let used = 0;
+    let used = chargedXarBytes;
     const skipped: string[] = [];
     const expandListed = async (
       listed: readonly StoredEntry[],
       role: "scripts" | "payload",
     ): Promise<void> => {
       for (const archive of listed) {
+        if (this.#refusedContent.has(archive.adapterKey)) continue;
         const declared = archive.declaredSize ?? 0;
-        const remaining = this.#expansionBudgetBytes - used;
+        // Reuse this archive's XAR charge when budgeting its cpio decode.
+        const prepaid = xarExpansionCharge(archive);
+        const remaining = this.#expansionBudgetBytes - used + prepaid;
         if (declared > remaining) {
           skipped.push(archive.path);
           continue;
@@ -797,7 +821,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           skipped.push(archive.path);
           continue;
         }
-        used += Math.max(declared, charged);
+        used += Math.max(declared, charged) - prepaid;
       }
     };
     // Presence comes from the TOC. An archive that is listed but not read
@@ -1006,7 +1030,11 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     metadata: MacosPkgMetadata,
     signal?: AbortSignal,
   ): Promise<Buffer | undefined> {
-    if (entry.origin.kind !== "xar") return undefined;
+    if (
+      entry.origin.kind !== "xar" ||
+      this.#refusedContent.has(entry.adapterKey)
+    )
+      return undefined;
     const declared = entry.declaredSize;
     if (declared !== null && extractedSizeExceedsBudget(declared, maxBytes)) {
       metadata.refusals.push(

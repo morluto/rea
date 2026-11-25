@@ -8,6 +8,7 @@ import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
 import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import {
   createBoundedXarInflate,
@@ -539,7 +540,7 @@ it("stops a streamed XAR inflate before it emits past its allowance", async () =
   expect(received).toBeLessThanOrEqual(16);
 });
 
-it("fails open() of an oversize gzip member with a limit error without inflating", async () => {
+it("refuses open() of an oversize gzip member without inflating", async () => {
   vi.mocked(createBoundedXarInflate).mockClear();
   const path = await writePkg("open-oversize.pkg", buildGzipPackageInfo());
   const reader = new MacosPkgArtifactReader(path, undefined, 16);
@@ -548,9 +549,9 @@ it("fails open() of an oversize gzip member with a limit error without inflating
     for await (const entry of reader.entries()) listed.push(entry);
     const pkgInfo = listed.find((entry) => entry.path === "PackageInfo");
     expect(pkgInfo).toBeDefined();
-    await expect(reader.open(pkgInfo!)).rejects.toMatchObject({
-      reason: "limit",
-    });
+    await expect(reader.open(pkgInfo!)).rejects.toBeInstanceOf(
+      ArtifactEntryContentUnavailable,
+    );
     expect(createBoundedXarInflate).not.toHaveBeenCalled();
   } finally {
     await reader.close();
@@ -639,6 +640,41 @@ it("names skipped component archives when the expansion budget is exhausted", as
       compression: "unread",
       members: [],
     });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("admits zlib XAR members in TOC order within one expansion allowance", async () => {
+  const mib = 1024 * 1024;
+  const bytes = Buffer.alloc(2 * mib, 0x61);
+  const { reader, entries, coverage } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "first.bin", encoding: "application/x-gzip", bytes },
+        { path: "second.bin", encoding: "application/x-gzip", bytes },
+      ],
+    }),
+    "zlib-resources.pkg",
+    3 * mib,
+  );
+  try {
+    const first = entries.find((entry) => entry.path === "first.bin")!;
+    const second = entries.find((entry) => entry.path === "second.bin")!;
+    expect((await buffer(await reader.open(first))).equals(bytes)).toBe(true);
+    await expect(reader.open(second)).rejects.toBeInstanceOf(
+      ArtifactEntryContentUnavailable,
+    );
+    expect(coverage).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        limitations: [
+          expect.stringMatching(
+            /second\.bin.*artifact_limits\.expanded_bytes/u,
+          ),
+        ],
+      }),
+    ]);
   } finally {
     await reader.close();
   }
