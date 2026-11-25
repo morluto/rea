@@ -1338,9 +1338,14 @@ const assembleUbiImage = (
   for (const [volId, volume] of lebs)
     if (volId !== UBI_LAYOUT_VOLUME_ID && !known.has(volId))
       ignoredLebCount += volume.size;
-  const count = (state: UbiPeb["state"]): number =>
-    pebs.filter((peb) => peb.state === state).length;
-  const corruptPebCount = count("corrupt");
+  const stateCounts = { mapped: 0, free: 0, erased: 0, corrupt: 0 };
+  let layoutPebCount = 0;
+  for (const peb of pebs) {
+    stateCounts[peb.state] += 1;
+    if (peb.state === "mapped" && peb.vid.volId === UBI_LAYOUT_VOLUME_ID)
+      layoutPebCount += 1;
+  }
+  const corruptPebCount = stateCounts.corrupt;
   const volumes = volumeTable.records.map((record) => {
     const assembled = assembleVolume(
       record,
@@ -1356,13 +1361,11 @@ const assembleUbiImage = (
   const { min, max } = counterRange(pebs);
   return {
     geometry,
-    mappedPebCount: count("mapped"),
-    freePebCount: count("free"),
-    erasedPebCount: count("erased"),
+    mappedPebCount: stateCounts.mapped,
+    freePebCount: stateCounts.free,
+    erasedPebCount: stateCounts.erased,
     corruptPebCount,
-    layoutPebCount: pebs.filter(
-      (peb) => peb.state === "mapped" && peb.vid.volId === UBI_LAYOUT_VOLUME_ID,
-    ).length,
+    layoutPebCount,
     staleLebCopyCount: [...stale.values()].reduce(
       (total, value) => total + value,
       0,

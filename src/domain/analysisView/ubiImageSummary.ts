@@ -25,11 +25,13 @@ export const summarizeUbiImage = (
   metadata: UbiImageMetadata,
 ): z.infer<typeof ubiImageSummaryMetadataSchema> => {
   const { volumes, ...rest } = metadata;
+  let extractableVolumeCount = 0;
+  for (const volume of volumes)
+    if (volume.extractable) extractableVolumeCount += 1;
   return {
     ...rest,
     kind: "ubi-image-summary",
     volume_count: volumes.length,
-    extractable_volume_count: volumes.filter(({ extractable }) => extractable)
-      .length,
+    extractable_volume_count: extractableVolumeCount,
   };
 };
