@@ -16,7 +16,7 @@ import {
   ArtifactResourceScope,
   AnalysisCleanupLease,
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
 } from "../../resources/index.js";
@@ -26,7 +26,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   javascriptRecoveryResultSchema,
@@ -183,18 +182,14 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled" &&
         primary.cleanup === undefined
-          ? cancelledBy(
-              OPERATION,
-              carriedReason(artifactFileCancellationCause(primary)),
-              {
-                ...(primary.partialObservation === undefined
-                  ? {}
-                  : { partialObservation: primary.partialObservation }),
-                ...(reportFailure === undefined
-                  ? {}
-                  : { capturedOutput: reportFailure.capturedOutput }),
-              },
-            )
+          ? artifactFileCancellationError(OPERATION, primary, {
+              ...(primary.partialObservation === undefined
+                ? {}
+                : { partialObservation: primary.partialObservation }),
+              ...(reportFailure === undefined
+                ? {}
+                : { capturedOutput: reportFailure.capturedOutput }),
+            })
           : primary;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];

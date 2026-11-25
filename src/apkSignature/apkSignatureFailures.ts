@@ -5,7 +5,7 @@ import {
   readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   projectStableArtifactFailure,
 } from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -13,8 +13,6 @@ import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
   unsupportedTarget,
   unrecognizedTarget,
 } from "../domain/analysisErrorCore.js";
@@ -218,10 +216,7 @@ const artifactReaderFailure = (
     case "integrity":
       return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,
