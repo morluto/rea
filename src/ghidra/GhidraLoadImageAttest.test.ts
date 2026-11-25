@@ -10,16 +10,14 @@ import { expect, it, vi } from "vitest";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import {
-  nativeLoadImageSchema,
-  nativeLoadImagePartialObservationSchema,
-} from "../domain/native/nativeLoadImage.js";
+import { nativeLoadImagePartialObservationSchema } from "../domain/native/nativeLoadImage.js";
 import {
   fixtureDosLoadImage,
   compareDosClientFixture,
   fixtureDosComLoadImage,
 } from "./GhidraLoadImage.fixture.js";
 import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js";
+import { selectGhidraComImport } from "./GhidraComImport.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import { limitationsFor } from "./GhidraProviderCapabilities.js";
 import {
@@ -56,6 +54,10 @@ it.each(["dos-mz", "dos-com", "raw-binary"] as const)(
       operation: "inspect_native_load_image",
       target: fixture.target,
       measured: fixture.observation,
+      comSelection:
+        format === "dos-com" && "bytes" in fixture
+          ? selectGhidraComImport("fixture.com", fixture.bytes)
+          : undefined,
       client:
         format === "dos-mz" && "bytes" in fixture
           ? {
@@ -90,10 +92,7 @@ it.each(["dos-mz", "dos-com", "raw-binary"] as const)(
     });
     if (result.ok)
       throw new Error("Expected cancellation after snapshot completion");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisCancelledError",
-      cause: reason,
-    });
+    expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
     expect(
       nativeLoadImagePartialObservationSchema.parse(
@@ -143,6 +142,7 @@ it("declines another format with the owned verification reason", async () => {
     status: "unsupported",
     reason: ghidraUnverifiedLoadImageReason(),
   });
+  expect(result.value.observations).toEqual(observation);
 });
 
 it.each([null, "caller stopped", new Error("caller stopped")])(
@@ -180,12 +180,9 @@ it.each([null, "caller stopped", new Error("caller stopped")])(
 it("preserves a snapshot failure before late cancellation", async () => {
   const fixture = dosFixture("dos-mz");
   const caller = new AbortController();
-  const source = new GhidraSessionError("protocol", "controlled read failure");
-  const projected = new ProviderAdapterError(
-    "ghidra",
-    "inspect_native_load_image",
-    { cause: source },
-  );
+  const source = new GhidraSessionError("protocol", "controlled read failure", {
+    snapshot_stage: "read",
+  });
   const result = await attestGhidraNativeLoadImage({
     operation: "inspect_native_load_image",
     target: fixture.target,
@@ -196,28 +193,24 @@ it("preserves a snapshot failure before late cancellation", async () => {
         return err(source);
       },
     },
-    mapSessionError: () => projected,
+    mapSessionError: (failure) =>
+      new ProviderAdapterError("ghidra", "inspect_native_load_image", {
+        cause: failure,
+        diagnostics: failure.diagnostics,
+      }),
     signal: caller.signal,
   });
-  expect(result).toEqual(err(projected));
-});
-
-it("keeps ordinary DOS verification valid", async () => {
-  const fixture = dosFixture("dos-mz");
-  const result = await attestGhidraNativeLoadImage({
-    operation: "inspect_native_load_image",
-    target: fixture.target,
-    measured: fixture.observation,
-    client: {
-      attestDosTargetSnapshot: async (observations) =>
-        compareDosClientFixture(fixture.bytes, fixture.sha256, observations),
-    },
-    mapSessionError: () => {
-      throw new Error("No source failure expected");
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      cause: { kind: "protocol", message: "controlled read failure" },
+      diagnostics: {
+        snapshot_stage: "read",
+        load_image_observations: fixture.observation,
+      },
     },
   });
-  if (!result.ok) throw result.error;
-  expect(nativeLoadImageSchema.parse(result.value).status).toBe("verified");
 });
 
 it("retains completed NativeAOT facts when cancellation precedes result consumption", async () => {

@@ -1,4 +1,6 @@
+import { unknownTarget, sameTargetIdentity } from "./targetIdentity.js";
 import type { Evidence } from "./evidence.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
@@ -18,6 +20,11 @@ export const FUNCTION_COMPARISON_PROVIDER = {
   version: "1",
 } as const;
 
+export const FUNCTION_COMPARISON_PROFILE = createAnalysisProfile(
+  FUNCTION_COMPARISON_PROVIDER,
+  { workflow_revision: 2 },
+);
+
 const COMPARISON_EVIDENCE_IDENTITIES = {
   compare_artifacts: {
     predicate: "rea.artifact-comparison",
@@ -30,6 +37,14 @@ const COMPARISON_EVIDENCE_IDENTITIES = {
   compare_process_captures: {
     predicate: "rea.process-comparison",
     provider: PROCESS_PROVIDER,
+  },
+  compare_web_screenshots: {
+    predicate: "rea.web-screenshot-diff",
+    provider: {
+      id: "rea-cdp-browser",
+      name: "REA Chrome DevTools Protocol observation provider",
+      version: "2",
+    },
   },
 } as const;
 
@@ -52,11 +67,21 @@ export const hasComparisonEvidenceIdentity = (evidence: Evidence): boolean => {
       : evidence.provider.id === expected.provider.id &&
         evidence.provider.name === expected.provider.name &&
         evidence.provider.version === expected.provider.version;
+  const subjectMatches =
+    evidence.operation === "compare_web_screenshots"
+      ? sameTargetIdentity(
+          evidence.subject.identity,
+          unknownTarget("not-observed"),
+        )
+      : sameTargetIdentity(
+          evidence.subject.identity,
+          unknownTarget("derived-from-linked-evidence"),
+        );
   return (
     evidence.predicate_type === expected.predicate &&
     providerMatches &&
     evidence.confidence === "derived" &&
     evidence.authority === "analyst-inference" &&
-    evidence.subject === null
+    subjectMatches
   );
 };

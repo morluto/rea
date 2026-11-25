@@ -1,0 +1,70 @@
+import { symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { createElfDependenciesService } from "../../../src/composition/binaryDiagnostics/elfDependencies.js";
+import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
+
+describe("ELF dependency stable filesystem boundary", () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-files-");
+    const path = join(root, "program");
+    const alias = join(root, "alias");
+    await writeFile(path, elfDependencyFixture());
+    await symlink(path, alias);
+    const service = createElfDependenciesService();
+    try {
+      await expectFileSelectionErrors(service, "inspect_elf_dependencies", {
+        root,
+        alias,
+        path,
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it.each([".gnu.version_r", ".gnu.version_d"])(
+    "keeps the inventory when %s declares a range past the file end",
+    async (oversizedSection) => {
+      const root = await createTestTempDirectory("rea-elf-dependencies-range-");
+      const path = join(root, "program");
+      await writeFile(path, elfDependencyFixture({ oversizedSection }));
+      const service = createElfDependenciesService();
+      try {
+        const result = await service.inspect({ path });
+        if (!result.ok) throw new Error(result.error.message);
+        expect(result.value.normalized_result).toMatchObject({
+          artifact: { path },
+          coverage: { status: "partial" },
+          needed: expect.arrayContaining([
+            expect.objectContaining({ name: "libc.so.6" }),
+          ]),
+        });
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
+  it("returns typed resource and cancellation failures", async () => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-budget-");
+    const path = join(root, "program");
+    await writeFile(path, elfDependencyFixture());
+    const service = createElfDependenciesService();
+    try {
+      const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
+      if (tooSmall.ok) throw new Error("Expected resource budget failure");
+      expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      const cancelled = await service.inspect(
+        { path },
+        { signal: AbortSignal.abort() },
+      );
+      if (cancelled.ok) throw new Error("Expected cancellation");
+      expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+    } finally {
+      await service.close();
+    }
+  });
+});

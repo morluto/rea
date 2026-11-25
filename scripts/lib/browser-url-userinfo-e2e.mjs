@@ -37,9 +37,8 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
     );
     await loadFixturePage(connection, `${origin}/app?userinfo-probe`);
     const producerUrls = [];
-    connection.onEvent((event) => {
-      if (event.method === "Debugger.scriptParsed")
-        producerUrls.push(event.params.url);
+    connection.onRegisteredEvent("Debugger.scriptParsed", (registered) => {
+      producerUrls.push(registered.payload.facts.url);
     });
     await connection.send("Debugger.enable");
     const browserUrl = await connection.send("Runtime.evaluate", {
@@ -107,6 +106,7 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
         target_id: target.id,
         include_script_sources: true,
         observation_ms: 0,
+        detail: "complete",
       },
     });
     assert.notEqual(mcp.isError, true, JSON.stringify(mcp));
@@ -142,12 +142,14 @@ async function loadFixturePage(connection, url) {
   const load = new Promise((resolve) => {
     resolveLoaded = resolve;
   });
-  const unsubscribe = connection.onEvent((event) => {
-    if (event.method !== "Page.lifecycleEvent" || event.params.name !== "load")
-      return;
-    loaded.add(event.params.loaderId);
-    if (event.params.loaderId === loaderId) resolveLoaded();
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Page.lifecycleEvent",
+    (registered) => {
+      if (registered.payload.name !== "load") return;
+      loaded.add(registered.payload.loaderId);
+      if (registered.payload.loaderId === loaderId) resolveLoaded();
+    },
+  );
   try {
     await connection.send("Page.enable");
     await connection.send("Page.setLifecycleEventsEnabled", { enabled: true });
@@ -166,7 +168,7 @@ async function loadFixturePage(connection, url) {
         }),
       ]);
     assert.equal(
-      (await connection.send("Page.getFrameTree")).frameTree.frame.url,
+      (await connection.send("Page.getFrameTree")).root.url.url,
       url,
     );
   } finally {

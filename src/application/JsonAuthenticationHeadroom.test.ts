@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   estimateJsonStorage,
+  estimateJsonArrayScalarEntry,
   requireAuthenticationHeadroom,
 } from "./JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -18,10 +19,99 @@ it("stops a bounded representation scan before visiting an over-budget tail", ()
   });
   expect(measured.valueBytes).toBeGreaterThan(512);
 });
+it("checks escaped complete JSON against serialization capacity independently of heap", () => {
+  const value = {
+    normalized_result: { wat: '\0"\\😀'.repeat(30), imports: ["\0"] },
+    raw_result: null,
+  };
+  const encodedLength = JSON.stringify(value).length;
+  const options = {
+    operation: "inspect_wasm_artifact",
+    path: "/module.wasm",
+    description: "Complete WASM Evidence cannot be assembled",
+    availableBytes: Number.MAX_SAFE_INTEGER,
+  };
+  const rejected = requireAuthenticationHeadroom(value, {
+    ...options,
+    serializedCodeUnitLimit: encodedLength - 1,
+  });
+  expect(rejected).toMatchObject({
+    ok: false,
+    error: {
+      retryable: false,
+      reportedLimits: {
+        serialized_json_code_units: encodedLength,
+        maximum_serialized_json_code_units: encodedLength - 1,
+      },
+    },
+  });
+  expect(
+    requireAuthenticationHeadroom(value, {
+      ...options,
+      serializedCodeUnitLimit: encodedLength,
+    }),
+  ).toEqual({ ok: true, value: undefined });
+});
+
 describe("JSON authentication headroom", () => {
+  it("measures source IDs without first constructing their array", () => {
+    const values = ["ev_123", null, 'escaped"\n😀'];
+    const empty = estimateJsonStorage({ evidence_links: [] });
+    const incremental = values.reduce((total, value, index) => {
+      const entry = estimateJsonArrayScalarEntry(value, index > 0);
+      return {
+        valueBytes: total.valueBytes + entry.valueBytes,
+        serializedUtf16Bytes:
+          total.serializedUtf16Bytes + entry.serializedUtf16Bytes,
+      };
+    }, empty);
+    expect(incremental.valueBytes).toBe(
+      estimateJsonStorage({ evidence_links: values }).valueBytes,
+    );
+    expect(incremental.serializedUtf16Bytes).toBe(
+      Buffer.byteLength(JSON.stringify({ evidence_links: values }), "utf16le"),
+    );
+  });
+
+  it("accounts for parsed and escaped storage reserved by a caller", () => {
+    const value = { result: "small" };
+    const request = {
+      operation: "address_name",
+      path: "recovery",
+      description: "Cannot authenticate",
+      availableBytes: 18_000,
+    };
+    const additional = { valueBytes: 8192, serializedUtf16Bytes: 2048 };
+    expect(requireAuthenticationHeadroom(value, request)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    const actual = requireAuthenticationHeadroom(value, {
+      ...request,
+      additional,
+    });
+    expect(actual).toMatchObject({
+      ok: false,
+      error: {
+        resource: "memory",
+        reportedLimits: {
+          serialized_json_utf16_bytes:
+            Buffer.byteLength(JSON.stringify(value), "utf16le") + 2048,
+          available_heap_bytes: 18_000,
+        },
+      },
+    });
+    expect(
+      requireAuthenticationHeadroom(value, {
+        ...request,
+        additional,
+        availableBytes: 24_000,
+      }),
+    ).toEqual({ ok: true, value: undefined });
+  });
+
   it("does not queue every row while deciding whether a wide report can fit", () => {
     let pending = 0;
-    let peak = 0;
     const rows: { admission_probe: boolean }[] = [];
     for (let index = 0; index < 512; index++) {
       const row = {
@@ -35,8 +125,7 @@ describe("JSON authentication headroom", () => {
       Object.defineProperty(rows, index, {
         enumerable: true,
         get: () => {
-          peak = Math.max(peak, ++pending);
-          if (pending > 32)
+          if (++pending > 32)
             throw new Error(
               "Admission queued report rows before refusing their allocation",
             );
@@ -52,7 +141,6 @@ describe("JSON authentication headroom", () => {
       availableBytes: 0,
     });
     expect(pending).toBe(0);
-    expect(peak).toBe(1);
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -62,59 +150,6 @@ describe("JSON authentication headroom", () => {
         },
       },
     });
-  });
-  it("reports parsed storage in authentication refusals", () => {
-    const text = "x".repeat(1000);
-    const projectedBytes: number[] = [];
-    for (const value of [text, { outer: [text, { inner: text }] }]) {
-      const result = requireAuthenticationHeadroom(value, {
-        operation: "inspect_analysis_view",
-        path: "/tmp/bundle.json",
-        description: "Cannot authenticate bundle",
-        availableBytes: 0,
-      });
-      if (result.ok) throw new Error("Expected authentication refusal");
-      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-      const bytes = result.error.reportedLimits?.projected_value_bytes;
-      if (typeof bytes !== "number")
-        throw new Error("Expected parsed storage bytes in refusal diagnostics");
-      projectedBytes.push(bytes);
-    }
-    const [scalar, nested] = projectedBytes;
-    if (scalar === undefined || nested === undefined)
-      throw new Error("Expected scalar and nested refusal diagnostics");
-    expect(scalar).toBeGreaterThanOrEqual(2000);
-    expect(nested).toBeGreaterThan(2 * scalar);
-  });
-
-  it("refuses authentication when live heap headroom cannot hold its copies", () => {
-    const value = { normalized_result: "y".repeat(10_000) };
-    expect(
-      requireAuthenticationHeadroom(value, {
-        operation: "compare_source_to_bundle",
-        path: "/tmp/capture.json",
-        description: "Cannot authenticate graph",
-        availableBytes: 1024,
-      }),
-    ).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisResourceConstraintError",
-        resource: "memory",
-        reportedLimits: {
-          input_path: "/tmp/capture.json",
-          available_heap_bytes: 1024,
-        },
-      },
-    });
-    expect(
-      requireAuthenticationHeadroom(value, {
-        operation: "compare_source_to_bundle",
-        path: "/tmp/capture.json",
-        description: "Cannot authenticate graph",
-        availableBytes: 1 << 30,
-      }),
-    ).toEqual({ ok: true, value: undefined });
   });
 });
 

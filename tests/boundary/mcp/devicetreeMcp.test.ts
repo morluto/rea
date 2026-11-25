@@ -5,8 +5,7 @@ import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerDevicetreeTool } from "../../../src/server/registerDevicetreeTool.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
 import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
@@ -18,7 +17,7 @@ import {
   cells,
   devicetreeFixture,
   dtString,
-} from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
@@ -35,8 +34,16 @@ const createDtbServer = (
     record,
     createToolResultDelivery(undefined),
   );
-  registerDevicetreeTool(server, service, silentLogger, record, lookup);
-  registerAnalysisViewTool(server, silentLogger, lookup, record);
+  registerServiceTools(
+    server,
+    { devicetree: service },
+    { logger: silentLogger, recordEvidence: record, evidenceById: lookup },
+  );
+  registerServiceTools(
+    server,
+    { analysisView: {} },
+    { logger: silentLogger, evidenceById: lookup, recordEvidence: record },
+  );
   return server;
 };
 
@@ -55,15 +62,11 @@ mcpTest(
       const root = await createTestTempDirectory("rea-dtb-mcp-");
       const path = join(root, "board.dtb");
       await writeFile(path, devicetreeFixture());
-      const response = await client.callTool({
-        name: "inspect_devicetree",
-        arguments: { path, detail: "summary" },
-      });
+      const response = await client.callTool(
+        { name: "inspect_devicetree", arguments: { path, detail: "summary" } },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
-        JSON.stringify(schemas.ajv.errors),
-      ).toBe(true);
       const result = toolContract("inspect_devicetree").outputSchema.parse(
         response.structuredContent,
       ).normalized_result;
@@ -107,8 +110,6 @@ mcpTest(
       await session.close();
     }
   },
-  // Includes SDK schema conversion, dialect validation and two public calls.
-  60_000,
 );
 mcpTest(
   "pages nodes without repeating a large bootargs summary",
@@ -170,7 +171,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 mcpTest(
   "keeps a malformed canonical phandle unresolved in retained reference pages",
@@ -235,7 +235,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
   const session = createTestBinarySession(() => {

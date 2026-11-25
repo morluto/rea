@@ -6,6 +6,7 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import { isJsonContentType } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { NetworkState } from "./CdpCaptureEventTypes.js";
@@ -13,16 +14,14 @@ import type { NetworkState } from "./CdpCaptureEventTypes.js";
 export const ingestResponseBodyShape = (
   state: CdpCaptureEventsState,
   requestId: string,
-  value: unknown,
+  reply: CdpCommandResult<"Network.getResponseBody"> | "malformed",
 ): void => {
   if (!state.network.has(requestId)) return;
-  const result = recordValue(value);
-  const body = cdpStringValue(result?.body);
-  const base64Encoded = result?.base64Encoded;
-  if (body === undefined || typeof base64Encoded !== "boolean") {
+  if (reply === "malformed") {
     invalidResponseBodyShape(state, requestId);
     return;
   }
+  const { body, base64Encoded } = reply;
   const decoded = base64Encoded ? decodePaddedBase64(body) : body;
   if (decoded === undefined) {
     invalidResponseBodyShape(state, requestId);
@@ -57,6 +56,7 @@ export const requestBodyShape = (
     return { status: "not_approved", request: null, response: null };
   const headers = recordValue(request.headers);
   const json = isJsonContentType(headers);
+  const bodyReported = Object.hasOwn(request, "postData");
   const body = cdpStringValue(request.postData);
   // CDP may omit a long body from postData while reporting hasPostData.
   const parsed =
@@ -67,10 +67,16 @@ export const requestBodyShape = (
         )
       : undefined;
   const shape = parsed?.ok ? parsed.value.shape : null;
-  const expected = json && (body !== undefined || request.hasPostData === true);
+  const expected = json && (bodyReported || request.hasPostData === true);
   if (expected && shape === null) {
     state.missingRequestBodyShapeIds.add(requestId);
-    if (parsed !== undefined && !parsed.ok && parsed.error.kind === "capacity")
+    if (bodyReported && body === undefined)
+      state.completeness.exclude("json_body_shapes", "invalid_protocol_value");
+    else if (
+      parsed !== undefined &&
+      !parsed.ok &&
+      parsed.error.kind === "capacity"
+    )
       state.completeness.exclude(
         "json_body_shapes",
         "resource_budget_exhausted",

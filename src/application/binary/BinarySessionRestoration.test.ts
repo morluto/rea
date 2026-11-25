@@ -1,13 +1,25 @@
 import { expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { elf } from "../../domain/binaryTarget.fixture.js";
+import { createTestBinarySession } from "../../../tests/fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import {
+  analysisSnapshotSchema,
+  snapshotBinding,
+  snapshotTarget,
+} from "../../domain/analysisSnapshot.js";
+import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { AnalysisSnapshotMismatchError } from "../../domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
@@ -15,6 +27,85 @@ import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
+
+it.each([false, true])(
+  "refreshes state published by close on alias switch (incoming fails: %s)",
+  async (failIncoming) => {
+    const directory = await createTestTempDirectory("rea-published-profile-");
+    const first = join(directory, "first.elf"),
+      alias = join(directory, "alias.elf");
+    await writeFile(first, elf(2, 1, 62));
+    await writeFile(alias, elf(2, 1, 62));
+    const identity = {
+      id: "fixture",
+      name: "Fixture analysis provider",
+      version: "1",
+    };
+    let generation = 0,
+      dirty = false;
+    const starts: number[] = [];
+    const failure = new AnalysisOutputError(
+      "health",
+      "Incoming target refused",
+    );
+    const session = createTestBinarySession(
+      (_target, profile) => ({
+        execute: async () => {
+          const selected = profile?.parameters.generation;
+          starts.push(Number(selected));
+          if (selected !== generation)
+            return err(
+              new AnalysisOutputError("health", "Stale published profile"),
+            );
+          return ok(createAnalysisExecution(null, identity));
+        },
+        close: async () => {
+          if (dirty) {
+            generation++;
+            dirty = false;
+          }
+          return ok(null);
+        },
+      }),
+      {
+        resolveAnalysisProfile: async (target) =>
+          failIncoming && generation > 0 && target.path === alias
+            ? err(failure)
+            : ok({
+                profile: createAnalysisProfile(identity, { generation }),
+                refreshAfterRetirement: true,
+              }),
+      },
+    );
+    try {
+      expect((await session.open(first)).ok).toBe(true);
+      expect((await session.execute("list_strings", {})).ok).toBe(true);
+      dirty = true;
+      const switched = await session.open(alias);
+      if (failIncoming) {
+        expect(switched.ok).toBe(false);
+        expect(session.activeTarget()?.path).toBe(first);
+      } else {
+        expect(switched.ok).toBe(true);
+        expect(session.activeTarget()?.path).toBe(alias);
+      }
+      expect(session.analysisProfile()?.parameters.generation).toBe(1);
+      expect(await session.status()).toMatchObject({
+        analysis_provider_binding: {
+          selection_source: "auto-single-candidate",
+        },
+        analysis_provider_candidates: [
+          { selected: true, selection_source: "auto-single-candidate" },
+        ],
+      });
+      expect((await session.execute("list_strings", {})).ok).toBe(true);
+      expect(starts).toEqual([0, 1]);
+    } finally {
+      expect((await session.close()).ok).toBe(true);
+    }
+  },
+);
 
 it("reports the previous selection after a failed switch restores its provider", async () => {
   const session = new BinarySession(
@@ -142,7 +233,7 @@ it.each([
             restorationCloseCalls += 1;
             if (cleanupFails && restorationCloseCalls === 1)
               return err(cleanupFailure);
-            cleanupFailure.resolveCleanup();
+            releaseOwnedCleanup(cleanupFailure);
             return ok(null);
           },
         };
@@ -216,3 +307,239 @@ it.each([
     }
   },
 );
+
+it("opens another target after a failed switch cannot restore the previous one", async () => {
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+  );
+  const identity = {
+    id: "restoration-test",
+    name: "Restoration test",
+    version: "1",
+  };
+  const restorationFailure = new AnalysisOutputError(
+    "health",
+    "Previous target could not restart",
+  );
+  const switchFailure = new AnalysisOutputError(
+    "health",
+    "Selected target could not start",
+  );
+  let created = 0;
+  const route: SessionProviderRoute = {
+    identity,
+    capabilities: new Map(),
+    profile: createAnalysisProfile(identity, { fixture: "original" }),
+    binding: null,
+    selection: undefined,
+    createClient: () => {
+      const restoring = created++ > 0;
+      return {
+        execute: async () =>
+          restoring
+            ? err(restorationFailure)
+            : ok(createAnalysisExecution(null, identity)),
+        close: async () => ok(null),
+      };
+    },
+  };
+  try {
+    const target = await session.resolveTarget(process.execPath);
+    if (!target.ok) throw target.error;
+    expect(
+      (await session.openResolvedTarget({ target: target.value, route })).ok,
+    ).toBe(true);
+    const failed = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "selected" }),
+        createClient: () => ({
+          execute: async () => err(switchFailure),
+          close: async () => ok(null),
+        }),
+      },
+    });
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(session.activeTarget()).toBeUndefined();
+    expect(failed.error.cleanupPrimary ?? failed.error).toBe(switchFailure);
+    const recovered = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "recovered" }),
+        createClient: () => ({
+          execute: async () => ok(createAnalysisExecution(null, identity)),
+          close: async () => ok(null),
+        }),
+      },
+    });
+    expect(
+      recovered.ok ? "opened" : projectAnalysisError(recovered.error).code,
+    ).toBe("opened");
+    expect(session.activeTarget()).toEqual(target.value);
+    expect(session.analysisProfile()?.parameters.fixture).toBe("recovered");
+  } finally {
+    await session.close();
+  }
+});
+
+it("keeps an imported snapshot when the first open fails and its cleanup fails", async () => {
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+  );
+  const identity = {
+    id: "restoration-test",
+    name: "Restoration test",
+    version: "1",
+  };
+  const profile = createAnalysisProfile(identity, { fixture: "imported" });
+  const cleanupFailure = new ProviderCleanupError(
+    identity.id,
+    ["first-client"],
+    { reason: "close failed" },
+  );
+  let closes = 0;
+  const route: SessionProviderRoute = {
+    identity,
+    capabilities: new Map(),
+    profile,
+    binding: null,
+    selection: undefined,
+    createClient: () => ({
+      execute: async () =>
+        err(new AnalysisOutputError("health", "Open failed")),
+      close: async () => {
+        closes += 1;
+        if (closes === 1) return err(cleanupFailure);
+        releaseOwnedCleanup(cleanupFailure);
+        return ok(null);
+      },
+    }),
+  };
+  try {
+    const target = await session.resolveTarget(process.execPath);
+    if (!target.ok) throw target.error;
+    expect(
+      session.importAnalysisSnapshot(
+        analysisSnapshotSchema.parse({
+          target: snapshotTarget(target.value),
+          binding: snapshotBinding(profile),
+          entries: [],
+          workflow_entries: [],
+          evidence_bundle: createEvidenceBundle([]),
+        }),
+      ).ok,
+    ).toBe(true);
+    const failed = await session.openResolvedTarget({
+      target: target.value,
+      route,
+    });
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(session.activeTarget()).toBeUndefined();
+    const other = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "other" }),
+      },
+    });
+    expect(other.ok).toBe(false);
+    if (other.ok) return;
+    expect(other.error).toBeInstanceOf(AnalysisSnapshotMismatchError);
+  } finally {
+    await session.close();
+  }
+});
+
+it("opens another profile after a failed switch whose cleanup later succeeds", async () => {
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+  );
+  const identity = {
+    id: "restoration-test",
+    name: "Restoration test",
+    version: "1",
+  };
+  const switchFailure = new AnalysisOutputError(
+    "health",
+    "Selected target could not start",
+  );
+  const cleanupFailure = new ProviderCleanupError(
+    identity.id,
+    ["incoming-client"],
+    { reason: "close failed" },
+  );
+  let incomingCloses = 0;
+  const route: SessionProviderRoute = {
+    identity,
+    capabilities: new Map(),
+    profile: createAnalysisProfile(identity, { fixture: "original" }),
+    binding: null,
+    selection: undefined,
+    createClient: () => ({
+      execute: async () => ok(createAnalysisExecution(null, identity)),
+      close: async () => ok(null),
+    }),
+  };
+  try {
+    const target = await session.resolveTarget(process.execPath);
+    if (!target.ok) throw target.error;
+    expect(
+      (await session.openResolvedTarget({ target: target.value, route })).ok,
+    ).toBe(true);
+    const failed = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "selected" }),
+        createClient: () => ({
+          execute: async () => err(switchFailure),
+          close: async () => {
+            incomingCloses += 1;
+            if (incomingCloses < 3) return err(cleanupFailure);
+            releaseOwnedCleanup(cleanupFailure);
+            return ok(null);
+          },
+        }),
+      },
+    });
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(session.activeTarget()).toBeUndefined();
+    const blocked = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "recovered" }),
+        createClient: () => ({
+          execute: async () => ok(createAnalysisExecution(null, identity)),
+          close: async () => ok(null),
+        }),
+      },
+    });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) return;
+    expect(projectAnalysisError(blocked.error).code).toBe("cleanup_incomplete");
+    expect(session.activeTarget()).toBeUndefined();
+    const recovered = await session.openResolvedTarget({
+      target: target.value,
+      route: {
+        ...route,
+        profile: createAnalysisProfile(identity, { fixture: "recovered" }),
+        createClient: () => ({
+          execute: async () => ok(createAnalysisExecution(null, identity)),
+          close: async () => ok(null),
+        }),
+      },
+    });
+    expect(
+      recovered.ok ? "opened" : projectAnalysisError(recovered.error).code,
+    ).toBe("opened");
+    expect(session.analysisProfile()?.parameters.fixture).toBe("recovered");
+  } finally {
+    await session.close();
+  }
+});

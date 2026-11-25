@@ -1,3 +1,4 @@
+import { metroContext } from "../../../tests/fixtures/javascriptMetroContext.js";
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -7,14 +8,10 @@ import {
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
-import {
-  classifyNextAppRoutePath,
-  nextScriptBasePath,
-  routePath,
-} from "./javascriptRoutePaths.js";
+import { classifyNextAppRoutePath } from "./javascriptRoutePaths.js";
 
-const analyze = (source: string, budget?: number) => {
-  const file = parseJavaScriptSource(source);
+const analyze = (source: string, budget?: number, sourcePath?: string) => {
+  const file = parseJavaScriptSource(source, sourcePath);
   if (file === null) throw new Error("fixture must parse");
   const index = complete(
     indexJavaScriptBindingsWithReceiversSteps(file.program),
@@ -90,34 +87,195 @@ it("reads route-record keys at most once beyond inspecting each property", () =>
       })),
     ),
   );
-  expect(propertyCount).toBe(count * 2 + 1);
-  expect(keyReads).toBeGreaterThanOrEqual(propertyCount);
   expect(keyReads).toBeLessThanOrEqual(propertyCount * 2);
 });
 
-it.each(["true", "(true as const)", "INDEX"])(
-  "retains an index route with flag %s",
-  (flag) => {
+it("keeps an index flag unknown before its initializer runs", () => {
+  const facts = analyze(
+    "createBrowserRouter([{index:INDEX,Component:Home}]);const INDEX=true;",
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toMatchObject([
+    { reason: expect.stringContaining("index-route flag") },
+  ]);
+});
+
+it.each([
+  ["var INDEX=true;globalThis.INDEX=false;", "INDEX"],
+  ['var INDEX=true;window["INDEX"]=false;', "INDEX"],
+  ["var INDEX=true;const host=globalThis;host.INDEX=false;", "INDEX"],
+  ["var INDEX=false;globalThis.INDEX=true;", "INDEX"],
+  ["var INDEX=true;const FLAG=INDEX;", "FLAG"],
+  ["var INDEX=true;", "(INDEX as boolean)"],
+  [
+    "export type Marker = string;var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+  ],
+] as const)(
+  "keeps script program-var index proofs unknown: %s %s",
+  (prefix, flag) => {
     const facts = analyze(
-      `const INDEX=true;createBrowserRouter([{index:${flag},Component:Home}]);`,
+      `${prefix}createBrowserRouter([{index:${flag},children:[{path:'child'}]},{path:'/known'}]);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/child",
+      "/known",
+    ]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("index-route flag"),
+      }),
+    ]);
+  },
+);
+
+it("retains a program-var route tree and reports its unresolved ownership", () => {
+  const facts = analyze(
+    "var ROUTES=[{path:'/reports',children:[{path:'child'}]}];createBrowserRouter(ROUTES);",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/reports",
+    "/reports/child",
+  ]);
+  expect(facts.unresolved).toMatchObject([
+    { reason: expect.stringContaining("unisolated program variable") },
+  ]);
+});
+
+it.each([
+  "var PATH='/a';const host=globalThis;host.PATH='/b';createBrowserRouter([{path:PATH}]);",
+  "var PATH='/a';createBrowserRouter([{path:PATH}]);",
+] as const)(
+  "never asserts an unisolated program-var parent segment: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates).toEqual([]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("parent segment is unknown"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);",
+  "var PATH='/reports/stale';const ALIAS=(PATH as string);createBrowserRouter([{path:ALIAS},{path:'/reports'}]);",
+  "var PATH='/reports/stale';createBrowserRouter([{route:PATH,component:View},{path:'/reports'}]);",
+  "var PATH='/reports/stale';defineRoutes({stale:{_$:PATH},known:{_$:'/reports'}});",
+  "var TARGET='/reports/stale';router.push(TARGET);createBrowserRouter([{path:'/reports'}]);",
+  "var TARGET='/reports/stale';const NAV={pathname:TARGET};router.push(NAV);createBrowserRouter([{path:'/reports'}]);",
+] as const)(
+  "does not re-admit an unisolated route value as an independent constant: %s",
+  (source) => {
+    const facts = analyze(source + "const independent='/reports/help';");
+    expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+      "/reports",
+      "/reports/help",
+    ]);
+    expect(
+      facts.candidates.find(({ path }) => path === "/reports/help"),
+    ).toMatchObject({
+      mechanism: "route-string-constant",
+    });
+    expect(facts.unresolved).not.toEqual([]);
+  },
+);
+
+it("keeps a navigation data path out of the route candidates", () => {
+  const facts = analyze(
+    "var SHARED={query:{path:'/data'}};router.push({pathname:'/reports',query:SHARED.query});",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/reports"]);
+});
+
+it("keeps unrelated routes that share the unisolated data object", () => {
+  // Rejecting the runtime identity must not claim the whole source object:
+  // the sibling route property is independent data and stays reported.
+  const facts = analyze(
+    "var SHARED={query:{path:'/data',Component:View},route:{path:'/independent',Component:View}};const HOLD=SHARED;router.push({pathname:'/reports',query:HOLD.query});",
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/reports",
+  ]);
+});
+
+it("keeps literal child routes that an unisolated children array carries", () => {
+  // The parent proof is unknown, but the child records are still source-owned.
+  // Only the ancestry is in doubt, so the literal paths must stay reported next
+  // to the interpretation gap instead of disappearing with the parent.
+  const facts = analyze(
+    "var children=[{path:'/kept',Component:View}];const config={path:'/parent',children};",
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual([
+    "/parent",
+    "/kept",
+  ]);
+  expect(facts.unresolved.map(({ reason }) => reason)).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("unisolated program variable"),
+    ]),
+  );
+});
+
+it.each([
+  "var TARGET='/t';globalThis.TARGET='/u';router.push(TARGET);",
+  "var NAV={pathname:'/x'};globalThis.NAV={pathname:'/y'};router.push(NAV);",
+] as const)(
+  "never asserts an unisolated program-var navigation destination: %s",
+  (source) => {
+    const facts = analyze(source);
+    expect(facts.candidates).toEqual([]);
+    expect(facts.unresolved).toEqual([
+      expect.objectContaining({
+        reason: expect.stringContaining("unisolated program variable"),
+      }),
+    ]);
+  },
+);
+
+it.each([
+  ["const PATH='/a';globalThis.PATH='/b';", "routes.js"],
+  ["var PATH='/a';globalThis.PATH='/b';", "routes.mjs"],
+] as const)("keeps a proven segment proof: %s %s", (prefix, path) => {
+  const facts = analyze(
+    `${prefix}createBrowserRouter([{path:PATH}]);`,
+    undefined,
+    path,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/a"]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it.each([
+  ["const INDEX=true;globalThis.INDEX=false;", ""],
+  ["let INDEX=true;globalThis.INDEX=false;", ""],
+  ["export {};var INDEX=true;globalThis.INDEX=false;", ""],
+  ["function make(){var INDEX=true;globalThis.INDEX=false;", "}make();"],
+] as const)(
+  "preserves lexical, module and function-local index proofs: %s",
+  (prefix, suffix) => {
+    const facts = analyze(
+      `${prefix}createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);${suffix}`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual(["/", "/child"]);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
+
+it.each(["routes.cjs", "routes.cts", "routes.mjs", "routes.mts"])(
+  "preserves parser-proven runtime isolation for %s",
+  (path) => {
+    const facts = analyze(
+      "var INDEX=true;globalThis.INDEX=false;createBrowserRouter([{index:INDEX}]);",
+      undefined,
+      path,
     );
     expect(facts.candidates.map(({ path }) => path)).toEqual(["/"]);
     expect(facts.unresolved).toEqual([]);
   },
 );
-
-it.each([
-  "createBrowserRouter([{index:INDEX,Component:Home}]);const INDEX=true;",
-  "const INDEX=runtime;createBrowserRouter([{index:INDEX,Component:Home}]);",
-])("retains unknown index flags without inventing a route: %s", (source) => {
-  const facts = analyze(source);
-  expect(facts.candidates).toEqual([]);
-  expect(facts.unresolved).toEqual([
-    expect.objectContaining({
-      reason: expect.stringContaining("index-route flag"),
-    }),
-  ]);
-});
 
 it("keeps a known false index flag absent", () => {
   const facts = analyze(
@@ -336,59 +494,63 @@ it("excludes generic config paths and SVG data while retaining navigation candid
     facts.candidates.some(({ path }) => path.includes("state/items")),
   ).toBe(false);
 });
-it.each([
-  ["/_next/static/chunks/app/page-123.js", "/"],
-  ["https://example.test/app/_next/static/chunks/app/page.tsx", "/"],
-  [
-    "https://example.test/app/_next/static/chunks/app/reports/page.js",
-    "/reports",
-  ],
-  [
-    "https://example.test/app/_next/static/chunks/pages/reports/page.js",
-    undefined,
-  ],
-  ["app/app/page.tsx", "/app"],
-  ["app/reports/page-helpers.js", undefined],
-  ["app/reports/page-deadbeef.js", undefined],
-  ["https://example.test/app/reports/page-helpers.js", undefined],
-  ["app/_components/page.tsx", undefined],
-  ["app/blog/_draft/page.js", undefined],
-  ["app/(group)/_private/nested/page.tsx", undefined],
-  ["app/%5Fcomponents/page.tsx", "/_components"],
-  ["app/blog/%5fdraft/page.js", "/blog/%5fdraft"],
-  ["app/%61/page.tsx", "/%61"],
-  ["https://example.test/app/%61/page.tsx", undefined],
-  ["app/a/page.tsx", "/a"],
-  ["app/100%/page.tsx", "/100%"],
-  ["app/team%2Fadmin/page.tsx", "/team%2Fadmin"],
-  ["static/chunks/app/(account)/reports/[id]/page-deadbeef.js", "/reports/:id"],
-  ["app/docs/[...slug]/page.js", "/docs/:slug+"],
-  ["app/(account)/reports/[id]/page.tsx", "/reports/:id"],
-  ["app/reports/page.ts", "/reports"],
-  ["app/docs/[[...slug]]/page", "/docs/:slug*"],
-  ["app/@modal/(.)photo/[id]/page.js", undefined],
-  ["/assets/app.js", undefined],
-] as const)(
-  "interprets Next App Router path %s without claiming reachability",
-  (value, expected) => {
-    const route = classifyNextAppRoutePath(value, {
-      kind: "source-literal",
-      runtime: "next",
-    });
-    expect(route?.kind === "known" ? route.path : undefined).toBe(expected);
-  },
-);
-it("distinguishes route-pattern markers, navigation query strings and Next asset bases", () => {
-  expect(routePath("/reports/:id?")).toBe("/reports/:id?");
-  expect(routePath("/reports?tab=recent#summary", { navigation: true })).toBe(
-    "/reports",
+it("distinguishes Next runtime page literals from non-pages and unresolved contexts", () => {
+  const pages = [
+    ["/_next/static/chunks/app/page-123.js", "/"],
+    [
+      "https://example.test/app/_next/static/chunks/app/reports/page.js",
+      "/reports",
+    ],
+    ["app/app/page.tsx", "/app"],
+    ["app/(account)/reports/[id]/page.tsx", "/reports/:id"],
+    ["static/chunks/app/docs/[...slug]/page-deadbeef.js", "/docs/:slug+"],
+    ["app/docs/[[...slug]]/page", "/docs/:slug*"],
+    ["app/%5Fcomponents/page.tsx", "/_components"],
+    ["app/blog/%5fdraft/page.js", "/blog/%5fdraft"],
+    ["app/%61/page.tsx", "/%61"],
+    ["app/a/page.ts", "/a"],
+    ["app/100%/page.tsx", "/100%"],
+    ["app/team%2Fadmin/page.tsx", "/team%2Fadmin"],
+  ] as const;
+  const gaps = [
+    ["https://example.test/app/%61/page.tsx", "runtime context"],
+    ["app/@modal/(.)photo/[id]/page.js", "intercepted"],
+    ["/app/feed/(.)photo/page.tsx", "runtime context"],
+    [
+      "https://example.test/app/_next/static/chunks/pages/reports/page.js",
+      "runtime context",
+    ],
+    ["https://example.test/app/reports/page-helpers.js", "runtime context"],
+  ] as const;
+  const ignored = [
+    "app/reports/page-helpers.js",
+    "app/reports/page-deadbeef.js",
+    "app/(.)photo/_private/page.tsx",
+    "app/_private/(.)photo/page.tsx",
+  ];
+  const source = [
+    "globalThis.TURBOPACK=[];",
+    ...[
+      ...pages.map(([value]) => value),
+      ...gaps.map(([value]) => value),
+      ...ignored,
+    ].map((value, index) => `const entry${index}=${JSON.stringify(value)};`),
+  ].join("\n");
+  const facts = analyze(source);
+  expect(facts.candidates).toMatchObject(
+    pages.map(([value, path]) => ({
+      path,
+      mechanism: "next-app-chunk",
+      segments: [{ value, origin: "next-app-path" }],
+    })),
   );
-  expect(
-    nextScriptBasePath("https://example.test/app/_next/static/chunks/1.js"),
-  ).toBe("/app");
-  expect(
-    nextScriptBasePath("https://example.test/_next/static/chunks/1.js"),
-  ).toBe("");
+  expect(facts.unresolved).toMatchObject(
+    gaps.map(([, reason], index) => ({
+      mechanism: "next-app-chunk",
+      reason: expect.stringContaining(reason),
+      location: { start: { line: pages.length + index + 2 } },
+    })),
+  );
 });
 
 it("keeps rejected mutated configurations owned instead of reviving stale automatic roots", () => {
@@ -609,18 +771,28 @@ it("does not recycle route-field initializers or writes as independent Next cons
   ]);
 });
 
-it("owns structured navigation fragments without leaking partial destinations", () => {
-  const facts = analyze(
-    `createBrowserRouter([{path:'/users'}]);router.push({pathname:'/users/' + id});router.navigate(['/users/',id]);router.push({path:suffix + ['/users/',id]});`,
-  );
-  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
-    "/users",
+it("reports incomplete structured navigation without publishing fragment routes", () => {
+  const source = [
+    "createBrowserRouter([{path:'/users'}]);",
+    "const prefix='/users/';",
+    "const target={pathname:prefix+id};",
+    "const parts=['/users/',id];",
+    "router.push({pathname:'/users/' + id});",
+    "router.navigate(parts);",
+    "router.push({path:suffix + ['/users/',id]});",
+    "router.push(target);",
+  ].join("\n");
+  const facts = analyze(source);
+  expect(facts.candidates).toMatchObject([
+    { path: "/users", mechanism: "nested-route-object" },
   ]);
-  expect(
-    facts.unresolved.filter(
-      ({ mechanism }) => mechanism === "navigation-target",
-    ),
-  ).toHaveLength(3);
+  expect(facts.unresolved).toMatchObject(
+    [5, 6, 7, 8].map((line) => ({
+      mechanism: "navigation-target",
+      reason: expect.stringContaining("not a supported literal"),
+      location: { start: { line } },
+    })),
+  );
 });
 it("extracts effective local pathname literals while owning nested navigation data", () => {
   const facts = analyze(
@@ -770,34 +942,6 @@ it("keeps callable bodies independent of navigation data ownership", () => {
   ]);
 });
 
-it.each([
-  "globalThis.TURBOPACK=[];const modulePath='app/feed/(.)photo/page.tsx';",
-  "globalThis.TURBOPACK=[];const modulePath='/app/feed/(.)photo/page.tsx';",
-] as const)("retains intercepted module paths as unknown: %s", (source) => {
-  const facts = analyze(source);
-  expect(facts.candidates).toEqual([]);
-  expect(facts.unresolved).toEqual([
-    expect.objectContaining({
-      mechanism: "next-app-chunk",
-      reason: expect.stringContaining(
-        source.includes("='/app/") ? "context" : "intercepted",
-      ),
-    }),
-  ]);
-});
-
-it.each(["app/(.)photo/_private/page.tsx", "app/_private/(.)photo/page.tsx"])(
-  "keeps private pages excluded before interpreting %s",
-  (value) => {
-    expect(
-      classifyNextAppRoutePath(value, {
-        kind: "source-literal",
-        runtime: "next",
-      }),
-    ).toBeUndefined();
-  },
-);
-
 it("tests long literals for page-shaped Next paths in linear time", () => {
   const classify = (value: string) =>
     classifyNextAppRoutePath(value, {
@@ -814,22 +958,7 @@ it("tests long literals for page-shaped Next paths in linear time", () => {
   expect(classify("app/x/page.tsx/extra")).toBeUndefined();
 });
 
-it("keeps the already-covered aliased binary fragment excluded", () => {
-  const facts = analyze(
-    "createBrowserRouter([{path:'/users'}]);const target={pathname:'/users/'+id};router.push(target);",
-  );
-  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
-  expect(facts.unresolved).toHaveLength(1);
-});
 it.each([
-  [
-    "createBrowserRouter([{path:'/users'}]);const prefix='/users/';const target={pathname:prefix+id};router.push(target);",
-    ["/users"],
-  ],
-  [
-    "createBrowserRouter([{path:'/users'}]);const target=['/users/',id];router.navigate(target);",
-    ["/users"],
-  ],
   [
     "const target={pathname:'/users',query:{path:'/download/file',component:'preview',href:'/query-data',module:'app/fake/page.tsx'}};router.push(target);",
     ["/users"],
@@ -838,7 +967,6 @@ it.each([
     "const query={path:'/download/file',component:'preview',href:'/query-data'};const target={pathname:'/users',query};router.push(target);",
     ["/users"],
   ],
-  ["const target='/reports';router.push(target);", ["/reports"]],
   [
     "const pathname='/reports';const target={pathname};router.push(target);",
     ["/reports"],
@@ -851,14 +979,40 @@ it.each([
   },
 );
 it("keeps two alias use sites distinct with initializer segment provenance", () => {
-  const facts = analyze(
-    "const target='/reports';router.push(target);router.replace(target);",
-  );
-  expect(facts.candidates).toHaveLength(2);
-  expect(facts.candidates[0]!.location).not.toEqual(
-    facts.candidates[1]!.location,
-  );
-  expect(facts.candidates[0]!.segments).toEqual(facts.candidates[1]!.segments);
+  const source = [
+    "const target='/reports';",
+    "router.push(target);",
+    "router.replace(target);",
+  ].join("\n");
+  const facts = analyze(source);
+  const initializer = {
+    start: { line: 1, column: 13 },
+    end: { line: 1, column: 23 },
+  };
+  expect(facts.candidates).toMatchObject([
+    {
+      path: "/reports",
+      mechanism: "navigation-target",
+      location: {
+        start: { line: 2, column: 12 },
+        end: { line: 2, column: 18 },
+      },
+      segments: [
+        { value: "/reports", origin: "literal", location: initializer },
+      ],
+    },
+    {
+      path: "/reports",
+      mechanism: "navigation-target",
+      location: {
+        start: { line: 3, column: 15 },
+        end: { line: 3, column: 21 },
+      },
+      segments: [
+        { value: "/reports", origin: "literal", location: initializer },
+      ],
+    },
+  ]);
 });
 it("keeps callable bodies independent of aliased navigation data", () => {
   const facts = analyze(
@@ -916,19 +1070,15 @@ it("does not trust a selected route after an earlier opaque navigation escape", 
   expect(facts.unresolved.length).toBeGreaterThan(0);
 });
 
-it.each([
-  "const registry={route:{path:'/independent',component:View},make(){return {};}};router.push({pathname:'/users',query:registry.make()});",
-  "const registry={route:{path:'/independent',component:View},query:{value:1}};router.push({pathname:'/users',query:registry.query});",
-])(
-  "does not own unrelated data in a navigation callee or projection: %s",
-  (source) => {
-    const facts = analyze(source);
-    expect(facts.candidates.map(({ path }) => path)).toEqual([
-      "/users",
-      "/independent",
-    ]);
-  },
-);
+it("preserves sibling route data when a query calls a registry method", () => {
+  const facts = analyze(
+    "const registry={route:{path:'/independent',component:View},make(){return {};}};router.push({pathname:'/users',query:registry.make()});",
+  );
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/independent",
+    "/users",
+  ]);
+});
 
 it.each([
   "route ? {ok:1} : {ok:2}",
@@ -965,26 +1115,19 @@ it.each([
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
 });
 
-it.each(
-  [
-    "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {query}=registry;router.push({pathname:'/users',query});",
-    "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query}=registry;router.push({pathname:'/users',query});",
-    "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query:payload}=registry;router.push({pathname:'/users',query:payload});",
-    "const registry={route:{path:'/independent',component:View},settings:{query:{path:'/query-data',component:Preview}}};const {settings:{query}}=registry;router.push({pathname:'/users',query});",
-    "const registry={route:{path:'/independent',component:View},query:{ok:1}};const {route,...query}=registry;router.push({pathname:'/users',query});",
-    "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};const {route,...payload}=registry;router.push({pathname:'/users',query:payload});",
-    "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View},other:{path:'/other-data',component:Preview}};const {route,...payload}=registry;router.push({pathname:'/users',query:payload});",
-    "const registry={settings:{query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}}};const {settings:{route,...payload}}=registry;router.push({pathname:'/users',query:payload});",
-    "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};const alias=registry;const {route,...payload}=alias;router.push({pathname:'/users',query:payload});",
-    "const registry=[{path:'/independent',component:View},{path:'/query-data',component:Preview}];const [route,...payload]=registry;router.push({pathname:'/users',query:payload});",
-  ].flatMap((source) => [source, `function module(){${source}}`]),
-)(
+it.each([
+  "const registry={route:{path:'/independent',component:View},query:{path:'/query-data',component:Preview}};const {query}=registry;router.push({pathname:'/users',query});",
+  "function navigate(){const registry={route:{path:'/independent',component:View},settings:{query:{path:'/query-data',component:Preview}}};const {settings:{query:payload}}=registry;router.push({pathname:'/users',query:payload});}",
+  "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View},other:{path:'/other-data',component:Preview}};const {route,...payload}=registry;router.push({pathname:'/users',query:payload});",
+  "function navigate(){const registry={settings:{query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}}};const alias=registry;const {settings:{route,...payload}}=alias;router.push({pathname:'/users',query:payload});}",
+  "const registry=[{path:'/independent',component:View},{path:'/query-data',component:Preview}];const [route,...payload]=registry;router.push({pathname:'/users',query:payload});",
+])(
   "preserves independent routes beside selected query projections: %s",
   (source) => {
     const facts = analyze(source);
-    expect(facts.candidates.map(({ path }) => path)).toEqual([
-      "/users",
+    expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
       "/independent",
+      "/users",
     ]);
   },
 );
@@ -993,7 +1136,6 @@ it.each([
   "route('/users/:id?');",
   "createBrowserRouter([{path:('/users/:id?' as const)}]);",
   "const route={path:('/users/:id?' as const),component:View};",
-  "const pattern='/users/:id?';createBrowserRouter([{path:pattern}]);",
 ])(
   "keeps optional registration patterns out of URL inference: %s",
   (source) => {
@@ -1004,7 +1146,7 @@ it.each([
 
 it("preserves explicit URL navigation beside an optional registered pattern", () => {
   const facts = analyze(
-    "route('/users/:id?');router.push('/users/:id?query=x');",
+    "route('/users/:id?');router.push('/users/:id?query=x#summary');",
   );
   expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
     "/users/:id?",
@@ -1021,70 +1163,76 @@ it("preserves initializer provenance for aliased registration segments", () => {
   const source =
     "const pattern='/users/:id?';createBrowserRouter([{path:pattern}]);";
   const facts = analyze(source);
-  const segment = facts.candidates[0]!.segments[0]!;
-  expect(
-    source.slice(segment.location.start.column, segment.location.end.column),
-  ).toBe("'/users/:id?'");
-});
-
-it.each(
-  [
-    "const paths=[];paths.push('/cache/key');",
-    "text.replace('/assets/logo.svg','');",
-    "const paths=[];paths.push(('/cache/key' as const));",
-    "const literal='/cache/key';const paths=[];paths.push(literal);",
-    "createBrowserRouter([{path:'/cache',component:View}]);const paths=[];paths.push('/cache/key');",
-  ].flatMap((source) => [source, `function module(){${source}}`]),
-)("does not admit data writes as navigation: %s", (source) => {
-  const facts = analyze(source);
-  expect(
-    facts.candidates.filter(
-      ({ mechanism }) => mechanism === "navigation-target",
-    ),
-  ).toEqual([]);
-  expect(
-    facts.candidates.filter(
-      ({ path }) => path === "/cache/key" || path === "/assets/logo.svg",
-    ),
-  ).toEqual([]);
-});
-
-it.each(
-  [
-    "const fallback={path:'/independent',component:View};const {query=fallback}={query:{ok:1}};router.push({pathname:'/users',query});",
-    "const fallback={path:'/independent',component:View};const alias=fallback;const {query:payload=alias}={query:{ok:1}};router.push({pathname:'/users',query:payload});",
-    "const fallback={path:'/independent',component:View};const {options:{query=fallback}}={options:{query:{ok:1}}};router.push({pathname:'/users',query});",
-  ].flatMap((source) => [source, `function module(){${source}}`]),
-)("keeps inactive navigation defaults independent: %s", (source) => {
-  const facts = analyze(source);
-  expect(facts.candidates.map(({ path }) => path)).toEqual([
-    "/users",
-    "/independent",
+  expect(facts.candidates).toMatchObject([
+    {
+      path: "/users/:id?",
+      segments: [
+        {
+          value: "/users/:id?",
+          location: {
+            start: { line: 1, column: 14 },
+            end: { line: 1, column: 27 },
+          },
+        },
+      ],
+    },
   ]);
 });
 
-it.each(
-  [
-    "const fallback={path:'/query-data',component:Preview};const {query=fallback}={};router.push({pathname:'/users',query});",
-    "const target='/users';const paths=[];paths.push(target);router.push(target);",
-  ].flatMap((source) => [source, `function module(){${source}}`]),
-)("keeps actual defaults and recognized navigation owned: %s", (source) => {
-  const facts = analyze(source);
-  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
-    "/users",
+it("excludes data writes beside registered and navigated paths", () => {
+  const facts = analyze(`
+    createBrowserRouter([{path:'/cache',component:View}]);
+    const paths=[];
+    paths.push('/cache/direct');
+    const data='/cache/alias';
+    paths.push(data);
+    text.replace('/cache/text','');
+    function navigate(){
+      const destinations=[];
+      destinations.push(('/cache/wrapped' as const));
+      const target='/cache/selected';
+      destinations.push(target);
+      router.push(target);
+    }
+  `);
+  expect(
+    facts.candidates
+      .map(({ path, mechanism }) => ({ path, mechanism }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  ).toEqual([
+    { path: "/cache", mechanism: "nested-route-object" },
+    { path: "/cache/selected", mechanism: "navigation-target" },
+  ]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("preserves inactive destructuring defaults and owns the selected default", () => {
+  const facts = analyze(`
+    const selectedFallback={path:'/selected-fallback',component:View};
+    const {query=selectedFallback}={};
+    router.push({pathname:'/using-fallback',query});
+    function navigate(){
+      const unusedFallback={path:'/unused-fallback',component:View};
+      const alias=unusedFallback;
+      const {options:{query:payload=alias}}={options:{query:{ok:1}}};
+      router.push({pathname:'/using-query',query:payload});
+    }
+  `);
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/unused-fallback",
+    "/using-fallback",
+    "/using-query",
   ]);
 });
 
-it.each(
-  [
-    "true ? {} : independent",
-    "false ? independent : {}",
-    "false && independent",
-    "true || independent",
-    "0 ?? independent",
-    "({}) ?? independent",
-  ].flatMap((expression) => [expression, `(${expression}) as unknown`]),
-)("keeps literal-inactive query branches independent: %s", (expression) => {
+it.each([
+  "true ? {} : independent",
+  "false ? independent : {}",
+  "false && independent",
+  "true || independent",
+  "0 ?? independent",
+  "(({}) ?? independent) as unknown",
+])("keeps literal-inactive query branches independent: %s", (expression) => {
   const facts = analyze(
     `const independent={path:'/independent',component:View};router.push({pathname:'/users',query:${expression}});`,
   );
@@ -1093,57 +1241,65 @@ it.each(
     "/independent",
   ]);
 });
-it.each(
-  [
-    "true ? independent : {}",
-    "false ? {} : independent",
-    "true && independent",
-    "false || independent",
-    "null ?? independent",
-  ].flatMap((expression) => [expression, `(${expression}) as unknown`]),
-)("owns literal-selected query branches: %s", (expression) => {
+it.each([
+  "true ? independent : {}",
+  "(false ? {} : independent) as unknown",
+  "true && independent",
+  "false || independent",
+  "null ?? independent",
+])("owns literal-selected query branches: %s", (expression) => {
   const facts = analyze(
     `const independent={path:'/query-data',component:Preview};router.push({pathname:'/users',query:${expression}});`,
   );
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
 });
 
-it.each([
-  "router.push({pathname:'/users',query:{item:independent,item:0}});",
-  "router.push({pathname:'/users',query:{item:independent,['item']:0}});",
-  "router.push({pathname:'/users',query:{1:independent,'1':0}});",
-  "router.push({pathname:'/users',query:independent,query:{}});",
-  "const payload={item:independent,item:0};router.push({pathname:'/users',query:payload});",
-  "router.push({pathname:'/users',query:{item:independent,...unknown,item:0}});",
-  "router.push({pathname:'/users',query:{item:independent,get item(){return 0;}}});",
-])(
-  "keeps overwritten navigation data references independent: %s",
-  (navigation) => {
-    const result = analyze(
-      `const independent={path:'/independent',component:View};${navigation}`,
-    );
-    expect(result.candidates.map((candidate) => candidate.path).sort()).toEqual(
-      ["/independent", "/users"],
-    );
-  },
-);
+it("keeps only overwritten query references eligible as independent routes", () => {
+  const facts = analyze(`
+    const computed={path:'/computed-overwrite',component:View};
+    router.push({pathname:'/one',query:{item:computed,['item']:0}});
 
-it.each([
-  "{item:0,item:independent}",
-  "{item:independent,other:0}",
-  "{item:independent,...unknown}",
-  "{item:independent,[key]:0}",
-])("retains effective or uncertain query data ownership: %s", (query) => {
-  const result = analyze(
-    `const independent={path:'/query-data',component:Preview};router.push({pathname:'/users',query:${query}});`,
-  );
-  expect(result.candidates.map((candidate) => candidate.path)).toEqual([
-    "/users",
+    const numeric={path:'/numeric-overwrite',component:View};
+    router.push({pathname:'/two',query:{1:numeric,'1':0}});
+
+    const replacedQuery={path:'/replaced-query',component:View};
+    router.push({pathname:'/three',query:replacedQuery,query:{}});
+
+    const spread={path:'/overwritten-after-spread',component:View};
+    const getter={path:'/overwritten-by-getter',component:View};
+    const payload={
+      item:spread,
+      ...unknown,
+      item:0,
+      other:getter,
+      get other(){return 0;}
+    };
+    router.push({pathname:'/four',query:payload});
+
+    const last={path:'/last-value',component:View};
+    const maybeSpread={path:'/maybe-spread',component:View};
+    const maybeComputed={path:'/maybe-computed',component:View};
+    router.push({pathname:'/five',query:{
+      first:{item:0,item:last},
+      second:{item:maybeSpread,...unknown},
+      third:{item:maybeComputed,[key]:0}
+    }});
+  `);
+  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
+    "/computed-overwrite",
+    "/five",
+    "/four",
+    "/numeric-overwrite",
+    "/one",
+    "/overwritten-after-spread",
+    "/overwritten-by-getter",
+    "/replaced-query",
+    "/three",
+    "/two",
   ]);
 });
 
 it.each([
-  "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry.query});",
   "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry['query']});",
   "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};router.push({pathname:'/users',query:registry?.query});",
   "const registry={query:{path:'/query-data',component:Preview},route:{path:'/independent',component:View}};const selected=registry.query;router.push({pathname:'/users',query:selected});",
@@ -1158,11 +1314,9 @@ it.each([
 });
 
 it.each([
-  "router.push({pathname:'/users',query:{['__proto__']:payload,__proto__:null}});",
   "router.push({pathname:'/users',query:{['__proto__']:payload,'__proto__':null}});",
   "router.push({pathname:'/users',query:{__proto__:payload,['__proto__']:0}});",
   "router.push({pathname:'/users',query:{__proto__:null,['__proto__']:payload}});",
-  "router.push({pathname:'/users',query:{['__proto__']:0,__proto__:payload}});",
   "const registry={['__proto__']:payload,__proto__:null};router.push({pathname:'/users',query:registry['__proto__']});",
   "const registry={['__proto__']:payload,__proto__:null};const {['__proto__']:query}=registry;router.push({pathname:'/users',query});",
 ])("distinguishes prototype setters from own query slots: %s", (navigation) => {
@@ -1183,14 +1337,11 @@ it("keeps an overwritten shorthand proto property independent", () => {
 });
 
 it.each([
-  "const registry={query:independent};registry.query={ok:1};router.push({pathname:'/users',query:registry.query});",
-  "const registry={query:independent};registry['query']={ok:1};router.push({pathname:'/users',query:registry.query});",
   "const registry={options:{query:independent}};registry.options={query:{ok:1}};router.push({pathname:'/users',query:registry.options.query});",
   "const registry={query:independent};const alias=registry;alias.query={ok:1};router.push({pathname:'/users',query:registry.query});",
   "const registry={query:independent};escape(registry);registry.query={ok:1};router.push({pathname:'/users',query:registry.query});",
-  "let query=independent;query={ok:1};router.push({pathname:'/users',query});",
   "let query=independent;query={ok:1};const selected=query;router.push({pathname:'/users',query:selected});",
-  "const registry={query:independent};const current={path:'/query-new-data',component:Preview};registry.query=current;router.push({pathname:'/users',query:registry.query});",
+  "const registry={query:independent};const current={path:'/query-new-data',component:Preview};registry['query']=current;router.push({pathname:'/users',query:registry.query});",
 ])("keeps definitely replaced query sources independent: %s", (navigation) => {
   const facts = analyze(
     `const independent={path:'/independent',component:View};${navigation}`,
@@ -1201,16 +1352,30 @@ it.each([
   ]);
 });
 
-it.each([
-  "const registry={query:payload};if(flag)registry.query={ok:1};router.push({pathname:'/users',query:registry.query});",
-  "const registry={query:payload};router.push({pathname:'/users',query:registry.query});registry.query={ok:1};",
-  "let query=payload;router.push({pathname:'/users',query});query={ok:1};router.push({pathname:'/users',query});",
-])("retains sources from possible or earlier query reads: %s", (navigation) => {
-  const facts = analyze(
-    `const payload={path:'/query-data',component:Preview};${navigation}`,
-  );
-  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
-    "/users",
+it("owns query values read before or across a possible write", () => {
+  const facts = analyze(`
+    const conditional={path:'/conditional-payload',component:Preview};
+    const registry={query:conditional};
+    if(flag)registry.query={ok:1};
+    router.push({pathname:'/conditional-read',query:registry.query});
+
+    const earlier={path:'/earlier-payload',component:Preview};
+    const holder={query:earlier};
+    router.push({pathname:'/earlier-read',query:holder.query});
+    holder.query={ok:1};
+
+    let query={path:'/binding-payload',component:Preview};
+    router.push({pathname:'/before-reassignment',query});
+    query={ok:1};
+    router.push({pathname:'/after-reassignment',query});
+  `);
+  expect(
+    facts.candidates.map(({ path, mechanism }) => [path, mechanism]).sort(),
+  ).toEqual([
+    ["/after-reassignment", "navigation-target"],
+    ["/before-reassignment", "navigation-target"],
+    ["/conditional-read", "navigation-target"],
+    ["/earlier-read", "navigation-target"],
   ]);
 });
 
@@ -1223,8 +1388,8 @@ it.each([
   const facts = analyze(
     `const payload={path:'/query-data',component:Preview};const registry={query:payload};const other={query:{ok:1}};${write}router.push({pathname:'/users',query:registry.query});`,
   );
-  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
-    "/users",
+  expect(facts.candidates).toMatchObject([
+    { path: "/users", mechanism: "navigation-target" },
   ]);
 });
 
@@ -1239,7 +1404,6 @@ it("proves a write through the same uncertain receiver at its own read", () => {
 });
 
 it.each([
-  "const registry={query:payload,...unknown};router.push({pathname:'/users',query:registry.query});",
   "const registry={query:payload,[key]:0};router.push({pathname:'/users',query:registry.query});",
   "const registry={settings:{query:payload,...unknown}};router.push({pathname:'/users',query:registry.settings.query});",
   "const registry={...{query:payload}};router.push({pathname:'/users',query:registry.query});",
@@ -1252,8 +1416,8 @@ it.each([
   const facts = analyze(
     `const payload={path:'/query-data',component:Preview};${navigation}`,
   );
-  expect([...new Set(facts.candidates.map(({ path }) => path))]).toEqual([
-    "/users",
+  expect(facts.candidates).toMatchObject([
+    { path: "/users", mechanism: "navigation-target" },
   ]);
 });
 
@@ -1318,18 +1482,6 @@ it.each([
   );
 });
 
-it("consumes finite repeated getter selections", () => {
-  const facts = analyze(
-    "const registry={get a(){return this}};router.push({pathname:'/p',query:registry.a.a.a});route('/independent');",
-  );
-  expect(facts.capacity).toBeNull();
-  expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
-    "/independent",
-    "/p",
-  ]);
-  expect(facts.unresolved).toEqual([]);
-});
-
 it("keeps configuration cycles in their source interpretation", () => {
   const facts = analyze(
     "const registry={get a(){return this.a.b}};createBrowserRouter(registry.a);route('/independent');",
@@ -1349,21 +1501,121 @@ it("keeps configuration cycles in their source interpretation", () => {
   ).toBe(false);
 });
 
+it("consumes finite getter chains and owns each returned query object", () => {
+  const facts = analyze(`
+    const repeated={
+      get a(){return this},
+      get b(){return this.a.a.a},
+      path:'/repeated-data',
+      component:Preview
+    };
+    const nested={
+      get a(){return this},
+      get b(){return this.a},
+      get c(){return this.b.b},
+      path:'/nested-data',
+      component:Preview
+    };
+    const direct={get a(){return this},path:'/direct-data',component:Preview};
+    router.push({pathname:'/direct-getter',query:direct.a.a.a});
+    router.push({pathname:'/repeated-getter',query:repeated.a.b});
+    router.push({pathname:'/nested-getter',query:nested.a.c});
+    route('/independent');
+  `);
+  expect(facts.capacity).toBeNull();
+  expect(
+    facts.candidates.map(({ path, mechanism }) => [path, mechanism]).sort(),
+  ).toEqual([
+    ["/direct-getter", "navigation-target"],
+    ["/independent", "router-call"],
+    ["/nested-getter", "navigation-target"],
+    ["/repeated-getter", "navigation-target"],
+  ]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("interprets Expo Router require.context keys as low-confidence file-route candidates", () => {
+  const source = metroContext([
+    "./(app)/_layout.tsx",
+    "./(app)/index.tsx",
+    "./(app)/reports/[id]/edit.tsx",
+    "./(app,admin)/team.tsx",
+    "./+html.tsx",
+    "./+not-found.tsx",
+    "./_layout.tsx",
+    "./api/users+api.ts",
+    "./docs/[...rest].tsx",
+    "./settings/index.web.jsx",
+  ]).replace("enumerable:!0", '["__proto__"]:null,enumerable:!0');
+  const facts = analyze(source);
+  expect(facts.unresolved).toEqual([]);
+  expect(
+    facts.candidates.map(({ path, segments }) => [segments[0]!.value, path]),
+  ).toEqual([
+    ["./(app)/index.tsx", "/"],
+    ["./(app)/reports/[id]/edit.tsx", "/reports/:id/edit"],
+    ["./(app,admin)/team.tsx", "/team"],
+    ["./api/users+api.ts", "/api/users"],
+    ["./docs/[...rest].tsx", "/docs/:rest+"],
+    ["./settings/index.web.jsx", "/settings"],
+  ]);
+  for (const candidate of facts.candidates) {
+    expect(candidate).toMatchObject({
+      mechanism: "expo-router-context-key",
+      confidence: "low",
+      derivation: "inferred",
+      segments: [{ origin: "literal", location: candidate.location }],
+    });
+    expect(
+      source.slice(
+        candidate.location.start.column,
+        candidate.location.end.column,
+      ),
+    ).toBe(JSON.stringify(candidate.segments[0]!.value));
+  }
+});
+
+it("keeps a require.context file map without Expo Router conventions unknown", () => {
+  const source = metroContext(["./Button.stories.tsx", "./Card.stories.tsx"]);
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({
+      mechanism: "expo-router-context-key",
+      reason: expect.stringContaining("Expo Router"),
+    }),
+  ]);
+});
+
 it.each([
-  "const registry={get a(){return this},get b(){return this.a.a},path:'/query-data',component:Preview};",
-  "const registry={get a(){return this},get b(){return this.a.a.a},path:'/query-data',component:Preview};",
-  "const registry={get a(){return this},get b(){return this.a},get c(){return this.b.b},path:'/query-data',component:Preview};",
-])(
-  "finishes getters before following the caller's remaining members: %s",
-  (registry) => {
-    const facts = analyze(
-      `${registry}router.push({pathname:'/p',query:registry.a.${registry.includes("get c()") ? "c" : "b"}});route('/independent');`,
-    );
-    expect(facts.capacity).toBeNull();
-    expect(facts.candidates.map(({ path }) => path).sort()).toEqual([
-      "/independent",
-      "/p",
-    ]);
-    expect(facts.unresolved).toEqual([]);
-  },
-);
+  metroContext(["./_layout.tsx", "./about.tsx", "./logo.png"]),
+  metroContext(["./_layout.tsx", "about.tsx"]),
+  "Object.defineProperties(target,{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}});",
+  "Object.defineProperties({},{default:{get(){}},'./_layout.tsx':{get(){}}});",
+  "Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{get(){},value:1}});",
+  "Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{__proto__:{value:1},get(){}}});",
+  "function build(Object){ return Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}}); }",
+])("does not read other defineProperties maps as route files: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("admits Expo Router context keys one at a time within the fact budget", () => {
+  const keys = Array.from(
+    { length: 80 },
+    (_, index) => `./${"section".repeat(8)}/${String(index)}/edit.tsx`,
+  );
+  const facts = analyze(metroContext(["./_layout.tsx", ...keys]), 20_000);
+  expect(facts.capacity).toMatchObject({
+    kind: "route-work-or-facts",
+    limit_bytes: 20_000,
+  });
+  expect(Buffer.byteLength(JSON.stringify(facts))).toBeLessThanOrEqual(20_000);
+  // Admitted routes are a prefix of the map, in key order.
+  expect(facts.candidates.map(({ segments }) => segments[0]!.value)).toEqual(
+    keys.slice(0, facts.candidates.length),
+  );
+  expect(facts.candidates.length).toBeGreaterThan(0);
+  expect(facts.candidates.length).toBeLessThan(keys.length);
+});

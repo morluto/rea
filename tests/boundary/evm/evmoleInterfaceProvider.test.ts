@@ -1,3 +1,5 @@
+import { EVMOLE_VERSION } from "../../../src/evm/EvmoleProviderIdentity.js";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { access, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +25,14 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
   failure_marker_path: z.string(),
   encoding: z.enum(["raw", "hex"]),
+  producer_limits: z.object({
+    input_bytes: z.number(),
+    output_bytes: z.number(),
+    diagnostic_bytes: z.number(),
+    address_space_bytes: z.number(),
+    file_bytes: z.number(),
+    cpu_seconds: z.number(),
+  }),
 });
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-evm-interface-boundary-");
@@ -84,7 +94,7 @@ it.runIf(!unsupportedHost).each(["SIGXCPU", "SIGXFSZ", "EFBIG"])(
       },
     });
     expect(result.error.message).toContain(
-      failure === "EFBIG" ? "exact write failure cause" : "exact signal cause",
+      failure === "EFBIG" ? "exact write failure cause" : failure,
     );
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -181,7 +191,7 @@ it.runIf(!unsupportedHost)(
       .parse(projectAnalysisError(result.error).details?.["diagnostics"]);
     expect(cleanup).toEqual({
       reason: "injected post-cleanup reporting failure",
-      previous_error: expect.objectContaining({ code: "unreadable_output" }),
+      previous_error: expect.objectContaining({ code: "resource_constraint" }),
       captured_output: { truncated: true, stderr: "", stdout: 1048576 },
     });
     expect(cleanup.previous_error.details?.["captured_output"]).toBeUndefined();
@@ -228,7 +238,7 @@ it.runIf(!unsupportedHost).each(["completed", "malformed-reply"] as const)(
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.3",
+              version: EVMOLE_VERSION,
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -339,7 +349,7 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -364,8 +374,13 @@ it.runIf(!unsupportedHost).each([1048576, 1048577])(
       if (result.ok)
         throw new Error("Expected explicit diagnostic budget failure");
       expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { captured_output: { truncated: true } },
+        code: "resource_constraint",
+        details: {
+          reported_limits: {
+            parameter: "producer_limits.diagnostic_bytes",
+          },
+          captured_output: { truncated: true },
+        },
       });
     }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -376,7 +391,7 @@ it
   .runIf(!unsupportedHost)
   .each([
     "success",
-    "format",
+    "malformed",
     "unsupported",
     "output-limit",
     "wrong-version",
@@ -411,16 +426,17 @@ it
         const bytes = Buffer.from(hex, "hex");
         const encodedReplies: Partial<Record<string, string | Buffer>> = {
           "invalid-utf8": Buffer.concat([
-            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from('{"ok":false,"reason":"malformed","message":"'),
             Buffer.from([0xff]),
             Buffer.from('"}'),
           ]),
           "literal-replacement": JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "valid �",
           }),
-          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+          "bom-reply":
+            '\uFEFF{"ok":false,"reason":"malformed","message":"valid"}',
         };
         const encodedReply = encodedReplies[scenario];
         if (encodedReply !== undefined)
@@ -431,7 +447,9 @@ it
             scenario === "broken-reply"
               ? "broken"
               : JSON.stringify(
-                  ["format", "unsupported", "output-limit"].includes(scenario)
+                  ["malformed", "unsupported", "output-limit"].includes(
+                    scenario,
+                  )
                     ? {
                         ok: false,
                         reason: scenario,
@@ -443,7 +461,9 @@ it
                     : {
                         ok: true,
                         version:
-                          scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                          scenario === "wrong-version"
+                            ? "0.0.0"
+                            : EVMOLE_VERSION,
                         bytecode: {
                           sha256: createHash("sha256")
                             .update(bytes)
@@ -478,7 +498,7 @@ it
     if (scenario === "literal-replacement")
       expect(result).toMatchObject({
         ok: false,
-        error: { issues: [{ message: "valid �" }] },
+        error: { failure: { kind: "malformed", detail: "valid �" } },
       });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
@@ -493,10 +513,10 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format" || scenario === "literal-replacement"
-              ? "AnalysisInputError"
+            scenario === "malformed" || scenario === "literal-replacement"
+              ? "AnalysisTargetFailureError"
               : scenario === "unsupported"
-                ? "AnalysisUnsupportedTargetError"
+                ? "AnalysisTargetFailureError"
                 : scenario === "output-limit"
                   ? "AnalysisResourceConstraintError"
                   : "AnalysisOutputError",
@@ -556,7 +576,7 @@ it.runIf(!unsupportedHost)(
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -642,7 +662,7 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
           scenario === "cancelled"
             ? "AnalysisCancelledError"
             : scenario === "output-limit"
-              ? "AnalysisOutputError"
+              ? "AnalysisResourceConstraintError"
               : "ProviderAdapterError",
       },
     });
@@ -781,7 +801,7 @@ it.runIf(!unsupportedHost)(
           request.reply_path,
           JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "Odd selected hex.",
           }),
         );
@@ -804,7 +824,7 @@ it.runIf(!unsupportedHost)(
         cleanupResources: [root],
         diagnostics: {
           reason: "root cleanup failed",
-          previous_error: { category: "invalid_input" },
+          previous_error: { category: "unsupported_target" },
         },
       },
     });
@@ -842,7 +862,7 @@ it
           request.reply_path,
           JSON.stringify({
             ok: true,
-            version: "0.9.3",
+            version: EVMOLE_VERSION,
             bytecode: {
               sha256: createHash("sha256").update(bytes).digest("hex"),
               bytes: bytes.length,
@@ -904,7 +924,7 @@ it
     });
     const evidence = parseEvidence(result.error.partialObservation);
     expect(evidence.subject?.local_path).toBe(path);
-    expect(evidence.subject?.digest.sha256).toBe(
+    expect(fileIdentity(evidence.subject).sha256).toBe(
       createHash("sha256").update(source).digest("hex"),
     );
     expect(Buffer.compare(await readFile(path), source)).toBe(0);
@@ -924,6 +944,9 @@ it
       expect(result.error.cause).toBe(reason);
     else expect(result.error.cleanupIncomplete).toBe(true);
     if (scenario === "cancelled-cleanup-failure") {
+      expect(result.error.diagnostics?.["reason"]).toBe(
+        "reported cleanup failure",
+      );
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
       denyClose = false;
       await provider.close();

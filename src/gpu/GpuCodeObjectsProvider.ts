@@ -1,11 +1,22 @@
+import {
+  readerIntegrityFailure,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactRegularFile,
+  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  artifactFileCompletion,
+  selectedFileTargetError,
+} from "../resources/index.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
-import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
+import type { GpuCodeObjectsPort } from "../ports/gpu/GpuCodeObjectsPort.js";
 import {
   createGpuCodeObjectsEvidence,
   createGpuCodeObjectsPartialEvidence,
 } from "../domain/gpu/gpuCodeObjectsEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   GpuCodeObjects,
   GpuCodeObjectsInput,
@@ -18,27 +29,22 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../domain/compression/zstandardFrameAllowance.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  withArtifactRegularFile,
-  bindArtifactFileCleanup,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 import {
   GpuFileSource,
   gpuCount,
@@ -51,6 +57,7 @@ import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_gpu_code_objects";
 
@@ -86,7 +93,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           "capacity",
           "One GPU inspection is already active",
           { concurrent_inspections: 1 },
-          { retryable: true },
+          { retryable: true, measuredExhaustion: true },
         ),
       );
     this.#busy = true;
@@ -107,56 +114,54 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+      // Malformed and truncated bytes are a malformed target; unsupported
+      // bytes are an unsupported target, as for every other format parser.
+      const formatFailure = parseFailureAnalysisError(
+        OPERATION,
+        input.path,
+        primary,
+      );
+      const frameAllowance =
+        primary instanceof ZstandardFrameAllowanceError
+          ? primary
+          : cause instanceof ZstandardFrameAllowanceError
+            ? cause
+            : undefined;
       let error: AnalysisError;
-      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+      if (frameAllowance !== undefined)
+        error = projectZstandardFrameAllowance(OPERATION, frameAllowance);
+      else if (
+        origin === "owned-or-classified" &&
+        primary instanceof AnalysisError
+      )
         error = primary;
       else if (primary instanceof BinaryResourceFailure)
-        error = new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          primary.message,
-          {
+        error = parseLimitConstraint(OPERATION, "memory", primary, {
+          reportedLimitContext: {
             maximum_object_bytes: GPU_OBJECT_BYTES,
             maximum_report_bytes: GPU_REPORT_BYTES,
           },
-          {
-            cause,
-            retryable: false,
-            remediationAction: `${primary.message} This release has no runtime override for that GPU byte allowance. The object allowance is ${String(GPU_OBJECT_BYTES)} bytes and the report allowance is ${String(GPU_REPORT_BYTES)} bytes. Additional host memory does not raise them. Repeating the unchanged request fails the same way.`,
-          },
-        );
-      else if (primary instanceof BinaryFormatFailure) {
-        error =
-          primary.kind === "unsupported"
-            ? new AnalysisUnsupportedTargetError(
-                OPERATION,
-                input.path,
-                primary.message,
-                { cause },
-              )
-            : new BinaryTargetError(input.path, primary.message, {
-                cause,
-                constraint: "file_format_rejected",
-              });
-      } else if (
+          retryable: false,
+          remediationAction: `${primary.message} This release has no runtime override for that GPU parser allowance. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`,
+        });
+      else if (formatFailure !== undefined) error = formatFailure;
+      else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(primary),
-        });
+        error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(primary)),
+        );
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
-        error = new AnalysisArtifactChangedError(
-          OPERATION,
-          input.path,
-          primary.message,
-          { cause },
-        );
+        error = readerIntegrityFailure(OPERATION, input.path, primary, {
+          cause,
+        });
       else if (
         primary instanceof Error &&
         "code" in primary &&
@@ -169,7 +174,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           { cause: primary },
         );
       else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+        error = selectedFileTargetError(input.path, primary, cause);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
@@ -192,8 +197,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           cause,
           diagnostics: {
             path: input.path,
-            reason:
-              primary instanceof Error ? primary.message : String(primary),
+            reason: errorMessage(primary),
           },
         });
       if (
@@ -254,8 +258,8 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
   async #read(
     file: FileHandle,
     input: GpuCodeObjectsInput,
-    signal?: AbortSignal,
-    retainProgress?: (progress: {
+    signal: AbortSignal | undefined,
+    retainProgress: (progress: {
       inventory: GpuInventory;
       size: number;
     }) => void,
@@ -271,7 +275,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         "GPU source does not match the inventory's selected SHA-256",
       );
     const inventory = new GpuInventory(input, signal);
-    retainProgress?.({ inventory, size });
+    retainProgress({ inventory, size });
     const format = await inventory.inspect(source);
     const after = await file.stat({ bigint: true });
     const named = await lstat(input.path, { bigint: true }).catch(
@@ -284,7 +288,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected GPU path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -293,6 +297,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "GPU source changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const leaves = inventory.objects.filter(
       (row) =>

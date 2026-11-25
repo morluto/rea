@@ -37,9 +37,7 @@ describe.skipIf(process.platform !== "darwin")(
         const fat = join(directory, "fat_enc");
         await writeFile(source, "int main(void) { return 0; }\n");
         const run = async (command: string, arguments_: string[]) => {
-          const result = await processes.run(command, arguments_, {
-            timeoutMs: 30_000,
-          });
+          const result = await processes.run(command, arguments_);
           expect(result.exitCode, result.stderr).toBe(0);
           return result.stdout;
         };
@@ -116,8 +114,11 @@ describe.skipIf(process.platform !== "darwin")(
         expect(range.container_start).toBe(
           (encrypted?.container_file_offset ?? 0) + field("cryptoff"),
         );
-        expect(inspected.limitations).toContain(
-          `Bytes ${range.container_start}-${range.container_end} (input file offsets, end exclusive) of the arm64 slice are ciphertext (cryptid 1); disassembly, decompilation, strings and references derived from them do not describe program code.`,
+        const limitation = inspected.limitations.find((item) =>
+          item.includes(`${range.container_start}-${range.container_end}`),
+        );
+        expect(limitation).toMatch(
+          /input file offsets.*end exclusive.*arm64.*ciphertext.*cryptid 1.*do not describe program code/iu,
         );
       },
     );

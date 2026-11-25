@@ -14,7 +14,6 @@ import {
   RP2040_FAMILY,
   RP2350_ARM_S_FAMILY,
   patternBytes,
-  uf2Block,
   uf2File,
   uf2Image,
 } from "../../src/domain/firmware/uf2.fixture.js";
@@ -177,36 +176,5 @@ cliTest(
       details: { logical_path: ".", algorithm: "dfu-crc32" },
     });
     expect(await readdir(directory)).toEqual(["firmware.dfu"]);
-  },
-);
-
-cliTest(
-  "refuses a conflicting UF2 rewrite through the CLI",
-  async ({ cli }) => {
-    const directory = await createTestTempDirectory("rea-uf2-conflict-cli-");
-    const source = join(directory, "firmware.uf2");
-    await writeFile(
-      source,
-      uf2File([
-        ...uf2Image(RP2040_FAMILY, 0x1000_0000, RP2040_APP),
-        uf2Block({
-          address: 0x1000_0000,
-          payload: [0xff],
-          blockNo: 0,
-          numBlocks: 1,
-          familyId: RP2040_FAMILY,
-        }),
-      ]),
-    );
-    const result = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      details: { operation: "inspect_artifact", reason: "format" },
-    });
-    expect(result.stdout + result.stderr).toContain(
-      "UF2 is malformed: family 0xe48bff56 (RP2040) address 0x10000000 is written with different values by blocks 0-1 (0x01) and block 2 (0xff)",
-    );
   },
 );

@@ -6,7 +6,6 @@ const EVM_ADMISSION_CODES = [
   "marker_mismatch",
   "request_path_missing",
   "tag_or_float",
-  "text_bytes_unavailable",
   "collection_exceeds_bound",
   "nesting_exceeds_profile",
   "value_outside_profile",
@@ -14,7 +13,7 @@ const EVM_ADMISSION_CODES = [
   "root_not_map",
 ] as const;
 
-export type EvmAdmissionCode = (typeof EVM_ADMISSION_CODES)[number];
+type EvmAdmissionCode = (typeof EVM_ADMISSION_CODES)[number];
 
 /** EVM limiter, worker, or metadata admission failure. `code` is the stable identity. */
 export class EvmAdmissionError extends Error {

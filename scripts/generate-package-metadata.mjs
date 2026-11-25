@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
-const { parseSkillManifestMetadata } = await importVerifierSource(
+const { parseAuthoredSkillManifest } = await importVerifierSource(
   new URL("../src/domain/skillManifest.ts", import.meta.url).href,
   import.meta.url,
 );
@@ -31,11 +31,9 @@ const skill = await readFile(
   join(root, ".agents/skills/reverse-engineer-anything/SKILL.md"),
   "utf8",
 );
-const skillMetadata = parseSkillManifestMetadata(skill);
+const skillMetadata = parseAuthoredSkillManifest(skill);
 if (!skillMetadata.ok) throw skillMetadata.error;
 const skillVersion = skillMetadata.value.version;
-if (skillVersion === null)
-  throw new Error("Missing reverse-engineer-anything skill metadata version");
 const versionOf = (name) => {
   const value = lock.packages?.[`node_modules/${name}`]?.version;
   if (typeof value !== "string")
@@ -50,6 +48,7 @@ export const PACKAGE_METADATA = {
   serverSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/server"))},
   clientSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/client"))},
   coreSdkVersion: ${JSON.stringify(versionOf("@modelcontextprotocol/core"))},
+  evmoleVersion: ${JSON.stringify(versionOf("evmole"))},
   skillVersion: ${JSON.stringify(skillVersion)},
 } as const;
 `;

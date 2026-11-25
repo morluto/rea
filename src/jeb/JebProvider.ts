@@ -5,26 +5,41 @@ import {
 } from "./JebMcpConnectionOwner.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  withDelegatedCleanupOwner,
+} from "../domain/analysisErrorCleanup.js";
 import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../application/jeb/JebAnalysisPort.js";
+} from "../ports/jeb/JebAnalysisPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { JebOperation, JebRequest } from "../domain/jeb/jebAnalysis.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
+import {
+  jvmExhaustionArea,
+  RUNTIME_EXHAUSTION_TOKENS,
+  externalJvmExhaustionRecovery,
+  type ExternalJvm,
+} from "../process/RuntimeExhaustion.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -39,6 +54,7 @@ import {
   type JebMcpConnection,
   type JebMcpConnectionFactory,
 } from "./JebMcpConnection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const JEB_CONNECTION_REMEDIATION = `Start a JEB client serving MCP (default ${DEFAULT_JEB_MCP_ENDPOINT}) or set REA_JEB_MCP_URL to the running endpoint.`;
 
@@ -105,6 +121,44 @@ const envelope = z.discriminatedUnion("success", [
   failure,
 ]);
 
+/** JEB runs in the user's own JVM; REA sets none of its memory limits. */
+const JEB_JVM: ExternalJvm = {
+  program: "JEB's",
+  role: "engine",
+  raise: (option) => `Restart the JEB client with a larger ${option}`,
+  settings: "the JEB client's JVM memory settings",
+  threads:
+    "Reduce concurrent work in the JEB client or review the engine host's thread and process limits",
+  smaller: "select a smaller input",
+};
+
+/**
+ * JEB's JVM out-of-memory report in a refusal it returned, read with the
+ * shared JVM marker. JEB runs in the user's own JVM, so its heap is the limit.
+ */
+const refusalExhaustion = (
+  operation: JebOperation,
+  refusal: z.infer<typeof failure>,
+  diagnostics: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError | undefined => {
+  const line = [refusal.error?.message, refusal.message].find(
+    (value) => value?.includes(RUNTIME_EXHAUSTION_TOKENS.jvm) === true,
+  );
+  if (line === undefined) return undefined;
+  const area = jvmExhaustionArea(line);
+  const threads = area === "native-thread";
+  return new AnalysisResourceConstraintError(
+    operation,
+    threads ? "capacity" : "memory",
+    `JEB reported that its Java virtual machine ran out of memory${threads ? " (unable to create a native thread)" : ""}. This is the engine's report and does not prove the exact allocation failure.`,
+    null,
+    {
+      diagnostics: { ...diagnostics, jvm_exhaustion_area: area ?? null },
+      remediationAction: externalJvmExhaustionRecovery(area, JEB_JVM),
+    },
+  );
+};
+
 /** Parse success/refusal once; operation-specific success data has its own owner. */
 const parseJebEnvelope = (
   payload: JsonValue,
@@ -137,6 +191,8 @@ const parseJebEnvelope = (
     );
   if (parsed.data.success) return ok(payload);
   const refusal = parsed.data;
+  const exhausted = refusalExhaustion(operation, refusal, diagnostics);
+  if (exhausted !== undefined) return err(exhausted);
   const reason = [
     refusal.error?.message,
     refusal.message,
@@ -216,6 +272,8 @@ export class JebProvider implements JebAnalysisPort {
     } catch (cause) {
       if (signal?.aborted === true) throw cause;
       if (cause instanceof AnalysisError) {
+        if (cause.cleanupIncomplete)
+          throw this.#attributed("inspect_jeb_client", cause);
         // The failure's owner, such as the discovery deadline, also owns the repair.
         const projected = projectAnalysisError(cause);
         return {
@@ -249,8 +307,7 @@ export class JebProvider implements JebAnalysisPort {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (options?.signal?.aborted === true)
       return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: options.signal.reason,
+        cancelledBy(request.operation, options.signal, {
           diagnostics: { endpoint: this.#selectedEndpoint },
         }),
       );
@@ -258,7 +315,12 @@ export class JebProvider implements JebAnalysisPort {
       const execution = await this.#dispatch(request, options?.signal);
       return execution;
     } catch (cause) {
-      return err(this.#providerFailure(request.operation, cause));
+      return err(
+        this.#attributed(
+          request.operation,
+          classifyProviderFailure(cause, this.#dialect(request.operation)),
+        ),
+      );
     }
   }
 
@@ -267,8 +329,7 @@ export class JebProvider implements JebAnalysisPort {
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const cancelled = (operation: JebOperation) => {
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
     };
     switch (request.operation) {
       case "inspect_jeb_client": {
@@ -321,9 +382,9 @@ export class JebProvider implements JebAnalysisPort {
     try {
       return await this.#engine(request.operation, signal);
     } catch (cause: unknown) {
-      throw this.#providerFailure(
+      throw this.#attributed(
         request.operation,
-        cause,
+        classifyProviderFailure(cause, this.#dialect(request.operation)),
       ).retainPartialObservation(
         createAnalysisExecutionEvidence(
           request.operation,
@@ -352,8 +413,7 @@ export class JebProvider implements JebAnalysisPort {
     operation: JebOperation,
     signal: AbortSignal | undefined,
   ) {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+    if (signal?.aborted === true) throw cancelledBy(operation, signal);
     const payload = await this.#connection.call(
       "get_client_information",
       {},
@@ -539,63 +599,80 @@ export class JebProvider implements JebAnalysisPort {
     return parsed.value;
   }
 
-  #providerFailure(operation: JebOperation, cause: unknown): AnalysisError {
-    if (cause instanceof JebMcpCleanupFailure)
-      return analysisErrorWithCleanupFailure(
-        this.#providerFailure(operation, cause.primaryFailure),
-        cause.cleanupFailure,
+  /** How JEB's raw MCP failures are reported for one operation. */
+  #dialect(operation: JebOperation): ProviderFailureDialect {
+    const diagnostics = { endpoint: this.#selectedEndpoint };
+    return {
+      providerId: "jeb",
+      operation,
+      recognise: (cause) =>
+        cause instanceof z.ZodError
+          ? new AnalysisProtocolError(
+              "JEB omitted or malformed required observation fields",
+              { cause, diagnostics },
+            )
+          : undefined,
+      unclassified: (cause) => {
+        const physical =
+          cause instanceof JebMcpPhysicalFailure ? cause.cause : cause;
+        return new AnalysisCapabilityUnavailableError(
+          "jeb",
+          operation,
+          errorMessage(physical),
+          { cause, diagnostics, userMessage: JEB_CONNECTION_REMEDIATION },
+        );
+      },
+    };
+  }
+
+  /**
+   * Report a classified failure under the REA operation that observed it. A
+   * shared MCP phase, such as catalog discovery or a tools/call, reports its
+   * own interruption under that phase; the operation and endpoint are added
+   * here, keeping the phase's cleanup ownership.
+   */
+  #attributed(operation: JebOperation, failure: AnalysisError): AnalysisError {
+    if (failure instanceof JebMcpCleanupFailure)
+      return analysisErrorWithCleanupDependencies(
+        this.#attributed(
+          operation,
+          classifyProviderFailure(
+            failure.primaryFailure,
+            this.#dialect(operation),
+          ),
+        ),
+        failure.cleanupFailure,
         operation,
-      )
-        .bindCleanupDependencies([cause.cleanupFailure])
-        .bindCleanupResourceOwner(cause.cleanupFailure);
+      ).bindCleanupResourceOwner(failure.cleanupFailure);
     if (
-      cause instanceof AnalysisCancelledError ||
-      cause instanceof AnalysisTimeoutError
+      failure instanceof AnalysisCancelledError ||
+      failure instanceof AnalysisTimeoutError
     ) {
       const options = {
-        cause: cause.cause,
         diagnostics: {
-          ...cause.diagnostics,
+          ...failure.diagnostics,
           endpoint: this.#selectedEndpoint,
         },
-        capturedOutput: cause.capturedOutput,
-        cleanup: cause.cleanup,
-        partialObservation: cause.partialObservation,
+        capturedOutput: failure.capturedOutput,
+        cleanup: failure.cleanup,
+        partialObservation: failure.partialObservation,
       };
-      const failure =
-        cause instanceof AnalysisTimeoutError
-          ? new AnalysisTimeoutError(operation, cause.timeoutMs, {
+      const attributed =
+        failure instanceof AnalysisTimeoutError
+          ? new AnalysisTimeoutError(operation, failure.timeoutMs, {
               ...options,
-              ...(cause.userMessage === undefined
+              cause: failure.cause,
+              ...(failure.userMessage === undefined
                 ? {}
-                : { userMessage: cause.userMessage }),
-              ...(cause.remediationAction === undefined
+                : { userMessage: failure.userMessage }),
+              ...(failure.remediationAction === undefined
                 ? {}
-                : { remediationAction: cause.remediationAction }),
+                : { remediationAction: failure.remediationAction }),
+              ...(failure.limit === undefined ? {} : { limit: failure.limit }),
             })
-          : new AnalysisCancelledError(operation, options);
-      return failure
-        .bindCleanupDependencies([cause])
-        .bindCleanupResourceOwner(cause);
+          : cancelledBy(operation, failure, options);
+      return withDelegatedCleanupOwner(attributed, failure);
     }
-    if (cause instanceof AnalysisError)
-      return cause.retainDiagnostics({ endpoint: this.#selectedEndpoint });
-    if (cause instanceof z.ZodError)
-      return new AnalysisProtocolError(
-        "JEB omitted or malformed required observation fields",
-        { cause, diagnostics: { endpoint: this.#selectedEndpoint } },
-      );
-    const physical =
-      cause instanceof JebMcpPhysicalFailure ? cause.cause : cause;
-    return new AnalysisCapabilityUnavailableError(
-      "jeb",
-      operation,
-      physical instanceof Error ? physical.message : String(physical),
-      {
-        cause,
-        diagnostics: { endpoint: this.#selectedEndpoint },
-        userMessage: JEB_CONNECTION_REMEDIATION,
-      },
-    );
+    return failure.retainDiagnostics({ endpoint: this.#selectedEndpoint });
   }
 }

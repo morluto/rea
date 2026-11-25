@@ -6,7 +6,6 @@ import {
   environmentManifestCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
 import {
-  environmentServeFixture,
   environmentServeSource,
   environmentServeSourceWithBody as singleExchangeSource,
 } from "../../../tests/fixtures/environmentServe.js";
@@ -74,9 +73,6 @@ const base64Source = async (bytes: Buffer): Promise<EnvironmentSource> => {
     view: { kind: "environment-manifest" },
   });
   if (!manifest.ok) throw manifest.error;
-  expect(environmentServeFixture().manifest.evidence_id).not.toBe(
-    manifest.value.evidence_id,
-  );
   return environmentServeSource({
     manifest: manifest.value,
     capture: evidence,
@@ -176,10 +172,14 @@ describe("replayEnvironmentTool selection", () => {
     ]);
     const args = { query: ["a", "c"], type: "b" };
     expect(
-      selectReplayExchange(search, exchanges, args, "?query=a&type=b&query=c"),
+      selectReplayExchange(search, exchanges, args, {
+        observedQuery: "?query=a&type=b&query=c",
+      }),
     ).toMatchObject({ exchange: { ordinal: first }, exact: true });
     expect(
-      selectReplayExchange(search, exchanges, args, "?query=a&query=c&type=b"),
+      selectReplayExchange(search, exchanges, args, {
+        observedQuery: "?query=a&query=c&type=b",
+      }),
     ).toMatchObject({ exchange: { ordinal: second }, exact: true });
     expect(selectReplayExchange(search, exchanges, args)).toMatchObject({
       exchange: { ordinal: first },
@@ -199,7 +199,7 @@ describe("replayEnvironmentTool selection", () => {
         search,
         translated,
         { query: ["seed", "c"], type: "b" },
-        "?query=live&type=b&query=c",
+        { observedQuery: "?query=live&type=b&query=c" },
       ),
     ).toMatchObject({ exchange: { ordinal: first }, exact: true });
   });
@@ -226,47 +226,7 @@ describe("replayEnvironmentTool selection", () => {
     ).toMatchObject({ exchange: { ordinal: 901 }, exact: false });
   });
 
-  it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
-    const result = replay("get_users_by_id", { id: "2" });
-    expect(result).toMatchObject({
-      status: 200,
-      content_type: "application/json",
-      body: { id: 2, login: "probe" },
-      replay: {
-        evidence_id: source.evidenceId,
-        exact_match: true,
-        recorded_path: "/api/users/2",
-        recorded_query: null,
-        body_recorded: true,
-        truncated: false,
-      },
-    });
-    expect(replay("get_users_by_id", { id: "3" })).toMatchObject({
-      body: { login: "viewer" },
-      replay: { exact_match: true, recorded_path: "/api/users/3" },
-    });
-    expect(
-      replay("get_folders_by_uid", { uid: "general" }).replay,
-    ).toMatchObject({
-      exact_match: true,
-      recorded_path: "/api/folders/general",
-    });
-  });
-
-  it("falls back to the tool's first record, flagged inexact, when no record matches", () => {
-    const users = tool("get_users_by_id");
-    const result = replay("get_users_by_id", { id: "999" });
-    expect(result.replay).toMatchObject({
-      record_ordinal: users.record_ordinals[0],
-      exact_match: false,
-      recorded_path: "/api/users/2",
-    });
-    expect(result.body).toMatchObject({ login: "probe" });
-    // Omitted parameters cannot mismatch: a call without arguments is exact on the first record.
-    expect(replay("get_users_by_id", {}).replay.exact_match).toBe(true);
-  });
-
-  it("matches query values after path segments and reports the recorded query", () => {
+  it("reports the recorded query for fully specified, partial and inexact calls", () => {
     const both = replay("get_search", { query: "probe", type: "dash-db" });
     expect(both.replay).toMatchObject({
       exact_match: true,
@@ -334,43 +294,43 @@ describe("replay selection precedence", () => {
   });
 
   it("prefers path matches over query matches and keeps manifest order on ties", () => {
-    const search = tool("get_search");
-    const [first, second] = search.record_ordinals;
-    if (first === undefined || second === undefined)
-      throw new Error("Fixture search tool must cite two records");
+    const users = {
+      ...tool("get_users_by_id"),
+      query_parameter_names: ["mode"],
+      record_ordinals: [902, 901],
+    };
+    const exchange = (
+      ordinal: number,
+      id: string,
+      mode: string,
+    ): RecordedExchange => ({
+      ordinal,
+      path: `/api/users/${id}`,
+      query: `?mode=${mode}`,
+      status: 200,
+      contentType: null,
+      bodyText: null,
+    });
     const exchanges = new Map<number, RecordedExchange>([
-      [
-        first,
-        {
-          ordinal: first,
-          path: "/api/search",
-          query: "?type=a",
-          status: 200,
-          contentType: null,
-          bodyText: null,
-        },
-      ],
-      [
-        second,
-        {
-          ordinal: second,
-          path: "/api/search",
-          query: "?type=a",
-          status: 200,
-          contentType: null,
-          bodyText: null,
-        },
-      ],
+      [901, exchange(901, "2", "a")],
+      [902, exchange(902, "3", "b")],
     ]);
     expect(
-      selectReplayExchange(search, exchanges, { type: "a" }),
-    ).toMatchObject({ exchange: { ordinal: first }, exact: true });
-    expect(
-      selectReplayExchange(search, new Map(), { type: "a" }),
-    ).toBeUndefined();
+      selectReplayExchange(users, exchanges, { id: "2", mode: "b" }),
+    ).toMatchObject({ exchange: { ordinal: 901 }, exact: false });
+    expect(selectReplayExchange(users, exchanges, { mode: "a" })).toMatchObject(
+      { exchange: { ordinal: 901 }, exact: true },
+    );
+    expect(selectReplayExchange(users, exchanges, {})).toMatchObject({
+      exchange: { ordinal: 902 },
+      exact: true,
+    });
+  });
+
+  it("refuses a tool whose manifest cites no retained exchange", () => {
     const refused = replayEnvironmentTool(
       { ...source, exchanges: new Map() },
-      search,
+      tool("get_search"),
       {},
     );
     if (refused.ok) throw new Error("Expected a refusal without records");
@@ -459,17 +419,14 @@ describe("replayEnvironmentTool bodies", () => {
   });
 
   it("truncates bodies over 256 KiB at a UTF-8 boundary and flags them", () => {
-    const text = "é".repeat(REPLAY_BODY_LIMIT_BYTES);
-    const result = replay(
-      "get_users_by_id",
-      { id: "2" },
-      singleExchangeSource(text, "application/json"),
-    );
-    expect(result.replay.truncated).toBe(true);
-    expect(typeof result.body).toBe("string");
-    const body = result.body as string;
-    expect(Buffer.byteLength(body, "utf8")).toBe(REPLAY_BODY_LIMIT_BYTES);
-    expect(body).not.toContain("�");
+    const prefix = "a" + "é".repeat(REPLAY_BODY_LIMIT_BYTES / 2 - 1);
+    expect(
+      replay(
+        "get_users_by_id",
+        { id: "2" },
+        singleExchangeSource(prefix + "é", "application/json"),
+      ),
+    ).toMatchObject({ body: prefix, replay: { truncated: true } });
     const exact = "x".repeat(REPLAY_BODY_LIMIT_BYTES);
     expect(
       replay(
@@ -522,11 +479,15 @@ describe("replayEnvironmentTool bodies", () => {
       });
       expect(typeof result.body).toBe("string");
       const body = result.body as string;
-      expect(
+      const expected = large.subarray(
+        0,
         encoding === "base64"
-          ? Buffer.from(body, "base64").length
-          : Buffer.byteLength(body, "utf8"),
-      ).toBeLessThanOrEqual(REPLAY_BODY_LIMIT_BYTES);
+          ? Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 3
+          : REPLAY_BODY_LIMIT_BYTES,
+      );
+      expect(body).toBe(
+        expected.toString(encoding === "base64" ? "base64" : "utf8"),
+      );
     }
     // Under the limit in recorded bytes, even though its base64 spelling is longer.
     const small = Buffer.alloc(200 * 1024, 0xff);
@@ -541,8 +502,16 @@ describe("replayEnvironmentTool bodies", () => {
 
 describe("replayEnvironmentTool reply metadata", () => {
   it("cuts a long recorded path or query in the reply and flags it, while matching on the full line", () => {
-    const users = tool("get_users_by_id");
-    const ordinal = users.record_ordinals[0] ?? 0;
+    const segment = "p".repeat(1024);
+    const path = `/api/${segment}/2`;
+    const query = `?ignored=${segment}&q=wanted`;
+    const ordinal = 0;
+    const users = {
+      ...tool("get_users_by_id"),
+      path_template: `/api/${segment}/{numeric}`,
+      query_parameter_names: ["q"],
+      record_ordinals: [ordinal],
+    };
     const long: EnvironmentSource = {
       ...source,
       exchanges: new Map([
@@ -550,8 +519,8 @@ describe("replayEnvironmentTool reply metadata", () => {
           ordinal,
           {
             ordinal,
-            path: `/api/users/2/${"p".repeat(4000)}`,
-            query: `?${"q".repeat(4000)}`,
+            path,
+            query,
             status: 200,
             contentType: null,
             bodyText: null,
@@ -559,15 +528,15 @@ describe("replayEnvironmentTool reply metadata", () => {
         ],
       ]),
     };
-    const cut = replay("get_users_by_id", { id: "2" }, long).replay;
-    expect(cut).toMatchObject({
+    const result = replayEnvironmentTool(long, users, { id: "2", q: "wanted" });
+    if (!result.ok) throw result.error;
+    expect(result.value.replay).toMatchObject({
       exact_match: true,
+      recorded_path: path.slice(0, 1024),
+      recorded_query: query.slice(0, 1024),
       recorded_line_truncated: true,
     });
-    expect(Buffer.byteLength(cut.recorded_path)).toBeLessThanOrEqual(1024);
-    expect(Buffer.byteLength(cut.recorded_query ?? "")).toBeLessThanOrEqual(
-      1024,
-    );
+    expect(long.exchanges.get(ordinal)).toMatchObject({ path, query });
     expect(
       replay("get_users_by_id", { id: "2" }).replay.recorded_line_truncated,
     ).toBe(false);

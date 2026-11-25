@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import {
   mkdir,
   writeFile,
   readFile,
-  mkdtemp,
   realpath,
   symlink,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -16,6 +17,7 @@ import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
@@ -26,10 +28,20 @@ import {
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import {
+  createQwenSkillReadback,
+  hasQwenSuccessfulResult,
+  qwenPersistedOutput,
+  qwenSavedSkillPath,
+  qwenToolResponseText,
+} from "./verify/clients/qwen-evidence.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
-const lab = await mkdtemp(join(tmpdir(), "rea-qwen-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-qwen-client-",
+});
 const client = "qwen";
 const mode = process.argv[2] ?? "call";
 assert(
@@ -60,9 +72,9 @@ let fixture;
 let passed = false;
 let evidenceSeen = false;
 let finalSeen = false;
-let skillRequested = false;
 let skillCallId;
 let expectedSkillBody;
+let skillRead;
 let searchCallId;
 let analysisCallId;
 let artifactReadByAgent = false;
@@ -219,24 +231,18 @@ await withVerifierCleanup(async () => {
       directory: lab,
       prefix: `${client}-${mode}`,
       onRequest: async ({ body, tools, requestIndex }) => {
-        const messages = (body.messages ?? []).map((message) => ({
-          role: message.role,
-          callId: message.tool_call_id,
-          text:
-            typeof message.content === "string"
-              ? message.content
-              : (message.content ?? [])
-                  .map((part) => part.text ?? "")
-                  .join("\n"),
-        }));
+        const messages = body.messages ?? [];
         const toolResponseText = (callId) =>
-          messages.find(
-            (message) => message.role === "tool" && message.callId === callId,
-          )?.text ?? "";
+          qwenToolResponseText(messages, callId);
         const expectedSkill = `Base directory for this skill: ${join(sharedSkills, "reverse-engineer-anything")}\nImportant: ALWAYS resolve absolute paths from this base directory when working with skills.\n\n${expectedSkillBody}\n`;
-        selectedSkillLoaded ||=
-          skillCallId !== undefined &&
-          toolResponseText(skillCallId).includes(expectedSkill);
+        if (skillRead?.callId !== undefined && !selectedSkillLoaded) {
+          const reply = toolResponseText(skillRead.callId);
+          assert(reply, "Qwen did not return the requested skill file read.");
+          selectedSkillLoaded = skillRead.readback.receive(reply);
+        } else {
+          selectedSkillLoaded ||=
+            toolResponseText(skillCallId).includes(expectedSkill);
+        }
         const toolText = JSON.stringify(
           (body.messages ?? []).filter((m) => m.role === "tool"),
         );
@@ -293,28 +299,35 @@ await withVerifierCleanup(async () => {
         const persisted = toolResponseText(analysisCallId).match(
           /Full output saved to: ([^\r\n]+)/u,
         );
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_fixture_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_fixture_${requestIndex}`, name, args);
         let message;
-        if (mode === "chat" || evidenceSeen) {
+        if (mode === "chat" || (evidenceSeen && selectedSkillLoaded)) {
           message = {
             role: "assistant",
             content: "REA_CLIENT_COMPATIBILITY_OK",
           };
-          finalSeen = true;
-        } else if (skill && !skillRequested) {
-          skillRequested = true;
+        } else if (skillCallId === undefined) {
+          assert(skill, "Qwen must expose its native skill tool.");
           message = call(skill.name, { skill: "reverse-engineer-anything" });
           skillCallId = message.tool_calls[0].id;
+        } else if (!selectedSkillLoaded) {
+          if (skillRead === undefined) {
+            const saved = qwenPersistedOutput(toolResponseText(skillCallId));
+            assert(saved, "Qwen did not load the installed skill.");
+            const path = await qwenSavedSkillPath(saved.path, runtime);
+            skillRead = {
+              path,
+              readback: createQwenSkillReadback(saved.digest, expectedSkill),
+            };
+          }
+          const read = tools.find((tool) => tool.name === "read_file");
+          assert(read, "Qwen must expose read_file for the saved skill.");
+          message = call(read.name, {
+            file_path: skillRead.path,
+            ...skillRead.readback.range,
+          });
+          skillRead.callId = message.tool_calls[0].id;
         } else if (persisted && shell) {
           artifactPath = persisted[1];
           assert(
@@ -401,11 +414,13 @@ await withVerifierCleanup(async () => {
         stderr: join(lab, `${mode}.stderr`),
       },
     );
-    const initialized = response.stdout
+    const events = response.stdout
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line))
-      .find((v) => v.type === "system" && v.subtype === "init");
+      .map((line) => JSON.parse(line));
+    const initialized = events.find(
+      (v) => v.type === "system" && v.subtype === "init",
+    );
     assert(initialized);
     const observed = initialized.tools
       .filter((n) => n.startsWith("mcp__rea__"))
@@ -417,7 +432,11 @@ await withVerifierCleanup(async () => {
       "Qwen must discover the complete REA catalog",
     );
     assert.equal(fixture.failure, undefined);
-    assert(finalSeen);
+    assert(
+      hasQwenSuccessfulResult(events, "REA_CLIENT_COMPATIBILITY_OK"),
+      "Qwen must emit a successful terminal result with the expected answer.",
+    );
+    finalSeen = true;
     if (mode === "call") {
       assert(evidenceSeen);
       assert(selectedSkillLoaded);
@@ -464,14 +483,6 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: lineage,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    await publishClientReceipt(lab, receipt);
   },
 ]);

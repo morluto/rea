@@ -1,14 +1,17 @@
 import type { FileHandle } from "node:fs/promises";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 /** Magic at the start of a CArchive cookie. */
-export const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
+const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
 
 /** PyInstaller 2.1+ cookie size, including the 64-byte library name. */
 export const PYINSTALLER_COOKIE_V21_BYTES = 88;
@@ -105,6 +108,7 @@ export const observePyInstallerCookie = async (
     return ok({ state: "absent" });
   const tailSize = Math.min(fileSize, PYINSTALLER_COOKIE_SEARCH_BYTES);
   const read = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: fileSize - tailSize,
     length: tailSize,
     label: "CArchive tail",
@@ -137,6 +141,7 @@ export const readCArchiveToc = async (
   handle: FileHandle,
   cookie: PyInstallerCookie,
   signal?: AbortSignal,
+  measuredEnd?: number,
 ): Promise<Result<readonly CArchiveEntry[], PyInstallerFailure>> => {
   if (cookie.tocLength > MAX_TOC_BYTES)
     return err(
@@ -147,6 +152,7 @@ export const readCArchiveToc = async (
     );
   const position = cookie.archiveStart + cookie.tocOffset;
   const read = await readPyInstallerBytes(handle, {
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
     position,
     length: cookie.tocLength,
     label: "CArchive table of contents",
@@ -163,29 +169,31 @@ export const readCArchiveToc = async (
 export const parseCArchiveToc = (
   bytes: Buffer,
 ): Result<readonly CArchiveEntry[], PyInstallerFailure> => {
+  const reader = new BinaryReader(bytes, false, "pyinstaller");
   const entries: CArchiveEntry[] = [];
   let offset = 0;
   const malformedEntry = (message: string): Result<never, PyInstallerFailure> =>
     err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `CArchive table index ${String(entries.length)} at TOC offset ${String(offset)}: ${message}`,
       ),
     );
   while (offset < bytes.length) {
+    if (offset + TOC_HEADER_BYTES > bytes.length)
+      return malformedEntry("CArchive table of contents entry is truncated");
+    const entryLength = reader.u32(offset);
+    if (entryLength < TOC_HEADER_BYTES || offset + entryLength > bytes.length)
+      return malformedEntry(
+        "CArchive table of contents entry extends outside the table",
+      );
+    // Only a framed record can exceed the retained entry allowance.
     if (entries.length >= MAX_TOC_ENTRIES)
       return err(
         pyInstallerFailure(
           "limit",
           "CArchive table of contents exceeds its entry bound",
         ),
-      );
-    if (offset + TOC_HEADER_BYTES > bytes.length)
-      return malformedEntry("CArchive table of contents entry is truncated");
-    const entryLength = bytes.readUInt32BE(offset);
-    if (entryLength < TOC_HEADER_BYTES || offset + entryLength > bytes.length)
-      return malformedEntry(
-        "CArchive table of contents entry extends outside the table",
       );
     const nameBytes = bytes.subarray(
       offset + TOC_HEADER_BYTES,
@@ -210,9 +218,9 @@ export const parseCArchiveToc = (
       typeCode: sourceTypeCode,
       // Other printable codes keep generic-file behavior; compression is independent.
       role: CARCHIVE_ENTRY_ROLES.get(sourceTypeCode) ?? "other",
-      offset: bytes.readUInt32BE(offset + 4),
-      compressedSize: bytes.readUInt32BE(offset + 8),
-      uncompressedSize: bytes.readUInt32BE(offset + 12),
+      offset: reader.u32(offset + 4),
+      compressedSize: reader.u32(offset + 8),
+      uncompressedSize: reader.u32(offset + 12),
       compressionFlag,
     });
     offset += entryLength;
@@ -246,29 +254,33 @@ const parseCookie = (
   if (relative + cookieBytes > tail.length)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive cookie extends past the end of the file",
       ),
     );
   const view = tail.subarray(relative, relative + cookieBytes);
-  const packageLength = view.readUInt32BE(8);
-  const tocOffset = view.readUInt32BE(12);
-  const tocLength = view.readUInt32BE(16);
-  const pythonVersion = view.readUInt32BE(20);
+  const reader = new BinaryReader(view, false, "pyinstaller");
+  const packageLength = reader.u32(8);
+  const tocOffset = reader.u32(12);
+  const tocLength = reader.u32(16);
+  const pythonVersion = reader.u32(20);
   if (
     !safeSum(tocOffset, tocLength, cookieBytes) ||
     packageLength !== tocOffset + tocLength + cookieBytes
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive cookie does not describe a table of contents inside the package",
       ),
     );
   const archiveStart = cookieOffset + cookieBytes - packageLength;
   if (archiveStart < 0 || archiveStart + packageLength > fileSize)
     return err(
-      pyInstallerFailure("format", "CArchive cookie range is outside the file"),
+      pyInstallerFailure(
+        "malformed",
+        "CArchive cookie range is outside the file",
+      ),
     );
   const library =
     layout === "2.1" ? libraryName(view.subarray(24, 88)) : ok(null);
@@ -293,19 +305,17 @@ const libraryName = (
   if (end >= 0 && bytes.subarray(end).some((byte) => byte !== 0))
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive Python library name is not NUL-padded",
       ),
     );
   if (text.length === 0) return ok(null);
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
-    );
+    return ok(decodeStrictUtf8(text, "preserve"));
   } catch {
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive Python library name is not valid UTF-8",
       ),
     );
@@ -314,16 +324,17 @@ const libraryName = (
 
 const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   const end = bytes.indexOf(0);
-  const text = end < 0 ? bytes : bytes.subarray(0, end);
-  if (text.length === 0)
-    return err(pyInstallerFailure("format", "CArchive entry name is empty"));
-  try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
+  if (end < 0 || bytes.subarray(end + 1).some((byte) => byte !== 0))
+    return err(
+      pyInstallerFailure("malformed", "CArchive entry name is not NUL-padded"),
     );
+  if (end === 0)
+    return err(pyInstallerFailure("malformed", "CArchive entry name is empty"));
+  try {
+    return ok(decodeStrictUtf8(bytes.subarray(0, end), "preserve"));
   } catch {
     return err(
-      pyInstallerFailure("format", "CArchive entry name is not valid UTF-8"),
+      pyInstallerFailure("malformed", "CArchive entry name is not valid UTF-8"),
     );
   }
 };
@@ -350,8 +361,7 @@ const validateCArchiveMembers = (
         entry.compressionFlag !== 0
       )
         return err(
-          pyInstallerFailure(
-            "integrity",
+          pyInstallerLayoutFailure(
             `CArchive declaration at table index ${String(entry.index)} has local payload or compression`,
           ),
         );
@@ -361,15 +371,14 @@ const validateCArchiveMembers = (
       entry.compressedSize !== entry.uncompressedSize
     )
       return err(
-        pyInstallerFailure(
-          "integrity",
+        pyInstallerLayoutFailure(
           `Stored CArchive member size disagrees with its table entry at table index ${String(entry.index)}`,
         ),
       );
     if (entry.offset > tocOffset)
       return err(
         pyInstallerFailure(
-          "format",
+          "malformed",
           `CArchive member offset is outside the archive at table index ${String(entry.index)}`,
         ),
       );
@@ -390,8 +399,7 @@ const validateCArchiveMembers = (
       range.start < occupied
     )
       return err(
-        pyInstallerFailure(
-          "integrity",
+        pyInstallerLayoutFailure(
           `CArchive member extends outside the archive or overlaps another member at table index ${String(range.index)}`,
         ),
       );

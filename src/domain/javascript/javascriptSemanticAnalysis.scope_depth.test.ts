@@ -1,5 +1,5 @@
 import * as t from "@babel/types";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import {
   analyzeJavaScriptSemantics,
@@ -17,26 +17,25 @@ const ancestryReads = (
 ): number => {
   const original = WeakMap.prototype.get;
   let reads = 0;
-  const get = vi.spyOn(WeakMap.prototype, "get").mockImplementation(function (
-    this: WeakMap<object, unknown>,
-    key,
-  ) {
-    const value: unknown = original.call(this, key);
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "type" in value &&
-      typeof value.type === "string"
-    )
-      reads++;
-    return value;
-  });
+  let ir: JavaScriptSemanticIr;
   try {
-    inspect(analyzeJavaScriptSemantics(source));
-    return reads;
+    WeakMap.prototype.get = function (key) {
+      const value: unknown = original.call(this, key);
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "type" in value &&
+        typeof value.type === "string"
+      )
+        reads++;
+      return value;
+    };
+    ir = analyzeJavaScriptSemantics(source);
   } finally {
-    get.mockRestore();
+    WeakMap.prototype.get = original;
   }
+  inspect(ir);
+  return reads;
 };
 
 it.each(["const a=1;", "let a; a=1;"])(
@@ -227,13 +226,14 @@ it.each([
 );
 
 it("keeps established logical operands across a long chain", () => {
-  // Known-falsy operands select the right branch at every level; the value and
-  // provenance must still come from the one reachable operand.
-  const ir = analyzeJavaScriptSemantics(
-    `const tok = ${'false || null || 0 || "" || '.repeat(10)}require("electron").app;`,
-  );
-  expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
-  expect(onlyBinding(ir, "tok").provenance).toEqual({
+  // Known-falsy operands select the right branch at every level.
+  const source = `const tok = ${'false || null || 0 || "" || '.repeat(10)}require("electron").app;`;
+  const parsed = parseJavaScriptSource(source, "main.cjs");
+  if (parsed === null) throw new Error("fixture did not parse");
+  const proven = analyzeParsedJavaScriptSemantics(parsed);
+  const candidate = analyzeJavaScriptSemantics(source);
+  expect(proven.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  expect(onlyBinding(proven, "tok").provenance).toEqual({
     status: "module",
     origins: [
       {
@@ -243,5 +243,15 @@ it("keeps established logical operands across a long chain", () => {
       },
     ],
     reason: null,
+  });
+  expect(onlyBinding(candidate, "tok").provenance).toMatchObject({
+    status: "ambiguous",
+    origins: [
+      {
+        specifier: "electron",
+        importedPath: ["app"],
+        loaderAuthority: "candidate",
+      },
+    ],
   });
 });

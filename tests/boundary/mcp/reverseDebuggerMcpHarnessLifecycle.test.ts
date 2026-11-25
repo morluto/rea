@@ -6,12 +6,13 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const providerSource = `#!${process.execPath}\nprocess.stdout.write("selected provider\\n");\n`;
 const inputSource = "selected input bytes\n";
 
 const selectedProviderFiles = async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-provider-owner-"));
+  const directory = await createTestTempDirectory("rea-provider-owner-");
   const provider = join(directory, "selected-rizin");
   const input = join(directory, "fixture.bin");
   await Promise.all([

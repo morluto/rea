@@ -1,3 +1,6 @@
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { parseConfig } from "../config/parseConfig.js";
+import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { expect, it } from "vitest";
 
 import {
@@ -5,15 +8,16 @@ import {
   regexMatchingDeadlineRecovery,
 } from "../config/regexMatchingDeadline.js";
 import {
+  regexWorkerHeapRequestContinuingRecovery,
   regexWorkerHeapRequestRecovery,
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  matchRegexValues,
   execArgvFromCommandLine,
   readLaunchExecArgv,
   readLaunchNodeOptions,
-  regexMatchingDeadlineError,
   regexMatchingLimitation,
   regexWorkerHeapError,
   resolveLaunchRegexWorkerHeap,
@@ -66,9 +70,9 @@ it.each([
   },
   {
     name: "accepts quoted NODE_OPTIONS and a leading plus or zeros",
-    execArgv: ["--max-old-space-size=+0256"],
-    nodeOptions: '"--max-old-space-size=144"',
-    heap: effective(256, true),
+    execArgv: [],
+    nodeOptions: '"--max-old-space-size=+0144"',
+    heap: effective(144, true),
   },
   {
     name: "uses the last positive flag",
@@ -219,12 +223,19 @@ it.each([
   },
 );
 
+it("leaves launch flags unrecoverable on platforms without /proc/self", () => {
+  for (const platform of ["darwin", "win32"] as const) {
+    expect(readLaunchNodeOptions(platform)).toEqual({ kind: "unrecoverable" });
+    expect(readLaunchExecArgv(platform)).toEqual({ kind: "unrecoverable" });
+  }
+});
+
 it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
   const previous = process.env.NODE_OPTIONS;
   const rewritten = "--max-old-space-size=61-rewritten";
   process.env.NODE_OPTIONS = rewritten;
   try {
-    const launch = readLaunchNodeOptions();
+    const launch = readLaunchNodeOptions(process.platform);
     if (process.platform === "linux") {
       expect(launch.kind).toBe("recovered");
       if (launch.kind === "recovered")
@@ -352,12 +363,12 @@ it("recovers launch exec argv from the command line, not process.execArgv", () =
     kind: "recovered",
     value: [],
   });
-  const before = readLaunchExecArgv();
+  const before = readLaunchExecArgv(process.platform);
   const snapshot = [...process.execArgv];
   process.execArgv.length = 0;
   try {
     expect(process.execArgv).toEqual([]);
-    expect(readLaunchExecArgv()).toEqual(before);
+    expect(readLaunchExecArgv(process.platform)).toEqual(before);
     if (before.kind === "recovered") expect(before.value).toEqual(snapshot);
     else expect(before).toEqual({ kind: "unrecoverable" });
   } finally {
@@ -394,10 +405,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(limitation.length).toBeLessThan(700);
     if (heap.kind === "effective")
       expect(limitation).toContain(`${String(heap.mib)} MiB`);
-    expect(
-      projectAnalysisError(regexMatchingDeadlineError("search_procedures"))
-        .remediation.action,
-    ).toContain(regexMatchingDeadlineRecovery(DEFAULT_REGEX_MATCHING_DEADLINE));
     const projected = projectAnalysisError(
       regexWorkerHeapError("search_procedures", new Error("heap"), heap),
     );
@@ -411,9 +418,6 @@ it("describes the effective heap and the configurable matching deadline", () => 
     expect(projected.remediation.action).toContain("--max-old-space-size");
     expect(projected.remediation.action).toContain(
       "--max-old-space-size-percentage",
-    );
-    expect(projected.remediation.action).toContain(
-      regexWorkerHeapRequestRecovery(DEFAULT_REGEX_WORKER_HEAP_REQUEST),
     );
     if (heap.kind === "unknown") {
       expect(projected.remediation.action).toContain(
@@ -483,7 +487,178 @@ it("keeps a selected heap request unless a positive Node flag overrides it", () 
     },
   });
   expect(projected.remediation.action).toContain(
-    regexWorkerHeapRequestRecovery(request),
+    regexWorkerHeapRequestContinuingRecovery(request),
   );
   expect(projected.details?.limit).toBeUndefined();
+});
+
+it.each([
+  ["regex.matching_deadline_ms", "REA_REGEX_MATCHING_DEADLINE_MS", 3000],
+  ["regex.worker_heap_request_mib", "REA_REGEX_WORKER_HEAP_REQUEST_MIB", 128],
+] as const)(
+  "preserves pre-aborted cancellation before invalid %s and rejects the invalid seed until overridden",
+  async (setting, environmentName, value) => {
+    const environment = { [environmentName]: "invalid" };
+    const parsed = parseConfig(environment);
+    if (!parsed.ok) throw parsed.error;
+    const settings = new AnalysisSettings(environment);
+    const config = runtimeAnalysisConfig(parsed.value, settings.read);
+    const input = {
+      operation: "search_strings",
+      pattern: "x",
+      caseSensitive: true,
+      values: ["x"],
+      deadline: config.regexMatchingDeadline,
+      heapRequest: config.regexWorkerHeapRequest,
+    };
+    const controller = new AbortController();
+    const reason = { stopped: true };
+    controller.abort(reason);
+    const cancelled = await settings.run(() =>
+      matchRegexValues({ ...input, signal: controller.signal }),
+    );
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
+    const rejected = await settings.run(() => matchRegexValues(input));
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ConfigurationError",
+        settings: [expect.objectContaining({ setting: environmentName })],
+      },
+    });
+    expect(
+      settings.update({ changes: [{ setting, action: "set", value }] }).ok,
+    ).toBe(true);
+    expect(await settings.run(() => matchRegexValues(input))).toEqual({
+      ok: true,
+      value: [0],
+    });
+    expect(
+      settings.update({ changes: [{ setting, action: "reset" }] }).ok,
+    ).toBe(true);
+    expect(await settings.run(() => matchRegexValues(input))).toMatchObject({
+      ok: false,
+      error: { _tag: "ConfigurationError" },
+    });
+  },
+);
+
+it("returns the structured deadline when a real worker pattern does not finish, then matches again", async () => {
+  const first = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read", "other"],
+  });
+  expect(first).toEqual({ ok: true, value: [0] });
+  const stuck = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "^(a+)+$",
+    caseSensitive: true,
+    values: [`${"a".repeat(40)}b`],
+    deadline: { deadlineMs: 50, source: "runtime" },
+  });
+  if (stuck.ok) throw new Error("expected the real worker to hit its deadline");
+  expect(projectAnalysisError(stuck.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      operation: "search_strings",
+      resource: "cpu",
+      reported_limits: {
+        matching_deadline_ms: 50,
+        matching_deadline_source: "runtime",
+      },
+      limit: {
+        setting: "regex.matching_deadline_ms",
+        effective_value: 50,
+        source: "runtime",
+        unit: "ms",
+      },
+    },
+  });
+  const after = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read"],
+  });
+  expect(after).toEqual({ ok: true, value: [0] });
+});
+
+it("validates patterns even when the worker has no candidate values", async () => {
+  const invalid = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "[",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(invalid).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError", operation: "search_procedures" },
+  });
+  const empty = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^main$",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(empty).toEqual({ ok: true, value: [] });
+});
+
+it("preserves Unicode case folding, astral and lone surrogates, and empty values", async () => {
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^(?:$|\\u{1F600}_|δ|[\\uD800])",
+      caseSensitive: false,
+      values: [
+        "",
+        "delta",
+        "Δelta",
+        "😀_emoji",
+        "\uD800",
+        "middle",
+        "",
+        "😀_end",
+        "δίκη",
+      ],
+    }),
+  ).toEqual({ ok: true, value: [0, 2, 3, 4, 6, 7, 8] });
+});
+
+it("matches across mixed ASCII, Unicode, and oversized single-item chunk boundaries", async () => {
+  const hugeString = `${"a".repeat(300_000)}NEEDLE_${"b".repeat(100)}`;
+  const values = Array.from({ length: 5_000 }, (_, i) => `item_${i}`);
+  values[12] = "Δ_chunk0";
+  values[4095] = "edge_chunk0_NEEDLE";
+  values[4096] = "start_chunk1_ascii";
+  values[4500] = hugeString;
+  values[4501] = "😀_post_huge_NEEDLE";
+  values[4999] = "\uD800_tail_NEEDLE";
+
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "NEEDLE|Δ_chunk0",
+      caseSensitive: true,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [12, 4095, 4500, 4501, 4999] });
+
+  const allEmpty = Array.from({ length: 4_200 }, () => "");
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^$",
+      caseSensitive: true,
+      values: allEmpty,
+    }),
+  ).toEqual({
+    ok: true,
+    value: Array.from({ length: 4_200 }, (_, i) => i),
+  });
 });

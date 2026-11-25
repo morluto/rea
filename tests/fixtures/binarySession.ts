@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
-import { HopperStartError } from "../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../src/hopper/HopperErrors.js";
 import type { Result } from "../../src/domain/result.js";
 import type {
   AnalysisClient,
@@ -14,7 +14,7 @@ import type {
   AnalysisProfileResolution,
   AnalysisProfileResolutionOptions,
   AnalysisProvider,
-} from "../../src/application/AnalysisProvider.js";
+} from "../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../src/application/binary/SessionProviderRouter.js";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
@@ -25,7 +25,11 @@ import { MANAGED_TOOL_CONTRACTS } from "../../src/contracts/managed/managedToolC
 import { ARTIFACT_TOOL_CONTRACTS } from "../../src/contracts/artifactToolContracts.js";
 
 import { err, ok as resultOk } from "../../src/domain/result.js";
-import { observed } from "./analysisExecution.js";
+import {
+  availableFixtureProvider,
+  supportedFixtureTarget,
+  observed,
+} from "./analysisExecution.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 type TestBinarySessionOptions = {
@@ -96,18 +100,8 @@ export const createTestProviderRouter = (
     createClient: (target, profile, context) =>
       declared.createClient(target, profile, context),
     resolveAnalysisProfile: resolve,
-    inspectAvailability: () => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectAvailability: availableFixtureProvider,
+    inspectTargetSupport: supportedFixtureTarget,
   };
   return SessionProviderRouter.selectable(
     new AnalysisProviderRegistry([candidate]),

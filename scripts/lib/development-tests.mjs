@@ -41,12 +41,7 @@ const artifactConsumers = {
   "artifacts:skills": [
     "tests/boundary/cli/guidanceCli.test.ts",
     "tests/boundary/guidanceSearch.test.ts",
-    "tests/boundary/mcp/registerGuidanceTools.test.ts",
-  ],
-  "artifacts:mcp-catalog": [
-    "tests/boundary/mcp/deferredRuntime.test.ts",
-    "tests/boundary/mcp/contractPresentation.test.ts",
-    "tests/boundary/mcp/toolSchemaValidity.test.ts",
+    "tests/boundary/mcp/guidanceMcp.test.ts",
   ],
   "artifacts:product-catalog": [
     "tests/boundary/filesystem/documentationFacts.test.ts",
@@ -58,7 +53,11 @@ const artifactConsumers = {
 };
 
 /** Plan source feedback or explicit tests with their runtime/artifact prerequisites. */
-export const developmentTestPlan = (request, baseCommit) => {
+export const developmentTestPlan = (
+  request,
+  baseCommit,
+  resolvedPaths = request.paths,
+) => {
   const explicit = request.paths.length > 0;
   if (
     request.mode === "changed" &&
@@ -70,12 +69,12 @@ export const developmentTestPlan = (request, baseCommit) => {
       ? []
       : SOURCE_TEST_PROJECTS.map(({ name }) => name);
   return {
-    needsBuild: request.paths.some(
+    needsBuild: resolvedPaths.some(
       (path) => projectForTest(path).group === "built",
     ),
     artifactTasks: Object.entries(artifactConsumers).flatMap(
       ([task, consumers]) =>
-        request.paths.some((path) => consumers.includes(path)) ? [task] : [],
+        resolvedPaths.some((path) => consumers.includes(path)) ? [task] : [],
     ),
     vitestArguments: [
       "run",

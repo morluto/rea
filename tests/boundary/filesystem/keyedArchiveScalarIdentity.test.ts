@@ -91,17 +91,10 @@ const verify = (
       decimal: "9007199254740993",
     });
   } else {
-    const exact =
-      typeof value === "object" &&
-      value !== null &&
-      JSON.stringify(value) ===
-        JSON.stringify({ $plist_type: "integer", decimal: "9007199254740993" });
-    const disclosed = result.limitations.some(
-      (note) =>
-        /integer|number/iu.test(note) &&
-        /precision|exact range|rounded/iu.test(note),
-    );
-    expect(exact || disclosed).toBe(true);
+    expect(value).toEqual({
+      $plist_type: "integer",
+      decimal: "9007199254740993",
+    });
   }
 };
 it.each(cases)(

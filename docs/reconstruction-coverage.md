@@ -28,6 +28,11 @@ this effective scope. A claim verifier must commit to its own surfaces and
 their reachable dependencies, including their artifact and implemented-owner
 digests. Callers do not need to duplicate the transitive closure in the request.
 
+Listed `residual_unknown_ids` select unknown identities from the Evidence bundle.
+The evaluator uses each identity's latest revision: resolved questions do not
+block the boundary, while reopened questions do. An active, unallowed question
+retains its cited supporting, contradicting and mutation Evidence in the result.
+
 ## Comparable verifier Evidence
 
 At least one record explicitly cited by the latest verifier observation must
@@ -78,3 +83,18 @@ Selection uses each unknown's latest revision, its comparison identity and
 Evidence references. Explicit unknown dependencies remain relevant across
 dimensions. Unknowns for another comparison and resolved heads do not become
 blockers merely because their source Evidence overlaps.
+
+## Visual reconstruction claims
+
+A visual claim uses retained `compare_web_screenshots` Evidence and two
+`capture_web_screenshot` records. Set `source_evidence.before_evidence_id` and
+`source_evidence.after_evidence_id` on the claim to select each observation.
+Both IDs are needed when the compared PNGs are byte-identical or a digest
+matches multiple retained captures. Each selected record must match its side's
+artifact digest. Separate pairs can reuse the same comparison Evidence, and
+the verifier checks coverage for each pair. With unique digest matches, the
+verifier can select the records automatically. It replays the PNG comparison at
+the recorded threshold. Incomplete capture coverage, an unreadable image, a
+dimension mismatch, or a comparison that
+disagrees with the retained pixels leaves the claim `unknown`. Visual claims
+are counted in `summary.visual`.

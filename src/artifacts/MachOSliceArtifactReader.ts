@@ -1,4 +1,16 @@
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
+  streamChunkToBuffer,
+  readArtifactFileChunks,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 
@@ -6,30 +18,25 @@ import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "../native/CommandRunner.js";
-import {
-  parseLipoOutputResult,
-  LipoFieldRetentionError,
-  type LipoArchitecture,
-} from "../native/parsers/lipo.js";
+} from "../providers/NativeCommandRunner.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
-  machoCpuSubtypeBase,
+  machoKnownArm32Subtype,
 } from "../domain/apple/machoCpuIdentity.js";
-import { readMachoImage, type ReadAt } from "./apple/MachoLoadCommandReader.js";
 import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-} from "./ArtifactReader.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
+  readMachoImage,
+  type ReadAt,
+} from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
+import {
+  lipoDescribesCpu,
+  parseLipoOutputResult,
+  LipoFieldRetentionError,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {
@@ -45,6 +52,8 @@ export class MachOSliceArtifactReader implements ArtifactReader {
   >();
   #closed = false;
   #closePromise: Promise<void> | undefined;
+  /** Coverage of the latest enumeration, reported when its iterator ends. */
+  #coverage: ArtifactReaderTraversal = { status: "complete", limitations: [] };
 
   constructor(
     private readonly path: string,
@@ -53,15 +62,27 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       environment,
     ),
     source?: StableRegularFileDescriptor,
+    /** Caller choice when lipo's slice records disagree with the FAT table. */
+    private readonly integrity: ArtifactIntegrityPolicyName = "fail",
   ) {
     this.#source = new ArtifactFileSource(path, "Universal Mach-O", source);
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const enumeration = this.#readEntries(signal);
     this.#enumerations.add(enumeration);
     try {
       yield* enumeration;
+      this.#assertOpen(signal);
+      // Every FAT slice is listed. A disagreement with lipo fails the
+      // traversal unless the caller chose to record it.
+      options?.onCoverage?.({
+        status: this.#coverage.status,
+        limitations: [...this.#coverage.limitations],
+      });
     } finally {
       this.#enumerations.delete(enumeration);
     }
@@ -70,14 +91,12 @@ export class MachOSliceArtifactReader implements ArtifactReader {
   async *#readEntries(
     signal?: AbortSignal,
   ): AsyncGenerator<ArtifactEntry, void> {
+    this.#assertOpen(signal);
     this.#entries.clear();
+    this.#coverage = { status: "complete", limitations: [] };
     const source = await this.#ensureSource();
     await this.#source.readSelectedPath();
-    if (this.#closed)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Universal Mach-O reader is closed",
-      );
+    this.#assertOpen(signal);
     const command = this.runner.run(
       "lipo",
       ["-detailed_info", this.path],
@@ -105,11 +124,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
               }),
         },
       );
-    if (this.#closed)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Universal Mach-O reader closed during slice discovery",
-      );
+    this.#assertOpen(signal);
     this.#command = {
       tool: captured.value.tool,
       arguments: ["-detailed_info", "$ARTIFACT"],
@@ -123,7 +138,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const parsed = parseLipoOutputResult(captured.value.stdout, this.path);
     if (!parsed.ok)
       throw new ArtifactReaderFailure(
-        parsed.error instanceof LipoFieldRetentionError ? "limit" : "format",
+        parsed.error instanceof LipoFieldRetentionError ? "limit" : "io",
         `lipo did not produce readable architecture records: ${parsed.error.message}`,
         {
           cause: parsed.error,
@@ -140,15 +155,12 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       signal,
     );
     await this.#source.readSelectedPath();
-    if (this.#closed)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Universal Mach-O reader is closed",
-      );
+    this.#assertOpen(signal);
     if (structural.status === "malformed")
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O structural slice index is malformed: ${structural.reason}`,
+        { integrityCheck: "layout-consistency" },
       );
     // A valid universal binary can hold slices REA cannot index, such as
     // big-endian PowerPC. lipo's own ranges still inventory every slice.
@@ -162,22 +174,31 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         "unavailable",
         `Mach-O structural slice index is unsupported: ${structural.reason}`,
       );
+    // lipo is an independent witness of the FAT table. Under
+    // record-and-continue a disagreement is recorded and REA's own FAT parse,
+    // when available, is the authority for slice identity and ranges.
+    const disagreements: string[] = [];
+    const disagree = (message: string): void => {
+      if (this.integrity === "fail")
+        throw new ArtifactReaderFailure("integrity", message, {
+          integrityCheck: "layout-consistency",
+        });
+      disagreements.push(message);
+    };
     const hiddenArchitectures = architectures.filter(({ hidden }) => hidden);
     const visibleArchitectures = architectures.filter(({ hidden }) => !hidden);
     if (
       lipo.hiddenArchitectureCount !== null &&
       lipo.hiddenArchitectureCount !== hiddenArchitectures.length
     )
-      throw new ArtifactReaderFailure(
-        "integrity",
+      disagree(
         "lipo hidden architecture count disagrees with its architecture rows",
       );
     if (
       lipo.declaredArchitectureCount !== null &&
       lipo.declaredArchitectureCount !== visibleArchitectures.length
     )
-      throw new ArtifactReaderFailure(
-        "integrity",
+      disagree(
         "lipo declared architecture count disagrees with its visible rows",
       );
     if (
@@ -193,6 +214,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const hiddenSlices =
       structural.status === "parsed" ? (structural.hiddenSlices ?? []) : [];
     const matchingSlices = new Map<LipoArchitecture, MachoSlice>();
+    const unmatchedRowLimitations: string[] = [];
     if (slices !== null) {
       if (
         slices.length !== visibleArchitectures.length ||
@@ -205,8 +227,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         (lipo.hiddenArchitectureCount !== null &&
           lipo.hiddenArchitectureCount !== hiddenSlices.length)
       )
-        throw new ArtifactReaderFailure(
-          "integrity",
+        disagree(
           "lipo declared and hidden architecture counts disagree with the Mach-O FAT table",
         );
       for (const [reportedRows, observedRows] of [
@@ -218,17 +239,64 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           const match = unmatched.findIndex((observed) =>
             lipoMatchesSlice(reported, observed, observedRows.length === 1),
           );
-          if (match < 0)
-            throw new ArtifactReaderFailure(
-              "integrity",
+          if (match < 0) {
+            disagree(
               `lipo slice metadata disagrees with the Mach-O FAT table: ${reported.name} (cputype=${reported.cpu_type ?? "unknown"}, cpusubtype=${reported.cpu_subtype ?? "unknown"}, offset=${reported.file_offset ?? "unknown"}, size=${reported.size ?? "unknown"}, alignment=${reported.alignment ?? "unknown"})`,
             );
+            // The row has no slice to carry its retained field evidence.
+            unmatchedRowLimitations.push(...lipoRowEvidence(reported));
+            continue;
+          }
           const [observed] = unmatched.splice(match, 1);
           if (observed !== undefined) matchingSlices.set(reported, observed);
         }
       }
     }
+    if (disagreements.length > 0 && slices !== null) {
+      this.#coverage = {
+        status: "complete",
+        limitations: [
+          `Integrity limitation: lipo slice metadata disagrees with the Mach-O FAT table (${disagreements.join("; ")}). Slices were enumerated from REA's FAT table parse; lipo's ranges were not used.`,
+          ...unmatchedRowLimitations,
+        ],
+      };
+      const matchedRows = new Map(
+        Array.from(matchingSlices, ([reported, observed]) => [
+          observed,
+          reported,
+        ]),
+      );
+      const names = new Set<string>();
+      for (const slice of [...slices, ...hiddenSlices]) {
+        this.#assertOpen(signal);
+        const reported = matchedRows.get(slice);
+        yield this.#sliceEntry(
+          uniqueSliceName(
+            reported?.name ?? structuralSliceName(slice),
+            slice.slice_offset,
+            names,
+          ),
+          slice.slice_offset,
+          slice.slice_size,
+          fileSize,
+          // lipo's ranges are not used, but its retained field evidence for a
+          // matched row still describes this slice.
+          reported === undefined ? [] : lipoRowEvidence(reported),
+        );
+      }
+      return;
+    }
+    // Without a FAT parse, lipo's rows are the only slice list; a count
+    // disagreement means a slice may be missing from them.
+    if (disagreements.length > 0)
+      this.#coverage = {
+        status: "unknown",
+        limitations: [
+          `Integrity limitation: lipo's architecture counts disagree with its own records (${disagreements.join("; ")}). No structural FAT parse was available, so slice ranges are based on lipo's records and the slice list may be incomplete.`,
+        ],
+      };
     for (const architecture of architectures) {
+      this.#assertOpen(signal);
       const structuralSlice = matchingSlices.get(architecture);
       const offset = architecture.file_offset ?? structuralSlice?.slice_offset;
       const sliceSize = architecture.size ?? structuralSlice?.slice_size;
@@ -236,66 +304,68 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "lipo omitted a universal slice byte range",
+          { integrityCheck: "layout-consistency" },
         );
-      if (
-        !Number.isSafeInteger(offset) ||
-        !Number.isSafeInteger(sliceSize) ||
-        offset < 0 ||
-        sliceSize <= 0 ||
-        !Number.isSafeInteger(offset + sliceSize) ||
-        offset + sliceSize > fileSize
-      )
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `lipo reported an out-of-bounds Mach-O slice: ${architecture.name}`,
-        );
-      const entry: ArtifactEntry = {
-        path: `slices/${architecture.name}`,
-        kind: "slice",
-        declaredSize: sliceSize,
-        compressedSize: null,
-        executable: true,
-        encrypted: false,
-        byteOffset: offset,
-        declaredIntegrity: null,
-        unpacked: false,
-        limitations: [
-          ...architecture.limitations,
-          ...(structural.status === "not-mach-o"
+      yield this.#sliceEntry(architecture.name, offset, sliceSize, fileSize, [
+        ...architecture.limitations,
+        ...(structural.status === "not-mach-o"
+          ? [
+              "Structural Mach-O facts were unavailable; slice range is based on lipo output.",
+            ]
+          : structural.status === "unsupported"
             ? [
-                "Structural Mach-O facts were unavailable; slice range is based on lipo output.",
-              ]
-            : structural.status === "unsupported"
-              ? [
-                  `Structural Mach-O facts were unsupported (${structural.reason}); slice range is based on lipo output.`,
-                ]
-              : []),
-          ...(architecture.file_offset === null || architecture.size === null
-            ? [
-                architecture.fields.offset.kind === "uninterpretable" ||
-                architecture.fields.size.kind === "uninterpretable"
-                  ? "Slice range was derived from structural Mach-O facts because lipo's range declarations could not all be interpreted."
-                  : "Slice range was derived from structural Mach-O facts because lipo omitted it.",
+                `Structural Mach-O facts were unsupported (${structural.reason}); slice range is based on lipo output.`,
               ]
             : []),
-          ...(architecture.cpu_type !== null &&
-          architecture.cpu_type_code === null
-            ? [
-                `lipo CPU type is retained as unnormalized source text: ${architecture.cpu_type}`,
-              ]
-            : []),
-          ...(architecture.cpu_subtype !== null &&
-          architecture.cpu_subtype_code === null
-            ? [
-                `lipo CPU subtype is retained as unnormalized source text: ${architecture.cpu_subtype}${architecture.capabilities === null ? "" : `; capabilities ${architecture.capabilities}`}`,
-              ]
-            : []),
-        ],
-        adapterKey: `${String(offset)}:${String(sliceSize)}`,
-      };
-      this.#entries.set(entry.adapterKey, copyArtifactEntry(entry));
-      yield entry;
+        ...(architecture.file_offset === null || architecture.size === null
+          ? [
+              architecture.fields.offset.kind === "uninterpretable" ||
+              architecture.fields.size.kind === "uninterpretable"
+                ? "Slice range was derived from structural Mach-O facts because lipo's range declarations could not all be interpreted."
+                : "Slice range was derived from structural Mach-O facts because lipo omitted it.",
+            ]
+          : []),
+        ...lipoCpuSourceLimitations(architecture),
+      ]);
     }
+  }
+
+  /** Inventory one slice range after checking it lies within the artifact. */
+  #sliceEntry(
+    name: string,
+    offset: number,
+    sliceSize: number,
+    fileSize: number,
+    limitations: readonly string[],
+  ): ArtifactEntry {
+    if (
+      !Number.isSafeInteger(offset) ||
+      !Number.isSafeInteger(sliceSize) ||
+      offset < 0 ||
+      sliceSize <= 0 ||
+      !Number.isSafeInteger(offset + sliceSize) ||
+      offset + sliceSize > fileSize
+    )
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Mach-O slice range is outside the artifact: ${name}`,
+        { integrityCheck: "layout-consistency" },
+      );
+    const entry: ArtifactEntry = {
+      path: `slices/${name}`,
+      kind: "slice",
+      declaredSize: sliceSize,
+      compressedSize: null,
+      executable: true,
+      encrypted: false,
+      byteOffset: offset,
+      declaredIntegrity: null,
+      unpacked: false,
+      limitations: [...limitations],
+      adapterKey: `${String(offset)}:${String(sliceSize)}`,
+    };
+    this.#entries.set(entry.adapterKey, copyArtifactEntry(entry));
+    return entry;
   }
 
   open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
@@ -314,11 +384,11 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         }),
       );
     const produced = this.#entries.get(entry.adapterKey);
-    if (produced === undefined || !sameArtifactEntry(entry, produced))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        "Mach-O slice entry metadata does not match this reader's inventory",
-      );
+    assertProducedEntry(
+      entry,
+      produced,
+      "Mach-O slice entry metadata does not match this reader's inventory",
+    );
     const offset = produced.byteOffset;
     const size = produced.declaredSize;
     if (
@@ -332,6 +402,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         "Invalid Mach-O slice byte range",
+        { integrityCheck: "layout-consistency" },
       );
     const source = await this.#ensureSource();
     await this.#source.readSelectedPath();
@@ -347,6 +418,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O slice range is outside the artifact: ${entry.path}`,
+        { integrityCheck: "layout-consistency" },
       );
     const sourceStream = readArtifactFileChunks(source.handle, {
       start: offset,
@@ -361,11 +433,13 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         return new ArtifactReaderFailure(
           "integrity",
           `Mach-O slice read coverage is incomplete: ${entry.path}`,
+          { integrityCheck: "read-coverage" },
         );
       if (coverage.bytes !== BigInt(size))
         return new ArtifactReaderFailure(
           "integrity",
           `Mach-O slice size disagrees with lipo metadata: ${entry.path}`,
+          { integrityCheck: "declared-size" },
         );
       if (signal?.aborted)
         return new ArtifactReaderFailure(
@@ -394,7 +468,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           throw new ArtifactReaderFailure(
             "integrity",
             `Could not read Mach-O slice range: ${entry.path}`,
-            { cause },
+            { cause, integrityCheck: "read-coverage" },
           );
         }
         validatingSource = true;
@@ -432,7 +506,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
             : new ArtifactReaderFailure(
                 "integrity",
                 `Could not read Mach-O slice range: ${entry.path}`,
-                { cause },
+                { cause, integrityCheck: "read-coverage" },
               )),
       );
     };
@@ -539,6 +613,15 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       );
   }
 
+  #assertOpen(signal?: AbortSignal): void {
+    assertArtifactReadActive(signal);
+    if (this.#closed)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Universal Mach-O reader is closed",
+      );
+  }
+
   async #ensureSource(): Promise<StableRegularFileDescriptor> {
     if (this.#closed)
       throw new ArtifactReaderFailure(
@@ -554,6 +637,50 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     return source;
   }
 }
+
+/** lipo CPU declarations REA retained as text because it could not normalize them. */
+const lipoCpuSourceLimitations = (architecture: LipoArchitecture): string[] => [
+  ...(architecture.cpu_type !== null && architecture.cpu_type_code === null
+    ? [
+        `lipo CPU type is retained as unnormalized source text: ${architecture.cpu_type}`,
+      ]
+    : []),
+  ...(architecture.cpu_subtype !== null &&
+  architecture.cpu_subtype_code === null
+    ? [
+        `lipo CPU subtype is retained as unnormalized source text: ${architecture.cpu_subtype}${architecture.capabilities === null ? "" : `; capabilities ${architecture.capabilities}`}`,
+      ]
+    : []),
+];
+
+/**
+ * Every source fact one lipo row carries beyond the ranges REA replaced:
+ * its uninterpretable fields and its unnormalized CPU declarations.
+ */
+const lipoRowEvidence = (architecture: LipoArchitecture): string[] => [
+  ...architecture.limitations,
+  ...lipoCpuSourceLimitations(architecture),
+];
+
+/** The most specific name a FAT slice's own CPU identity supports. */
+const structuralSliceName = (slice: MachoSlice): string =>
+  ((slice.fat_cpu_type ?? slice.cpu_type) === 12
+    ? machoKnownArm32Subtype(slice.fat_cpu_subtype ?? slice.cpu_subtype)
+    : undefined) ?? slice.architecture;
+
+/**
+ * Keep slice paths distinct: two FAT slices can share an identity name, so a
+ * repeated name is qualified by the slice's FAT offset, which is unique.
+ */
+const uniqueSliceName = (
+  name: string,
+  offset: number,
+  used: Set<string>,
+): string => {
+  const unique = used.has(name) ? `${name}@${String(offset)}` : name;
+  used.add(unique);
+  return unique;
+};
 
 /** Compare lipo's independent ranges with structurally parsed slice identity. */
 const readStructuralSlices = async (
@@ -582,61 +709,27 @@ const lipoMatchesSlice = (
     reported.cpu_subtype_code !== null;
   return (
     (hasPhysicalIdentity || structurallyUnique) &&
-    lipoNameMatches(reported.name, observed) &&
+    (reported.numericName !== undefined ||
+      lipoNameMatches(reported.name, observed)) &&
     (reported.file_offset === null ||
       reported.file_offset === observed.slice_offset) &&
     (reported.size === null || reported.size === observed.slice_size) &&
-    (reported.cpu_type_code === null ||
-      reported.cpu_type_code === observedCpuType) &&
-    lipoSubtypeMatches(reported, observedCpuSubtype) &&
+    lipoDescribesCpu(reported, observedCpuType, observedCpuSubtype) &&
     (reported.alignment === null ||
       observed.fat_alignment_exponent === null ||
       reported.alignment === 2 ** observed.fat_alignment_exponent)
   );
 };
 
-/**
- * Compare the complete subtype when lipo printed its capability byte, and
- * otherwise only the subtype bits its record names.
- */
-const lipoSubtypeMatches = (
-  reported: LipoArchitecture,
-  observedCpuSubtype: number,
-): boolean => {
-  if (reported.cpu_subtype_code !== null)
-    return reported.cpu_subtype_code === observedCpuSubtype;
-  return (
-    reported.cpu_subtype_base === null ||
-    reported.cpu_subtype_base === machoCpuSubtypeBase(observedCpuSubtype)
-  );
-};
-
-/** ARM implementation names from cctools libstuff/arch.c, keyed by lipo spelling. */
-const ARM_SUBTYPES: Readonly<Record<string, number>> = {
-  armv4t: 5,
-  armv5: 7,
-  xscale: 8,
-  armv6: 6,
-  armv7: 9,
-  armv7f: 10,
-  armv7s: 11,
-  armv7k: 12,
-  armv6m: 14,
-  armv7m: 15,
-  armv7em: 16,
-  "armv8m.main": 17,
-  "armv8m.base": 18,
-  "armv8.1m.main": 19,
-};
-
 /** Reconcile lipo's specific name with the structural reader's CPU family. */
 const lipoNameMatches = (reported: string, observed: MachoSlice): boolean => {
   if (reported === observed.architecture) return true;
-  if (observed.cpu_type === 12 && observed.architecture === "arm")
-    return (
-      ARM_SUBTYPES[reported] ===
-      machoCpuSubtypeBase(observed.fat_cpu_subtype ?? observed.cpu_subtype)
+  if (observed.cpu_type === 12 && observed.architecture === "arm") {
+    const subtype = machoKnownArm32Subtype(
+      observed.fat_cpu_subtype ?? observed.cpu_subtype,
     );
+    return (reported === "armv5" ? "armv5tej" : reported) === subtype;
+  }
   if (reported === machoArchitectureFamily(observed.architecture)) return true;
   // Retain lipo's capability-variant spelling; physical identity is checked separately.
   return (

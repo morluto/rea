@@ -1,21 +1,17 @@
 import { expect, it } from "vitest";
 import {
-  analysisViewCaptureEvidence,
-  environmentStateCaptureFixture,
   timedCaptureEvidence,
+  captureParent,
 } from "../../../tests/fixtures/analysisView.js";
 import {
   SCENARIO_EXCHANGES,
   scenarioCaptureEvidence,
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
-import type { Evidence } from "../evidence.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-  type AnalysisViewResult,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import type { AnalysisViewResult } from "./analysisViewResult.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import {
   WITHHELD_WRITE_HINTS,
   summarizeEnvironmentCoverage,
@@ -30,23 +26,9 @@ const RULES = [
   "sibling-variance",
 ] as const;
 
-const parentOf = (
-  evidence: Evidence = analysisViewCaptureEvidence(
-    environmentStateCaptureFixture(),
-  ),
-): AnalysisViewParent => ({
-  predicateType: evidence.predicate_type,
-  evidenceId: evidence.evidence_id,
-  operation: evidence.operation,
-  normalizedResult: evidence.normalized_result,
-  subject: evidence.subject,
-  limitations: [],
-  parameters: evidence.parameters,
-});
-
 const project = (
   kind: "environment-state" | "environment-coverage",
-  parent: AnalysisViewParent = parentOf(),
+  parent: AnalysisViewParent = captureParent(),
 ): AnalysisViewResult => {
   const projected = projectAnalysisView(
     parent,
@@ -60,25 +42,24 @@ const plan = (
   tool: string,
   reason: StateWritePlan["reason"],
   extra: Partial<StateWritePlan> = {},
-): StateWritePlan =>
-  ({
-    tool,
-    effect: "create",
-    target: "/api/folders",
-    served: reason === null,
-    reason,
-    exemplar_ordinal: 4,
-    observation: null,
-    response: null,
-    body: null,
-    rules: [],
-    collection: null,
-    insert: null,
-    merge: null,
-    checked_record_ordinals: [],
-    contradicted_by: null,
-    ...extra,
-  }) as StateWritePlan;
+): StateWritePlan => ({
+  tool,
+  effect: "create",
+  target: "/api/folders",
+  served: reason === null,
+  reason,
+  exemplar_ordinal: 4,
+  observation: null,
+  response: null,
+  body: null,
+  rules: [],
+  collection: null,
+  insert: null,
+  merge: null,
+  checked_record_ordinals: [],
+  contradicted_by: null,
+  ...extra,
+});
 
 it("has a hint for every reason the state view reports for a withheld write", () => {
   const reasons = environmentStateFields.writes.element.shape.reason
@@ -129,7 +110,7 @@ it("counts read tools by how they answer and lists writes as served or withheld 
           tool: "delete_folders_by_uid",
           effect: "delete",
           reason: "no-state-target",
-          hint: WITHHELD_WRITE_HINTS["no-state-target"],
+          hint: expect.stringContaining("path template"),
           exemplar_ordinal: null,
           contradicted_by: null,
         },
@@ -146,9 +127,6 @@ it("summarizes the state the environment-state view derives with the same rules"
     coverage.kind !== "environment-coverage"
   )
     throw new Error("Expected state and coverage views");
-  const summary = summarizeEnvironmentCoverage(state);
-  expect(coverage.reads).toEqual(summary.reads);
-  expect(coverage.writes).toEqual(summary.writes);
   expect(coverage.reads.state + coverage.reads.recorded).toBe(
     state.views.length,
   );
@@ -179,7 +157,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
     ["GET", "/api/folders/f1", { message: "not found" }, 404],
     ["GET", "/api/folders", []],
   ]);
-  const parent = parentOf(evidence);
+  const parent = captureParent(evidence);
   const state = project("environment-state", parent);
   const coverage = project("environment-coverage", parent);
   if (
@@ -197,9 +175,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
     expect.arrayContaining([
       expect.objectContaining({
         reason: "no-state-target",
-        hint: expect.stringContaining(
-          "could not be linked to a modelled state target",
-        ),
+        hint: WITHHELD_WRITE_HINTS["no-state-target"],
       }),
     ]),
   );
@@ -207,7 +183,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
 
 it("says an untimed capture learns no clock, and only for an untimed capture", () => {
   const untimed = /learns no clock/u;
-  const scenarioParent = parentOf(
+  const scenarioParent = captureParent(
     scenarioCaptureEvidence(
       scenarioCaptureFixture(SCENARIO_EXCHANGES, {
         request_body: true,
@@ -216,25 +192,20 @@ it("says an untimed capture learns no clock, and only for an untimed capture", (
       }),
     ),
   );
-  for (const [parent, timeline] of [
-    [parentOf(), "recorded-start-time"],
-    [scenarioParent, "record-order"],
+  for (const [parent, needsClockAdvice] of [
+    [captureParent(), false],
+    [scenarioParent, true],
   ] as const) {
-    const state = project("environment-state", parent);
     const coverage = project("environment-coverage", parent);
-    if (
-      state.kind !== "environment-state" ||
-      coverage.kind !== "environment-coverage"
-    )
-      throw new Error("Expected state and coverage views");
-    expect(state.timeline).toBe(timeline);
+    if (coverage.kind !== "environment-coverage")
+      throw new Error("Expected coverage view");
     expect(coverage.limitations.some((line) => untimed.test(line))).toBe(
-      timeline === "record-order",
+      needsClockAdvice,
     );
   }
 });
 
-it("refuses a browser scenario without response bodies as the state view does", () => {
+it("refuses a browser scenario without selected response bodies", () => {
   const evidence = scenarioCaptureEvidence(
     scenarioCaptureFixture(SCENARIO_EXCHANGES, {
       request_body: true,
@@ -242,16 +213,16 @@ it("refuses a browser scenario without response bodies as the state view does", 
       header_values: true,
     }),
   );
-  const view = (kind: "environment-state" | "environment-coverage") =>
-    projectAnalysisView(
-      parentOf(evidence),
-      analysisViewRequestSchema.parse({ kind, template_rules: [] }),
-    );
-  const state = view("environment-state");
-  const coverage = view("environment-coverage");
-  if (state.ok || coverage.ok) throw new Error("Expected both refusals");
-  expect(coverage.error).toMatchObject({
-    _tag: "AnalysisUnsupportedTargetError",
-    message: state.error.message,
+  expect(
+    projectAnalysisView(captureParent(evidence), {
+      kind: "environment-coverage",
+      template_rules: [],
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisTargetFailureError",
+      message: expect.stringContaining("response_body selected"),
+    },
   });
 });

@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
@@ -204,10 +205,13 @@ it.each(["write", "resize"] as const)(
       );
       await expect(renderer.frames()).rejects.toBe(failure);
     } finally {
-      await scope.close();
-      terminalDispose.mockRestore();
-      addonDispose.mockRestore();
-      await rm(temporaryRoot, { recursive: true, force: true });
+      try {
+        await scope.close();
+      } finally {
+        terminalDispose.mockRestore();
+        addonDispose.mockRestore();
+        await rm(temporaryRoot, { recursive: true, force: true });
+      }
     }
   },
 );
@@ -226,7 +230,7 @@ it("retains disposal failures for a later cleanup retry", async () => {
     normalize: boundedNormalize((value) => value),
   });
   const scope = new ProcessCaptureResourceScope();
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-terminal-retry-"));
+  const temporaryRoot = await createTestTempDirectory("rea-terminal-retry-");
   try {
     const cleanup = await scope.release({
       timers: new Set(),
@@ -244,9 +248,11 @@ it("retains disposal failures for a later cleanup retry", async () => {
     );
     expect(terminalDispose).toHaveBeenCalledTimes(2);
   } finally {
-    await scope.close();
-    terminalDispose.mockRestore();
-    await rm(temporaryRoot, { recursive: true, force: true });
+    try {
+      await scope.close();
+    } finally {
+      terminalDispose.mockRestore();
+    }
   }
 });
 
@@ -327,8 +333,11 @@ it("renders retained chunks once after late PID knowledge, preserving event time
       expect(frame.serialized_state).toContain("child=selected");
     }
   } finally {
-    await renderer.dispose();
-    write.mockRestore();
+    try {
+      await renderer.dispose();
+    } finally {
+      write.mockRestore();
+    }
   }
 });
 

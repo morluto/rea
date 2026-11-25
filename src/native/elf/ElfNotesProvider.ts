@@ -1,91 +1,101 @@
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
-  projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  closeArtifactResources,
+  withStableArtifactHandle,
+  yieldArtifactRead,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../../domain/compression/zstandardFrameAllowance.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  ELF_NOTES_READ_BUDGETS,
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
+  type ElfNotes,
   type InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 import {
-  ElfNoteSectionNameBudgetFailure,
-  parseElfNotes,
+  ELF_NOTE_TEXT_ALLOWANCE,
+  parseElfNotesFromHandle,
 } from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class ElfNotesProvider implements ElfNotesPort {
   readonly identity = ELF_NOTES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_NOTES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_NOTES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
+    let completed: ElfNotes | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        const result = await withStableArtifactHandle<ElfNotes>(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          parseElfNotes(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observed = identity;
             },
-            input,
-          ),
+            onVerifiedResult: (value) => {
+              completed = value;
+            },
+          },
+          (handle) =>
+            parseElfNotesFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              () => yieldArtifactRead(options?.signal),
+            ),
         );
+        return ok(result);
       });
     } catch (cause) {
-      return err(elfNotesFailure(cause, input));
+      return err(elfNotesFailure(cause, input, observed, completed));
     }
   }
 }
-
-const NOTE_TEXT_BUDGET =
-  "The ELF note text, hash, and scan budget fixed by the admitted image length plus decoded section names";
 
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
@@ -99,150 +109,95 @@ const inputBudgetRemediation = (
       ? `The image exceeds the ${String(MAX_INSPECT_ELF_NOTE_ENTRIES)}-entry note-table ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected note entry budget.`;
 
-const sectionNameBudgetRemediation = (
-  cause: ElfNoteSectionNameBudgetFailure,
-): string =>
-  cause.minimumMaxFileBytes <= BigInt(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
-    ? `Raise max_file_bytes to at least ${String(cause.minimumMaxFileBytes)} bytes to admit the source and decoded ELF section names.`
-    : `The source and decoded ELF section names require ${String(cause.minimumMaxFileBytes)} bytes, above this operation's ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte maximum; select an image with a smaller section-name table.`;
+const sectionNameBudgetRemediation = (required: bigint): string =>
+  required <= BigInt(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
+    ? `Raise max_file_bytes to at least ${String(required)} bytes to admit the source and decoded ELF section names.`
+    : `The source and decoded ELF section names require ${String(required)} bytes, above this operation's ${String(MAX_INSPECT_ELF_NOTE_FILE_BYTES)}-byte maximum; select an image with a smaller section-name table.`;
 
-const elfNotesFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
+const elfNotesFailure = (
+  cause: unknown,
   input: InspectElfNotesInput,
+  observed?: { readonly sha256: string; readonly bytes: number },
+  completed?: ElfNotes,
 ) => {
-  const { cause, origin } = facts;
-  if (cause instanceof ElfNoteSectionNameBudgetFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "memory",
-      cause.message,
-      {
-        max_file_bytes: cause.selectedMaxFileBytes,
-        minimum_required_bytes: cause.minimumMaxFileBytes.toString(),
-      },
-      {
-        cause,
-        retryable: false,
-        remediationAction: sectionNameBudgetRemediation(cause),
-      },
-    );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise.
-      // The note text, hash, and scan ceiling equals the admitted image
-      // length plus decoded section names, so host memory cannot raise it.
-      const noteTextBudget = cause.boundary === "memory";
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : noteTextBudget
-              ? fixedAllowanceOptions(NOTE_TEXT_BUDGET, "parser")
-              : {
-                  retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: ELF_NOTES_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "ELF image",
+      fallbackMessage: "ELF note inspection failed.",
+      recognise: (failure) => {
+        if (failure instanceof ZstandardFrameAllowanceError)
+          return projectZstandardFrameAllowance(OPERATION, failure);
+        const sectionNameBudget = elfSectionNameBudget(failure);
+        if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
+          return parseLimitConstraint(OPERATION, "memory", failure, {
+            retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_NOTES_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
+            remediationAction: sectionNameBudgetRemediation(
+              sectionNameBudget.required,
+            ),
+          });
+        if (isParseLimit(failure, "elf-notes")) {
+          const entryBudget = failure.failure.limit.name === "max_entries";
+          return parseLimitConstraint(
+            OPERATION,
+            entryBudget ? "capacity" : "memory",
+            failure,
+            entryBudget
+              ? {
+                  retryable: false,
+                  limit: elfReadBudgetLimit(
+                    ELF_NOTES_READ_BUDGETS,
+                    "max_entries",
+                    input.max_entries,
                   ),
+                  remediationAction: inputBudgetRemediation("capacity", input),
+                }
+              : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
+                  limit: failure.failure.limit.maximum,
+                  unit: "bytes",
                 }),
-        },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
+          );
+        }
+        return undefined;
+      },
+      fileSize: (failure) =>
+        parseLimitConstraint(
+          OPERATION,
+          "file-size",
+          decodeLimit(
+            "elf-notes",
+            failure.message,
+            { name: "max_file_bytes", maximum: input.max_file_bytes },
+            { cause: failure },
+          ),
           {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
+            retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_NOTES_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
+            remediationAction: inputBudgetRemediation("file-size", input),
           },
-        ],
-      );
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected ELF image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "ELF note inspection failed.",
-    { cause },
+        ),
+    }),
   );
-};
-
-const elfNotesFailure = (cause: unknown, input: InspectElfNotesInput) => {
-  const primary = elfNotesFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
-  );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,
     input.path,
     ELF_NOTES_PROVIDER.id,
     OPERATION,
+    observed,
   );
 };

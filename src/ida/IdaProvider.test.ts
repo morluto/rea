@@ -1,4 +1,3 @@
-import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { describe, expect, it, vi } from "vitest";
@@ -15,7 +14,9 @@ import {
   RecordingIdaMcp,
   createIdaTarget,
 } from "../../tests/fixtures/idaMcp.js";
+import { inspectIdaRegistration } from "./IdaDoctor.js";
 import { IdaProvider } from "./IdaProvider.js";
+import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 
 it.each([
   { state: "unconfigured", selected: false, content: undefined },
@@ -55,6 +56,19 @@ it.each([
       expect(snapshot.availability.diagnostics).not.toHaveProperty(
         "configuration_remediation",
       );
+      // Doctor reports the runtime's repair for a selected registration.
+      if (selected && snapshot.availability.status === "unavailable") {
+        const doctor = await inspectIdaRegistration(path, {
+          retain: () => undefined,
+          run: (operation) => operation(),
+        });
+        expect(
+          doctor.checks.find(({ name }) => name === "registration"),
+        ).toMatchObject({
+          ok: false,
+          remediation: snapshot.availability.remediation,
+        });
+      }
       expect(connect).not.toHaveBeenCalled();
     } finally {
       const closed = await provider.closeOwnedResources();
@@ -68,7 +82,11 @@ it("keeps a selected valid registration distinct from a live IDA connection", as
   const path = join(root, "registration.json");
   await writeFile(
     path,
-    JSON.stringify({ mode: "attached", url: "http://127.0.0.1:13337/mcp" }),
+    JSON.stringify({
+      mode: "attached",
+      url: "http://127.0.0.1:13337/mcp",
+      protocol: "native",
+    }),
   );
   const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
   if (!config.ok) throw config.error;
@@ -144,6 +162,25 @@ it.each(["missing", "file", "directory", "omitted"] as const)(
           )?.reason,
         ).toContain("direct call edges");
       } else expect(snapshot.availability.status).toBe("available");
+      // Doctor projects the same admission, so it agrees on the outcome,
+      // reason and repair.
+      const doctor = await inspectIdaRegistration(registration, {
+        retain: () => undefined,
+        run: (operation) => operation(),
+      });
+      expect(doctor.available).toBe(
+        snapshot.availability.status === "available",
+      );
+      const workspaceCheck = doctor.checks.find(
+        ({ name }) => name === "private_workspace",
+      );
+      if (snapshot.availability.status === "unavailable")
+        expect(workspaceCheck).toMatchObject({
+          ok: false,
+          detail: snapshot.availability.reason,
+          remediation: snapshot.availability.remediation,
+        });
+      else expect(workspaceCheck).toMatchObject({ ok: true });
       expect((await readdir(root)).sort()).toEqual(before);
       expect(connect).not.toHaveBeenCalled();
     } finally {
@@ -196,8 +233,7 @@ describe("IDA provider target support", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       status: "unsupported",
@@ -297,10 +333,12 @@ it.each(["http", "stdio"] as const)(
             transport === "http"
               ? {
                   url: "http://127.0.0.1:8745/mcp",
+                  protocol: "native",
                   headers: { Authorization: token, "X-Input": "retained" },
                 }
               : {
                   command: "fixture",
+                  protocol: "native",
                   env: { PRIVATE_VALUE: token, IDADIR: "/fixture/ida" },
                   sensitive: { env: ["PRIVATE_VALUE"] },
                 },
@@ -328,6 +366,7 @@ it.each(["http", "stdio"] as const)(
           transport === "http"
             ? {
                 url: "http://127.0.0.1:8745/mcp",
+                protocol: "native",
                 headers: {
                   Authorization: "second credential",
                   "X-Input": "changed input",
@@ -335,6 +374,7 @@ it.each(["http", "stdio"] as const)(
               }
             : {
                 command: "fixture",
+                protocol: "native",
                 env: {
                   PRIVATE_VALUE: "second credential",
                   IDADIR: "/changed/ida",
@@ -357,14 +397,16 @@ it.each(["http", "stdio"] as const)(
 it("applies runtime regex budgets through a bound IDA client and recovers in the same session", async () => {
   const { root, target } = await createIdaTarget();
   const path = join(root, "registration.json");
-  let client:
-    | import("../application/AnalysisProvider.js").AnalysisClient
-    | undefined;
+  let client: import("../ports/AnalysisProvider.js").AnalysisClient | undefined;
   let provider: IdaProvider | undefined;
   try {
     await writeFile(
       path,
-      JSON.stringify({ mode: "attached", url: "http://127.0.0.1:13337/mcp" }),
+      JSON.stringify({
+        mode: "attached",
+        url: "http://127.0.0.1:13337/mcp",
+        protocol: "native",
+      }),
     );
     const parsed = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!parsed.ok) throw parsed.error;
@@ -372,10 +414,10 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     const producer = new RecordingIdaMcp(target, "attached");
     const value = "a".repeat(40) + "!";
     producer.overrideCall = (name) =>
-      name === "list_strings"
+      name === "find_regex"
         ? {
-            data: [{ address: "0x3000", length: value.length, string: value }],
-            next_offset: null,
+            matches: [{ addr: "0x3000", string: value }],
+            cursor: { done: true },
           }
         : undefined;
     provider = new IdaProvider(
@@ -406,6 +448,13 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     expect(failed).toMatchObject({
       ok: false,
       error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "search_strings",
+        resource: "cpu",
+        reportedLimits: {
+          matching_deadline_ms: 100,
+          matching_deadline_source: "runtime",
+        },
         limit: {
           setting: "regex.matching_deadline_ms",
           effective_value: 100,
@@ -416,10 +465,9 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     const capabilities = provider
       .capabilities()
       .find(({ operation }) => operation === "search_strings");
-    expect(capabilities?.limitations).toContain(
-      launchRegexMatchingLimitation(
-        { deadlineMs: 100, source: "runtime" },
-        { heapMiB: 256, source: "runtime" },
+    expect(capabilities?.limitations).toContainEqual(
+      expect.stringMatching(
+        /100 ms matching deadline \(source runtime\).*256 MiB worker heap request \(source runtime\).*update_analysis_settings/iu,
       ),
     );
     settings.update({
@@ -434,10 +482,9 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
       expect.objectContaining({ address: "0x3000", value }),
     ]);
     if (recovered.ok) {
-      expect(recovered.value.limitations).toContain(
-        launchRegexMatchingLimitation(
-          { deadlineMs: 10000, source: "runtime" },
-          { heapMiB: 256, source: "runtime" },
+      expect(recovered.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /10000 ms matching deadline \(source runtime\).*256 MiB worker heap request \(source runtime\).*update_analysis_settings/iu,
         ),
       );
     }
