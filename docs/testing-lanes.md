@@ -698,7 +698,8 @@ package matrix and the Windows curated lane, including Windows native controls,
 Inspector, setup, configuration and packaging entrypoints. A test file with a
 darwin gate must be named by a macOS workflow job or listed in
 `DARWIN_MANUAL_TESTS` with the reason it stays manual, because a gated file no
-macOS job names passes CI without running. Runtime sources under
+macOS job names passes CI without running. Static checks enforce this for every
+code or workflow change, including test-only changes. Runtime sources under
 `src/` or `bridge/` without an owner, and the authored skill, run the Linux suite
 and the Linux x64 installed-package/Inspector baseline only. Test-only changes
 run the Linux suite without native package verification, except test files that
