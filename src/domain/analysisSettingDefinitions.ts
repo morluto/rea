@@ -487,9 +487,7 @@ export const ANALYSIS_SETTINGS = {
       "start_rizin_debug_session",
       "rizin_debug_command",
       "close_rizin_debug_session",
-      "start_lldb_session",
       "lldb_command",
-      "close_lldb_session",
     ],
   },
   "debugger.max_command_output_bytes": {

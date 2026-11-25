@@ -193,6 +193,11 @@ try {
   console.log("[+] Predicate:", evidence.predicate_type);
   assert.equal(evidence.provider.id, "apple.lldb");
   assert.equal(evidence.predicate_type, "rea.debugger.console-observation");
+  assert.equal(evidence.authority, "controlled-replay");
+  assert.ok(
+    evidence.provider.version,
+    "Evidence provider should carry observed LLDB version",
+  );
   assert.equal(evidence.subject.identity.kind, "session");
   assert.equal(evidence.subject.identity.session_kind, "lldb");
   assert.equal(evidence.subject.identity.target.kind, "file");

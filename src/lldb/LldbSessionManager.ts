@@ -176,6 +176,7 @@ interface ActiveSession {
   readonly child: ProviderProcessHandle;
   readonly rl: readline.Interface;
   readonly pending: Map<number, PendingRpc>;
+  version: string | null;
   nextId: number;
   closed: boolean;
   closing: boolean;
@@ -508,6 +509,7 @@ export class LldbSessionManager {
       rl,
       pending,
       nextId: 1,
+      version: null,
       closed: false,
       closing: false,
       closeRequested: false,
@@ -583,7 +585,7 @@ export class LldbSessionManager {
       }
 
       // 1. Initialize
-      await this.#sendSessionRpc(
+      const initRes = await this.#sendSessionRpc(
         initializeResponseSchema,
         session,
         "initialize",
@@ -592,6 +594,9 @@ export class LldbSessionManager {
         signal,
         "start_lldb_session",
       );
+      if (initRes?.version) {
+        session.version = initRes.version;
+      }
 
       // 2. Launch target or attach
       let launchState: LldbStartResult["state"] = "ready";
@@ -867,12 +872,17 @@ export class LldbSessionManager {
     };
 
     const { provenance, unobservedReason } = session.launchFile;
+    const providerIdentity = {
+      ...LLDB_PROVIDER_IDENTITY,
+      version: session.version,
+    };
     const evidence = createEvidence(
       lldbSessionSubject(session),
-      LLDB_PROVIDER_IDENTITY,
+      providerIdentity,
       {
         predicateType: "rea.debugger.console-observation",
         operation: "lldb_command",
+        authority: "controlled-replay",
         parameters: {
           session_id: sessionId,
           command,

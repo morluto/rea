@@ -3,18 +3,17 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 import pino from "pino";
 import { expect, it, vi } from "vitest";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   AnalysisCapabilityUnavailableError,
@@ -555,85 +554,82 @@ it("preserves unknown target identity and omits launch provenance when started w
 });
 
 it("resolves symlinked traversal paths so evidence hash and launch binary match the true target", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "rea-lldb-symlink-"));
-  try {
-    const workDir = join(dir, "work");
-    const otherInnerDir = join(dir, "other", "inner");
-    const otherDir = join(dir, "other");
-    await mkdir(workDir, { recursive: true });
-    await mkdir(otherInnerDir, { recursive: true });
+  const dir = await createTestTempDirectory("rea-lldb-symlink-");
+  const workDir = join(dir, "work");
+  const otherInnerDir = join(dir, "other", "inner");
+  const otherDir = join(dir, "other");
+  await mkdir(workDir, { recursive: true });
+  await mkdir(otherInnerDir, { recursive: true });
 
-    const otherTarget = join(otherDir, "target");
-    const workTarget = join(workDir, "target");
-    await writeFile(otherTarget, "#!/bin/sh\necho other\n", { mode: 0o755 });
-    await writeFile(workTarget, "#!/bin/sh\necho work\n", { mode: 0o755 });
+  const otherTarget = join(otherDir, "target");
+  const workTarget = join(workDir, "target");
+  await writeFile(otherTarget, "#!/bin/sh\necho other\n", { mode: 0o755 });
+  await writeFile(workTarget, "#!/bin/sh\necho work\n", { mode: 0o755 });
 
-    const linkPath = join(workDir, "link");
-    await symlink(otherInnerDir, linkPath);
+  const linkPath = join(workDir, "link");
+  await symlink(otherInnerDir, linkPath);
 
-    const callerSelected = `${workDir}/link/../target`;
-    const expectedResolved = await realpath(otherTarget);
-    const expectedSha256 = createHash("sha256")
-      .update(await readFile(otherTarget))
-      .digest("hex");
+  const callerSelected = `${workDir}/link/../target`;
+  const expectedResolved = await realpath(otherTarget);
+  const expectedSha256 = createHash("sha256")
+    .update(await readFile(otherTarget))
+    .digest("hex");
 
-    let launchedPath: string | undefined;
-    const fakeBridge = new FakeLldbBridge();
-    fakeBridge.stdin.on("data", (chunk) => {
-      const text = String(chunk);
-      for (const line of text.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const req = JSON.parse(trimmed);
-          if (req.method === "launch") {
-            launchedPath = req.params.path;
-          }
-        } catch {}
-      }
-    });
+  let launchedPath: string | undefined;
+  const fakeBridge = new FakeLldbBridge();
+  fakeBridge.stdin.on("data", (chunk) => {
+    const text = String(chunk);
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const req = JSON.parse(trimmed);
+        if (req.method === "launch") {
+          launchedPath = req.params.path;
+        }
+      } catch {}
+    }
+  });
 
-    const spawnProcess = vi.fn(async () => ({
-      process:
-        fakeBridge as unknown as import("node:child_process").ChildProcess,
-      ownsProcessLifetime: true,
-    }));
-    const manager = new LldbSessionManager({
-      platform: "darwin",
-      spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
-    });
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+  });
 
-    const started = await manager.start(undefined, { path: callerSelected });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const sessionId = started.value.session_id;
+  const started = await manager.start(undefined, { path: callerSelected });
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const sessionId = started.value.session_id;
 
-    // Verify LLDB launch received the true resolved target, not the lexical work/target
-    expect(launchedPath).toBe(expectedResolved);
+  // Verify LLDB launch received the true resolved target, not the lexical work/target
+  expect(launchedPath).toBe(expectedResolved);
 
-    const executed = await manager.execute(sessionId, "target info");
-    expect(executed.ok).toBe(true);
-    if (!executed.ok) return;
+  const executed = await manager.execute(sessionId, "target info");
+  expect(executed.ok).toBe(true);
+  if (!executed.ok) return;
 
-    const { evidence } = executed.value;
-    expect(evidence.parameters.launch_provenance).toEqual({
-      caller_selected_path: callerSelected,
-      resolved_path: expectedResolved,
-    });
-    expect(evidence.subject.identity).toMatchObject({
-      kind: "session",
-      session_kind: "lldb",
-      id: sessionId,
-      target: {
-        kind: "file",
-        sha256: expectedSha256,
-      },
-    });
+  const { evidence } = executed.value;
+  expect(evidence.authority).toBe("controlled-replay");
+  expect(evidence.provider.version).toBe("lldb-1700");
+  expect(evidence.parameters.launch_provenance).toEqual({
+    caller_selected_path: callerSelected,
+    resolved_path: expectedResolved,
+  });
+  expect(evidence.subject.identity).toMatchObject({
+    kind: "session",
+    session_kind: "lldb",
+    id: sessionId,
+    target: {
+      kind: "file",
+      sha256: expectedSha256,
+    },
+  });
 
-    await manager.close(sessionId);
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
-  }
+  await manager.close(sessionId);
 });
 
 it("rejects session startup when LLDB bridge initialize handshake fails", async () => {

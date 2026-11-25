@@ -5,6 +5,8 @@ export const LLDB_PROVIDER_IDENTITY = {
   version: null,
 } as const;
 
+export const LLDB_OBSERVATION_AUTHORITY = "controlled-replay" as const;
+
 export interface LldbProviderIdentity {
   readonly id: typeof LLDB_PROVIDER_IDENTITY.id;
   readonly name: typeof LLDB_PROVIDER_IDENTITY.name;
