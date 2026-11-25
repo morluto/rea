@@ -39,34 +39,30 @@ const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
   "old arm64e bind opcodes not supported",
 ]);
 
-const dyldFailureDiagnostics = (
-  capture: NativeCommandCapture,
-  outputs: readonly string[],
-  admitsSuccess = false,
-): readonly string[] =>
-  capture.tool !== "dyld_info" ||
-  capture.exitCode === null ||
-  (capture.exitCode === 0 && !admitsSuccess) ||
-  capture.signal !== null
-    ? []
-    : outputs.flatMap((output) =>
-        withoutEchoedPathHeader(output, capture.arguments.at(-1))
-          .split(/\r?\n/u)
-          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
-          .filter(Boolean),
-      );
-
 /** Admit the observed refusal only when it is the sole settled diagnostic. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
   admitsSuccess = false,
 ): string | null => {
-  const diagnostics = dyldFailureDiagnostics(
-    capture,
-    [capture.stdout, capture.stderr],
-    admitsSuccess,
-  );
-  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
+  if (
+    capture.tool !== "dyld_info" ||
+    capture.exitCode === null ||
+    (capture.exitCode === 0 && !admitsSuccess) ||
+    capture.signal !== null
+  )
+    return null;
+
+  let diagnostic: string | null = null;
+  for (const output of [capture.stdout, capture.stderr]) {
+    const body = withoutEchoedPathHeader(output, nativeCommandOperand(capture));
+    for (const match of body.matchAll(/[^\n]+/gu)) {
+      const line = match[0].trim().replace(/^(?:dyld_info:\s*)/u, "");
+      if (!line) continue;
+      if (diagnostic !== null) return null;
+      diagnostic = line;
+    }
+  }
+  return diagnostic;
 };
 
 /**
@@ -98,14 +94,17 @@ export const isUnbackedTextDyldFailure = (
   dyldFailureDiagnostic(capture) ===
   "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
-/** A sole CORE/FVMLIB refusal still requires an independently matching header. */
+/** Xcode 16 can exit zero with the sole CORE/FVMLIB refusal on stdout. */
 export const parseDyldFileTypeRefusal = (
   capture: NativeCommandCapture,
 ): {
   readonly fileType: 3 | 4;
   readonly diagnostic: string;
 } | null => {
-  const diagnostic = dyldFailureDiagnostic(capture);
+  const diagnostic = dyldFailureDiagnostic(
+    capture,
+    capture.stderr.trim() === "",
+  );
   if (diagnostic === null) return null;
   const fileType = Number(
     /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1],

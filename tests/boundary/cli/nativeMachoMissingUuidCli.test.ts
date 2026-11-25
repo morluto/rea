@@ -141,6 +141,13 @@ describe.skipIf(process.platform !== "darwin")(
             `unknown (?:mh\\.)?filetype ${fileType}(?:\\r?\\n|$)`,
             "u",
           );
+          const native = await processes.run("/usr/bin/xcrun", [
+            "dyld_info",
+            "-imports",
+            path,
+          ]);
+          expect(native.signal).toBeNull();
+          expect(native.stdout).toMatch(diagnosticPattern);
           const expectedRefusal = {
             code: "unsupported_target",
             category: "unsupported_target",
@@ -160,7 +167,7 @@ describe.skipIf(process.platform !== "darwin")(
               ),
               captured_output: {
                 stdout: expect.stringMatching(diagnosticPattern),
-                exit_code: 1,
+                exit_code: native.exitCode,
                 signal: null,
                 truncated: false,
               },
