@@ -82,6 +82,13 @@
       "reason": "Deno retained metadata bytes are a resource policy."
     }
   },
+  "src/artifacts/UbiImageArtifactReader.ts": {
+    "`The ${parserLimit.name} allowance`": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "UBI eraseblock size and count allowances are resource policies; the static payload CRC budget is derived from the admitted image length."
+    }
+  },
   "src/artifacts/WxapkgArtifactReader.ts": {
     "\"The wxapkg directory-and-chunk I/O work allowance\"": {
       "class": "pending",
