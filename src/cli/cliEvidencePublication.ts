@@ -45,6 +45,12 @@ export const recordCliEvidencePublication = (
   if (context !== undefined) context.receipt = receipt;
 };
 
+/** Withdraw this invocation's receipt when the file it named was discarded. */
+export const clearCliEvidencePublication = (): void => {
+  const context = publication.getStore();
+  if (context !== undefined) delete context.receipt;
+};
+
 /** Snapshot a receipt for output recovery after the invocation context ends. */
 export const cliEvidencePublicationReceipt = ():
   | PublishedEvidenceReceipt

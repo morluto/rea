@@ -3,6 +3,7 @@ import {
   redactExplicitText,
 } from "../domain/explicitSensitiveValues.js";
 import {
+  clearCliEvidencePublication,
   cliPublicationInvocation,
   recordCliEvidencePublication,
 } from "./cliEvidencePublication.js";
@@ -331,7 +332,11 @@ const retainOverBudgetEvidence = async (
       });
     },
   });
-  if (!kept.ok) return kept;
+  // A write the cache then discarded (or never kept) names no file.
+  if (!kept.ok) {
+    if (kept.error.committed === undefined) clearCliEvidencePublication();
+    return kept;
+  }
   const receipt = {
     ...bundleReceipt(kept.value.path, kept.value.bytes, input),
     sha256: kept.value.sha256,

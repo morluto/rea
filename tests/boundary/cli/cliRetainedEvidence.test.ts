@@ -13,7 +13,10 @@ import { expect, it } from "vitest";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { createCli } from "../../../src/cli.js";
 import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
-import { withCliEvidencePublication } from "../../../src/cli/cliEvidencePublication.js";
+import {
+  cliEvidencePublicationReceipt,
+  withCliEvidencePublication,
+} from "../../../src/cli/cliEvidencePublication.js";
 import {
   cliRetainedEvidenceDirectory,
   retainCliEvidence,
@@ -314,4 +317,34 @@ it("never uses a cache whose path holds a value marked sensitive", async () => {
   expect(output.delivery.retention_failure).toEqual(expect.any(String));
   expect(JSON.stringify(output)).not.toContain(marked);
   expect(await files(join(root, marked))).toEqual([]);
+});
+
+it("withdraws the publication receipt of a bundle the cache discards", async () => {
+  const root = await createTestTempDirectory("rea-retain-receipt-");
+  const directory = join(root, "evidence");
+  const target = join(root, "bytes");
+  await writeFile(target, randomBytes(1024 * 1024));
+  const inspected = await createByteEntropyService().inspect({
+    path: target,
+    block_size: 256,
+  });
+  if (!inspected.ok) throw inspected.error;
+  // The record fits the cache; its bundle, with the bundle's own fields, does not.
+  const capBytes = Buffer.byteLength(JSON.stringify(inspected.value)) + 16;
+  const { output, receipt } = await withCliEvidencePublication(
+    async () => ({
+      output: (await publishCliAnalysisEvidence(inspected, {
+        operation: "inspect_byte_entropy",
+        signal: new AbortController().signal,
+        detail: undefined,
+        evidenceOutput: undefined,
+      })) as Output,
+      receipt: cliEvidencePublicationReceipt(),
+    }),
+    { retention: { directory, capBytes } },
+  );
+  expect(output.delivery).toMatchObject({ retained: "not-retained" });
+  expect(output.delivery.retention_failure).toContain("larger than");
+  expect(receipt).toBeUndefined();
+  expect(await files(directory)).toEqual([]);
 });
