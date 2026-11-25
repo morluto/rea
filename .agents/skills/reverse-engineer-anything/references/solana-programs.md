@@ -1,9 +1,4 @@
----
-name: solana-decompile
-description: Analyze and reconstruct Solana sBPF programs with REA — capture a deployed program's ELF by id or analyze a local capture, recover Anchor discriminator candidates and the syscall surface, and hand the leads to differential verification. Use when a claim depends on a Solana program's deployed bytecode rather than available source.
----
-
-# Solana decompile
+# Solana programs
 
 Use REA's `analyze_solana_program` when the ground truth is a deployed Solana
 program: its source is unavailable, untrusted, or suspected to differ from

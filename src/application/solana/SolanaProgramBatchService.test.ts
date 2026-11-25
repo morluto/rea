@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { SolanaProgramBatchService } from "./SolanaProgramBatchService.js";
 import { SolanaProgramService } from "./SolanaProgramService.js";
@@ -80,7 +81,7 @@ const buildElf = (): Uint8Array => {
 };
 
 it("analyzes a mixed batch with per-item isolation and a written index", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-"));
+  const root = await createTestTempDirectory("rea-solana-batch-");
   const elf = buildElf();
   const alphaPath = join(root, "alpha.so");
   const betaPath = join(root, "beta.so");
@@ -178,7 +179,7 @@ const batchService = (): SolanaProgramBatchService =>
   );
 
 it("keeps capture names that look like paths or reserved files inside out_dir", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-names-"));
+  const root = await createTestTempDirectory("rea-solana-batch-names-");
   const elf = buildElf();
   const captures = join(root, "captures");
   await mkdir(captures);
@@ -207,7 +208,7 @@ it("keeps capture names that look like paths or reserved files inside out_dir", 
 });
 
 it("expands a capture directory and reports an unreadable one as input", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-dir-"));
+  const root = await createTestTempDirectory("rea-solana-batch-dir-");
   const captures = join(root, "captures");
   await mkdir(captures);
   await writeFile(join(captures, "alpha.so"), buildElf());
@@ -233,7 +234,7 @@ it("expands a capture directory and reports an unreadable one as input", async (
 });
 
 it("refuses a non-empty batch root instead of overwriting earlier output", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-root-"));
+  const root = await createTestTempDirectory("rea-solana-batch-root-");
   const elfPath = join(root, "alpha.so");
   await writeFile(elfPath, buildElf());
   const outDir = join(root, "out");

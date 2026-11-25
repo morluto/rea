@@ -45,6 +45,7 @@ const imageWith = (
   elfType: 3,
   machine: 263,
   entrypoint: 0,
+  elfFlags: 0,
   programHeaders: [],
   sections: [],
   dynamicSymbols,

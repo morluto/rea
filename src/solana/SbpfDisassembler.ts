@@ -21,6 +21,12 @@ export interface SbpfInstruction {
    * bigint because discriminator constants span the full unsigned range. */
   readonly imm64: bigint;
   readonly slots: 1 | 2;
+  /**
+   * Target register of a register-indirect `callx`, decoded once for the
+   * ELF's sBPF version (the `imm` field before v2, `src` from v2); null for
+   * every other instruction.
+   */
+  readonly indirectRegister: number | null;
   readonly mnemonic: string;
   readonly text: string;
 }
@@ -113,16 +119,20 @@ const formatInstruction = (base: Omit<SbpfInstruction, "text">): string => {
       : `truncated lddw (missing second word)`;
   if (klass === 0x04 || klass === 0x07) {
     const bits = klass === 0x07 ? 64 : 32;
-    if (op === 8) return `r${String(dst)} = -r${String(dst)}`;
+    // 32-bit ALU operations truncate and zero the upper half; name their
+    // registers wN so the width survives in the rendered text.
+    const reg = bits === 64 ? "r" : "w";
+    const aluOperand = srcIsRegister ? `${reg}${String(src)}` : String(imm);
+    if (op === 8) return `${reg}${String(dst)} = -${reg}${String(dst)}`;
     if (op === 13)
       // The immediate carries the conversion width (16, 32 or 64 bits).
       return `r${String(dst)} = ${srcIsRegister ? "be" : "le"}${String(imm)}(r${String(dst)})`;
     const name = ALU_NAMES[op];
     if (name === undefined)
       return `unknown alu${String(bits)} op ${String(op)}`;
-    if (name === "mov") return `r${String(dst)} = ${operand}`;
+    if (name === "mov") return `${reg}${String(dst)} = ${aluOperand}`;
     const symbol = ALU_SYMBOLS[op] ?? name;
-    return `r${String(dst)} ${symbol}= ${operand}`;
+    return `${reg}${String(dst)} ${symbol}= ${aluOperand}`;
   }
   if (klass === 0x05 || klass === 0x06) {
     const name = JMP_NAMES[op];
@@ -131,7 +141,9 @@ const formatInstruction = (base: Omit<SbpfInstruction, "text">): string => {
     if (name === "exit") return "exit";
     if (name === "call")
       return srcIsRegister
-        ? `call ${signed(imm)}`
+        ? base.indirectRegister === null
+          ? `callx (unknown register)`
+          : `callx r${String(base.indirectRegister)}`
         : `call ${String(imm >>> 0)}`;
     const comparison: Readonly<Record<string, string>> = {
       jeq: "==",
@@ -203,6 +215,7 @@ export const disassembleSbpf = (
   text: Uint8Array,
   baseAddress: number,
   baseFileOffset: number,
+  sbpfVersion = 0,
 ): readonly SbpfInstruction[] => {
   const instructions: SbpfInstruction[] = [];
   const reader = new BinaryReader(
@@ -227,17 +240,27 @@ export const disassembleSbpf = (
       imm64 = (BigInt(high) << 32n) | BigInt(imm >>> 0);
       slots = 2;
     }
+    const srcIsRegister = (opcode & 0x08) !== 0;
+    const indirectRegister =
+      opcode === 0x8d && srcIsRegister
+        ? sbpfVersion >= 2
+          ? src
+          : imm >= 0 && imm <= 10
+            ? imm
+            : null
+        : null;
     const base: Omit<SbpfInstruction, "text"> = {
       address: baseAddress + slot * 8,
       fileOffset: baseFileOffset + byteIndex,
       opcode,
       dst,
       src,
-      srcIsRegister: (opcode & 0x08) !== 0,
+      srcIsRegister,
       offset,
       imm,
       imm64,
       slots,
+      indirectRegister,
       // A final one-word lddw lacks its high immediate; never report it
       // as a complete constant load.
       mnemonic:

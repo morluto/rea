@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
@@ -64,6 +64,56 @@ const inputIssue = (path: string, message: string): AnalysisInputError =>
   new AnalysisInputError(OPERATION, undefined, [
     { path: [path], reason: "invalid_value", message },
   ]);
+
+/** Device and inode of an existing file (following links), or undefined. */
+const fileIdentity = async (path: string): Promise<string | undefined> => {
+  try {
+    const info = await stat(path);
+    return `${String(info.dev)}:${String(info.ino)}`;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Admit every receipt destination before anything is written. A destination
+ * must not be a symbolic link (or sit in a linked item directory), and must
+ * not be, through any alias, one of the selected inputs: the evidence file
+ * or an analysis. Returns the refusal message, or undefined when admitted.
+ */
+const outputConflict = async (
+  outputs: readonly { readonly path: string; readonly directory?: string }[],
+  inputs: readonly string[],
+): Promise<string | undefined> => {
+  const inputIds = new Set<string>();
+  for (const input of inputs) {
+    const id = await fileIdentity(input);
+    if (id !== undefined) inputIds.add(id);
+  }
+  for (const output of outputs) {
+    if (output.directory !== undefined) {
+      try {
+        const directory = await lstat(output.directory);
+        if (!directory.isDirectory())
+          return `Batch item directory is not a plain directory: ${output.directory}.`;
+      } catch {
+        /* a missing item directory is reported when its analysis is read */
+      }
+    }
+    let info: Awaited<ReturnType<typeof lstat>> | undefined;
+    try {
+      info = await lstat(output.path);
+    } catch {
+      info = undefined;
+    }
+    if (info === undefined) continue;
+    if (info.isSymbolicLink())
+      return `Receipt destination is a symbolic link: ${output.path}.`;
+    if (inputIds.has(`${String(info.dev)}:${String(info.ino)}`))
+      return `Receipt destination ${output.path} is one of the selected inputs; choose evidence and analysis files outside the receipt destinations.`;
+  }
+  return undefined;
+};
 
 /** Read and JSON-parse one caller-selected file with the intake error taxonomy. */
 const readJsonFile = async (
@@ -286,6 +336,29 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
           );
       }
     }
+
+    const conflict = await outputConflict(
+      [
+        ...targets.map((target) => ({
+          path: target.receiptsPath,
+          ...(mode === "batch"
+            ? { directory: dirname(target.receiptsPath) }
+            : {}),
+        })),
+        ...(batchRoot === undefined
+          ? []
+          : [{ path: join(batchRoot, "receipts.json") }]),
+      ],
+      [input.evidence_path, ...targets.map((target) => target.analysisPath)],
+    );
+    if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
+    if (conflict !== undefined)
+      return err(
+        inputIssue(
+          input.analysis_path === undefined ? "out_dir" : "analysis_path",
+          conflict,
+        ),
+      );
 
     const programs: SolanaProgramReceipts[] = [];
     const usedShas = new Set<string>();

@@ -9,9 +9,13 @@ signs, or broadcasts a transaction.
 ```sh
 rea analyze-solana-program --path ./pump_amm.so --json
 rea analyze-solana-program --program-id pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA --out-dir ./pump_amm --json
-rea analyze-solana-programs --items '[{"path":"./pump.so"},{"path":"./pump_amm.so"}]' --out-dir ./batch --json
+rea analyze-solana-programs --items "[{\"path\":\"$PWD/pump.so\"},{\"path\":\"$PWD/pump_amm.so\"}]" --out-dir ./batch --json
 rea analyze-solana-programs --dir ./captures --out-dir ./batch --json
 ```
+
+Paths inside `--items` are JSON values validated by the tool contract, so
+they must be absolute; `--dir` and `--out-dir` are resolved against the
+current directory.
 
 `analyze_solana_programs` / `analyze-solana-programs` runs the same
 single-program workflow over a mixed list of local ELFs and program ids

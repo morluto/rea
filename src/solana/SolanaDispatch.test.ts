@@ -141,7 +141,7 @@ const section = (
 
 /** Image whose .rodata holds a 3-entry jump table at 0x2000 into .text. */
 const tableImage = (entries: readonly number[]): SolanaElfImage => {
-  const bytes = new Uint8Array(0x60);
+  const bytes = new Uint8Array(Math.max(0x60, 0x40 + entries.length * 8));
   const view = new DataView(bytes.buffer);
   entries.forEach((value, index) =>
     view.setBigUint64(0x40 + index * 8, BigInt(value), true),
@@ -152,6 +152,7 @@ const tableImage = (entries: readonly number[]): SolanaElfImage => {
     elfType: 3,
     machine: 263,
     entrypoint: 0x1000,
+    elfFlags: 0,
     programHeaders: [],
     sections: [
       section(".text", 0x1000, 0, 0x100),
@@ -169,7 +170,7 @@ const TABLE_STREAM = join(
   word(0x6f, 8, 2, 0, 3), // r8 = r2 << 3 (index scale; value not traced)
   word(0x0f, 7, 6, 0, 0), // r7 = r6 + r8
   word(0x79, 9, 7, 0, 0), // r9 = *(u64 *)(r7 + 0)
-  word(0x8d, 0, 9, 0, 0), // callx r9
+  word(0x8d, 0, 0, 0, 9), // callx r9 (sBPF v0: the register is in imm)
 );
 
 it("recovers jump-table entries as labeled candidates", () => {
@@ -199,7 +200,7 @@ it("counts register-indirect transfers with no verified table as unresolved", ()
   const instructions = disassembleSbpf(
     join(
       word(0x79, 9, 10, 0, 0), // r9 = *(u64 *)(r10 + 0): frame slot, not a table
-      word(0x8d, 0, 9, 0, 0), // callx r9
+      word(0x8d, 0, 0, 0, 9), // callx r9 (sBPF v0: the register is in imm)
     ),
     0x1000,
     0,
@@ -214,4 +215,46 @@ it("counts register-indirect transfers with no verified table as unresolved", ()
   );
   expect(single.candidates).toHaveLength(0);
   expect(single.computedJumpsUnresolved).toBe(1);
+});
+
+it("does not pair split halves read through a reassigned base register", () => {
+  const instructions = disassembleSbpf(
+    join(
+      word(0x61, 3, 2, 0, 0), // r3 = *(u32 *)(r2 + 0)
+      word(0x55, 3, 0, 3, LO), // if r3 != lo goto +3
+      word(0xbf, 2, 7, 0, 0), // r2 = r7: a different base value
+      word(0x61, 4, 2, 4, 0), // r4 = *(u32 *)(r2 + 4)
+      word(0x15, 4, 0, 5, HI), // if r4 == hi goto +5
+      word(0x95, 0, 0, 0, 0),
+    ),
+    0x1000,
+    0,
+  );
+  expect(scanSolanaDispatch(instructions).candidates).toHaveLength(0);
+});
+
+it("does not carry a table definition across exit into a later function", () => {
+  const instructions = disassembleSbpf(
+    join(
+      word(0x18, 6, 0, 0, 0x2000), // lddw r6 = table base
+      word(0x00, 0, 0, 0, 0),
+      word(0x79, 9, 6, 0, 0), // r9 = *(u64 *)(r6 + 0)
+      word(0x95, 0, 0, 0, 0), // exit: the next function starts here
+      word(0x8d, 0, 0, 0, 9), // callx r9
+    ),
+    0x1000,
+    0,
+  );
+  const scan = scanSolanaDispatch(instructions, tableImage([0x1000, 0x1040]));
+  expect(scan.candidates).toHaveLength(0);
+  expect(scan.computedJumpsUnresolved).toBe(1);
+});
+
+it("reports a jump table longer than the slot allowance as truncated", () => {
+  const scan = scanSolanaDispatch(
+    disassembleSbpf(TABLE_STREAM, 0x1000, 0),
+    tableImage(Array.from({ length: 1100 }, () => 0x1000)),
+  );
+  expect(scan.truncatedTables).toBe(1);
+  expect(scan.candidates).toHaveLength(1024);
 });

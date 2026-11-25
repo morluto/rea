@@ -48,6 +48,11 @@ export interface SolanaDispatchScan {
    * idiom. Counted, never guessed: each is an unknown dispatch site.
    */
   readonly computedJumpsUnresolved: number;
+  /**
+   * Jump tables that still held code targets past the per-table slot
+   * allowance: their later slots were not examined.
+   */
+  readonly truncatedTables: number;
 }
 
 /** Instructions scanned after an lddw for its dispatch comparison. */
@@ -57,7 +62,9 @@ const SPLIT_WINDOW = 24;
 /** Instructions walked when tracing a register definition chain. */
 const DEF_CHAIN_LIMIT = 6;
 /** Upper bound on jump-table entries recovered from one table. */
-const MAX_TABLE_ENTRIES = 1024;
+/** Slots examined per jump table; a longer table is reported as truncated. */
+export const SOLANA_MAX_TABLE_ENTRIES = 1024;
+const MAX_TABLE_ENTRIES = SOLANA_MAX_TABLE_ENTRIES;
 
 /** True when an instruction overwrites the given register. */
 const writesRegister = (
@@ -167,6 +174,8 @@ interface HalfCompare {
   readonly half: "lo" | "hi";
   readonly constant: number;
   readonly baseRegister: number;
+  /** Which write of the base register the load read through. */
+  readonly baseValue: number;
   readonly branch: "jeq" | "jne";
   readonly target: number;
   readonly valueRegister: number;
@@ -188,8 +197,25 @@ const scanSplitCompare = (
   // Track which registers currently hold a u32 loaded from [base + 0|4].
   const loads = new Map<
     number,
-    { readonly base: number; readonly offset: number }
+    {
+      readonly base: number;
+      readonly baseValue: number;
+      readonly offset: number;
+    }
   >();
+  // A register's value identity: bumped on every write, so two loads pair
+  // only when they read through the same value of the base register.
+  const values = new Map<number, number>();
+  let nextValue = 1;
+  const valueOf = (register: number): number => {
+    let value = values.get(register);
+    if (value === undefined) {
+      value = nextValue;
+      nextValue += 1;
+      values.set(register, value);
+    }
+    return value;
+  };
   const compares: HalfCompare[] = [];
   for (let index = 0; index < instructions.length; index += 1) {
     const instruction = instructions[index];
@@ -206,21 +232,30 @@ const scanSplitCompare = (
           half: load.offset === 0 ? "lo" : "hi",
           constant: instruction.imm >>> 0,
           baseRegister: load.base,
+          baseValue: load.baseValue,
           branch: instruction.mnemonic,
           target: branchTargetOf(instruction),
           valueRegister: instruction.dst,
         });
     }
-    if (instruction.mnemonic === "call" || instruction.mnemonic === "exit")
+    if (endsStraightLineBlock(instruction)) {
       loads.clear();
-    else if (instruction.opcode === 0x61)
+      values.clear();
+    } else if (instruction.opcode === 0x61) {
       // ldx u32: dst = *(u32 *)(src + offset)
-      loads.set(instruction.dst, {
+      const load = {
         base: instruction.src,
+        baseValue: valueOf(instruction.src),
         offset: instruction.offset,
-      });
-    else if (writesRegister(instruction, instruction.dst))
+      };
+      values.set(instruction.dst, nextValue);
+      nextValue += 1;
+      loads.set(instruction.dst, load);
+    } else if (writesRegister(instruction, instruction.dst)) {
       loads.delete(instruction.dst);
+      values.set(instruction.dst, nextValue);
+      nextValue += 1;
+    }
   }
 
   const candidates: SolanaHandlerCandidate[] = [];
@@ -231,7 +266,11 @@ const scanSplitCompare = (
       const high = compares[hi];
       if (high === undefined) break;
       if (high.index - low.index > SPLIT_WINDOW) break;
-      if (high.half !== "hi" || high.baseRegister !== low.baseRegister)
+      if (
+        high.half !== "hi" ||
+        high.baseRegister !== low.baseRegister ||
+        high.baseValue !== low.baseValue
+      )
         continue;
       // A control transfer between the halves breaks the guard chain.
       let broken = false;
@@ -327,10 +366,15 @@ const tableBaseOf = (
 const scanTableDispatch = (
   instructions: readonly SbpfInstruction[],
   image: SolanaElfImage | undefined,
-): { candidates: SolanaHandlerCandidate[]; unresolved: number } => {
+): {
+  candidates: SolanaHandlerCandidate[];
+  unresolved: number;
+  truncatedTables: number;
+} => {
   const candidates: SolanaHandlerCandidate[] = [];
   const emitted = new Set<string>();
   let unresolved = 0;
+  let truncatedTables = 0;
   const text = image === undefined ? undefined : solanaTextSection(image);
   const rodataSections =
     image === undefined
@@ -354,7 +398,9 @@ const scanTableDispatch = (
           "elf",
         );
 
-  const readTable = (base: number): readonly number[] | undefined => {
+  const readTable = (
+    base: number,
+  ): { entries: readonly number[]; truncated: boolean } | undefined => {
     if (reader === undefined || text === undefined || image === undefined)
       return undefined;
     const section = rodataSections.find(
@@ -362,39 +408,55 @@ const scanTableDispatch = (
         base >= candidate.address && base < candidate.address + candidate.size,
     );
     if (section === undefined) return undefined;
-    const entries: number[] = [];
-    for (let index = 0; index < MAX_TABLE_ENTRIES; index += 1) {
+    const entryAt = (index: number): number | undefined => {
       const address = base + index * 8;
       const fileOffset = section.offset + (address - section.address);
-      if (fileOffset + 8 > section.offset + section.size) break;
-      if (fileOffset + 8 > image.bytes.length) break;
+      if (fileOffset + 8 > section.offset + section.size) return undefined;
+      if (fileOffset + 8 > image.bytes.length) return undefined;
       const value = Number(reader.word(fileOffset, 64));
       if (
         value < text.address ||
         value >= text.address + text.size ||
         (value - text.address) % 8 !== 0
       )
-        break;
+        return undefined;
+      return value;
+    };
+    const entries: number[] = [];
+    for (let index = 0; index < MAX_TABLE_ENTRIES; index += 1) {
+      const value = entryAt(index);
+      if (value === undefined) break;
       entries.push(value);
     }
-    return entries.length >= 2 ? entries : undefined;
+    if (entries.length < 2) return undefined;
+    // A table still holding code targets past the slot allowance was not
+    // examined in full; report it rather than present a complete table.
+    const truncated =
+      entries.length === MAX_TABLE_ENTRIES &&
+      entryAt(MAX_TABLE_ENTRIES) !== undefined;
+    return { entries, truncated };
   };
 
   const defs = new Map<number, RegisterDef>();
   for (const instruction of instructions) {
     if (instruction.mnemonic === "call" && instruction.srcIsRegister) {
-      const def = defs.get(instruction.src);
+      const def =
+        instruction.indirectRegister === null
+          ? undefined
+          : defs.get(instruction.indirectRegister);
       const entries =
         def?.kind === "ldx64" && def.offset === 0
           ? (() => {
               const base = tableBaseOf(def.base, 0);
-              return base === null
+              const table = base === null ? undefined : readTable(base);
+              return base === null || table === undefined
                 ? undefined
-                : { base, entries: readTable(base) };
+                : { base, ...table };
             })()
           : undefined;
-      if (entries?.entries === undefined) unresolved += 1;
-      else
+      if (entries === undefined) unresolved += 1;
+      else {
+        if (entries.truncated) truncatedTables += 1;
         entries.entries.forEach((target, index) => {
           const key = `${String(entries.base)}:${String(index)}`;
           if (emitted.has(key)) return;
@@ -415,6 +477,7 @@ const scanTableDispatch = (
             tableIndex: index,
           });
         });
+      }
     }
     // Record this instruction's effect on register definitions.
     if (instruction.mnemonic === "lddw")
@@ -445,8 +508,12 @@ const scanTableDispatch = (
       // Calls clobber the argument/return registers r0–r5.
       for (let register = 0; register <= 5; register += 1)
         defs.set(register, OTHER_DEF);
+    // exit and ja end the straight-line block: a later function or block
+    // never inherits this one's table definitions.
+    if (instruction.mnemonic === "exit" || instruction.mnemonic === "ja")
+      defs.clear();
   }
-  return { candidates, unresolved };
+  return { candidates, unresolved, truncatedTables };
 };
 
 /**
@@ -471,5 +538,9 @@ export const scanSolanaDispatch = (
     if (aKey !== bKey) return aKey - bKey;
     return a.branchTarget - b.branchTarget;
   });
-  return { candidates, computedJumpsUnresolved: table.unresolved };
+  return {
+    candidates,
+    computedJumpsUnresolved: table.unresolved,
+    truncatedTables: table.truncatedTables,
+  };
 };

@@ -1,5 +1,4 @@
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createSolanaToolServices } from "../../../src/composition/solana.js";
@@ -9,6 +8,7 @@ import type { SolanaProgramAnalysis } from "../../../src/domain/solana/solanaPro
 import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { solanaDispatchElf } from "../../fixtures/solana/elf.js";
 import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
@@ -16,7 +16,7 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 mcpTest(
   "records Solana program evidence through MCP without a binary target and refuses a non-empty out_dir",
   async ({ mcp, onTestFinished, expect }) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-solana-mcp-"));
+    const root = await createTestTempDirectory("rea-solana-mcp-");
     const elf = solanaDispatchElf();
     const elfPath = join(root, "program.so");
     await writeFile(elfPath, elf);

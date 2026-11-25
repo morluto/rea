@@ -1,7 +1,44 @@
-import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../domain/binaryContainer.js";
 import { firstKeyed, keyedBy } from "../domain/keyedCollection.js";
-/** Expected ELF carrier failure, independent of the analysis engine. */
-export class SolanaElfFailure extends Error {}
+/**
+ * Expected ELF carrier failure, carried as a shared parser failure so the
+ * provider projects its kind, offset and field through
+ * `parseFailureAnalysisError`.
+ */
+export class SolanaElfFailure extends BinaryFormatFailure {
+  constructor(
+    message: string,
+    facts: {
+      readonly kind?: "malformed" | "truncated" | "unsupported";
+      readonly offset?: number;
+      readonly field?: string;
+    } = {},
+  ) {
+    const { kind = "malformed", offset, field } = facts;
+    super(kind, message, {
+      format: "elf",
+      ...(offset === undefined || !Number.isSafeInteger(offset)
+        ? {}
+        : { offset }),
+      ...(field === undefined ? {} : { field }),
+    });
+    this.name = "SolanaElfFailure";
+  }
+}
+
+/**
+ * Whole-parse expansion budget, derived from the capture size: the records
+ * and name bytes that all symbol and relocation tables together may expand
+ * to. Tables can overlap, so a per-table extent check alone does not bound
+ * the parse.
+ */
+interface ExpansionBudget {
+  records: number;
+  stringBytes: number;
+}
 
 export interface SolanaElfSection {
   readonly name: string;
@@ -46,6 +83,8 @@ export interface SolanaElfImage {
   readonly elfType: number;
   readonly machine: number;
   readonly entrypoint: number;
+  /** e_flags; for sBPF it names the bytecode version. */
+  readonly elfFlags: number;
   readonly programHeaders: readonly SolanaElfProgramHeader[];
   readonly sections: readonly SolanaElfSection[];
   readonly dynamicSymbols: readonly SolanaElfSymbol[];
@@ -128,6 +167,7 @@ const assertTableExtent = (
   if (entrySize < minimumEntrySize)
     throw new SolanaElfFailure(
       `${label} entry size ${String(entrySize)} is smaller than ${String(minimumEntrySize)} bytes.`,
+      { offset: tableOffset, field: label },
     );
   if (
     !Number.isSafeInteger(tableOffset) ||
@@ -137,6 +177,7 @@ const assertTableExtent = (
   )
     throw new SolanaElfFailure(
       `${label} (${String(count)} entries of ${String(entrySize)} bytes at ${String(tableOffset)}) extends past the captured file.`,
+      { kind: "truncated", offset: tableOffset, field: label },
     );
 };
 
@@ -146,6 +187,7 @@ const sectionEntryCount = (
   section: SolanaElfSection,
   label: string,
   minimumEntrySize: number,
+  budget: ExpansionBudget,
 ): number => {
   if (section.entrySize < minimumEntrySize) return 0;
   const count = Math.floor(section.size / section.entrySize);
@@ -157,6 +199,12 @@ const sectionEntryCount = (
     count,
     minimumEntrySize,
   );
+  if (count > budget.records)
+    throw new SolanaElfFailure(
+      `${label} entries across all tables exceed the ${String(Math.floor(bytes.length / ELF64_REL_SIZE))} records the captured file can hold; tables overlap.`,
+      { offset: section.offset, field: label },
+    );
+  budget.records -= count;
   return count;
 };
 
@@ -263,6 +311,7 @@ const readDynamicSymbols = (
   bytes: Uint8Array,
   reader: ElfReader,
   sections: readonly SolanaElfSection[],
+  budget: ExpansionBudget,
 ): SolanaElfSymbol[] => {
   const symbols: SolanaElfSymbol[] = [];
   for (const section of sections) {
@@ -274,16 +323,24 @@ const readDynamicSymbols = (
       section,
       "Dynamic symbol table",
       ELF64_SYMBOL_SIZE,
+      budget,
     );
     for (let index = 0; index < count; index += 1) {
       const offset = section.offset + index * section.entrySize;
+      const name = readString(
+        bytes,
+        strings.offset,
+        strings.size,
+        reader.u32(offset),
+      );
+      budget.stringBytes -= name.length;
+      if (budget.stringBytes < 0)
+        throw new SolanaElfFailure(
+          "Dynamic symbol names across all tables exceed the captured file size; string tables overlap.",
+          { offset: section.offset, field: "Dynamic symbol table" },
+        );
       symbols.push({
-        name: readString(
-          bytes,
-          strings.offset,
-          strings.size,
-          reader.u32(offset),
-        ),
+        name,
         info: bytes[offset + 4] ?? 0,
         sectionIndex: reader.u16(offset + 6),
         value: reader.u64(offset + 8),
@@ -305,6 +362,7 @@ const readRelocations = (
   reader: ElfReader,
   little: boolean,
   sections: readonly SolanaElfSection[],
+  budget: ExpansionBudget,
 ): SolanaElfRelocation[] => {
   const relocations: SolanaElfRelocation[] = [];
   for (const section of sections) {
@@ -315,6 +373,7 @@ const readRelocations = (
       section,
       "Relocation table",
       ELF64_REL_SIZE,
+      budget,
     );
     for (let index = 0; index < count; index += 1) {
       const offset = section.offset + index * section.entrySize;
@@ -362,6 +421,7 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
   if (bytes.length < 64)
     throw new SolanaElfFailure(
       "File is shorter than an ELF64 header (64 bytes).",
+      { kind: "truncated", offset: 0, field: "ELF header" },
     );
   if (
     bytes[0] !== 0x7f ||
@@ -373,11 +433,13 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
   if (bytes[4] !== 2)
     throw new SolanaElfFailure(
       `Expected a 64-bit ELF (EI_CLASS 2), found class ${String(bytes[4])}.`,
+      { kind: "unsupported", offset: 4, field: "EI_CLASS" },
     );
   const encoding = bytes[5];
   if (encoding !== 1 && encoding !== 2)
     throw new SolanaElfFailure(
       `Unknown ELF data encoding ${String(encoding)}.`,
+      { offset: 5, field: "EI_DATA" },
     );
   const reader = elfReader(bytes, encoding === 1);
   const programHeaderOffset = reader.u64(32);
@@ -413,6 +475,10 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
     sectionHeaderCount,
     sectionNameIndex,
   );
+  const budget: ExpansionBudget = {
+    records: Math.floor(bytes.length / ELF64_REL_SIZE),
+    stringBytes: bytes.length,
+  };
   const declaredEnd = declaredExtentEnd(
     programHeaders,
     sections,
@@ -428,11 +494,26 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
     entrypoint: reader.u64(24),
     programHeaders,
     sections,
-    dynamicSymbols: readDynamicSymbols(bytes, reader, sections),
-    relocations: readRelocations(bytes, reader, encoding === 1, sections),
+    elfFlags: reader.u32(48),
+    dynamicSymbols: readDynamicSymbols(bytes, reader, sections, budget),
+    relocations: readRelocations(
+      bytes,
+      reader,
+      encoding === 1,
+      sections,
+      budget,
+    ),
     trailingBytes: Math.max(0, bytes.length - declaredEnd),
   };
 };
+
+/**
+ * The sBPF bytecode version an ELF declares in e_flags: 0 through 4 as
+ * written, the legacy EF_SBPF_V2 flag (0x20) as version 2, anything else as
+ * version 0, the loader's default.
+ */
+export const solanaSbpfVersion = (elfFlags: number): number =>
+  elfFlags === 0x20 ? 2 : elfFlags >= 0 && elfFlags <= 4 ? elfFlags : 0;
 
 /** The executable code section: `.text` when named, else the first executable PROGBITS section. */
 export const solanaTextSection = (

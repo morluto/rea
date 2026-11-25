@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import {
   AnalysisCancelledError,
@@ -78,7 +79,7 @@ const buildElf = (): Uint8Array => {
 };
 
 it("writes a pinned handoff artifact with IDL-confirmed handler names", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-handoff-"));
+  const root = await createTestTempDirectory("rea-solana-handoff-");
   const elf = buildElf();
   const elfPath = join(root, "program.so");
   await writeFile(elfPath, elf);
@@ -124,7 +125,7 @@ it("writes a pinned handoff artifact with IDL-confirmed handler names", async ()
 });
 
 it("leaves handler names null when no instruction names are supplied", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-handoff-"));
+  const root = await createTestTempDirectory("rea-solana-handoff-");
   const elfPath = join(root, "program.so");
   await writeFile(elfPath, buildElf());
   const provider = new SolanaProgramProvider();
@@ -135,7 +136,7 @@ it("leaves handler names null when no instruction names are supplied", async () 
 });
 
 it("refuses an out_dir that already holds the capture and leaves it intact", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-out-"));
+  const root = await createTestTempDirectory("rea-solana-out-");
   const elf = buildElf();
   // A capture named like an output file must never be overwritten.
   const elfPath = join(root, "solana-analysis.json");
@@ -152,7 +153,7 @@ it("refuses an out_dir that already holds the capture and leaves it intact", asy
 });
 
 it("keeps a capture named handoff.json distinct from the handoff metadata", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-out-"));
+  const root = await createTestTempDirectory("rea-solana-out-");
   const elf = buildElf();
   const captureDir = join(root, "captures");
   await mkdir(captureDir);
@@ -176,7 +177,7 @@ it("keeps a capture named handoff.json distinct from the handoff metadata", asyn
 });
 
 it("refuses a big-endian sBPF ELF instead of decoding it as little-endian", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-be-"));
+  const root = await createTestTempDirectory("rea-solana-be-");
   const elf = buildElf();
   elf[5] = 2;
   const view = new DataView(elf.buffer);
@@ -201,7 +202,7 @@ it("refuses a big-endian sBPF ELF instead of decoding it as little-endian", asyn
 });
 
 it("refuses a code section that extends past the capture", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-trunc-"));
+  const root = await createTestTempDirectory("rea-solana-trunc-");
   const elf = buildElf();
   const view = new DataView(elf.buffer);
   const sectionHeaderOffset = Number(view.getBigUint64(40, true));
@@ -218,7 +219,7 @@ it("refuses a code section that extends past the capture", async () => {
 });
 
 it("refuses a code section that ends inside an instruction", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-partial-"));
+  const root = await createTestTempDirectory("rea-solana-partial-");
   const elf = buildElf();
   const view = new DataView(elf.buffer);
   const sectionHeaderOffset = Number(view.getBigUint64(40, true));
@@ -234,7 +235,7 @@ it("refuses a code section that ends inside an instruction", async () => {
 });
 
 it("reports cancellation with the caller's reason instead of a provider failure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-abort-"));
+  const root = await createTestTempDirectory("rea-solana-abort-");
   const elfPath = join(root, "program.so");
   await writeFile(elfPath, buildElf());
   const controller = new AbortController();

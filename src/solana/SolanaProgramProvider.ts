@@ -13,11 +13,16 @@ import {
   isAborted,
   unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
-import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { decodeLimit } from "../domain/parseFailure.js";
-import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
@@ -25,6 +30,8 @@ import type {
   SolanaProgramAnalysis,
 } from "../domain/solana/solanaProgram.js";
 import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
   outputDirectoryAdmissionRefusal,
@@ -32,8 +39,8 @@ import {
 import {
   parseSolanaElf,
   solanaElfMachineName,
+  solanaSbpfVersion,
   solanaTextSection,
-  SolanaElfFailure,
   ELF_MACHINE_BPF,
   type SolanaElfImage,
   type SolanaElfSection,
@@ -43,7 +50,11 @@ import {
   isUnknownSbpfInstruction,
   sbpfCodeBoundaryIssues,
 } from "./SbpfDisassembler.js";
-import { anchorDiscriminator, scanSolanaDispatch } from "./SolanaDispatch.js";
+import {
+  anchorDiscriminator,
+  scanSolanaDispatch,
+  SOLANA_MAX_TABLE_ENTRIES,
+} from "./SolanaDispatch.js";
 import {
   resolveSolanaCallSites,
   type SolanaCallResolution,
@@ -314,18 +325,10 @@ const analyzeAcquired = (
   try {
     image = parseSolanaElf(acquired.bytes);
   } catch (cause) {
-    if (
-      cause instanceof SolanaElfFailure ||
-      cause instanceof BinaryFormatFailure
-    )
-      return err(
-        new AnalysisTargetFailureError(
-          OPERATION,
-          acquired.path,
-          { kind: "malformed", format: "elf", detail: cause.message },
-          { cause },
-        ),
-      );
+    // SolanaElfFailure and BinaryReader range failures are shared parser
+    // failures; project their kind, offset and field unchanged.
+    const refusal = parseFailureAnalysisError(OPERATION, acquired.path, cause);
+    if (refusal !== undefined) return err(refusal);
     return err(adapterError(cause));
   }
   if (image.machine !== ELF_MACHINE_BPF)
@@ -365,6 +368,7 @@ const analyzeAcquired = (
           ),
           textSection.address,
           textSection.offset,
+          solanaSbpfVersion(image.elfFlags),
         );
   const dispatch = scanSolanaDispatch(instructions, image);
   const handlers = dispatch.candidates;
@@ -383,6 +387,10 @@ const analyzeAcquired = (
   if (image.trailingBytes > 0)
     limitations.push(
       `The artifact carries ${String(image.trailingBytes)} trailing bytes beyond its ELF-declared extents (typical of account-capacity dumps); identity covers the whole file.`,
+    );
+  if (dispatch.truncatedTables > 0)
+    limitations.push(
+      `${String(dispatch.truncatedTables)} jump table(s) still held code targets past the ${String(SOLANA_MAX_TABLE_ENTRIES)}-slot table allowance; slots beyond it were not examined and are not listed as candidates.`,
     );
   if (acquired.source === "solana-rpc")
     limitations.push(
@@ -416,6 +424,7 @@ const analyzeAcquired = (
       program_header_count: image.programHeaders.length,
       section_header_count: image.sections.length,
       trailing_bytes: image.trailingBytes,
+      sbpf_version: solanaSbpfVersion(image.elfFlags),
       sections: image.sections.map((section) => ({
         name: section.name,
         type: section.type,
@@ -537,6 +546,7 @@ const plannedOutputs = (
         ),
         textSection.address,
         textSection.offset,
+        report.elf.sbpf_version,
       ).map((instruction) => {
         const line = `${instruction.address.toString(16).padStart(8, "0")}  ${instruction.text}`;
         const resolution = resolvedByAddress.get(instruction.address);
@@ -569,6 +579,32 @@ const plannedOutputs = (
     );
   }
   return files;
+};
+
+/**
+ * Roll back an unpublished tree. When rollback cannot prove removal, the
+ * tree stays owned by a cleanup lease bound to the returned cleanup error,
+ * so the residual output is reported and a later release can retry it.
+ */
+const rollbackRetained = async (
+  tree: SafeOutputTree,
+): Promise<AnalysisError | undefined> => {
+  const lease = new AnalysisCleanupLease(async () => {
+    await tree.rollback();
+  }, [tree.outputRoot]);
+  try {
+    await lease.release();
+    return undefined;
+  } catch (cause) {
+    const cleanup = new ProviderCleanupError(
+      SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
+      [tree.outputRoot],
+      { reason: errorMessage(cause) },
+      { cause, operation: OPERATION },
+    );
+    new AnalysisCleanupLeaseGroup(cleanup, [lease]);
+    return cleanup;
+  }
 };
 
 /**
@@ -613,16 +649,28 @@ const writeArtifacts = async (
     return undefined;
   } catch (cause) {
     if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
-    if (tree !== undefined && !tree.published)
-      await tree.rollback().catch(() => undefined);
-    if (isAborted(signal)) return cancelledBy(OPERATION, signal);
     const refusal = outputDirectoryAdmissionRefusal(
       OPERATION,
       "out_dir",
       cause,
     );
-    if (refusal instanceof AnalysisError) return refusal;
-    return adapterError(cause);
+    // A refused destination was never claimed: there is nothing to roll back.
+    const cleanupFailure =
+      tree === undefined || tree.published || refusal instanceof AnalysisError
+        ? undefined
+        : await rollbackRetained(tree);
+    const primary = isAborted(signal)
+      ? cancelledBy(OPERATION, signal)
+      : refusal instanceof AnalysisError
+        ? refusal
+        : adapterError(cause);
+    return cleanupFailure === undefined
+      ? primary
+      : analysisErrorWithCleanupDependencies(
+          primary,
+          cleanupFailure,
+          OPERATION,
+        );
   }
 };
 

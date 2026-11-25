@@ -118,6 +118,10 @@ explicit path or endpoint and do not need it.
   directory. See the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
   without a provider; see the ESP section of `references/native-and-artifacts.md`.
+- Deployed Solana program (sBPF ELF, by local capture or program id):
+  `analyze_solana_program` (or `analyze_solana_programs` for a batch), then
+  `solana_receipts` for differential outcomes; see
+  [Solana programs](references/solana-programs.md).
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;
   consult the NativeAOT workflow in `references/native-and-artifacts.md` for
   optional metadata recovery and its supported host/layout boundary.
@@ -460,6 +464,8 @@ as complete while required questions remain open.
 
 - Native binaries, managed assemblies, archives, and extraction:
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
+- Solana sBPF programs, Anchor dispatch leads, and differential receipts:
+  [references/solana-programs.md](references/solana-programs.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:
   [references/javascript-applications.md](references/javascript-applications.md)
 - Android APK declarations, classes, methods, and static references:

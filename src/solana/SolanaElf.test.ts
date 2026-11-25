@@ -185,3 +185,28 @@ it("rejects a symbol table whose declared size runs past the capture", () => {
   }
   expect(() => parseSolanaElf(elf)).toThrow(SolanaElfFailure);
 });
+
+it("bounds the whole parse when symbol tables overlap", () => {
+  const elf = buildElf(0);
+  const view = new DataView(elf.buffer);
+  const sectionHeaderOffset = Number(view.getBigUint64(40, true));
+  let dynsym = -1;
+  for (let index = 0; index < 7; index += 1)
+    if (view.getUint32(sectionHeaderOffset + index * 64 + 4, true) === 11)
+      dynsym = index;
+  expect(dynsym).toBeGreaterThan(0);
+  // Point every other section header at the same dynamic symbol table.
+  const source = sectionHeaderOffset + dynsym * 64;
+  for (let index = 1; index < 7; index += 1)
+    if (index !== dynsym && index !== 6)
+      elf.copyWithin(sectionHeaderOffset + index * 64, source, source + 64);
+  // Grow the symbol table to span the whole file: each copy fits alone, all
+  // copies together exceed what the file can hold.
+  for (let index = 1; index < 6; index += 1) {
+    const base = sectionHeaderOffset + index * 64;
+    if (view.getUint32(base + 4, true) !== 11) continue;
+    view.setBigUint64(base + 24, 0n, true);
+    view.setBigUint64(base + 32, BigInt(elf.length - (elf.length % 24)), true);
+  }
+  expect(() => parseSolanaElf(elf)).toThrow(/tables overlap/);
+});

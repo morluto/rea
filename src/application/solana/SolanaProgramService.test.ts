@@ -31,6 +31,7 @@ const report: SolanaProgramAnalysis = {
     program_header_count: 3,
     section_header_count: 9,
     trailing_bytes: 0,
+    sbpf_version: 0,
     sections: [
       { name: ".text", type: 1, address: 0x120, offset: 288, size: 1024 },
     ],

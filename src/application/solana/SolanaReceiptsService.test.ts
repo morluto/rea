@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { SolanaProgramBatchService } from "./SolanaProgramBatchService.js";
 import { SolanaProgramService } from "./SolanaProgramService.js";
@@ -104,7 +105,7 @@ const analyzeOne = async (elfPath: string, outDir: string): Promise<string> => {
 };
 
 it("receipts a single analysis from its evidence, bound by SHA-256", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const root = await createTestTempDirectory("rea-solana-receipts-");
   const elfPath = join(root, "pump_amm.so");
   await writeFile(elfPath, CREATE_CONFIG_ELF);
   const outDir = join(root, "out");
@@ -152,7 +153,7 @@ it("receipts a single analysis from its evidence, bound by SHA-256", async () =>
 });
 
 it("refuses evidence bound to a different artifact", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const root = await createTestTempDirectory("rea-solana-receipts-");
   const elfPath = join(root, "pump_amm.so");
   await writeFile(elfPath, CREATE_CONFIG_ELF);
   const outDir = join(root, "out");
@@ -170,7 +171,7 @@ it("refuses evidence bound to a different artifact", async () => {
 });
 
 it("receipts a batch, matching evidence per program and reporting orphan programs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const root = await createTestTempDirectory("rea-solana-receipts-");
   const alphaPath = join(root, "alpha.so");
   const betaPath = join(root, "beta.so");
   await writeFile(alphaPath, CREATE_CONFIG_ELF);
@@ -274,7 +275,7 @@ const sha256Of = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 it("derives receipt paths from out_dir, never from paths stored in the index", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const root = await createTestTempDirectory("rea-solana-receipts-");
   const alphaPath = join(root, "alpha.so");
   await writeFile(alphaPath, CREATE_CONFIG_ELF);
   const batchOut = await batchOf(root, [{ path: alphaPath }]);
@@ -282,7 +283,7 @@ it("derives receipt paths from out_dir, never from paths stored in the index", a
   const index = JSON.parse(await readFile(indexPath, "utf8")) as {
     analysis_path?: string | null;
   }[];
-  const elsewhere = await mkdtemp(join(tmpdir(), "rea-solana-elsewhere-"));
+  const elsewhere = await createTestTempDirectory("rea-solana-elsewhere-");
   for (const entry of index)
     if ("analysis_path" in entry)
       entry.analysis_path = join(elsewhere, "solana-analysis.json");
@@ -305,7 +306,7 @@ it("derives receipt paths from out_dir, never from paths stored in the index", a
 });
 
 it("rejects duplicate evidence documents for one artifact", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const root = await createTestTempDirectory("rea-solana-receipts-");
   const alphaPath = join(root, "alpha.so");
   await writeFile(alphaPath, CREATE_CONFIG_ELF);
   const batchOut = await batchOf(root, [{ path: alphaPath }]);
@@ -323,7 +324,7 @@ it("rejects duplicate evidence documents for one artifact", async () => {
 });
 
 it("reports failed batch items as skipped with their recorded error", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const root = await createTestTempDirectory("rea-solana-receipts-");
   const alphaPath = join(root, "alpha.so");
   await writeFile(alphaPath, CREATE_CONFIG_ELF);
   const batchOut = await batchOf(root, [
@@ -348,4 +349,24 @@ it("reports failed batch items as skipped with their recorded error", async () =
     .normalized_result as SolanaReceiptsResult;
   expect(built.skipped_items.map((item) => item.name)).toEqual(["missing"]);
   expect(built.skipped_items[0]?.reason).toMatch(/Batch analysis failed/);
+});
+
+it("refuses to write receipts over a selected evidence file", async () => {
+  const root = await createTestTempDirectory("rea-solana-receipts-");
+  const elfPath = join(root, "program.so");
+  await writeFile(elfPath, CREATE_CONFIG_ELF);
+  const outDir = join(root, "out");
+  const sha256 = await analyzeOne(elfPath, outDir);
+  const evidencePath = join(outDir, "receipts.json");
+  const evidence = JSON.stringify({
+    program: { elf_sha256: sha256 },
+    handlers: [],
+  });
+  await writeFile(evidencePath, evidence);
+  const result = await receiptsService().buildReceipts({
+    out_dir: outDir,
+    evidence_path: evidencePath,
+  });
+  expect(result.ok).toBe(false);
+  expect(await readFile(evidencePath, "utf8")).toBe(evidence);
 });

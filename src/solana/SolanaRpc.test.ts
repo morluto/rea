@@ -42,39 +42,49 @@ const accountValue = (
   rentEpoch: 0,
 });
 
-it("resolves an upgradeable program through its ProgramData account", async () => {
-  const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);
-  const programDataAddress = decodeBase58(BPF_LOADER_UPGRADEABLE) as Uint8Array;
-  const programAccount = new Uint8Array(36);
-  new DataView(programAccount.buffer).setUint32(0, 2, true);
-  programAccount.set(programDataAddress, 4);
-  const programData = new Uint8Array(45 + elf.length);
-  const dataView = new DataView(programData.buffer);
-  dataView.setUint32(0, 3, true);
-  dataView.setBigUint64(4, 4242n, true);
-  programData[12] = 1;
-  programData.set(elf, 45);
-  const calls: string[] = [];
-  const fetchImpl = (async (_url: unknown, init?: { body?: unknown }) => {
-    const body = JSON.parse(String(init?.body)) as {
-      params: readonly string[];
-    };
-    const address = body.params[0] as string;
-    calls.push(address);
-    return jsonResponse(
-      address === PUMP_AMM
-        ? accountValue(programAccount, BPF_LOADER_UPGRADEABLE)
-        : accountValue(programData, BPF_LOADER_UPGRADEABLE, false),
+it.each([1, 0])(
+  "resolves an upgradeable program through its ProgramData account (authority tag %i)",
+  async (authorityTag) => {
+    const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);
+    const programDataAddress = decodeBase58(
+      BPF_LOADER_UPGRADEABLE,
+    ) as Uint8Array;
+    const programAccount = new Uint8Array(36);
+    new DataView(programAccount.buffer).setUint32(0, 2, true);
+    programAccount.set(programDataAddress, 4);
+    const programData = new Uint8Array(45 + elf.length);
+    const dataView = new DataView(programData.buffer);
+    dataView.setUint32(0, 3, true);
+    dataView.setBigUint64(4, 4242n, true);
+    // The ELF starts at byte 45 whether or not an upgrade authority is set.
+    programData[12] = authorityTag;
+    programData.set(elf, 45);
+    const calls: string[] = [];
+    const fetchImpl = (async (_url: unknown, init?: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body)) as {
+        params: readonly string[];
+      };
+      const address = body.params[0] as string;
+      calls.push(address);
+      return jsonResponse(
+        address === PUMP_AMM
+          ? accountValue(programAccount, BPF_LOADER_UPGRADEABLE)
+          : accountValue(programData, BPF_LOADER_UPGRADEABLE, false),
+      );
+    }) as typeof fetch;
+    const fetched = await fetchSolanaProgramElf(
+      PUMP_AMM,
+      "https://rpc.invalid",
+      {
+        fetchImpl,
+      },
     );
-  }) as typeof fetch;
-  const fetched = await fetchSolanaProgramElf(PUMP_AMM, "https://rpc.invalid", {
-    fetchImpl,
-  });
-  expect(calls).toEqual([PUMP_AMM, BPF_LOADER_UPGRADEABLE]);
-  expect(fetched.programDataAccount).toBe(BPF_LOADER_UPGRADEABLE);
-  expect(fetched.slot).toBe(4242);
-  expect(Array.from(fetched.elfBytes)).toEqual(Array.from(elf));
-});
+    expect(calls).toEqual([PUMP_AMM, BPF_LOADER_UPGRADEABLE]);
+    expect(fetched.programDataAccount).toBe(BPF_LOADER_UPGRADEABLE);
+    expect(fetched.slot).toBe(4242);
+    expect(Array.from(fetched.elfBytes)).toEqual(Array.from(elf));
+  },
+);
 
 it("accepts a legacy-loader account holding the ELF directly", async () => {
   const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);

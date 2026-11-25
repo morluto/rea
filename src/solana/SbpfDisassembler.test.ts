@@ -178,3 +178,29 @@ it("marks an lddw missing its second word as unknown instead of reading past the
   const [only] = instructions;
   expect(only !== undefined && isUnknownSbpfInstruction(only)).toBe(true);
 });
+
+it("decodes the callx target register for the ELF's sBPF version", () => {
+  const [v0] = disassembleSbpf(word(0x8d, 0, 0, 0, 9), 0, 0, 0);
+  expect(v0?.indirectRegister).toBe(9);
+  expect(v0?.text).toBe("callx r9");
+  const [v2] = disassembleSbpf(word(0x8d, 0, 9, 0, 0), 0, 0, 2);
+  expect(v2?.indirectRegister).toBe(9);
+  expect(v2?.text).toBe("callx r9");
+});
+
+it("renders 32-bit ALU operations with their width", () => {
+  const instructions = disassembleSbpf(
+    join(
+      word(0xb4, 1, 0, 0, -1),
+      word(0xb7, 1, 0, 0, -1),
+      word(0x0c, 1, 2, 0, 0),
+    ),
+    0,
+    0,
+  );
+  expect(instructions.map((entry) => entry.text)).toEqual([
+    "w1 = -1",
+    "r1 = -1",
+    "w1 += w2",
+  ]);
+});

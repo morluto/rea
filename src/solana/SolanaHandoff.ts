@@ -110,7 +110,7 @@ export const renderSolanaHandoffBrief = (
     "",
     "## Next step",
     "",
-    "Feed the pinned ELF in this directory to REA's Ghidra/IDA native workflows for deeper decompilation (bring-your-own; this analyzer does not invoke them). Treat decompiler output as a lead: rebuild or write the candidate implementation, then differential-verify each handler against the captured original in a local VM over real-transaction fixtures, per the solana-decompile skill. A handler counts as recovered only when its differential receipts pass.",
+    "Feed the pinned ELF in this directory to REA's Ghidra/IDA native workflows for deeper decompilation (bring-your-own; this analyzer does not invoke them). Treat decompiler output as a lead: rebuild or write the candidate implementation, then differential-verify each handler against the captured original in a local VM over real-transaction fixtures, per the Solana programs reference of the reverse-engineer-anything skill. A handler counts as recovered only when its differential receipts pass.",
     "",
   ];
   return lines.join("\n");

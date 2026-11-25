@@ -1,6 +1,9 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
+/** Size of the UpgradeableLoaderState::ProgramData header before the ELF. */
+const PROGRAM_DATA_METADATA_BYTES = 45;
+
 /** Bounds-checked little-endian reader over account data. */
 const littleEndianReader = (bytes: Uint8Array): BinaryReader =>
   new BinaryReader(
@@ -341,8 +344,9 @@ export const fetchSolanaProgramElf = async (
       `ProgramData account ${programDataAccount} has an unexpected layout.`,
     );
   const slot = Number(dataReader.word(4, 64));
-  const authorityPresent = data[12] === 1;
-  const elfStart = authorityPresent ? 45 : 13;
+  // ProgramData reserves a fixed 45-byte header (tag, slot, and an
+  // Option<Pubkey> authority slot) whether or not an authority is set.
+  const elfStart = PROGRAM_DATA_METADATA_BYTES;
   if (data.length <= elfStart)
     throw new SolanaRpcFailure(
       `ProgramData account ${programDataAccount} carries no ELF bytes.`,
