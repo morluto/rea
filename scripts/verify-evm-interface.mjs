@@ -18,6 +18,10 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
+const manifest = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
+const expectedEngine = `evmole@${manifest.dependencies.evmole}`;
 const solcModule = process.env.REA_VERIFY_SOLC_MODULE;
 const strace = process.env.REA_VERIFY_STRACE_COMMAND;
 if (
@@ -124,7 +128,7 @@ try {
     const evidence = parseEvidence(value);
     const report = evidence.normalized_result;
     assert.equal(report.diagnostics.truncated, false);
-    assert.equal(evidence.provider.version, "evmole@0.9.4");
+    assert.equal(evidence.provider.version, expectedEngine);
     assert.equal(evidence.confidence, "inferred");
     assert.equal(report.artifact.path, path);
     assert.equal(report.artifact.encoding, encoding);
@@ -560,7 +564,7 @@ console.log(
       status: failures.length === 0 ? "passed" : "failed",
       public_cases: cases,
       compiler: solc.version(),
-      engine: "evmole@0.9.4",
+      engine: expectedEngine,
       ...(failures.length === 0
         ? {
             target_execution: "exec-syscalls-verified-absent",
