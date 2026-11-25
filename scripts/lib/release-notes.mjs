@@ -193,14 +193,15 @@ function readReleaseSection(text, version) {
 function bulletCredits(parts, repository) {
   const references = new Set();
   const links = [];
+  const linkedIssues = new Set();
   let prose = "";
   let localProse = "";
   for (const { text, href } of parts) {
     prose += text;
     const reference = githubReleaseReference(href);
     if (href) links.push(href);
-    if (reference?.canonicalUrl && reference.canonicalUrl !== href)
-      links.push(reference.canonicalUrl);
+    if (reference?.route === "issues")
+      linkedIssues.add(reference.repository + "#" + reference.number);
     if (reference?.number !== undefined) {
       if (reference.repository === repository.toLowerCase())
         references.add(reference.number);
@@ -219,10 +220,13 @@ function bulletCredits(parts, repository) {
       (match) => match[1].toLowerCase(),
     ),
   );
-  return { references, links, prose, thanked };
+  return { references, links, linkedIssues, prose, thanked };
 }
 
-function requiredCredits(inventory, { references, links, prose }) {
+function requiredCredits(
+  inventory,
+  { references, links, linkedIssues, prose },
+) {
   const required = [];
   for (const pr of inventory.pullRequests.filter((item) =>
     references.has(item.number),
@@ -231,11 +235,11 @@ function requiredCredits(inventory, { references, links, prose }) {
       required.push({ handle, context: `PR #${pr.number}` });
   }
   for (const issue of inventory.pullRequests.flatMap((item) => item.issues)) {
+    const repository = issue.repository.nameWithOwner.toLowerCase();
     const mentioned =
-      (issue.repository.nameWithOwner.toLowerCase() ===
-        inventory.repository.toLowerCase() &&
+      (repository === inventory.repository.toLowerCase() &&
         references.has(issue.number)) ||
-      links.includes(issue.url);
+      linkedIssues.has(repository + "#" + issue.number);
     const handle = human(issue.author);
     if (mentioned && handle)
       required.push({

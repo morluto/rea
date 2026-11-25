@@ -74,7 +74,7 @@ export function githubReleaseReference(href) {
     ? {
         repository: repository.toLowerCase(),
         number,
-        canonicalUrl: `${url.origin}/${repository}/${route}/${target}`,
+        route,
       }
     : undefined;
 }

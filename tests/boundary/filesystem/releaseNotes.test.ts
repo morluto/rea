@@ -870,6 +870,63 @@ it.each([
   });
 });
 
+it("requires credit for a cross-repository issue deep link with mixed casing", async () => {
+  const f = await fixture();
+  const inventory = z
+    .object({
+      pullRequests: z.array(
+        z
+          .object({
+            issues: z.array(
+              z
+                .object({
+                  number: z.number(),
+                  url: z.string(),
+                  repository: z
+                    .object({ nameWithOwner: z.string() })
+                    .passthrough(),
+                })
+                .passthrough(),
+            ),
+          })
+          .passthrough(),
+      ),
+    })
+    .passthrough()
+    .parse(JSON.parse(await readFile(f.manifest, "utf8")));
+  const issue = inventory.pullRequests
+    .flatMap((pr) => pr.issues)
+    .find(({ number }) => number === 51);
+  if (!issue) throw new Error("Expected fixture issue #51");
+  issue.repository.nameWithOwner = "other/project";
+  issue.url = "https://github.com/other/project/issues/51";
+  await writeFile(f.manifest, JSON.stringify(inventory));
+  const { stdout: record } = await f.invoke([
+    "record",
+    "--manifest",
+    f.manifest,
+  ]);
+  const bullet = f.bullet.replace(
+    "#51",
+    "[the report](https://github.com/Other/Project/issues/51/#issuecomment-1)",
+  );
+  const changelog = join(f.directory, "CHANGELOG.md");
+  const notes = f.notes.replace(f.record, record);
+  await writeFile(changelog, notes.replace(f.bullet, bullet));
+  await f.invoke(["check", "--manifest", f.manifest]);
+  await writeFile(
+    changelog,
+    notes.replace(f.bullet, bullet.replace(", @reporter", "")),
+  );
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      "Missing Thanks @reporter for issue other/project#51",
+    ),
+  });
+});
+
 it("requires editorial headings in release prose outside code fences", async () => {
   const f = await fixture();
   const notes = f.notes.replace(
