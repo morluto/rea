@@ -1,7 +1,7 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { text } from "node:stream/consumers";
+import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
@@ -156,9 +156,7 @@ describe("UnityFS payloads and malformed declarations", () => {
         const [entry] = await collectEntries(reader);
         if (entry === undefined) throw new Error("expected one entry");
         const stream = await reader.open(entry);
-        const chunks: Buffer[] = [];
-        for await (const chunk of stream) chunks.push(chunk as Buffer);
-        expect(Buffer.concat(chunks).equals(big)).toBe(true);
+        expect((await buffer(stream)).equals(big)).toBe(true);
       },
     );
   });

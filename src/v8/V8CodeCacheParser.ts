@@ -15,13 +15,13 @@ import {
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
 import { V8_CODE_CACHE_FORMAT } from "./V8CodeCache.errors.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import { readAdmittedRange } from "../resources/index.js";
 import {
   decodeLimit,
   malformedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
-import type { ByteSource, PrefixedByteSource } from "../domain/byteSource.js";
+import type { PrefixedByteSource } from "../domain/byteSource.js";
 
 const unsupported = (message: string): never => {
   throw unsupportedInput(V8_CODE_CACHE_FORMAT, message);
@@ -297,21 +297,6 @@ const buildV8CodeCacheReport = (
     : LIMITATIONS,
 });
 
-const readAdmittedRange = async (
-  source: ByteSource,
-  offset: number,
-  length: number,
-): Promise<Buffer> => {
-  const bytes = await source.readRange(offset, length);
-  if (bytes.length !== length)
-    throw new ArtifactReaderFailure(
-      "integrity",
-      `V8 code cache read at offset ${String(offset)} ended before its ${String(length)} admitted bytes.`,
-      { integrityCheck: "read-coverage" },
-    );
-  return bytes;
-};
-
 /** Stream one V8 code cache container over a bounded file handle in fixed chunks. */
 export const parseV8CodeCacheFromHandle = async (
   source: PrefixedByteSource,
@@ -324,7 +309,7 @@ export const parseV8CodeCacheFromHandle = async (
   const headerBytes =
     source.prefix.length >= headerNeeded
       ? source.prefix
-      : await readAdmittedRange(source, 0, headerNeeded);
+      : await readAdmittedRange("V8 code cache", source, 0, headerNeeded);
   const parsed = parseV8CodeCacheHeader(headerBytes, source.size);
   const scanner = new V8CodeCachePayloadScanner(parsed.payloadOffset, input);
   let cursor = parsed.payloadOffset;
@@ -334,7 +319,9 @@ export const parseV8CodeCacheFromHandle = async (
   }
   while (cursor < source.size) {
     const length = Math.min(STREAM_CHUNK_BYTES, source.size - cursor);
-    scanner.update(await readAdmittedRange(source, cursor, length));
+    scanner.update(
+      await readAdmittedRange("V8 code cache", source, cursor, length),
+    );
     cursor += length;
   }
   return buildV8CodeCacheReport(parsed, artifact, scanner.finish());
