@@ -1,4 +1,7 @@
-import { completeOrUnknownCoverageSchema } from "../coverage.js";
+import {
+  completeOrUnknownCoverageSchema,
+  knownCoverageStatusSchema,
+} from "../coverage.js";
 import { z } from "zod";
 import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
@@ -6,6 +9,7 @@ import {
   rustAuditableMetadataSchema,
   rustcCommitOmissionSchema,
   rustcCommitSchema,
+  rustMaxInferredCratesSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
 import { ok } from "../result.js";
@@ -50,6 +54,17 @@ export const rustBinaryUnknowns = (
             "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
           ]
         : []),
+      ...(report.inferred_crates === undefined
+        ? []
+        : [
+            "Path-inferred Cargo crates reflect panic and debug path strings rather than a complete lockfile dependency graph.",
+            ...(report.inferred_crates.truncated ||
+            report.rustc_versions?.truncated === true
+              ? [
+                  "Inferred Cargo crates or rustc version banners were truncated by item or scan budgets; additional candidates remain uninspected.",
+                ]
+              : []),
+          ]),
     ],
   };
 };
@@ -78,6 +93,25 @@ export const rustBinarySummarySchema = z.strictObject({
     .omit({ hashes: true })
     .extend({ hashes_count: count })
     .nullable(),
+  inferred_crates: z
+    .strictObject({
+      evidence_kind: z.literal("inferred"),
+      available_count: count,
+      discovered_count: count,
+      registry_count: count,
+      git_count: count,
+      max_items: rustMaxInferredCratesSchema,
+      truncated: z.boolean(),
+    })
+    .exactOptional(),
+  rustc_versions: z
+    .strictObject({
+      evidence_kind: z.literal("inferred"),
+      available_count: count,
+      discovered_count: count,
+      truncated: z.boolean(),
+    })
+    .exactOptional(),
   rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
 });
 export const rustBinaryViewContextSchema = z.strictObject({
@@ -85,6 +119,10 @@ export const rustBinaryViewContextSchema = z.strictObject({
     auditable_metadata_available: z.boolean(),
     embedded_records: completeOrUnknownCoverageSchema,
     runtime_dependencies: z.literal("unknown"),
+    inferred_crates: z.enum([
+      "not-requested",
+      ...knownCoverageStatusSchema.options,
+    ]),
   }),
 });
 
@@ -97,6 +135,8 @@ const summarize = (
     artifact,
     auditable_metadata: metadata,
     rustc_commit: compiler,
+    inferred_crates: crates,
+    rustc_versions: versions,
   } = report;
   const section =
     metadata === null
@@ -115,6 +155,12 @@ const summarize = (
             cyclic_packages: metadata.cyclic_dependency_indices.length,
           },
         };
+  let registryCount = 0;
+  let gitCount = 0;
+  for (const item of crates?.items ?? []) {
+    if (item.source_kind === "registry") registryCount += 1;
+    else gitCount += 1;
+  }
   let compilerSummary: z.output<
     typeof rustBinarySummarySchema
   >["rustc_commit"] = null;
@@ -133,6 +179,29 @@ const summarize = (
     bytes: artifact.bytes,
     auditable_metadata: section,
     rustc_commit: compilerSummary,
+    ...(crates === undefined
+      ? {}
+      : {
+          inferred_crates: {
+            evidence_kind: crates.evidence_kind,
+            available_count: crates.items.length,
+            discovered_count: crates.discovered_count,
+            registry_count: registryCount,
+            git_count: gitCount,
+            max_items: crates.max_items,
+            truncated: crates.truncated,
+          },
+        }),
+    ...(versions === undefined
+      ? {}
+      : {
+          rustc_versions: {
+            evidence_kind: versions.evidence_kind,
+            available_count: versions.items.length,
+            discovered_count: versions.discovered_count,
+            truncated: versions.truncated,
+          },
+        }),
     ...(report.rustc_commit_omission === undefined
       ? {}
       : { rustc_commit_omission: report.rustc_commit_omission }),
@@ -161,6 +230,7 @@ export const projectRustBinaryView = (
   );
   if (!subject.ok) return subject;
   const metadata = report.auditable_metadata;
+  const inferredCrates = report.inferred_crates;
   const unknowns = rustBinaryUnknowns(report);
   const shared = {
     parent_evidence_id: parent.evidenceId,
@@ -172,6 +242,12 @@ export const projectRustBinaryView = (
       embedded_records:
         metadata === null ? ("unknown" as const) : ("complete" as const),
       runtime_dependencies: "unknown" as const,
+      inferred_crates:
+        inferredCrates === undefined
+          ? ("not-requested" as const)
+          : inferredCrates.truncated
+            ? ("partial" as const)
+            : ("complete" as const),
     },
     limitations: boundedViewMessages(
       [...parent.limitations, ...report.limitations],
@@ -194,6 +270,78 @@ export const projectRustBinaryView = (
       summary,
       coverage: completeWithinViewCoverage(1),
     });
+  const indices =
+    view.indices === undefined ? undefined : new Set(view.indices);
+  const fields =
+    view.fields === undefined ? undefined : new Set<string>(view.fields);
+  if (view.collection === "inferred_crates") {
+    if (inferredCrates === undefined)
+      return invalidAnalysisView(
+        "Parent Rust Evidence did not collect inferred_crates; re-run inspect_rust_binary with include_inferred_crates: true.",
+      );
+    const names = view.names === undefined ? undefined : new Set(view.names);
+    const exactName = view.name;
+    const needle = view.contains;
+    const sourceKind = view.source_kind;
+    const matchCrate =
+      exactName === undefined &&
+      names === undefined &&
+      needle === undefined &&
+      sourceKind === undefined
+        ? undefined
+        : (row: (typeof inferredCrates.items)[number]) =>
+            (exactName === undefined || row.name === exactName) &&
+            (names?.has(row.name) ?? true) &&
+            (needle === undefined || row.name.includes(needle)) &&
+            (sourceKind === undefined || row.source_kind === sourceKind);
+    const projectCrate = (
+      row: (typeof inferredCrates.items)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("name") ?? true) && { name: row.name }),
+      ...((fields?.has("version") ?? true) && { version: row.version }),
+      ...((fields?.has("source_kind") ?? true) && {
+        source_kind: row.source_kind,
+      }),
+      ...((fields?.has("registry_index") ?? true) && {
+        registry_index: row.registry_index,
+      }),
+      ...((fields?.has("checkout_id") ?? true) && {
+        checkout_id: row.checkout_id,
+      }),
+      ...((fields?.has("revision") ?? true) && { revision: row.revision }),
+      ...((fields?.has("first_file_offset") ?? true) && {
+        first_file_offset: row.first_file_offset,
+      }),
+      ...((fields?.has("reference_count") ?? true) && {
+        reference_count: row.reference_count,
+      }),
+    });
+    const selected =
+      indices !== undefined
+        ? selectIndexedViewRows(
+            inferredCrates.items,
+            indices,
+            view,
+            matchCrate,
+            projectCrate,
+          )
+        : selectViewRows(inferredCrates.items, view, matchCrate, projectCrate);
+    return ok({
+      kind: "rust" as const,
+      view,
+      ...shared,
+      rust: summary,
+      page: { collection: "inferred_crates" as const, rows: selected.rows },
+      coverage: pageViewCoverage(
+        view.offset,
+        selected.rows.length,
+        selected.total,
+      ),
+    });
+  }
+  // Inferred crates come from read-only sections, not the auditable section.
   if (metadata === null)
     return ok({
       kind: "rust" as const,
@@ -203,10 +351,6 @@ export const projectRustBinaryView = (
       page: { collection: view.collection, rows: [] },
       coverage: unavailableViewCoverage(),
     });
-  const indices =
-    view.indices === undefined ? undefined : new Set(view.indices);
-  const fields =
-    view.fields === undefined ? undefined : new Set<string>(view.fields);
   if (view.collection === "packages") {
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =

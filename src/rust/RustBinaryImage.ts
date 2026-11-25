@@ -10,6 +10,8 @@ import type {
   RustAuditableMetadata,
   RustBinary,
   RustContainerBits,
+  RustInferredCrates,
+  RustcVersions,
 } from "../domain/rust/rustBinary.js";
 import {
   DEFAULT_RUSTC_HASH_LIMIT,
@@ -26,6 +28,16 @@ import {
   readRustWasmSectionsFromReader,
 } from "./RustWasmImage.js";
 import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
+import {
+  recoverRustSourceFingerprintsFromReader,
+  rustSourceFingerprintRanges,
+  type FileByteRange,
+} from "./RustInferredCrates.js";
+
+export interface ReadRustBinaryImageOptions {
+  readonly includeInferredCrates?: boolean | undefined;
+  readonly maxInferredCrates?: number | undefined;
+}
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
@@ -42,6 +54,8 @@ export interface RustBinaryImage {
   readonly byte_order: RustBinary["byte_order"];
   readonly auditable_metadata: RustAuditableMetadata | null;
   readonly rustc_commit: RustBinary["rustc_commit"];
+  readonly inferred_crates?: RustInferredCrates;
+  readonly rustc_versions?: RustcVersions;
   readonly section_names_limitation?: string;
 }
 
@@ -64,6 +78,7 @@ interface RustImageLayout extends Pick<
   readonly dependency: DependencySpan | null;
   /** Spans where rustc stores constant `/rustc/<hash>/` path strings. */
   readonly compiler_strings: readonly FileSpan[];
+  readonly fingerprint_ranges: readonly FileByteRange[];
 }
 
 /** Stream Rust dependency and compiler-path inspection over a range reader. */
@@ -72,6 +87,7 @@ export const readRustBinaryImageFromHandle = async (
   maxRustcHashes: number | undefined,
   maxOutputBytes: number | undefined,
   pause: ZstandardFramePause,
+  options?: ReadRustBinaryImageOptions,
 ): Promise<RustBinaryImage> => {
   const effectiveMaxHashes = maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT;
   const effectiveMaxOutputBytes =
@@ -89,8 +105,15 @@ export const readRustBinaryImageFromHandle = async (
           "inspect_rust_binary",
           pause,
         ),
+        source.size,
       );
-  const { section_name, dependency, compiler_strings, ...identity } = layout;
+  const {
+    section_name,
+    dependency,
+    compiler_strings,
+    fingerprint_ranges,
+    ...identity
+  } = layout;
   const auditable_metadata =
     dependency === null
       ? null
@@ -111,10 +134,20 @@ export const readRustBinaryImageFromHandle = async (
     effectiveMaxOutputBytes,
     pause,
   );
+  const fingerprints =
+    options?.includeInferredCrates === true
+      ? await recoverRustSourceFingerprintsFromReader(
+          source,
+          fingerprint_ranges,
+          options.maxInferredCrates,
+          pause,
+        )
+      : undefined;
   return {
     ...identity,
     auditable_metadata,
     rustc_commit,
+    ...(fingerprints === undefined ? {} : fingerprints),
   };
 };
 
@@ -133,6 +166,15 @@ const wasmLayoutFromReader = async (
     section_name: rustDependencySectionName("wasm"),
     dependency: dependency_sections[0] ?? null,
     compiler_strings: data_section === null ? [] : [data_section],
+    fingerprint_ranges:
+      data_section === null
+        ? []
+        : [
+            {
+              offset: data_section.offset,
+              end: data_section.offset + data_section.size,
+            },
+          ],
   };
 };
 
@@ -183,6 +225,7 @@ const rustcCommitFromReader = async (
 
 const nativeLayoutFromContainer = (
   container: BinaryContainer,
+  fileBytes: number,
 ): RustImageLayout => {
   const section_name = rustDependencySectionName(container.format);
   const dependency = dependencySection(section_name, container.sections);
@@ -209,6 +252,7 @@ const nativeLayoutFromContainer = (
                 ? dependency.file_alignment
                 : undefined,
           },
+    fingerprint_ranges: rustSourceFingerprintRanges(fileBytes, container),
     compiler_strings: [
       ...container.sections.filter((section) => section.read_only),
       ...(container.format === "elf"

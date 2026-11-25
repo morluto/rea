@@ -629,7 +629,8 @@ cliTest(
               {
                 path: ["view"],
                 reason: "invalid_format",
-                message: "view must be a JSON package or edge selection",
+                message:
+                  "view must be a JSON package, edge or inferred_crates selection",
               },
             ],
           },

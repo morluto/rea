@@ -2,7 +2,8 @@
 
 `inspect_rust_binary` / `inspect-rust-binary` answers which crate names,
 versions, sources, and dependency edges are embedded by cargo-auditable in one
-selected local executable, library, or WebAssembly module. It reads the file
+selected local executable, library, or WebAssembly module. Optional Cargo source-path and rustc banner fingerprints can help
+when dependency metadata is absent or remapped. It reads the file
 without running it and requires no Rust installation, active binary target,
 Hopper, Ghidra, or IDA.
 
@@ -143,6 +144,52 @@ The hash is not a claim that that compiler produced the binary. Several
 distinct hashes leave a single commit unknown. Windows builds join the rest of
 the path with a backslash, as in `/rustc/<40-hex>\library\core`, and that form
 counts too.
+
+## Optional source-path crate and compiler-banner fingerprints
+
+Most shipped Rust binaries omit `cargo-auditable` (`.dep-v0`), and builds using
+`--remap-path-prefix` may omit `/rustc/<40-hex>/` paths while still retaining
+Cargo registry or git checkout panic-location paths in read-only data or `rustc`
+version banners in `.rodata` / ELF `.comment`. Pass
+`include_inferred_crates: true` (CLI `--include-inferred-crates`, with optional
+`max_inferred_crates` / `--max-inferred-crates` in `1..10000`, default `1000`)
+to opt into a linear, non-backtracking byte scan over merged read-only file
+ranges plus uncompressed, file-backed, non-writable/non-executable ELF
+`.comment` (`SHT_PROGBITS`) sections, or WebAssembly data-section bytes:
+
+```bash
+rea inspect-rust-binary /artifacts/application --include-inferred-crates --max-inferred-crates 500 --json
+```
+
+When requested, the result adds two `evidence_kind: "inferred"` inventories:
+
+- `inferred_crates`, with `items` (`name`, `version`, `source_kind` `"registry" | "git"`,
+  `registry_index`, `checkout_id`, `revision`, `first_file_offset`, `reference_count`),
+  `discovered_count`, `max_items`, and `truncated`:
+  - Registry paths match `/cargo/registry/src/<index>/<crate>-<semver>/`,
+    `/.cargo/registry/src/...`, and Windows `\` spellings, splitting `<crate>-<semver>`
+    at the first `-` followed by a valid Cargo SemVer `MAJOR.MINOR.PATCH` so
+    hyphenated or Cargo-valid Unicode XID crate names (`tokio-util-0.7.13`,
+    `x86_64-0.15.2`, `unicodé-0.1.0`) and pre-release or build-metadata versions
+    remain unambiguous.
+  - Git checkout paths match `cargo/git/checkouts/<repo_slug>-<16-hex-id>/<7..40-hex-rev>/`
+    with `/` or `\` separators (`version: null`, `registry_index: null`, `checkout_id`, `revision`).
+- `rustc_versions`, capped at 64 unique banners (`banner`, `version`, `channel`,
+  `commit_hash`, `commit_date`, `first_file_offset`, `reference_count`), matching
+  both `rustc <semver> (<hex> <YYYY-MM-DD>)` and ELF `.comment`
+  `rustc version <semver> (<hex> <YYYY-MM-DD>)` strings.
+
+Default `inspect_rust_binary` calls omit `inferred_crates` and `rustc_versions`
+so default parameters, payloads, and `evidence_id` digests remain unchanged.
+Retained summaries add `source_coverage.inferred_crates` (`"not-requested" | "complete" | "partial"`)
+and summary counts, and `inspect_analysis_view` (`kind: "rust"`,
+`collection: "inferred_crates"`) pages recovered crates with `indices`, `name`,
+`names`, `contains`, `source_kind`, `fields`, `offset`, and `limit` (refusing
+cleanly when the parent Evidence did not request `include_inferred_crates`).
+Candidate scanning uses bounded range reads and is limited to 64 MiB; hitting the item or scan cap sets
+`truncated: true`, reports `"partial"` source coverage, and records a limitation rather than failing. Path-inferred
+crates reflect surviving panic/debug strings and do not establish a complete
+`Cargo.lock` dependency graph.
 
 ## WebAssembly modules
 

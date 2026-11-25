@@ -216,7 +216,9 @@ explicit path or endpoint and do not need it.
   - Go build metadata or static `(ptr, len)` strings: `inspect_go_binary`
     ([Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md)).
   - Rust cargo-auditable dependencies: `inspect_rust_binary`; for selected
-    crates, pass a `packages` `view` on the first call
+    crates, pass a `packages` `view` on the first call. Opt into Cargo path
+    and rustc banner fingerprints with `include_inferred_crates: true`, then
+    select `collection: "inferred_crates"` for those inferred rows
     ([Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)).
   - Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory
     targets first, then decode selected payloads.

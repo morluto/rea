@@ -274,6 +274,195 @@ it("pages matching original indices and omits dependency vectors unless selected
   });
 });
 
+it("refuses inferred_crates view when uncollected and pages/filters inferred_crates when collected", () => {
+  const uncollected = parent();
+  const uncollectedSummary = projectAnalysisView(uncollected, {
+    kind: "summary",
+  });
+  if (!uncollectedSummary.ok) throw uncollectedSummary.error;
+  expect(uncollectedSummary.value).toMatchObject({
+    kind: "summary",
+    source_coverage: { inferred_crates: "not-requested" },
+  });
+  expect(uncollectedSummary.value).not.toHaveProperty(
+    "summary.inferred_crates",
+  );
+  expect(uncollectedSummary.value).not.toHaveProperty("summary.rustc_versions");
+  const refused = projectAnalysisView(uncollected, {
+    kind: "rust",
+    collection: "inferred_crates",
+    offset: 0,
+    limit: 10,
+  });
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) {
+    expect(JSON.stringify(refused.error)).toContain(
+      "include_inferred_crates: true",
+    );
+  }
+
+  const withCrates: RustBinary = {
+    ...structuredClone(report),
+    inferred_crates: {
+      evidence_kind: "inferred",
+      items: [
+        {
+          name: "tokio-util",
+          version: "0.7.13",
+          source_kind: "registry",
+          registry_index: "index.crates.io-6f17d22bba15001f",
+          checkout_id: null,
+          revision: null,
+          first_file_offset: 100,
+          reference_count: 3,
+        },
+        {
+          name: "quinn",
+          version: null,
+          source_kind: "git",
+          registry_index: null,
+          checkout_id: "0123456789abcdef",
+          revision: "a1b2c3d",
+          first_file_offset: 220,
+          reference_count: 1,
+        },
+      ],
+      discovered_count: 3,
+      max_items: 2,
+      truncated: true,
+    },
+    rustc_versions: {
+      evidence_kind: "inferred",
+      items: [
+        {
+          banner: "rustc 1.85.0 (4d91de4e4 2025-02-17)",
+          version: "1.85.0",
+          channel: "stable",
+          commit_hash: "4d91de4e4",
+          commit_date: "2025-02-17",
+          first_file_offset: 320,
+          reference_count: 2,
+        },
+      ],
+      discovered_count: 1,
+      truncated: false,
+    },
+  };
+  const collected = parent(withCrates);
+  const summary = projectAnalysisView(collected, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  expect(summary.value).toMatchObject({
+    source_coverage: { inferred_crates: "partial" },
+    summary: {
+      inferred_crates: {
+        evidence_kind: "inferred",
+        available_count: 2,
+        discovered_count: 3,
+        registry_count: 1,
+        git_count: 1,
+        max_items: 2,
+        truncated: true,
+      },
+      rustc_versions: {
+        evidence_kind: "inferred",
+        available_count: 1,
+        discovered_count: 1,
+        truncated: false,
+      },
+    },
+  });
+
+  const complete = structuredClone(withCrates);
+  complete.inferred_crates!.discovered_count = 2;
+  complete.inferred_crates!.truncated = false;
+  const completeSummary = projectAnalysisView(parent(complete), {
+    kind: "summary",
+  });
+  if (!completeSummary.ok) throw completeSummary.error;
+  expect(completeSummary.value).toMatchObject({
+    source_coverage: { inferred_crates: "complete" },
+    summary: { inferred_crates: { truncated: false } },
+  });
+
+  const gitOnly = projectAnalysisView(collected, {
+    kind: "rust",
+    collection: "inferred_crates",
+    source_kind: "git",
+    contains: "quin",
+    fields: ["name", "checkout_id", "revision"],
+    offset: 0,
+    limit: 10,
+  });
+  if (!gitOnly.ok || gitOnly.value.kind !== "rust")
+    throw new Error("Expected inferred_crates page");
+  expect(gitOnly.value.page).toEqual({
+    collection: "inferred_crates",
+    rows: [
+      {
+        index: 1,
+        name: "quinn",
+        checkout_id: "0123456789abcdef",
+        revision: "a1b2c3d",
+      },
+    ],
+  });
+
+  for (const { selection, offset, rows, total } of [
+    {
+      selection: {},
+      offset: 1,
+      rows: [{ index: 1, name: "quinn" }],
+      total: 2,
+    },
+    {
+      selection: { indices: [1, 90, 0, 1] },
+      offset: 1,
+      rows: [{ index: 1, name: "quinn" }],
+      total: 2,
+    },
+    {
+      selection: {
+        indices: [1, 90, 0, 1],
+        name: "quinn",
+        names: ["quinn"],
+        contains: "quin",
+        source_kind: "git" as const,
+      },
+      offset: 0,
+      rows: [{ index: 1, name: "quinn" }],
+      total: 1,
+    },
+    { selection: { indices: [] }, offset: 0, rows: [], total: 0 },
+    { selection: { names: [] }, offset: 0, rows: [], total: 0 },
+    {
+      selection: { name: "quinn", source_kind: "registry" as const },
+      offset: 0,
+      rows: [],
+      total: 0,
+    },
+  ]) {
+    const page = projectAnalysisView(collected, {
+      kind: "rust",
+      collection: "inferred_crates",
+      fields: ["name"],
+      ...selection,
+      offset,
+      limit: 1,
+    });
+    if (!page.ok) throw page.error;
+    expect(page.value).toMatchObject({
+      page: { collection: "inferred_crates", rows },
+      source_coverage: { inferred_crates: "partial" },
+      coverage: {
+        total,
+        examined: rows.length,
+        next_offset: null,
+        exhausted: true,
+      },
+    });
+  }
+});
+
 it.each(["packages", "edges"] as const)(
   "reports decoded empty Rust %s as fully examined",
   (collection) => {

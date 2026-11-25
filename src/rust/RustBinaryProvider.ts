@@ -132,6 +132,10 @@ export class RustBinaryProvider implements RustBinaryPort {
                 input.max_rustc_hashes,
                 limits.output_bytes,
                 () => yieldArtifactRead(options?.signal),
+                {
+                  includeInferredCrates: input.include_inferred_crates,
+                  maxInferredCrates: input.max_inferred_crates,
+                },
               ),
               selected.fileOffset,
             );
@@ -142,6 +146,12 @@ export class RustBinaryProvider implements RustBinaryPort {
               byte_order: image.byte_order,
               auditable_metadata: image.auditable_metadata,
               rustc_commit: image.rustc_commit,
+              ...(image.inferred_crates === undefined
+                ? {}
+                : { inferred_crates: image.inferred_crates }),
+              ...(image.rustc_versions === undefined
+                ? {}
+                : { rustc_versions: image.rustc_versions }),
               artifact: {
                 path: input.path,
                 file_name: basename(input.path),
@@ -207,6 +217,28 @@ const inFile = (image: RustBinaryImage, fileOffset: number): RustBinaryImage =>
                   file_offset: entry.file_offset + fileOffset,
                 })),
               },
+        ...(image.inferred_crates === undefined
+          ? {}
+          : {
+              inferred_crates: {
+                ...image.inferred_crates,
+                items: image.inferred_crates.items.map((item) => ({
+                  ...item,
+                  first_file_offset: item.first_file_offset + fileOffset,
+                })),
+              },
+            }),
+        ...(image.rustc_versions === undefined
+          ? {}
+          : {
+              rustc_versions: {
+                ...image.rustc_versions,
+                items: image.rustc_versions.items.map((item) => ({
+                  ...item,
+                  first_file_offset: item.first_file_offset + fileOffset,
+                })),
+              },
+            }),
       };
 
 const outputLimit = (path: string, maxOutputBytes: number) =>
@@ -232,7 +264,9 @@ const RUST_RESOURCE_GUARD_LIMITATION =
 
 const limitationsFor = (image: RustBinaryImage): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
-  `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
+  image.inferred_crates === undefined
+    ? `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`
+    : "Only the .dep-v0 dependency section, read-only Cargo/rustc source-path strings, ELF .comment toolchain banners and WebAssembly data are inspected. Functions, types, and runtime behavior are not recovered.",
   ...(image.format === "wasm"
     ? [
         `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. At most ${MAX_WASM_SECTIONS} section payloads are examined.`,
@@ -266,6 +300,21 @@ const limitationsFor = (image: RustBinaryImage): string[] => [
         "Dependency indices contain a cycle. The cycle is reported and was not traversed.",
       ]
     : []),
+  ...(image.inferred_crates === undefined
+    ? []
+    : [
+        "Path-inferred Cargo crates and rustc version banners are recovered from read-only panic/debug source paths, ELF .comment strings and WebAssembly data (bounded to 64 MiB of candidate bytes). They do not represent a complete Cargo.lock dependency graph; crates without surviving path strings remain unobserved.",
+        ...(image.inferred_crates.truncated
+          ? [
+              "Recovered inferred_crates were truncated at the configured item limit or 64 MiB read-only scan budget; additional Cargo crate path strings may exist.",
+            ]
+          : []),
+        ...(image.rustc_versions?.truncated === true
+          ? [
+              "Recovered rustc_versions were truncated at the 64-banner limit or 64 MiB read-only scan budget; additional toolchain banners may exist.",
+            ]
+          : []),
+      ]),
 ];
 
 const unknownFormatLimitation = (

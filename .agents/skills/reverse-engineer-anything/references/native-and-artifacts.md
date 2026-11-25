@@ -143,6 +143,14 @@ kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
 `scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
 and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
+When dependency metadata or compiler paths are absent, opt in with
+`include_inferred_crates: true` (CLI `--include-inferred-crates`) to recover
+Cargo registry/git source-path crates and rustc version banners from read-only
+bytes, ELF `.comment`, or WebAssembly data. Optional `max_inferred_crates`
+(CLI `--max-inferred-crates`) is 1..10000, default 1000. Inspect retained rows
+with `inspect_analysis_view` kind `rust`, collection `inferred_crates`.
+These fingerprints do not establish a complete lockfile dependency graph.
+
 ## Maven POM and Gradle module metadata
 
 Use `inspect_maven_gradle_metadata` for an explicit local Maven `pom.xml` or

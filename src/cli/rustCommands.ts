@@ -19,13 +19,14 @@ export const registerRustCommands = (
     contractNamed(RUST_TOOL_CONTRACTS, "inspect_rust_binary"),
     {
       description:
-        "Inspect an embedded cargo-auditable Rust dependency list without target execution",
+        "Inspect embedded cargo-auditable Rust dependencies and optional source-path crate/rustc fingerprints without target execution",
       positionals: ["path"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],
       evidenceDelivery: true,
       viewDelivery: {
-        invalidJson: "view must be a JSON package or edge selection",
+        invalidJson:
+          "view must be a JSON package, edge or inferred_crates selection",
         kind: "rust",
         viewSelectsSummary: true,
       },
@@ -39,13 +40,21 @@ export const registerRustCommands = (
           description:
             "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
         },
+        include_inferred_crates: {
+          description:
+            "Also scan read-only data, ELF .comment and WebAssembly data for Cargo crate source-path fingerprints and rustc version banners",
+        },
+        max_inferred_crates: {
+          description:
+            "Maximum distinct inferred Cargo crates (1-10000; default 1000; requires --include-inferred-crates)",
+        },
         detail: {
           description:
             "Default complete; a view selects compact delivery with --evidence_output",
         },
         view: {
           description:
-            "JSON package or edge selection; retains complete Evidence with --evidence_output",
+            "JSON package, edge or inferred_crates selection; retains complete Evidence with --evidence_output",
         },
       },
     },
