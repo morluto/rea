@@ -17,6 +17,7 @@ import { artifactComparisonResultSchema } from "../../src/domain/artifactCompari
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence, type Evidence } from "../../src/domain/evidence.js";
+import { occurrenceAt } from "../fixtures/artifactEvidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -69,14 +70,6 @@ const comparisonSession = async () => {
   return { inspect, compare };
 };
 
-const occurrence = (evidence: Evidence, path: string) => {
-  const found = artifactInventoryResultSchema
-    .parse(evidence.normalized_result)
-    .occurrences.find(({ logical_path }) => logical_path === path);
-  if (found === undefined) throw new Error(`Missing ${path}`);
-  return found;
-};
-
 const changedPaths = (result: { changes: { logical_path: string }[] }) =>
   result.changes
     .map(({ logical_path }) => logical_path)
@@ -97,8 +90,8 @@ it("reports an ESP partition whose declaration alone changed", async () => {
     dump(partitionTable(TWO_OTA_PARTITIONS)),
   );
   const right = await inspect("readonly.bin", dump(partitionTable(readonly)));
-  const leftNvs = occurrence(left, "partitions/nvs.bin");
-  const rightNvs = occurrence(right, "partitions/nvs.bin");
+  const leftNvs = occurrenceAt(left, "partitions/nvs.bin");
+  const rightNvs = occurrenceAt(right, "partitions/nvs.bin");
   expect(rightNvs.artifact_id).toBe(leftNvs.artifact_id);
   expect(leftNvs.format_metadata).toMatchObject({ readonly: false });
   expect(rightNvs.format_metadata).toMatchObject({ readonly: true });
@@ -126,10 +119,12 @@ it("reports an ESP partition whose declaration alone changed", async () => {
   // Labels that are not UTF-8 compare by their bytes.
   const first = await inspect("label-a.bin", dump(labelBytes([0xff, 0x01])));
   const second = await inspect("label-b.bin", dump(labelBytes([0xfe, 0x01])));
-  expect(occurrence(first, "partitions/0.bin").format_metadata).toMatchObject({
-    label: null,
-    label_hex: "ff01",
-  });
+  expect(occurrenceAt(first, "partitions/0.bin").format_metadata).toMatchObject(
+    {
+      label: null,
+      label_hex: "ff01",
+    },
+  );
   expect(changedPaths(await compare(first, second))).toEqual([
     "partition-table.bin",
     "partitions/0.bin",
@@ -165,7 +160,7 @@ it("classifies every partition of two dumps that end inside their last partition
   const right = await inspect("right.bin", mergeBin(moved));
   const inventory = artifactInventoryResultSchema.parse(left.normalized_result);
   expect(inventory.coverage.status).toBe("complete");
-  expect(occurrence(left, "partitions/ota_0.bin").limitations).toEqual([
+  expect(occurrenceAt(left, "partitions/ota_0.bin").limitations).toEqual([
     `partitions/ota_0.bin is truncated: the dump holds ${String(app.length)} of its 65536 bytes.`,
   ]);
 
@@ -202,7 +197,7 @@ it("classifies every partition of two dumps that end inside their last partition
     ["partitions/ota_0.bin", "changed"],
     ["partitions/ota_1.bin", "changed"],
   ]);
-  expect(occurrence(left, "partitions/ota_1.bin").limitations).toEqual([
+  expect(occurrenceAt(left, "partitions/ota_1.bin").limitations).toEqual([
     expect.stringMatching(/partitions\/ota_1\.bin.*outside.*65536/iu),
   ]);
 });
