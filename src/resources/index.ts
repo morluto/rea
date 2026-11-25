@@ -121,6 +121,7 @@ export {
   assertStableArtifactState,
   completedStableArtifact,
   completedStableArtifactStream,
+  readAdmittedRange,
   readStableArtifact,
   streamStableArtifact,
   withStableArtifactHandle,
