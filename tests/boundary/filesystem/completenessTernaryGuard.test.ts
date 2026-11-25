@@ -30,10 +30,17 @@ it.each([
   ],
   ['const s = flag ? (foo) : "complete";', 1],
   ['const s = flag ? (foo) : () => "complete";', 0],
+  // An `extends` property or earlier argument does not hide a subsequent ternary.
+  ['check(options.extends, ok ? "complete" : "partial");', 1],
+  ['check(options?.extends, ok ? "complete" : "partial");', 1],
   // Non-ternary uses of "complete" are ignored.
   ['type Status<T> = T extends true ? "complete" : "partial";', 0],
   [
     'type Status<T> = T extends Record<string, unknown> ? "complete" : "partial";',
+    0,
+  ],
+  [
+    'type Status<T> = T extends Record<string, Map<string, number>> ? "complete" : "partial";',
     0,
   ],
   ['function f(status?: "complete") { return status; }', 0],

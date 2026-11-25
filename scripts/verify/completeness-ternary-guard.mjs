@@ -262,6 +262,8 @@ export const adhocCompletenessTernaryCount = (content) => {
   const ternaryStack = [];
   /** @type {boolean[]} */
   const sawExtendsAtDepth = [false];
+  /** @type {number[]} */
+  const extendsAngleDepth = [0];
   let depth = 0;
   let count = 0;
 
@@ -271,6 +273,7 @@ export const adhocCompletenessTernaryCount = (content) => {
     if (token.opensSubstitution === true) {
       depth += 1;
       sawExtendsAtDepth[depth] = false;
+      extendsAngleDepth[depth] = 0;
       continue;
     }
     if (token.kind === "substitution-end") {
@@ -280,6 +283,7 @@ export const adhocCompletenessTernaryCount = (content) => {
     if (token.kind === "punct" && OPENERS.has(token.text)) {
       depth += 1;
       sawExtendsAtDepth[depth] = false;
+      extendsAngleDepth[depth] = 0;
       continue;
     }
     if (token.kind === "punct" && CLOSERS.has(token.text)) {
@@ -293,8 +297,26 @@ export const adhocCompletenessTernaryCount = (content) => {
       continue;
     }
     if (isId(token, "extends")) {
-      sawExtendsAtDepth[depth] = true;
+      const previous = tokens[index - 1];
+      if (!isPunct(previous, ".") && !isPunct(previous, "?.")) {
+        sawExtendsAtDepth[depth] = true;
+        extendsAngleDepth[depth] = 0;
+      }
       continue;
+    }
+    if (sawExtendsAtDepth[depth] === true) {
+      if (isPunct(token, "<")) {
+        extendsAngleDepth[depth] = (extendsAngleDepth[depth] ?? 0) + 1;
+        continue;
+      }
+      if (isPunct(token, ">") && (extendsAngleDepth[depth] ?? 0) > 0) {
+        extendsAngleDepth[depth] = (extendsAngleDepth[depth] ?? 0) - 1;
+        continue;
+      }
+      if (isPunct(token, ",") && (extendsAngleDepth[depth] ?? 0) === 0) {
+        sawExtendsAtDepth[depth] = false;
+        continue;
+      }
     }
     if (isPunct(token, "?")) {
       const next = tokens[index + 1];
@@ -305,6 +327,7 @@ export const adhocCompletenessTernaryCount = (content) => {
         isPunct(next, "=");
       const isConditionalType = sawExtendsAtDepth[depth] === true;
       sawExtendsAtDepth[depth] = false;
+      extendsAngleDepth[depth] = 0;
       if (!isOptionalMarker && !isConditionalType) {
         ternaryStack.push({ qIndex: index, depth });
       }
@@ -312,6 +335,7 @@ export const adhocCompletenessTernaryCount = (content) => {
     }
     if (isPunct(token, ":")) {
       sawExtendsAtDepth[depth] = false;
+      extendsAngleDepth[depth] = 0;
       const open = ternaryStack.at(-1);
       if (
         open !== undefined &&
@@ -330,6 +354,7 @@ export const adhocCompletenessTernaryCount = (content) => {
     }
     if (token.kind === "punct" && EXTENDS_BOUNDARIES.has(token.text)) {
       sawExtendsAtDepth[depth] = false;
+      extendsAngleDepth[depth] = 0;
     }
   }
   return count;
