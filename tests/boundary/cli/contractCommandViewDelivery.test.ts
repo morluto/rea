@@ -119,9 +119,7 @@ const harness = () => {
     const registered = cliCommand(cli, command)?.definition;
     if (registered === undefined) throw new Error(`${command} is missing`);
     const parse = (key: "args" | "options", value: unknown) =>
-      (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(
-        value,
-      );
+      registered[key]!.parse(value);
     const run = Reflect.get(registered, "run") as (
       value: unknown,
     ) => Promise<unknown>;
