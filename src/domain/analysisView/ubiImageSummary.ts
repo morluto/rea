@@ -2,9 +2,9 @@ import { z } from "zod";
 
 import {
   ubiImageMetadataSchema,
-  uint32,
   type UbiImageMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/firmwareMetadata.js";
+import { uint32 } from "../formatMetadata/primitives.js";
 
 /**
  * A UBI image's root facts in the summary view, under their own kind: header

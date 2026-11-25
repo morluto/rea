@@ -6,7 +6,7 @@ import { setImmediate } from "node:timers/promises";
 import type {
   UbiImageMetadata,
   UbiVolumeMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/firmwareMetadata.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   assertArtifactReadActive,
