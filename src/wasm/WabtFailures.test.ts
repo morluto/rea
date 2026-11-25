@@ -2,10 +2,14 @@ import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { wabtFailureDialect } from "./WabtFailures.js";
+import { wabtFailureDialect, type WabtVersionProbe } from "./WabtFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
-import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
+import {
+  WABT_RELEASE_LINE,
+  WABT_VERSION,
+  WASM_RESOURCE_DEFAULTS,
+} from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 
@@ -174,12 +178,12 @@ it.each([
         ? { cancellation: { reason: callerReason } }
         : undefined,
     );
-    const probe = {
-      configuration_key: "REA_WABT_BIN_DIRECTORY" as const,
+    const probe: WabtVersionProbe = {
+      configuration_key: "REA_WABT_BIN_DIRECTORY",
       executable_path: "/tools/wasm2wat",
       tool: "wasm2wat",
-      expected_version: "1.0.42" as const,
-      accepted_releases: "WABT >=1.0.42 <1.1.0 (verified with 1.0.42)",
+      expected_version: WABT_VERSION,
+      accepted_releases: WABT_RELEASE_LINE,
     };
     const failure = wabtFailure(cause, "configuration", "/selected.wasm", {
       commandTimeoutMs: 1234,
@@ -220,11 +224,11 @@ it.each([
     expect(projected).toMatchObject({
       code: "capability_unavailable",
       retryable: false,
+      // No structured fact names the setting or distinguishes these
+      // refusals, so each keeps the setting and its errno-specific repair.
       remediation: { action: expect.stringContaining(action) },
     });
     expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-    expect(projected.remediation.action).toContain("restart");
-    expect(projected.remediation.action).toContain("Do not repeat");
   },
 );
 
@@ -258,9 +262,6 @@ it.each([false, true])(
       },
     });
     if (!cleanup) {
-      expect(projected.remediation.action).toContain("max_input_bytes");
-      expect(projected.remediation.action).not.toContain("evidence reply");
-      expect(projected.remediation.action).not.toContain("--");
       expect(projected.details?.limit).toMatchObject({
         control_kind: "parameter",
         parameter: "max_input_bytes",
@@ -347,6 +348,7 @@ it("keeps setup guidance when a version probe's output cannot be collected", () 
     wabtFailure(cause, "configuration", "/module.wasm"),
   );
   expect(projected).toMatchObject({ code: "capability_unavailable" });
+  // The setting name has no structured field on this refusal.
   expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });
 

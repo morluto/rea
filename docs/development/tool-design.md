@@ -54,11 +54,11 @@ satisfy. A plan without execution does not establish runtime behavior.
 ## Exercise the analyst workflow
 
 Before defining a new provider-backed tool, state the analyst's question, what
-they already have, the intended result and authority, and what must remain
-unknown. Try the nearest existing REA workflow and the relevant native provider
-or ordinary script path when available. Identify the specific gap and what a
-new or extended contract would add; upstream capability alone does not require
-a new tool or equal support from every provider.
+they already have, the intended result and authority, and what must stay
+unknown. Try the nearest REA workflow, then the native provider or a plain
+script. Name the gap and what a new or extended contract adds. An upstream
+capability alone does not justify a new tool or equal support on every
+provider.
 
 Use the caller's selected target and authority. Follow
 [provider-backed workflow verification](testing.md#provider-backed-workflow-verification)
@@ -68,30 +68,30 @@ that claim requires an actual agent evaluation.
 
 ## Audit existing tools
 
-Scope an audit by analyst tasks and the caller's target, providers and authority.
-Record the source revision and, when used, the running server, catalog and
-provider versions; a connected server can differ from the current checkout.
-Inspect the live CLI help or MCP descriptions and schemas alongside the owning
-contracts and documentation. Choose representative tasks and their nearest REA
-and native alternatives rather than counting upstream commands.
+Scope an audit by analyst tasks, not by counting upstream commands.
 
-For those tasks, inspect relevant rendered MCP prompts, guided workflows and
-packaged skill advice in the versions actually in use. Follow the suggested
-producer-to-consumer handoff against the live contracts, including source
-identity, session lifetime and available alternatives. Matching text between
-two renderers does not establish that their shared advice is correct or that an
-agent selected the workflow.
-
-Exercise each selected workflow before and after the tool call. Use
-[workflow verification](testing.md#provider-backed-workflow-verification) to
-check returned facts, partial outcomes, recovery and the scope of existing
-provider evidence.
+- **Record what you ran.** Note the source revision and, when used, the running
+  server, catalog and provider versions; a connected server can differ from the
+  checkout.
+- **Check the live surface.** Read the CLI help or MCP descriptions and schemas,
+  rendered prompts, guided workflows and skill advice in the versions in use.
+  Compare them with the owning contracts and docs.
+- **Follow the handoffs.** Check source identity, session lifetime and
+  alternatives between producer and consumer against the live contracts.
+  Matching text in two renderers does not prove the advice is correct.
+- **Start from first contact.** Begin each task with the call an agent makes on
+  an unfamiliar target, and check routing as well as the final answer.
+- **Use real public artifacts as well as synthetic ones.** See
+  [public-corpus checks](testing.md#public-corpus-checks).
+- **Verify before and after.** Use
+  [workflow verification](testing.md#provider-backed-workflow-verification) for
+  returned facts, partial outcomes, recovery and provider scope.
 
 Report working routes as well as findings. Separate a reproduced contract bug,
-an intentional limitation, a design opportunity and an unverified hypothesis;
-include the smallest useful reproduction, impact and coverage limits. Do not
-claim autonomous-agent selection from a scripted trace. Check related reports
-before proposing another issue, and avoid treating lack of API parity as a bug.
+an intentional limitation, a design opportunity and an unverified hypothesis,
+with the smallest useful reproduction, impact and coverage limits. A scripted
+trace does not show which tool an agent would choose. Check related reports
+first, and don't treat a lack of API parity as a bug.
 
 ### Write descriptions for selection and a valid first call
 
@@ -125,6 +125,27 @@ can still produce an overstated answer. Report whole-task usage, including
 retries and cached input, rather than treating fewer description bytes as proof
 of lower token cost.
 
+## Route first contact by parsed facts
+
+The first call on an unfamiliar target decides whether an agent finds the right
+tool. Treat a dead end there as a defect.
+
+- **Return facts, not a bare refusal.** For an unrecognised input, return what
+  is known: size, digest, leading bytes and any bounded signature candidates.
+  Keep `unrecognised`, `malformed` and `unsupported` distinct.
+- **Recognise every format a dedicated tool parses.** If REA can read a format,
+  first-contact inspection names that tool instead of rejecting the file.
+- **Derive next probes from the owner's parsed facts.** Rank them and list only
+  operations that apply. A file can be several things at once, such as an
+  executable that carries a package; report each reading in a useful order
+  rather than hiding one.
+- **Never fall back silently to another lane.** A workflow that finds none of
+  its inputs says so and names what it did find, as counts, instead of
+  returning an empty success.
+- **Skip checks that cannot apply.** A format-gated check that cannot apply to
+  the detected format is omitted, not reported as `not_applicable` with a
+  next probe for another format.
+
 ## Design recovery around the failure
 
 Distinguish a request that violates its input contract from a valid selection
@@ -134,6 +155,12 @@ only when the input contract is the problem; for a valid lookup, preserve the
 caller's exact selector, the observed reason and any candidates, and give a
 next step that addresses that outcome. An inventory miss does not prove that
 the artifact lacks the requested item.
+
+Malformed or unsupported target bytes are a target problem, not a request
+problem. Report them in the target category, with recovery that names another
+target or operation. A selector that resolves to the wrong kind of object, such
+as an import slot passed where a procedure is expected, reports what it
+resolved to and names the operations that answer it on that provider.
 
 For prerequisite failures, identify what the requested operation actually needs.
 A missing executable, a wrong path, an incompatible host or version, denied
@@ -157,6 +184,9 @@ another context could help, describe it as an explicit choice and state any
 relevant loss of state; do not switch or select a candidate automatically.
 Preserve uncertainty, partial observations, and session or cleanup state. A
 suggested retry must be safe and explain any required change or wait.
+`retryable` claims only an idempotent retry. If a timed-out or cancelled
+operation may already have taken effect, say so instead of offering a blind
+retry.
 
 Verify recovery through the public workflow: reproduce the failure, follow
 the suggested next step when feasible, and check the result and session state.
@@ -184,6 +214,18 @@ does not establish another instance.
   the question; preserve access to complete source Evidence and honor existing
   contracts and requested detail. Missing coverage is unknown, not absence.
   Avoid extra lookups solely to understand the answer or its provenance.
+- Keep result semantics provider-neutral. If an operation means the same
+  thing on several providers, it resolves the same selector the same way on
+  each. Otherwise the contract declares the difference.
+- Page cursors over mutable state, such as a live provider session that accepts
+  annotations, carry the source revision. A cursor from an older revision fails
+  instead of returning shifted rows.
+- Name the address space of every location: RVA, virtual address or file
+  offset, in one documented spelling. Report the image base wherever results
+  mix those spaces.
+- State session-scoped facts, such as provider defect notes and analysis-profile
+  caveats, once per session and reference them afterwards. Attach a scoped
+  caveat only to the architectures, formats or operations it applies to.
 - Keep observed, derived, and inferred relationships distinct. Preserve
   unresolved edges and partial provider facts instead of requiring every
   provider to supply the same metadata.
@@ -203,18 +245,27 @@ does not establish another instance.
   enforce the requested target and lifecycle. A private temporary copy is a
   filesystem write even when the selected artifact remains untouched. Derive
   overlapping tool and provider effect declarations from the same fact.
-- Add limits only for real format, protocol, authority, or measured resource
-  constraints. Report pagination, truncation, cancellation, and partial failure.
-  An assumed agent budget is insufficient justification for a limit. Name the
-  ceiling and its recovery as described in
-  [admission limits and recovery](../reference/limits-and-recovery.md).
-- Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`) and
-  graph-traversal (`get_call_graph`, `trace_call_path`) tools optional per-call
-  bounds (`limit`/`offset` or `max_depth`/`max_nodes`). Omitting them preserves
-  unpaged behavior; supplying them should stop producer work early where
-  possible, mark truncated coverage/discovery `partial`, and report explicit
-  continuation facts (`total_*`, `truncated`, `limitations`, or
-  `residual_unknowns`).
+- Separate **admission limits** from **delivery budgets**:
+  - An admission limit refuses or stops work. Add one only for a real format,
+    protocol, authority or measured resource constraint, and measure what the
+    operation actually reads. A header reader is bounded by the bytes it reads,
+    not by file size. Name the ceiling and its recovery as described in
+    [admission limits and recovery](../reference/limits-and-recovery.md).
+  - A delivery budget never refuses. It sizes the inline answer for the
+    agent's context, retains the complete result as Evidence, and returns a
+    summary, the Evidence ID and a cursor. The agent's context is a valid
+    reason for a delivery budget, not for an admission limit.
+  - Report pagination, truncation, cancellation and partial failure either way.
+- Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`),
+  inventory and graph-traversal (`get_call_graph`, `trace_call_path`) tools
+  per-call bounds (`limit`/`offset` or `max_depth`/`max_nodes`). With no bounds
+  supplied, return a bounded summary within the delivery budget and keep the
+  complete result available through retained Evidence; return everything
+  inline only when the caller asks for complete detail. Supplied bounds should
+  stop producer work early where possible, mark truncated coverage or discovery
+  `partial`, and report continuation facts (`total_*`, `truncated`,
+  `limitations` or `residual_unknowns`). Selectors narrow every collection they
+  touch, not only the primary one.
 - Keep input schemas flat for compact advertisement: avoid redundant root
   unions (`z.discriminatedUnion` whose branches share identical properties
   differing only by a boolean), which double schema size and introduce root
@@ -286,6 +337,9 @@ entry points. Trace where it is established, which consumers rely on it,
 and where fallback, retry, or cleanup can change the outcome. Search for
 other code that derives the same fact or claims the same responsibility.
 Different implementations can still make the same decision independently.
+Sibling readers of one format share its header parser and the structural checks
+for the fields they read. Each operation keeps its own required fields and
+admission policy; don't duplicate parsing to enforce those differences.
 
 Have the owner carry the result, its source and scope, and any uncertainty.
 Each consumer applies its own policy to those shared facts. Keep proof of
@@ -594,6 +648,10 @@ failed request's physical, cancellation and cleanup facts.
   cancellation before commit keeps the completed value as a partial
   observation, cancellation after commit keeps the value, and unconfirmed
   cleanup reports `cleanup_incomplete` while keeping the completed value.
+  SQLite keeps a failed close primary when cancellation arrives during that
+  close, and retains the caller's cancellation as a secondary failure.
+  Startup deadlines own the readiness cutoff for sessions that remain open
+  after a successful handshake.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s

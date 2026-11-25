@@ -280,6 +280,9 @@ const summarizeManagedGraph = (graph: {
       case "managed-native-implementation":
         native_implementations += 1;
         break;
+      default:
+        // The application graph also carries non-managed nodes; they have no managed count.
+        break;
     }
   }
   let calls = 0;

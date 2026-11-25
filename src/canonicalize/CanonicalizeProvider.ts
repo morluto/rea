@@ -1,6 +1,6 @@
 import {
   projectArtifactCloseFailure,
-  ArtifactReaderFailure,
+  translateArtifactFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
   completedStableArtifactObservation,
@@ -12,7 +12,6 @@ import {
 } from "../providers/classifyProviderFailure.js";
 import type { CanonicalizePort } from "../ports/canonicalize/CanonicalizePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import {
@@ -165,12 +164,10 @@ const canonicalizeFailureDialect = (
       ),
     retainCompletedIdentity: true,
   },
-  unclassified: (cause, details) =>
-    new ArtifactOperationError(
-      OPERATION,
-      cause instanceof ArtifactReaderFailure ? cause.reason : "io",
-      undefined,
-      cause instanceof Error ? cause.message : "Canonicalization failed.",
-      { ...details, cause },
-    ),
+  // A reader failure the shared file facts did not classify — an ASAR header the
+  // owning reader refused as malformed or truncated — is translated the one owned
+  // way: a format refusal becomes the target failure of the selected path, and
+  // any other reader failure its operation failure, rather than this pass naming
+  // a reason the reader vocabulary no longer lets an operation carry.
+  unclassified: (cause) => translateArtifactFailure(OPERATION, input.path, cause),
 });

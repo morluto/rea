@@ -12,6 +12,7 @@ import {
 } from "../resources/index.js";
 import {
   malformedInput,
+  ParseFailureError,
   parseFailureFromCause,
 } from "../domain/parseFailure.js";
 import { setImmediate as immediate } from "node:timers/promises";
@@ -33,9 +34,9 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
+  AnalysisTargetFailureError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -91,8 +92,8 @@ export function* decodeAppleDispatchMetadataSteps(
     slice: admittedSlice,
   });
   if (!selected.ok) {
-    if (selected.error.kind === "malformed")
-      throw malformedInput("macho", selected.error.message);
+    if (selected.error.kind === "format")
+      throw new ParseFailureError(selected.error.failure);
     // Admission bound this architecture and slice to these exact bytes, so a
     // refusal is an inconsistency inside REA, not the caller's selection.
     throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
@@ -530,18 +531,9 @@ const appleDispatchMetadataPrimaryFailure = (
         { cause },
       );
     if (cause instanceof BinaryFormatFailure)
-      return new AnalysisUnsupportedTargetError(
-        OPERATION,
-        path,
-        cause.message,
-        {
-          cause,
-          remediationAction:
-            cause.kind !== "unsupported"
-              ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
-              : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
-        },
-      );
+      return new AnalysisTargetFailureError(OPERATION, path, cause.failure, {
+        cause,
+      });
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
       return cancelledBy(
         OPERATION,

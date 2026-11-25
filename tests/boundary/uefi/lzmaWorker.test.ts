@@ -1,199 +1,153 @@
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { expect, it } from "vitest";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expect, it, onTestFinished } from "vitest";
+import { ArtifactResourceScope } from "../../../src/resources/index.js";
+import { UefiLzmaSession } from "../../../src/uefi/UefiLzmaSession.js";
+import type { UefiDecodeResult } from "../../../src/uefi/UefiScanContext.js";
 
-/** The pinned pure-JS decoder, used in tests to build real streams. */
-const lzmaPurescript = createRequire(import.meta.url)(
-  "lzma-purejs",
-) as unknown as {
-  compressFile: (
-    buffer: Buffer,
+const { compressFile } = createRequire(import.meta.url)("lzma-purejs") as {
+  compressFile(
+    bytes: Buffer,
     output?: undefined,
     options?: { eos: boolean },
-  ) => Uint8Array;
+  ): Uint8Array;
 };
+const workerPath = fileURLToPath(
+  new URL("../../../dist/uefi/UefiLzmaWorker.js", import.meta.url),
+);
 
-interface UefiLzmaWorkerReply {
-  readonly ok: unknown;
-  readonly reason?: unknown;
-  readonly message?: unknown;
-  readonly lzma_version?: unknown;
-  readonly input_bytes_consumed?: unknown;
-  readonly output?: { readonly sha256: unknown; readonly bytes: unknown };
+type Decode = (bytes: Buffer, limit: number) => Promise<UefiDecodeResult>;
+
+async function withDecoder(
+  probe: (decode: Decode) => Promise<void>,
+): Promise<void> {
+  const resources = new ArtifactResourceScope();
+  const session = new UefiLzmaSession(
+    workerPath,
+    "inspect_uefi_firmware",
+    resources,
+  );
+  onTestFinished(() => resources.close());
+  const signal = AbortSignal.timeout(30_000);
+  try {
+    await resources.run(() =>
+      probe((bytes, limit) => session.decode(bytes, "lzma", limit, signal)),
+    );
+  } finally {
+    await session.close();
+  }
 }
 
-const runLzmaWorker = async (
-  directory: string,
-  payload: Buffer,
-  maxOutputBytes: number,
-): Promise<UefiLzmaWorkerReply> => {
-  const payloadPath = join(directory, "payload.lzma");
-  const outputPath = join(directory, "output.bin");
-  const replyPath = join(directory, "reply.json");
-  const requestPath = join(directory, "request.json");
-  await writeFile(payloadPath, payload);
-  await writeFile(
-    requestPath,
-    JSON.stringify({
-      format: "lzma",
-      payload_path: payloadPath,
-      output_path: outputPath,
-      reply_path: replyPath,
-      max_output_bytes: maxOutputBytes,
-    }),
-  );
-  await promisify(execFile)(
-    process.execPath,
-    [
-      "--max-old-space-size=256",
-      "--disable-wasm-trap-handler",
-      fileURLToPath(
-        new URL("../../../dist/uefi/UefiLzmaWorker.js", import.meta.url),
-      ),
-      requestPath,
-    ],
-    { timeout: 30_000, maxBuffer: 1024 * 1024 },
-  );
-  return JSON.parse(await readFile(replyPath, "utf8")) as UefiLzmaWorkerReply;
-};
+function expectDecoded(
+  result: UefiDecodeResult,
+  expected: Buffer,
+  consumed: number,
+): void {
+  if (!result.ok) throw new Error(result.message);
+  expect(result.outcome.decoderVersion).toBe("0.9.3");
+  expect(result.outcome.consumedBytes).toBe(consumed);
+  expect(result.outcome.bytes.equals(expected)).toBe(true);
+}
 
-/** Real compiled worker and pinned decoder; no provider-admission claim. */
-it("decompresses a real lzma-purejs stream through the actual worker", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-");
-  const plain = Buffer.from(
-    "B550 AORUS Elite V2 firmware module payload. ".repeat(40),
-  );
-  const reply = await runLzmaWorker(
-    directory,
-    Buffer.from(lzmaPurescript.compressFile(plain)),
-    1024 * 1024,
-  );
-  expect(reply.ok, JSON.stringify(reply)).toBe(true);
-  expect(reply.lzma_version).toBe("0.9.3");
-  expect(reply.output?.bytes).toBe(plain.length);
-  expect(reply.output?.sha256).toBe(
-    createHash("sha256").update(plain).digest("hex"),
-  );
-  expect((await readFile(join(directory, "output.bin"))).equals(plain)).toBe(
-    true,
-  );
-});
-
-it("reports a typed failure for an undecodable stream", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-");
-  // Valid property byte, corrupt LZMA stream behind it.
-  const reply = await runLzmaWorker(
-    directory,
-    Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00, 0x11, 0x22, 0x33, 0x44]),
-    1024 * 1024,
-  );
-  expect(reply.ok).toBe(false);
-  expect(reply.message, JSON.stringify(reply)).not.toBe("");
-  expect(["format", "decoder"]).toContain(reply.reason);
-});
-
-it("honors the caller's output budget as an output-limit failure", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-");
-  const plain = Buffer.from(
-    "decompressed payload beyond the tight budget".repeat(5),
-  );
-  const reply = await runLzmaWorker(
-    directory,
-    Buffer.from(lzmaPurescript.compressFile(plain)),
-    16,
-  );
-  expect(reply.ok).toBe(false);
-  expect(reply.reason).toBe("output-limit");
-  await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
-});
-
-it("checks the declared dictionary before the decoder allocates its window", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-");
-  const stream = Buffer.from(
-    lzmaPurescript.compressFile(Buffer.from("small firmware payload")),
-  );
-  stream.writeUInt32LE(128 * 1024 * 1024, 1);
-  const reply = await runLzmaWorker(directory, stream, 1024);
-  expect(reply).toMatchObject({
-    ok: false,
-    reason: "output-limit",
-    message: expect.stringContaining("dictionary"),
-  });
-});
-
-it("uses the EDK II minimum effective dictionary size for match distances", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-small-dict-");
+it("decodes real compressed bytes through stdio and accepts the minimum effective dictionary", async () => {
   const plain = Buffer.from(
     "Static firmware bytes for the dictionary fixture. ".repeat(50),
   );
-  const input = Buffer.from(lzmaPurescript.compressFile(plain));
-  input.writeUInt32LE(16, 1);
-  const reply = await runLzmaWorker(directory, input, plain.length);
-  expect(reply).toMatchObject({
-    ok: true,
-    input_bytes_consumed: input.length,
+  const normal = Buffer.from(compressFile(plain));
+  const small = Buffer.from(normal);
+  small.writeUInt32LE(16, 1);
+  await withDecoder(async (decode) => {
+    expectDecoded(await decode(normal, plain.length), plain, normal.length);
+    expectDecoded(await decode(small, plain.length), plain, small.length);
   });
-  expect((await readFile(join(directory, "output.bin"))).equals(plain)).toBe(
-    true,
-  );
 });
 
-it("rejects an incomplete coded body even when its declared output size is plausible", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-eof-");
-  const input = Buffer.from(
-    lzmaPurescript.compressFile(
-      Buffer.from("Ordinary test data for the LZMA worker's read boundary."),
-    ),
+it("returns typed limit and framing refusals through stdio without losing the next reply", async () => {
+  const plain = Buffer.from(
+    "Static firmware data for the LZMA worker's read boundary.".repeat(5),
   );
-  const reply = await runLzmaWorker(directory, input.subarray(0, -1), 1024);
-  expect(reply).toMatchObject({ ok: false, reason: "format" });
-  await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
-});
-
-it("rejects a nonzero LZMA range coder lead-in", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-lzma-range-");
-  const input = Buffer.from(
-    lzmaPurescript.compressFile(Buffer.from("static firmware fixture")),
+  const valid = Buffer.from(compressFile(plain));
+  const dictionary = Buffer.from(valid);
+  dictionary.writeUInt32LE(128 * 1024 * 1024, 1);
+  const wrongLeadIn = Buffer.from(valid);
+  wrongLeadIn[13] = 1;
+  const unknownSize = Buffer.from(
+    compressFile(plain, undefined, { eos: true }),
   );
-  input[13] = 1;
-  const reply = await runLzmaWorker(directory, input, 1024);
-  expect(reply).toMatchObject({
-    ok: false,
-    reason: "format",
-    message: expect.stringContaining("range coder byte must be zero"),
+  unknownSize.writeBigUInt64LE(0xffffffffffffffffn, 5);
+  await withDecoder(async (decode) => {
+    for (const [label, input, limit, reason, message] of [
+      [
+        "short header",
+        valid.subarray(0, 9),
+        1024,
+        "malformed",
+        "Incomplete LZMA stream header",
+      ],
+      [
+        "short coded body",
+        valid.subarray(0, -1),
+        1024,
+        "malformed",
+        "Compressed stream ends before the decoder can finish",
+      ],
+      [
+        "initial range coder byte",
+        wrongLeadIn,
+        1024,
+        "malformed",
+        "range coder byte must be zero",
+      ],
+      [
+        "oversized dictionary",
+        dictionary,
+        1024,
+        "output-limit",
+        "dictionary exceeds the worker memory budget",
+      ],
+      [
+        "declared output budget",
+        valid,
+        16,
+        "output-limit",
+        "Declared LZMA output exceeds 16 bytes",
+      ],
+      [
+        "streamed output budget",
+        unknownSize,
+        16,
+        "output-limit",
+        "Decompressed output exceeds the 16 byte budget",
+      ],
+    ] as const) {
+      expect(await decode(input, limit), label).toEqual({
+        ok: false,
+        reason,
+        message: expect.stringContaining(message),
+      });
+    }
+    expectDecoded(await decode(valid, plain.length), plain, valid.length);
   });
-  await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
 });
 
-it.each([false, true])(
-  "accounts for input consumption with an end marker (unknown size %s)",
-  async (unknownSize) => {
-    const plain = Buffer.from("UEFI audit fixture");
-    const markerless = lzmaPurescript.compressFile(plain);
-    const withMarker = Buffer.from(
-      lzmaPurescript.compressFile(plain, undefined, { eos: true }),
-    );
-    expect(withMarker.length).toBeGreaterThan(markerless.length);
-    if (unknownSize) withMarker.writeBigUInt64LE(0xffffffffffffffffn, 5);
-    const input = Buffer.concat([
-      withMarker,
-      Buffer.from("unread fixture bytes"),
-    ]);
-    const directory = await createTestTempDirectory("rea-uefi-lzma-marker-");
-    const reply = await runLzmaWorker(directory, input, 1024);
-    // A declared output size lets the decoder stop before a legal optional marker.
-    expect(reply).toMatchObject({
-      ok: true,
-      input_bytes_consumed: unknownSize ? withMarker.length : markerless.length,
-    });
-    expect((await readFile(join(directory, "output.bin"))).equals(plain)).toBe(
-      true,
-    );
-  },
-);
+it("accounts for optional and required end markers in the reported consumed span", async () => {
+  const plain = Buffer.from("UEFI audit fixture");
+  const markerless = compressFile(plain);
+  const withMarker = Buffer.from(compressFile(plain, undefined, { eos: true }));
+  expect(withMarker.length).toBeGreaterThan(markerless.length);
+  const unknownSize = Buffer.from(withMarker);
+  unknownSize.writeBigUInt64LE(0xffffffffffffffffn, 5);
+  const trailing = Buffer.from("unread fixture bytes");
+  await withDecoder(async (decode) => {
+    for (const [input, consumed] of [
+      [withMarker, markerless.length],
+      [unknownSize, withMarker.length],
+    ] as const) {
+      expectDecoded(
+        await decode(Buffer.concat([input, trailing]), 1024),
+        plain,
+        consumed,
+      );
+    }
+  });
+});

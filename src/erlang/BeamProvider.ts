@@ -1,7 +1,7 @@
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -17,6 +17,7 @@ import {
   MAX_INSPECT_ERLANG_BEAM_ATOMS,
   MAX_INSPECT_ERLANG_BEAM_CHUNKS,
   MAX_INSPECT_ERLANG_BEAM_FILE_BYTES,
+  type ErlangBeam,
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
@@ -37,25 +38,22 @@ export class BeamProvider implements BeamPort {
   readonly identity = ERLANG_BEAM_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ERLANG_BEAM_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ERLANG_BEAM_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectErlangBeamInput, options?: ExecutionOptions) {
+    let completed: ErlangBeam | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
-      return await this.#resources.run(async () =>
-        withStableArtifactHandle(
+      return await this.#resources.run(async () => {
+        const report = await withStableArtifactHandle<ErlangBeam>(
           input.path,
           input.max_file_bytes,
           {
@@ -65,23 +63,21 @@ export class BeamProvider implements BeamPort {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (value) => {
+              completed = value;
+            },
           },
-          async (handle) =>
-            ok(
-              await parseErlangBeamFromHandle(
-                handle,
-                {
-                  path: input.path,
-                  sha256: handle.sha256,
-                  bytes: handle.size,
-                },
-                input,
-              ),
+          (handle) =>
+            parseErlangBeamFromHandle(
+              handle,
+              { path: input.path, sha256: handle.sha256, bytes: handle.size },
+              input,
             ),
-        ),
-      );
+        );
+        return ok(report);
+      });
     } catch (cause) {
-      return err(beamFailure(cause, input, observed));
+      return err(beamFailure(cause, input, observed, completed));
     }
   }
 }
@@ -108,7 +104,8 @@ const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
 const beamFailure = (
   cause: unknown,
   input: InspectErlangBeamInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: ErlangBeam | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const reportedLimits = {
@@ -170,6 +167,7 @@ const beamFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

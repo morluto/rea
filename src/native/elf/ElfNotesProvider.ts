@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   yieldArtifactRead,
   artifactFilePrimaryFacts,
@@ -21,11 +21,13 @@ import {
 } from "../../domain/compression/zstandardFrameAllowance.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  ELF_NOTES_READ_BUDGETS,
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
   type ElfNotes,
   type InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
@@ -42,16 +44,12 @@ export class ElfNotesProvider implements ElfNotesPort {
   readonly identity = ELF_NOTES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_NOTES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_NOTES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
@@ -138,6 +136,11 @@ const elfNotesFailure = (
         if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
           return parseLimitConstraint(OPERATION, "memory", failure, {
             retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_NOTES_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: sectionNameBudgetRemediation(
               sectionNameBudget.required,
             ),
@@ -151,6 +154,11 @@ const elfNotesFailure = (
             entryBudget
               ? {
                   retryable: false,
+                  limit: elfReadBudgetLimit(
+                    ELF_NOTES_READ_BUDGETS,
+                    "max_entries",
+                    input.max_entries,
+                  ),
                   remediationAction: inputBudgetRemediation("capacity", input),
                 }
               : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
@@ -173,6 +181,11 @@ const elfNotesFailure = (
           ),
           {
             retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_NOTES_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: inputBudgetRemediation("file-size", input),
           },
         ),

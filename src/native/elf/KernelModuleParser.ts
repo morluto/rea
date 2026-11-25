@@ -23,10 +23,14 @@ import {
   type ImageSection,
   type BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import { readElfImageFromReader } from "../../domain/native/elfImage.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
+import {
+  elfSectionFitsFile,
+  elfSectionLocation,
+  readElfImageFromReader,
+} from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
@@ -44,32 +48,6 @@ const exceeds = (examined: number, maxEntries: number): void => {
       { boundary: "capacity" },
     );
 };
-
-const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
-  offset >= 0n &&
-  size >= 0n &&
-  offset <= BigInt(fileLength) &&
-  size <= BigInt(fileLength) - offset;
-
-const locationOf = (
-  section: ElfSection,
-): { offset: number; bytes: number } | null => {
-  if (
-    !fits(
-      section.declared_range.offset,
-      section.declared_range.size,
-      Number.MAX_SAFE_INTEGER,
-    )
-  )
-    return null;
-  return {
-    offset: Number(section.declared_range.offset),
-    bytes: Number(section.declared_range.size),
-  };
-};
-
-const inFile = (section: ElfSection, fileLength: number): boolean =>
-  fits(section.declared_range.offset, section.declared_range.size, fileLength);
 
 const rawHex = (bytes: Buffer): string | null =>
   bytes.length > MAX_KERNEL_MODULE_RAW_BYTES ? null : bytes.toString("hex");
@@ -333,9 +311,9 @@ const presence = (
 } => {
   if (section === undefined)
     return { status: namesComplete ? "absent" : "unknown", location: null };
-  if (section.type === 8 || !inFile(section, fileLength))
+  if (section.type === 8 || !elfSectionFitsFile(section, fileLength))
     return { status: "present", location: null };
-  const location = locationOf(section);
+  const location = elfSectionLocation(section);
   if (section.compressed) return { status: "unsupported", location };
   return { status: "present", location };
 };
@@ -354,7 +332,7 @@ const sized = (
       bytes: null,
       compressed: null,
     };
-  if (!inFile(section, fileLength) || section.type === 8) {
+  if (!elfSectionFitsFile(section, fileLength) || section.type === 8) {
     limitations.push(
       `${label} is declared but not file-backed, so its size is unknown.`,
     );
@@ -365,7 +343,7 @@ const sized = (
       compressed: null,
     };
   }
-  const location = locationOf(section);
+  const location = elfSectionLocation(section);
   if (section.compressed)
     limitations.push(
       `${label} is stored compressed. The reported size is the file-backed storage size; the decoded size is unknown.`,
@@ -485,7 +463,7 @@ const parseSignatureTrailer = (
 };
 
 const readSourceRange = async (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> => {
@@ -496,14 +474,15 @@ const readSourceRange = async (
   const bytes = await source.readRange(offset, length);
   if (bytes.length !== length)
     throw new ArtifactReaderFailure(
-      "format",
+      "integrity",
       "Kernel module ended before the admitted file range.",
+      { integrityCheck: "read-coverage" },
     );
   return bytes;
 };
 
 const parseSignatureFromSource = async (
-  source: NativeByteSource,
+  source: ByteSource,
   signal: AbortSignal | undefined,
 ): Promise<Report["signature"]> => {
   const tailLen = Math.min(
@@ -564,8 +543,12 @@ const modinfoSectionLocation = (
         reason: null,
       },
     };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, fileLength))
+  const location = elfSectionLocation(section);
+  if (
+    section.type === 8 ||
+    location === null ||
+    !elfSectionFitsFile(section, fileLength)
+  )
     return {
       ready: false,
       result: {
@@ -607,8 +590,12 @@ const versionsSectionLocation = (
         reason: null,
       },
     };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, fileLength))
+  const location = elfSectionLocation(section);
+  if (
+    section.type === 8 ||
+    location === null ||
+    !elfSectionFitsFile(section, fileLength)
+  )
     return {
       ready: false,
       result: {
@@ -709,7 +696,7 @@ const finalizeKernelModule = (
     (section) => section.name?.startsWith("__ksymtab") === true,
   );
   const ksymtabSections = ksymtabNamed.filter(
-    (section) => section.type !== 8 && inFile(section, fileLength),
+    (section) => section.type !== 8 && elfSectionFitsFile(section, fileLength),
   );
   const unbacked = ksymtabNamed.length - ksymtabSections.length;
   if (unbacked > 0)
@@ -717,7 +704,7 @@ const finalizeKernelModule = (
       `${String(unbacked)} __ksymtab* section(s) are declared but not file-backed, so their ranges are unknown.`,
     );
   const ksymtab = ksymtabSections.flatMap((section) => {
-    const location = locationOf(section);
+    const location = elfSectionLocation(section);
     if (section.name === null || location === null) return [];
     const fitsName =
       section.name.length <= MAX_KERNEL_MODULE_SECTION_NAME_BYTES;
@@ -805,7 +792,7 @@ const finalizeKernelModule = (
 
 /** Decode kernel-module metadata positionally over a bounded file handle. */
 export const parseKernelModuleFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
   signal?: AbortSignal,

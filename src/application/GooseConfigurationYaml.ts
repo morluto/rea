@@ -18,6 +18,8 @@ import {
 import {
   materializeUnresolvedYamlAliases,
   retainYamlConfigurationSource,
+  initializeEmptyYamlMapping,
+  yamlConfigurationValue,
   yamlAliasValues,
   retainYamlScalarSource,
 } from "./YamlConfigurationSource.js";
@@ -145,8 +147,11 @@ const gooseYamlOptions = {
   customTags: gooseScalarTags,
 } as const;
 
+/** A diagnostic from Goose's native YAML reader or editor. */
+export class GooseConfigurationYamlError extends ConfigurationError {}
+
 /** A duplicate YAML member cannot establish one selected configuration value. */
-class GooseConfigurationYamlError extends ConfigurationError {
+class GooseDuplicateMemberError extends GooseConfigurationYamlError {
   readonly kind = "shadowed_member";
   constructor(
     readonly path: readonly string[],
@@ -158,14 +163,6 @@ class GooseConfigurationYamlError extends ConfigurationError {
     );
   }
 }
-
-const emptyRoot = (root: Document["contents"]): boolean =>
-  root === null ||
-  (isScalar(root) &&
-    root.value === null &&
-    root.source === "" &&
-    root.tag === undefined &&
-    root.anchor === undefined);
 
 /** Recover a diagnostic key path from the parser-owned duplicate position. */
 const duplicatePath = (
@@ -194,32 +191,27 @@ const parseGooseDocument = (text: string): Document => {
   const document = parseDocument(text, gooseYamlOptions);
   const failure = document.errors[0] ?? document.warnings[0];
   if (failure?.code === "DUPLICATE_KEY")
-    throw new GooseConfigurationYamlError(
+    throw new GooseDuplicateMemberError(
       duplicatePath(document.contents, failure.pos[0]) ?? [],
       failure,
     );
   if (failure !== undefined)
-    throw new ConfigurationError("Invalid or unsupported Goose YAML", {
+    throw new GooseConfigurationYamlError("Invalid or unsupported Goose YAML", {
       cause: failure,
     });
   return document;
 };
 
 const gooseDocumentValue = (document: Document): unknown => {
-  if (emptyRoot(document.contents)) return {};
   try {
-    return document.toJS({
-      reviver: (_key, value) =>
-        typeof value === "bigint" &&
-        value >= BigInt(Number.MIN_SAFE_INTEGER) &&
-        value <= BigInt(Number.MAX_SAFE_INTEGER)
-          ? Number(value)
-          : value,
-    });
+    return yamlConfigurationValue(document);
   } catch (cause: unknown) {
-    throw new ConfigurationError("Goose YAML values could not be resolved", {
-      cause,
-    });
+    throw new GooseConfigurationYamlError(
+      "Goose YAML values could not be resolved",
+      {
+        cause,
+      },
+    );
   }
 };
 
@@ -242,17 +234,11 @@ export const editGooseConfigurationYaml = (
   // Resolve against the original graph before editing, including the YAML
   // library's native alias-expansion admission.
   gooseDocumentValue(document);
-  const root = document.contents;
-  if (emptyRoot(root)) {
-    const map = document.createNode({});
-    if (isScalar(root))
-      map.commentBefore = [root.commentBefore, root.comment]
-        .filter((comment) => comment !== undefined)
-        .join("\n");
-    document.contents = map;
-  }
+  initializeEmptyYamlMapping(document);
   if (!isMap(document.contents))
-    throw new ConfigurationError("Goose configuration root must be a mapping");
+    throw new GooseConfigurationYamlError(
+      "Goose configuration root must be a mapping",
+    );
   for (let length = 1; length < path.length; length++) {
     const parent = resolveYamlEditPath(document, path.slice(0, length));
     let previous = document.getIn(parent, true);
@@ -264,7 +250,7 @@ export const editGooseConfigurationYaml = (
       if (value === undefined) return text;
       document.setIn(parent, document.createNode({}));
     } else if (!isMap(previous))
-      throw new ConfigurationError(
+      throw new GooseConfigurationYamlError(
         `Goose configuration ${path.slice(0, length).join(".")} must be a mapping`,
       );
   }

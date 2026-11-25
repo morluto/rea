@@ -1,5 +1,4 @@
 import type { FileMapping } from "../domain/virtualFileMapping.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import { isUtf8 } from "node:buffer";
 import {
   GO_ANALYSIS_BUDGET_DEFAULTS,
@@ -18,6 +17,7 @@ import {
   type FileMappingIndex,
   type LoadRegion,
 } from "../domain/binaryContainer.js";
+import type { ByteSource } from "../domain/byteSource.js";
 
 const STREAM_CHUNK_BYTES = 64 * 1024;
 const TARGET_PAGE_BYTES = 4096;
@@ -53,7 +53,7 @@ type StringScanRead = {
 
 /** Read exactly the admitted header and candidate ranges from the file. */
 export const recoverGoStringLiteralsFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   container: BinaryContainer,
   budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
   checkActive?: () => void,

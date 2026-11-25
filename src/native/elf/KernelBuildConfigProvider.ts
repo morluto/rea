@@ -1,6 +1,6 @@
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -35,16 +35,12 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
   readonly identity = KERNEL_BUILD_CONFIG_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        KERNEL_BUILD_CONFIG_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      KERNEL_BUILD_CONFIG_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(

@@ -32,7 +32,10 @@ import {
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
   .omit({
@@ -161,7 +164,7 @@ const candidateIndices = <Row extends object>(
   rows: readonly Row[],
   key: keyof Row & string,
   filter: ReadonlySet<string>,
-): number[] | undefined => {
+): readonly number[] | undefined => {
   if (!isImmutableJsonSnapshot(report)) return undefined;
   if (filter.size === 0) return [];
   let indexes = traceIndexes.get(rows);
@@ -188,11 +191,11 @@ const candidateIndices = <Row extends object>(
 const collectCandidateIndices = (
   indexMap: ReadonlyMap<string, readonly number[]>,
   filter: ReadonlySet<string>,
-): number[] => {
+): readonly number[] => {
   if (filter.size === 1) {
     const only = filter.values().next().value;
     const list = only === undefined ? undefined : indexMap.get(only);
-    return list === undefined ? [] : [...list];
+    return list ?? [];
   }
   const seen = new Set<number>();
   for (const key of filter) {
@@ -207,20 +210,16 @@ const selectCandidateRows = <Source, Row>(
   rows: readonly Source[],
   candidateIndices: readonly number[],
   view: { readonly offset: number; readonly limit: number },
-  matches: (row: Source, index: number) => boolean,
+  matches: ((row: Source, index: number) => boolean) | undefined,
   project: (row: Source, index: number) => Row,
 ): { rows: Row[]; total: number } => {
-  const selected: Row[] = [];
-  let total = 0;
-  for (let i = 0; i < candidateIndices.length; i += 1) {
-    const index = candidateIndices[i]!;
-    const row = rows[index]!;
-    if (!matches(row, index)) continue;
-    if (total >= view.offset && selected.length < view.limit)
-      selected.push(project(row, index));
-    total++;
-  }
-  return { rows: selected, total };
+  // Exact index hits already supply the total unless another filter applies.
+  return selectViewRows(
+    candidateIndices,
+    view,
+    matches === undefined ? undefined : (index) => matches(rows[index]!, index),
+    (index) => project(rows[index]!, index),
+  );
 };
 
 const selectRows = (
@@ -232,18 +231,16 @@ const selectRows = (
       streams = values(view.stream_ids),
       kinds = values(view.kinds),
       calls = values(view.call_ids);
-    const filtered =
-      ids !== undefined ||
-      streams !== undefined ||
-      kinds !== undefined ||
-      calls !== undefined;
+    const activeFilters = [ids, streams, kinds, calls].filter(
+      (selection) => selection !== undefined,
+    );
     const matchEvent = (row: PlaywrightTrace["events"][number]): boolean =>
       allows(ids, row.event_id) &&
       allows(streams, row.stream_id) &&
       allows(kinds, row.kind) &&
       allows(calls, row.call_id);
     const projectEvent = createEventProjector(view);
-    if (filtered) {
+    if (activeFilters.length > 0) {
       const candidates =
         ids !== undefined
           ? candidateIndices(report, report.events, "event_id", ids)
@@ -257,7 +254,7 @@ const selectRows = (
           report.events,
           candidates,
           view,
-          matchEvent,
+          activeFilters.length > 1 ? matchEvent : undefined,
           projectEvent,
         );
       }
@@ -295,7 +292,7 @@ const selectRows = (
           report.members,
           candidates,
           view,
-          matchMember,
+          ids !== undefined && paths !== undefined ? matchMember : undefined,
           projectMember,
         );
       }
@@ -332,7 +329,7 @@ const selectRows = (
           report.streams,
           candidates,
           view,
-          matchStream,
+          undefined,
           projectStream,
         );
       return selectViewRows(report.streams, view, matchStream, projectStream);
@@ -363,7 +360,7 @@ const selectRows = (
         report.diagnostics,
         candidates,
         view,
-        matchDiagnostic,
+        undefined,
         projectDiagnostic,
       );
     return selectViewRows(
@@ -428,15 +425,8 @@ export const projectPlaywrightTraceView = (
     "playwright-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Playwright trace inventories support summary and playwright-trace pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Playwright trace inventories support summary and playwright-trace pages.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

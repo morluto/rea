@@ -13,6 +13,23 @@ export interface McpClientIdentity {
   readonly version: string;
 }
 
+/** Connect an SDK client while leaving teardown with the caller, including a partial handshake. */
+export const connectFixtureClient = async (
+  server: McpServer,
+  identity: McpClientIdentity,
+  resources: Array<{ close(): Promise<void> }>,
+): Promise<Client> => {
+  const client = new Client(identity, {
+    jsonSchemaValidator: createMcpSchemaValidation(),
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
+};
+
 /** Registry for production MCP servers and SDK clients owned by one test. */
 export interface TestMcp {
   /** Transfer server ownership on admission; a closed registry leaves it with the caller. */

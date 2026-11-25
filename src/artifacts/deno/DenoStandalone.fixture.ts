@@ -1,3 +1,9 @@
+import {
+  uint32LE as u32,
+  uint64LE as u64,
+  write32,
+  write64,
+} from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
@@ -44,18 +50,6 @@ export interface DenoSectionFixture {
 }
 
 const u8 = (value: number): Buffer => Buffer.from([value]);
-
-const u32 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(4);
-  bytes.writeUInt32LE(value);
-  return bytes;
-};
-
-const u64 = (value: number | bigint): Buffer => {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
-  return bytes;
-};
 
 const asBytes = (value: Buffer | string): Buffer =>
   typeof value === "string" ? Buffer.from(value, "utf8") : value;
@@ -332,24 +326,4 @@ const thinMachOWithoutDenoSection = (): Buffer => {
 
 const writeName = (bytes: Buffer, offset: number, name: string): void => {
   bytes.write(name, offset, Math.min(name.length, 16), "latin1");
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const write64 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-  else bytes.writeBigUInt64BE(BigInt(value), offset);
 };

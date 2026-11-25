@@ -1,4 +1,6 @@
 import {
+  asarExtentRefusal,
+  malformedArtifact,
   parseAsarHeaderExtents,
   parseAsarHeaderJson,
   ArtifactReaderFailure,
@@ -55,11 +57,11 @@ const parseHeader = (bytes: Buffer, jsonBytes: number): unknown => {
     return parseAsarHeaderJson(bytes.subarray(JSON_START, end));
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw new ArtifactReaderFailure(
-      "format",
-      "ASAR JSON header is not valid JSON",
-      { cause },
-    );
+    throw malformedArtifact("asar", "ASAR JSON header is not valid JSON", {
+      cause,
+      offset: JSON_START,
+      field: "header",
+    });
   }
 };
 
@@ -113,7 +115,10 @@ export const canonicalizeAsarBytes = async (
     bytes.subarray(0, JSON_START),
     bytes.length,
   );
-  if (!extents.ok) throw extents.error;
+  // Defensive: the caller reaches this only after `looksLikeAsar` already
+  // validated the same extents, so build the owner's refusal from the tag
+  // rather than reinterpret the prefix a second way.
+  if (!extents.ok) throw asarExtentRefusal(extents.error);
   // Bound the header this pass will decode, parse and duplicate-scan before
   // allocating. This opt-in pass applies a fixed header budget it does not read
   // from settings, so the message describes that fixed cutoff rather than

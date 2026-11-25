@@ -96,7 +96,7 @@ export const protobufDecodingObjectSchema = z.strictObject({
   limitations: z.array(z.string()),
   schema: z
     .strictObject({
-      decoder: z.literal("protobuf-es-2.16.0"),
+      decoder: z.enum(["protobuf-es-2.16.0", "protobuf-es-2.17.0"]),
       descriptor_set_path: z.string(),
       descriptor_set_sha256: z.string().regex(/^[0-9a-f]{64}$/),
       descriptor_set_bytes: index,

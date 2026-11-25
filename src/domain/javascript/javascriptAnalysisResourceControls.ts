@@ -220,6 +220,13 @@ export const javaScriptAnalysisCoverageLimits = (
 
 /** Optional operational choices; omission keeps them out of Evidence parameters. */
 export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
+  // domain-vocabulary: caller-selected analysis depth, not a coverage status.
+  semantic_analysis: z
+    .enum(["complete", "structure-only"])
+    .optional()
+    .describe(
+      "complete (default) parses, static-analyzes and semantic-analyzes every selected source. structure-only returns static and application-graph facts without semantic analysis: no semantic IR, semantic graph or semantic traces are produced, which bounds large-application analysis time and retention; request complete analysis of selected sources afterwards for semantic detail.",
+    ),
   semantic_precision: javaScriptSemanticPrecisionSchema.optional().describe(
     `Per-source evaluator budgets. Omitted fields preserve defaults: ${Object.entries(
       JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,

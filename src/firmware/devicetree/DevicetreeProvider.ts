@@ -4,7 +4,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
   type StableArtifactSnapshot,
@@ -34,16 +34,12 @@ export class DevicetreeProvider implements DevicetreePort {
   readonly identity = DEVICETREE_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        DEVICETREE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      DEVICETREE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectDevicetreeInput, options?: ExecutionOptions) {

@@ -30,7 +30,7 @@ def encoded(value):
 
 def location(offset, size, limit):
     if not 0 <= offset <= limit or not 0 <= size <= limit - offset:
-        raise CoreFailure("format", "Recorded source range exceeds its declared container.")
+        raise CoreFailure("malformed", "Recorded source range exceeds its declared container.")
     return {"offset": hex(offset), "bytes": hex(size)}
 
 
@@ -43,16 +43,20 @@ def inspect_core(path, cache):
         if actual != required:
             raise CoreFailure("unsupported", "Expected " + package + " " + required + "; selected Python reports " + actual + ".")
     content = path.read_bytes()
-    if len(content) < 16 or content[:4] != b"\x7fELF":
-        raise CoreFailure("format", "Selected recording lacks a complete ELF identification.")
+    # Bytes that diverge from the ELF magic are not an ELF; a matching prefix that
+    # ends before e_ident is complete is a truncated one.
+    if content[:4] != b"\x7fELF"[: len(content[:4])]:
+        raise CoreFailure("malformed", "Selected recording lacks a complete ELF identification.")
+    if len(content) < 16:
+        raise CoreFailure("truncated", "Selected recording lacks a complete ELF identification.")
     if content[4:6] != b"\x02\x01":
         raise CoreFailure("unsupported-target", "Initial recorded-core profile requires ELF64 little-endian.")
     if len(content) < 64:
-        raise CoreFailure("format", "Selected ELF64 core header is truncated.")
+        raise CoreFailure("truncated", "Selected ELF64 core header is truncated.")
     if content[6] != 1:
-        raise CoreFailure("format", "ELF identification version is not EV_CURRENT.")
+        raise CoreFailure("malformed", "ELF identification version is not EV_CURRENT.")
     if int.from_bytes(content[20:24], "little") != 1:
-        raise CoreFailure("format", "ELF header version is not EV_CURRENT.")
+        raise CoreFailure("malformed", "ELF header version is not EV_CURRENT.")
     # Linux commonly emits ELFOSABI_NONE (0), also accepted as GNU/Linux (3).
     # Other declared OSABIs must never select Linux note ctypes.
     if content[7] not in (0, 3) or content[8] != 0:
@@ -83,7 +87,7 @@ def inspect_core(path, cache):
         header = image.header
         count = image.num_segments()
         if count and header.e_phentsize < image.structs.Elf_Phdr.sizeof():
-            raise CoreFailure("format", "Program-header entry is shorter than the required ELF64 structure.")
+            raise CoreFailure("malformed", "Program-header entry is shorter than the required ELF64 structure.")
         location(header.e_phoff, count * header.e_phentsize, len(content))
         segments, notes, padding, threads, signals = [], [], [], [], []
         for segment_index, segment in enumerate(image.iter_segments()):
@@ -94,7 +98,7 @@ def inspect_core(path, cache):
             if backing:
                 location(h.p_offset, h.p_filesz, len(content))
             if type_id == 1 and h.p_filesz > h.p_memsz:
-                raise CoreFailure("format", "Recorded PT_LOAD file bytes exceed memory size.")
+                raise CoreFailure("malformed", "Recorded PT_LOAD file bytes exceed memory size.")
             segments.append({"index": segment_index, "type": h.p_type, "type_id": type_id,
                              "header_location": location(header_offset, header.e_phentsize, len(content)),
                              "offset": hex(h.p_offset), "file_size": hex(h.p_filesz), "memory_size": hex(h.p_memsz),
@@ -107,7 +111,7 @@ def inspect_core(path, cache):
                 if end - position < header_size:
                     raw = content[position:end]
                     if any(raw):
-                        raise CoreFailure("format", "Nonzero trailing note bytes lack a complete note header.")
+                        raise CoreFailure("malformed", "Nonzero trailing note bytes lack a complete note header.")
                     padding.append({"segment_index": segment_index, "location": location(position, len(raw), end), "bytes_base64": encoded(raw)})
                     break
                 note = struct_parse(image.structs.Elf_Nhdr, image.stream, stream_pos=position)
@@ -118,7 +122,7 @@ def inspect_core(path, cache):
                 location(position, note_end - position, end)
                 owner = content[owner_start:owner_start + note.n_namesz]
                 if owner and b"\0" not in owner:
-                    raise CoreFailure("format", "Declared note owner has no NUL terminator.")
+                    raise CoreFailure("malformed", "Declared note owner has no NUL terminator.")
                 display = owner.split(b"\0", 1)[0].decode("utf-8", "replace") if owner else None
                 descriptor = content[descriptor_start:descriptor_start + note.n_descsz]
                 note_index = len(notes)
@@ -135,7 +139,7 @@ def inspect_core(path, cache):
                     continue
                 if note_type_id == 1:
                     if len(descriptor) < ctypes.sizeof(prstatus_type):
-                        raise CoreFailure("format", "Linux " + profile_label + " NT_PRSTATUS descriptor is truncated.")
+                        raise CoreFailure("malformed", "Linux " + profile_label + " NT_PRSTATUS descriptor is truncated.")
                     status = prstatus_type.from_buffer_copy(descriptor)
                     registers = []
                     for name, kind in registers_type._fields_:
@@ -144,7 +148,7 @@ def inspect_core(path, cache):
                     threads.append({"note_index": note_index, "historical_pid": ctypes.c_int32(status.pr_pid).value, "recorded_current_signal": status.pr_cursig, "registers": registers})
                 elif note_type_id == 0x53494749:
                     if len(descriptor) < ctypes.sizeof(elf_siginfo_64):
-                        raise CoreFailure("format", "Linux " + profile_label + " NT_SIGINFO descriptor is truncated.")
+                        raise CoreFailure("malformed", "Linux " + profile_label + " NT_SIGINFO descriptor is truncated.")
                     signal = elf_siginfo_64.from_buffer_copy(descriptor)
                     number = ctypes.c_int32(signal.si_signo).value
                     code = ctypes.c_int32(signal.si_code).value
@@ -164,7 +168,7 @@ def inspect_core(path, cache):
     except CoreFailure:
         raise
     except (ELFError, ValueError, AssertionError, IndexError) as error:
-        raise CoreFailure("format", "Recorded core failed unchanged upstream structural parsing: " + str(error)) from error
+        raise CoreFailure("malformed", "Recorded core failed unchanged upstream structural parsing: " + str(error)) from error
 
 
 if __name__ == "__main__":

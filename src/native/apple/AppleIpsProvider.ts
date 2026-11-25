@@ -2,7 +2,7 @@ import {
   completedStableArtifactObservation,
   type StableArtifactSnapshot,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   readStableArtifact,
   withStableArtifactHandle,
   artifactFileCompletion,
@@ -54,16 +54,12 @@ export class AppleIpsProvider implements AppleIpsPort {
   readonly identity = APPLE_IPS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        APPLE_IPS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      APPLE_IPS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectAppleIpsInput, options?: ExecutionOptions) {

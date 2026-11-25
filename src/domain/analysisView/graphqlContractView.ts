@@ -11,7 +11,7 @@ import {
 } from "../apiContract/graphqlContract.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import type { JsonValue } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -23,7 +23,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { pickFields, selectViewRows } from "./selectViewRows.js";
 
 export const graphqlContractViewContextSchema = graphqlContractSchema.omit({
@@ -232,15 +232,8 @@ export const projectGraphqlContractView = (
     "graphql-contract",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "GraphQL inventories support summary and graphql-contract pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "GraphQL inventories support summary and graphql-contract pages.",
     );
   const {
     types: _types,

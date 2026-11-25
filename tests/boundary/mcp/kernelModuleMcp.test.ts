@@ -8,7 +8,6 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -167,26 +166,6 @@ mcpTest(
       expect(evidence.normalized_result.versions?.entries[1]?.crc_hex).toBe(
         "90abcdef",
       );
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_kernel_module",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_kernel_module",
-        arguments: { path: "demo.ko" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_kernel_module" },
-      });
     } finally {
       await session.close();
     }

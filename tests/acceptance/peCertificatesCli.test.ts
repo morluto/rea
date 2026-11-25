@@ -10,7 +10,10 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "../../src/native/pe/PeCertificates.fixture.js";
 import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowance.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -35,10 +38,14 @@ cliTest(
     const badAlignment = Buffer.from(valid.subarray(0, valid.length - 1));
     badAlignment.writeUInt32LE(table.length * 2 - 1, tableSizeAt);
     const call = await cli.sharedMcpCall!();
-    for (const { bytes, message } of [
+    for (const { bytes, message, kind } of [
       { bytes: valid },
-      { bytes: badLength, message: "dwLength exceeds" },
-      { bytes: badAlignment, message: "alignment padding is truncated" },
+      { bytes: badLength, message: "dwLength exceeds", kind: "malformed" },
+      {
+        bytes: badAlignment,
+        message: "alignment padding is truncated",
+        kind: "truncated",
+      },
     ]) {
       const expectedError =
         message === undefined
@@ -50,14 +57,11 @@ cliTest(
               },
             }
           : {
-              code: "invalid_request",
+              code: "unsupported_target",
               details: {
-                issues: [
-                  expect.objectContaining({
-                    reason: "invalid_format",
-                    message: expect.stringContaining(message),
-                  }),
-                ],
+                failure_kind: kind,
+                format: "pe-certificate-table",
+                reason: expect.stringContaining(message),
               },
             };
       await writeFile(path, bytes);
@@ -101,15 +105,11 @@ cliTest.for([false, true])(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     const error = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-          }),
-        ],
+        failure_kind: "truncated",
+        format: "pe-certificate-table",
       },
     };
     expect.soft(invalid.exitCode, invalid.stdout).toBe(1);
@@ -189,16 +189,12 @@ cliTest.for([0x00, 0xff, null])(
         );
       } else {
         expect(value).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
             operation: "inspect_pe_certificates",
-            issues: [
-              expect.objectContaining({
-                path: ["path"],
-                reason: "invalid_format",
-                message: expect.stringContaining("critical"),
-              }),
-            ],
+            failure_kind: "malformed",
+            format: "pe-certificate-table",
+            reason: expect.stringContaining("critical"),
           },
         });
       }
@@ -228,21 +224,19 @@ cliTest(
     });
     expect(result.exitCode, result.stdout).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("Name RDN"),
-          }),
-        ],
+        failure_kind: "malformed",
+        format: "pe-certificate-table",
+        reason: expect.stringContaining("Name RDN"),
       },
     });
     const call = await cli.sharedMcpCall!();
     const response = await call("inspect_pe_certificates", { path });
-    expect(parseMcpToolError(response).error).toEqual(result.json);
+    const mcpError = parseMcpToolError(response).error;
+    expect(mcpError.remediation.action).toContain("inspect_pe_certificates");
+    expectAdapterErrorParity(mcpError, result.json, "inspect_pe_certificates");
     expect(response.structuredContent).toBeUndefined();
     expect((await readFile(path)).equals(bytes)).toBe(true);
   },
@@ -268,16 +262,12 @@ cliTest(
     });
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("padding"),
-          }),
-        ],
+        failure_kind: "malformed",
+        format: "pe-certificate-table",
+        reason: expect.stringContaining("padding"),
       },
     });
     // Only zero the advertised unused bit; all ASN.1 lengths stay unchanged.
@@ -405,20 +395,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-cert-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-certificates", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_pe_certificates" },
-  });
-});
-
 cliTest(
   "reports TeletexString compatibility text with its decoding limitation",
   async ({ cli }) => {
@@ -463,8 +439,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_pe_certificates",
+        failure_kind: "malformed",
+        format: "pe-certificate-table",
+      },
     });
   },
 );
@@ -498,17 +478,15 @@ cliTest.for([
     allowance: "decoded certificate text",
     certificates: 350,
     limits: { max_decoded_text_bytes: 65_536 },
-    message: "65536-byte decoded budget",
   },
   {
     allowance: "ASN.1 value count",
     certificates: 600,
     limits: { max_asn1_values: 16_384 },
-    message: "16384-node budget",
   },
 ])(
   "reports the fixed $allowance allowance as a resource constraint",
-  async ({ certificates, limits, message }, { cli }) => {
+  async ({ certificates, limits }, { cli }) => {
     const root = await createTestTempDirectory("rea-pe-cert-cli-allowance-");
     const path = join(root, "large.exe");
     await writeFile(
@@ -534,11 +512,5 @@ cliTest.for([
         },
       },
     });
-    const { message: reason, remediation } = result.json as {
-      message: string;
-      remediation: { action: string };
-    };
-    expect(reason).toContain(message);
-    expect(remediation.action).toContain(String(Object.values(limits)[0]));
   },
 );

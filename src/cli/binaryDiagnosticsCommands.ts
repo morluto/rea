@@ -147,6 +147,25 @@ export const registerBinaryDiagnosticsCommands = (
   registerContractCommand(
     cli,
     logger,
+    contract("inspect_pe_unwind_ranges"),
+    {
+      description:
+        "Inspect x64 PE exception-directory function ranges without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32+ image" } },
+    },
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peUnwindRanges.js")
+        ).createPeUnwindRangesService(),
+      "rea-pe-unwind-ranges",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
     contract("inspect_apple_ips"),
     {
       description:
@@ -440,7 +459,7 @@ export const registerBinaryDiagnosticsCommands = (
     contract("inspect_binary_layout"),
     {
       description:
-        "Inspect binary file/linked layout without executing the selected object",
+        "Inspect ELF file/linked layout without executing the selected object; Linux x64 with caller-supplied pwntools only",
       positionals: ["path"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],

@@ -20,7 +20,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -79,16 +79,19 @@ export const projectOwnedArtifactInputFailure = (
     !(cause instanceof ArtifactReaderFailure)
   )
     return undefined;
-  if (cause.reason === "unsupported")
-    return new AnalysisUnsupportedTargetError(operation, path, cause.message, {
+  // A format owner's malformed, truncated or unsupported bytes keep its facts
+  // and are a target refusal; the request that selected the file is not at
+  // fault. The reader records those facts only for its own target reason, so
+  // a cancelled read whose opaque abort reason happens to be a parser failure
+  // stays a cancellation.
+  if (cause.parseFailure !== undefined)
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
       cause,
     });
-  if (
-    cause.reason === "malformed" ||
-    cause.reason === "truncated" ||
-    cause.reason === "format" ||
-    cause.reason === "path"
-  )
+  // Only a path-kind refusal (a symlink, directory or other non-regular file)
+  // is the caller's selection. Byte faults without parsed facts are left to
+  // the reader's own artifact-operation classification.
+  if (cause.reason === "path")
     return stableArtifactInputFailure(cause, operation, field);
   return undefined;
 };
@@ -144,7 +147,7 @@ export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
       }
     : {};
 
-/** Report a rejected artifact path or format with its source-provided recovery. */
+/** Report a rejected artifact path with its source-provided recovery. */
 export const stableArtifactInputFailure = (
   cause: ArtifactReaderFailure,
   operation: string,
@@ -188,6 +191,19 @@ export const projectArtifactCloseFailure = (
   if (error === undefined) return cause;
   bindArtifactFileCleanup(cause, error);
   return error;
+};
+
+/** Close a provider's descriptor scope and preserve its cleanup leases on failure. */
+export const closeArtifactResources = async (
+  close: () => Promise<void>,
+  provider: { readonly id: string },
+  operation: string,
+): Promise<void> => {
+  try {
+    await close();
+  } catch (cause: unknown) {
+    throw projectArtifactCloseFailure(cause, provider.id, operation);
+  }
 };
 
 /** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */

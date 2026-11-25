@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
@@ -17,10 +16,11 @@ import {
   UNWIND_PERSONALITY,
   UNWIND_SUFFIX_VA,
   elfUnwindAbsentFixture,
-  elfUnwindByteSource,
   elfUnwindFixture,
   elfUnwindSectionlessFixture,
 } from "./ElfUnwindTables.fixture.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 // Pass-through spies that count how often symbol names are scanned and decoded.
 const stringTable = vi.hoisted(() => ({
@@ -156,7 +156,7 @@ it.each(
 const parse = async (
   bytes: Buffer,
   raw: Readonly<Record<string, unknown>> = {},
-  readRange?: NativeByteSource["readRange"],
+  readRange?: ByteSource["readRange"],
   signal?: AbortSignal,
 ) => {
   const input = inspectElfUnwindRangesInputSchema.parse({
@@ -165,7 +165,7 @@ const parse = async (
   });
   const source =
     readRange === undefined
-      ? elfUnwindByteSource(bytes)
+      ? bufferByteSource(bytes, 4096)
       : { size: bytes.length, readRange };
   return elfUnwindRangesSchema.parse(
     await parseElfUnwindRangesFromHandle(
@@ -384,7 +384,8 @@ it("rejects a short positional read of an admitted frame range", async () => {
       return bytes.subarray(offset, offset + length);
     }),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "integrity",
+    integrityCheck: "read-coverage",
     message: expect.stringMatching(/unwind range.*admitted file extent/iu),
   });
   expect(frameReads).toBe(1);

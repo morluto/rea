@@ -3,8 +3,7 @@ import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js"
 import { lstat, open } from "node:fs/promises";
 import {
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
-  ArtifactReaderFailure,
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
@@ -144,16 +143,12 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
     private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        WINDOWS_SHORTCUT_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      WINDOWS_SHORTCUT_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -281,25 +276,13 @@ const windowsShortcutFailure = (
       operation: OPERATION,
       path: input.path,
       description: "shortcut",
-      recognise: (failure, origin) => {
+      recognise: (failure) => {
         if (failure instanceof WindowsShortcutResourceFailure)
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             path: input.path,
             retryable: false,
             remediationAction: budgetRemediation(failure.failure.limit),
           });
-        if (
-          origin === "owned-or-classified" &&
-          failure instanceof ArtifactReaderFailure &&
-          (failure.reason === "path" || failure.reason === "format")
-        )
-          return new AnalysisInputError(OPERATION, { cause: failure }, [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: failure.message,
-            },
-          ]);
         return undefined;
       },
       fileSize: (failure) =>
