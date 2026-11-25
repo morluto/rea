@@ -467,8 +467,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_erlang_beam" },
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        format_failure: "malformed",
+        format: "beam",
+      },
     });
   },
 );
@@ -487,14 +491,32 @@ cliTest(
         arguments: ["inspect-erlang-beam", path, "--max-chunks", "1", "--json"],
       });
     const admitted = await inspect();
-    expect(admitted.json).toMatchObject({ code: "resource_constraint" });
+    expect(admitted.exitCode).toBe(1);
+    expect(admitted.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_erlang_beam",
+        resource: "capacity",
+        reported_limits: { max_chunks: 1 },
+      },
+    });
 
     // Retain bytes beyond the declared form. They cannot supply the second
     // chunk's payload even though the complete file contains it.
     bytes.writeUInt32BE(secondHeader, 4);
     await writeFile(path, bytes);
     const refused = await inspect();
-    expect(refused.json).toMatchObject({ code: "invalid_request" });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_erlang_beam",
+        format_failure: "malformed",
+        format: "beam",
+        reason: "BEAM chunk payload exceeds the form.",
+      },
+    });
   },
 );
 

@@ -18,6 +18,7 @@ import {
 import {
   rizinCommand,
   rizinCommandLimitations,
+  RIZIN_VERSION_PROBE,
   rizinCommandRejection,
 } from "../rizin/RizinCommand.js";
 import {
@@ -54,6 +55,7 @@ export const createReverseEngineeringCommandPort = (
         rejection: rizinCommandRejection,
         identity: RIZIN_PROVIDER_IDENTITY,
         repair: RIZIN_COMMAND_REPAIR,
+        versionProbe: RIZIN_VERSION_PROBE,
       },
     ),
 });

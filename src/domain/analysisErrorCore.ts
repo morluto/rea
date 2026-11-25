@@ -2,6 +2,7 @@ import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
 import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
+import type { ParseFailure } from "./parseFailure.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -26,6 +27,34 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
     super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
     this.remediationAction = options?.remediationAction;
     this.undecodedContent = options?.undecodedContent ?? false;
+  }
+}
+
+/** What a byte-format parser established about the selected target's bytes. */
+export type MalformedTargetFailure = Extract<
+  ParseFailure,
+  { readonly kind: "malformed" | "truncated" }
+>;
+
+/**
+ * The selected target's bytes violate, or end inside, a structure of the
+ * format this operation reads. The request's arguments are not at fault, so
+ * this is a target refusal rather than invalid input.
+ */
+export class AnalysisMalformedTargetError extends AnalysisError {
+  readonly _tag = "AnalysisMalformedTargetError";
+  readonly failure: MalformedTargetFailure;
+  constructor(
+    readonly operation: string,
+    readonly path: string,
+    failure: MalformedTargetFailure,
+    options?: AnalysisErrorOptions,
+  ) {
+    super(
+      `${failure.kind === "truncated" ? "Truncated" : "Malformed"} ${failure.format} target for ${operation} at ${path}: ${failure.detail}`,
+      options,
+    );
+    this.failure = Object.freeze({ ...failure });
   }
 }
 

@@ -42,10 +42,11 @@ const withOmittableDefaults = (schema: z.ZodObject): z.ZodObject => {
   return metadata === undefined ? result : result.meta(metadata);
 };
 
-/** Let the object parser decide omission; the CLI advertises required outputs. */
+/** Check input omission without allocating an object wrapper per required field. */
 const fillsOmission = (field: z.ZodType): boolean =>
   field._zod.optout === undefined &&
-  z.object({ value: field }).safeParse({}).success;
+  field._zod.optin !== undefined &&
+  field.safeParse(undefined).success;
 
 const optionalWithMetadata = (field: z.ZodType): z.ZodType => {
   const metadata = field.meta();

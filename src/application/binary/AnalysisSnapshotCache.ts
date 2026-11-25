@@ -2,6 +2,7 @@ import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import {
   EvidenceIntegrityError,
@@ -111,15 +112,16 @@ const replayDocumentSelected = (
   !DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
   typeof parameters.document === "string";
 
-/** Ghidra's private Program belongs to this one-shot target; GUI defaults do not. */
-const isOneShotPseudocode = (
-  operation: AnalysisOperation,
+/**
+ * Ghidra's private Program belongs to this one-shot target, so every read
+ * without a document selector still names it; GUI defaults do not. Whether
+ * the read may replay stays with the declared cache policy and effects.
+ */
+const isOneShotTargetRead = (
   descriptor: CapabilityDescriptor | undefined,
   context: ExecutionOptions["snapshotContext"],
 ): boolean =>
-  context === "one-shot-target" &&
-  operation === "procedure_pseudo_code" &&
-  descriptor?.provider.id === "ghidra";
+  context === "one-shot-target" && descriptor?.provider.id === "ghidra";
 
 /**
  * Caller and callee walks omit `document`. Their observations are still
@@ -150,7 +152,7 @@ export const isSourceEvidenceRetainable = (
     typeof parameters.document === "string" ||
     DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
     options.requiresSourceEvidence === true ||
-    isOneShotPseudocode(operation, descriptor, options.snapshotContext)) &&
+    isOneShotTargetRead(descriptor, options.snapshotContext)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
@@ -180,17 +182,72 @@ export const isSnapshotCacheable = (
     snapshotContext: context,
   }) &&
   (replayDocumentSelected(operation, parameters) ||
-    isOneShotPseudocode(operation, descriptor, context)) &&
+    isOneShotTargetRead(descriptor, context)) &&
   descriptor.cachePolicy !== "live";
+
+/**
+ * Why a one-shot read the caller asked to snapshot cannot replay, or
+ * undefined when the snapshot can replay it. The same predicates decide
+ * whether the session records the replay entry.
+ */
+export const oneShotSnapshotReplayRefusal = ({
+  operation,
+  descriptor,
+  parameters,
+  execution,
+  profiled,
+}: {
+  readonly operation: AnalysisOperation;
+  readonly descriptor: CapabilityDescriptor;
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly execution: Pick<AnalysisExecution, "cachePolicy">;
+  /** The selected profile belongs to the executing provider. */
+  readonly profiled: boolean;
+}): string | undefined => {
+  const context = "one-shot-target" as const;
+  if (
+    profiled &&
+    isSnapshotCacheable(operation, descriptor, parameters, context) &&
+    execution.cachePolicy !== "live"
+  )
+    return undefined;
+  const reason =
+    descriptor.cachePolicy === "live" || execution.cachePolicy === "live"
+      ? `${descriptor.provider.id} declares this result live, so it must be observed again`
+      : requestsStandaloneDecompile(operation, parameters)
+        ? "a standalone decompile always runs"
+        : `${descriptor.provider.id} does not bind this read to the snapshot's target and profile`;
+  return snapshotNotSavedLimitation(reason);
+};
+
+/** The limitation a caller who asked for a snapshot gets when its answer cannot replay. */
+export const snapshotNotSavedLimitation = (reason: string): string =>
+  `Not saved for snapshot replay: ${reason}. The snapshot records this Evidence, and repeating the call runs the provider again.`;
+
+/**
+ * Why `record` would skip an execution's replay entry, or undefined when it
+ * would keep it. `record` uses the same answer, so the notice cannot drift.
+ */
+const executionReplayRefusal = (
+  execution: AnalysisExecution,
+): string | undefined =>
+  // The snapshot format does not carry reference truncation or stored-pointer
+  // classifications. Replaying either would present a capped or untyped read
+  // as the live observation.
+  execution.referencesTruncated === true ||
+  execution.referenceClassifications !== undefined ||
+  execution.referenceCoverageGaps !== undefined
+    ? "the snapshot format cannot keep this result's reference truncation or classifications"
+    : undefined;
+
+/** Limitation that marks every observation replayed from a snapshot. */
+const SNAPSHOT_REPLAY_LIMITATION =
+  "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
 ): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
-
-/** Limitation that marks every observation replayed from a snapshot. */
-const SNAPSHOT_REPLAY_LIMITATION =
-  "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
@@ -516,16 +573,18 @@ export class AnalysisSnapshotCache {
     };
   }): void {
     this.select(input.target, input.profile);
+    const resolvedTarget = this.#target ?? snapshotTarget(input.target);
+    const resolvedBinding = this.#binding ?? snapshotBinding(input.profile);
     const queryId = analysisQueryId(
-      snapshotTarget(input.target),
-      snapshotBinding(input.profile),
+      resolvedTarget,
+      resolvedBinding,
       input.operation,
       input.parameters,
     );
     if (!this.#workflowEntries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotWorkflowEntry({
-      target: snapshotTarget(input.target),
-      binding: snapshotBinding(input.profile),
+      target: resolvedTarget,
+      binding: resolvedBinding,
       operation: input.operation,
       parameters: input.parameters,
       execution: input.execution,
@@ -571,11 +630,17 @@ export class AnalysisSnapshotCache {
             withoutDisplayName(cachedTarget),
             target,
           );
-    const execution: AnalysisExecution = structuredClone({
+    const resultPayload = isImmutableJsonSnapshot(cached.execution.result)
+      ? cached.execution.result
+      : structuredClone(cached.execution.result);
+    const rawPayload = isImmutableJsonSnapshot(cached.execution.raw_result)
+      ? cached.execution.raw_result
+      : structuredClone(cached.execution.raw_result);
+    const execution: AnalysisExecution = {
       ...(binding === undefined ? {} : { evidenceId: binding.evidenceId }),
-      result: cached.execution.result,
-      rawResult: cached.execution.raw_result,
-      provider: cached.execution.provider,
+      result: resultPayload,
+      rawResult: rawPayload,
+      provider: structuredClone(cached.execution.provider),
       analysisProfile: structuredClone(profile),
       limitations: [
         ...cached.execution.limitations,
@@ -585,18 +650,26 @@ export class AnalysisSnapshotCache {
       RELATIONSHIP_OPERATIONS.has(operation)
         ? {
             relationshipCoverage: {
-              status: "unknown",
+              status: "unknown" as const,
               reason: "Snapshot entry does not report relationship coverage.",
+              limited_directions:
+                operation === "procedure_callers"
+                  ? (["callers"] as ["callers"])
+                  : operation === "procedure_callees"
+                    ? (["callees"] as ["callees"])
+                    : (["callers", "callees"] as ["callers", "callees"]),
             },
           }
         : cached.execution.relationship_coverage === null
           ? {}
           : {
-              relationshipCoverage: cached.execution.relationship_coverage,
+              relationshipCoverage: structuredClone(
+                cached.execution.relationship_coverage,
+              ),
             }),
-      locations: cached.execution.locations,
-      subject: subject ?? null,
-    });
+      locations: structuredClone(cached.execution.locations),
+      subject: subject === null ? null : structuredClone(subject),
+    };
     return binding?.sourceEvidence === undefined
       ? execution
       : { ...execution, sourceEvidence: binding.sourceEvidence };
@@ -616,15 +689,7 @@ export class AnalysisSnapshotCache {
   ): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
-    // The snapshot format does not carry reference truncation or stored-pointer
-    // classifications. Replaying either would present a capped or untyped read
-    // as the live observation.
-    if (
-      execution.referencesTruncated === true ||
-      execution.referenceClassifications !== undefined ||
-      execution.referenceCoverageGaps !== undefined
-    )
-      return;
+    if (executionReplayRefusal(execution) !== undefined) return;
     let sourceBinding: SnapshotReplayBinding | undefined;
     if ((execution.sourceEvidence?.length ?? 0) > 0) {
       if (execution.evidenceId === undefined || lookup === undefined) return;
@@ -634,16 +699,18 @@ export class AnalysisSnapshotCache {
       if (closed === null) return;
       sourceBinding = closed;
     }
+    const resolvedTarget = this.#target ?? snapshotTarget(target);
+    const resolvedBinding = this.#binding ?? snapshotBinding(profile);
     const queryId = analysisQueryId(
-      snapshotTarget(target),
-      snapshotBinding(profile),
+      resolvedTarget,
+      resolvedBinding,
       operation,
       parameters,
     );
     if (!this.#entries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotEntry({
-      target: snapshotTarget(target),
-      binding: snapshotBinding(profile),
+      target: resolvedTarget,
+      binding: resolvedBinding,
       operation,
       parameters,
       execution: {
@@ -668,6 +735,32 @@ export class AnalysisSnapshotCache {
             : { sourceEvidence: Object.freeze([input.evidence]) }),
         },
       );
+  }
+
+  /**
+   * Why recording this execution would keep no replay entry: its reference
+   * facts, or a full cache that holds no entry for this query yet.
+   */
+  recordingRefusal(input: {
+    readonly target: BinaryTarget;
+    readonly profile: AnalysisProfileCommitment;
+    readonly operation: AnalysisOperation;
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly execution: AnalysisExecution;
+  }): string | undefined {
+    const refused = executionReplayRefusal(input.execution);
+    if (refused !== undefined) return refused;
+    if (this.#hasCapacity() || !this.matches(input.target, input.profile))
+      return undefined;
+    const queryId = analysisQueryId(
+      this.#target ?? snapshotTarget(input.target),
+      this.#binding ?? snapshotBinding(input.profile),
+      input.operation,
+      input.parameters,
+    );
+    return this.#entries.has(queryId)
+      ? undefined
+      : `the snapshot already holds its ${String(SNAPSHOT_CACHE_ENTRY_CEILING)}-entry maximum`;
   }
 
   /** Forget all target-bound entries. */

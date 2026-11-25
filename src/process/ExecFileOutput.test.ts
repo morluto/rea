@@ -9,6 +9,7 @@ import { testWaitDeadline } from "../../tests/support/testWait.js";
 
 import {
   execFileBytes,
+  execFileFailureCapturedOutput,
   execFileOutput,
   execFileOutputFailure,
 } from "./ExecFileOutput.js";
@@ -115,20 +116,6 @@ describe("execFileOutput", () => {
       expect(Buffer.compare(result.stderr, Buffer.from([0xfe]))).toBe(0);
     },
   );
-
-  it("reports raw byte counts when UTF-8 decoding changes the captured text", async () => {
-    const result = await execFileOutput(process.execPath, [
-      "-e",
-      "process.stdout.write(Buffer.from([0x61, 0xff])); process.stderr.write(Buffer.from([0xe2, 0x82, 0xac]));",
-    ]);
-
-    expect(result).toMatchObject({
-      stdout: "a�",
-      stderr: "€",
-      stdoutBytes: 2,
-      stderrBytes: 3,
-    });
-  });
 
   it("captures output larger than Node's default execFile limit", async () => {
     const marker = "tail-marker";
@@ -352,10 +339,13 @@ describe.skipIf(process.platform === "win32")(
       const ready = join(directory, "ready");
       const stopped = join(directory, "stopped");
       const release = join(directory, "release");
+      // Publish the signal by rename so the poller never reads a created but
+      // still-empty file while the child is alive.
       const script = [
         'const fs = require("node:fs");',
         'for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => {',
-        `  fs.writeFileSync(${JSON.stringify(stopped)}, name);`,
+        `  fs.writeFileSync(${JSON.stringify(`${stopped}.partial`)}, name);`,
+        `  fs.renameSync(${JSON.stringify(`${stopped}.partial`)}, ${JSON.stringify(stopped)});`,
         `  const exitCode = ${JSON.stringify(exitCode)};`,
         "  if (exitCode !== null) process.exit(exitCode);",
         "});",
@@ -687,25 +677,64 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
-describe("execFileOutput failure metadata", () => {
-  it("preserves raw byte counts on a failed command with invalid UTF-8", async () => {
-    const failure: unknown = await execFileOutput(process.execPath, [
+describe("execFileOutput decoding", () => {
+  it("reports raw byte counts when UTF-8 decoding changes the captured text", async () => {
+    const result = await execFileOutput(process.execPath, [
       "-e",
-      "process.stdout.write(Buffer.from([0x61, 0xff])); process.stderr.write(Buffer.from([0xe2, 0x82, 0xac])); process.exitCode = 7;",
-    ]).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
+      "process.stdout.write(Buffer.from([0x61, 0xff])); process.stderr.write(Buffer.from([0xe2, 0x82, 0xac]));",
+    ]);
 
-    expect(execFileOutputFailure(failure)).toMatchObject({
+    expect(result).toMatchObject({
       stdout: "a�",
       stderr: "€",
       stdoutBytes: 2,
       stderrBytes: 3,
-      code: 7,
+      stdoutInvalidUtf8: true,
     });
-    expect(execFileOutputFailure(failure)).not.toHaveProperty("spawnFailed");
+    expect(result).not.toHaveProperty("stderrInvalidUtf8");
   });
+});
+
+describe("execFileOutput failure metadata", () => {
+  it.each([
+    { route: "execFile", options: {} },
+    { route: "spawn", options: { stopSignal: "SIGTERM" as const } },
+  ])(
+    "preserves raw byte counts and marks invalid UTF-8 on a failed command through $route",
+    async ({ options }) => {
+      const failure: unknown = await execFileOutput(
+        process.execPath,
+        [
+          "-e",
+          "process.stdout.write(Buffer.from([0x61, 0xff])); process.stderr.write(Buffer.from([0xe2, 0x82, 0xac])); process.exitCode = 7;",
+        ],
+        options,
+      ).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+
+      const projected = execFileOutputFailure(failure);
+      expect(projected).toMatchObject({
+        stdout: "a�",
+        stderr: "€",
+        stdoutBytes: 2,
+        stderrBytes: 3,
+        code: 7,
+        stdoutInvalidUtf8: true,
+      });
+      expect(projected).not.toHaveProperty("stderrInvalidUtf8");
+      // The command started and exited, so the failure is not a spawn failure.
+      expect(projected).not.toHaveProperty("spawnFailed");
+      if (projected === undefined) throw new Error("Expected a failure");
+      expect(execFileFailureCapturedOutput(projected)).toMatchObject({
+        stdout_invalid_utf8: true,
+      });
+      expect(execFileFailureCapturedOutput(projected)).not.toHaveProperty(
+        "stderr_invalid_utf8",
+      );
+    },
+  );
   // Without stopSignal the command takes Node's execFile; adb always passes
   // one and takes the owned spawn route. Both throw ENOTDIR synchronously.
   it.skipIf(process.platform === "win32").each([
@@ -768,6 +797,21 @@ describe("execFileOutput failure metadata", () => {
       signal: null,
       killed: false,
       outputTruncated: true,
+    });
+  });
+  it("reports no exit status in captured output that was not fully collected", () => {
+    const failure = execFileOutputFailure(
+      Object.assign(new Error("owned output collection failed"), {
+        stdout: "partial stdout",
+        stderr: "",
+        code: 0,
+        collectionFailure: true,
+      }),
+    );
+    if (failure === undefined) throw new Error("Expected failure metadata");
+    expect(execFileFailureCapturedOutput(failure)).toMatchObject({
+      stdout: "partial stdout",
+      exit_code: null,
     });
   });
 });

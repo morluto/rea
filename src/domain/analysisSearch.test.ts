@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   analysisSearchPredicate,
   literalSubstringPredicate,
+  matchedProcedureAliases,
   matchProcedureNames,
 } from "./analysisSearch.js";
 
@@ -99,5 +100,58 @@ it("preserves single-alias matches, primary fallback and duplicate ordering", ()
   expect(matchProcedureNames(row, ["name", "name2", "name"], matches)).toEqual({
     value: row.value,
     matched_aliases: ["name", "name2"],
+  });
+});
+
+it("handles empty patterns and Unicode simple case folding boundaries", () => {
+  expect(literalSubstringPredicate("", false)("")).toBe(true);
+  expect(literalSubstringPredicate("", false)("Δelta")).toBe(true);
+  expect(
+    analysisSearchPredicate({
+      pattern: "",
+      mode: "regex",
+      case_sensitive: false,
+      document: undefined,
+    })(""),
+  ).toBe(true);
+  expect(literalSubstringPredicate("::123", false)("ns::123_fn")).toBe(true);
+  expect(literalSubstringPredicate("::123", false)("ns:123_fn")).toBe(false);
+  // Kelvin sign (U+212A) and long s (U+017F) fold to k/s under ECMAScript iu,
+  // while İ (U+0130) must NOT match ASCII 'i'.
+  expect(literalSubstringPredicate("sk", false)("\u017f\u212a")).toBe(true);
+  expect(literalSubstringPredicate("i", false)("\u0130")).toBe(false);
+});
+
+it("deduplicates and orders matched aliases across zero, small, and large alias lists", () => {
+  const matches = (value: string) => value.startsWith("hit_");
+  expect(matchedProcedureAliases("hit_primary", [], matches)).toBeUndefined();
+  expect(
+    matchedProcedureAliases("hit_primary", ["hit_primary"], matches),
+  ).toBeUndefined();
+  expect(
+    matchedProcedureAliases(
+      "primary",
+      ["miss", "hit_1", "miss", "hit_2", "hit_1", "primary"],
+      matches,
+    ),
+  ).toEqual(["hit_1", "hit_2"]);
+  const manyAliases = [
+    "m0",
+    "m1",
+    "hit_a",
+    "m2",
+    "m3",
+    "hit_b",
+    "hit_a",
+    "m4",
+    "m5",
+    "primary",
+    "hit_c",
+  ];
+  expect(
+    matchProcedureNames({ value: "primary" }, manyAliases, matches),
+  ).toEqual({
+    value: "primary",
+    matched_aliases: ["hit_a", "hit_b", "hit_c"],
   });
 });

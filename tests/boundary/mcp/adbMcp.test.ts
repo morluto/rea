@@ -1,10 +1,9 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import { z } from "zod";
-
-import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -319,8 +318,8 @@ const results: Readonly<Record<string, unknown>> = {
 
 /** A provider double that answers every ADB operation from the recorded results. */
 const adbProvider = (
-  execute: AdbDeviceAnalysisPort["execute"],
-): AdbDeviceAnalysisPort => ({
+  execute: RequestAnalysisPort<AdbRequest>["execute"],
+): RequestAnalysisPort<AdbRequest> => ({
   async inspectAvailability() {
     return { status: "available", code: null, reason: null, diagnostics: {} };
   },
@@ -330,7 +329,7 @@ const adbProvider = (
 
 /** Connect one MCP client to an ADB provider over an in-memory session. */
 const connectAdbMcpClient = async (
-  provider: AdbDeviceAnalysisPort,
+  provider: RequestAnalysisPort<AdbRequest>,
   name: string,
   proposedUiAction = false,
 ): Promise<{

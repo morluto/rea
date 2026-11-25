@@ -32,7 +32,7 @@ export const artifactFileAdmissionFailure = (
     );
   if (cause instanceof NonRegularFileReadError)
     return new ArtifactReaderFailure(
-      "format",
+      "path",
       `${diagnosticLabel} source is not a regular file: ${path}`,
       { cause },
     );

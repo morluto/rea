@@ -54,13 +54,7 @@ export const executeProviderOperation = async <
   schema: z.ZodType<TRequest>,
   provider: ProviderOperationPort<TRequest>,
   confidence: "observed" | "derived",
-  projection?: {
-    readonly parameters?: (
-      request: TRequest,
-      execution: AnalysisExecution,
-    ) => Readonly<Record<string, JsonValue>>;
-    readonly authority?: (request: TRequest) => Evidence["authority"];
-  },
+  buildEvidence?: (request: TRequest, execution: AnalysisExecution) => Evidence,
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options?.signal?.aborted)
     return err(cancelledBy(operation, options.signal));
@@ -76,18 +70,68 @@ export const executeProviderOperation = async <
     );
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
-  const execution = executed.value;
-  const evidence = createAnalysisExecutionEvidence(
-    operation,
-    projection?.parameters?.(request.data, execution) ?? request.data.input,
-    execution,
-    confidence,
-    projection?.authority === undefined
-      ? undefined
-      : { authority: projection.authority(request.data) },
-  );
+  const evidence =
+    buildEvidence !== undefined
+      ? buildEvidence(request.data, executed.value)
+      : createAnalysisExecutionEvidence(
+          operation,
+          request.data.input,
+          executed.value,
+          confidence,
+        );
   return completeProviderEvidence(evidence, options?.signal);
 };
+
+/**
+ * Shared single-request provider service wrapping {@link executeProviderOperation}
+ * and optional provider cleanup. Replaces per-provider pass-through service classes.
+ */
+export class ProviderOperationService<
+  TOperation extends string,
+  TRequest extends ProviderOperationRequest,
+  TPort extends ProviderOperationPort<TRequest> =
+    ProviderOperationPort<TRequest>,
+> {
+  constructor(
+    readonly provider: TPort,
+    private readonly schema: z.ZodType<TRequest>,
+    private readonly confidence:
+      | "observed"
+      | "derived"
+      | ((operation: TOperation) => "observed" | "derived") = "observed",
+    private readonly buildEvidence?: (
+      request: TRequest,
+      execution: AnalysisExecution,
+    ) => Evidence,
+  ) {}
+
+  close(): Promise<void> {
+    return (
+      (this.provider as { close?: () => Promise<void> }).close?.() ??
+      Promise.resolve()
+    );
+  }
+
+  execute(
+    operation: TOperation,
+    input: unknown,
+    options?: ExecutionOptions,
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const resolvedConfidence =
+      typeof this.confidence === "function"
+        ? this.confidence(operation)
+        : this.confidence;
+    return executeProviderOperation(
+      operation,
+      input,
+      options,
+      this.schema,
+      this.provider,
+      resolvedConfidence,
+      this.buildEvidence,
+    );
+  }
+}
 
 /** Classify completion after Evidence assembly, preserving facts on late abort. */
 export const completeProviderEvidence = (
@@ -103,6 +147,22 @@ export const completeProviderEvidence = (
       }),
     );
   return ok(evidence);
+};
+
+/** Use the admitted Evidence on every failure retaining the same report. */
+export const retainCompletedArtifactEvidence = (
+  error: AnalysisError,
+  evidence: Evidence,
+): void => {
+  const source = error.partialObservation;
+  if (source === undefined) return;
+  for (
+    let owner: AnalysisError | undefined = error;
+    owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    if (owner.partialObservation === source)
+      owner.partialObservation = evidence;
 };
 
 /**

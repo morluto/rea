@@ -67,7 +67,7 @@ test.each([
             code: null,
             detail: "Ghidra installation passed its required checks.",
             remediation: null,
-            classification: "config_drift",
+            classification: "healthy",
           },
         ],
       },

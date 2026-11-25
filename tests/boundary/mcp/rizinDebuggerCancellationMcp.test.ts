@@ -18,7 +18,7 @@ import {
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
 import { silentLogger } from "../../../src/logger.js";
-import type { RizinDebugToolOptions } from "../../../src/server/serviceToolBindings.js";
+import type { RizinDebugToolOptions } from "../../../src/server/debuggerToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createBinarySessionTargets,

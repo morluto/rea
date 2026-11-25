@@ -16,7 +16,10 @@ import {
 import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  retainCompletedArtifactEvidence,
+} from "../ProviderOperationExecution.js";
 import {
   callerAnalysisParameters,
   parseAnalysisInput,
@@ -55,51 +58,56 @@ export class ElfDependenciesService {
       );
     const parameters = callerAnalysisParameters(rawInput)(input.value);
     const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = elfDependenciesSchema.safeParse(result.value);
+    const source = result.ok ? result.value : result.error.partialObservation;
+    if (!result.ok && source === undefined) return result;
+    const report = elfDependenciesSchema.safeParse(source);
     if (
       !report.success ||
       report.data.artifact.path !== input.value.path ||
       !validReport(report.data, input.value)
     )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
-          "ELF dependency provider returned malformed output or changed artifact identity.",
-        ),
-      );
+      return result.ok
+        ? err(
+            new AnalysisOutputError(
+              OPERATION,
+              "ELF dependency provider returned malformed output or changed artifact identity.",
+            ),
+          )
+        : result;
     const value = report.data;
     const mapped = elfArchitecture(value.machine);
     const architecture = BINARY_ARCHITECTURES.find(
       (supported) => supported === mapped,
     );
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "elf",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: [
-            { kind: "artifact-path", path: value.artifact.path },
-            ...rangesOf(value).map((range) => ({
-              kind: "file-offset-range" as const,
-              start: range.offset,
-              end: range.offset + range.bytes,
-            })),
-          ],
-        },
-      ),
-      options?.signal,
+    const evidence = createEvidence(
+      {
+        path: value.artifact.path,
+        format: "elf",
+        sha256: value.artifact.sha256,
+        ...(architecture === undefined ? {} : { architecture }),
+      },
+      this.provider.identity,
+      {
+        operation: OPERATION,
+        parameters,
+        result: value,
+        confidence: "observed",
+        limitations: value.limitations,
+        locations: [
+          { kind: "artifact-path", path: value.artifact.path },
+          ...rangesOf(value).map((range) => ({
+            kind: "file-offset-range" as const,
+            start: range.offset,
+            end: range.offset + range.bytes,
+          })),
+        ],
+      },
     );
+    if (!result.ok) {
+      retainCompletedArtifactEvidence(result.error, evidence);
+      return result;
+    }
+    return completeProviderEvidence(evidence, options?.signal);
   }
 }
 

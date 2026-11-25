@@ -28,6 +28,29 @@ NAVIGATION = (
 )
 
 
+# Sources are shared with the figures on the corresponding reading pages.
+DEFAULT_IMAGE_ALT = "Blue REA lettering beside disassembly, hex data and an agent workflow."
+SOCIAL_FIGURES = {
+    "showcase/": "docs/assets/rea-showcases.svg",
+    "showcase/aegis/": "website/artwork/aegis.svg",
+    "showcase/ctf/": "website/public/assets/figures/ctf-mask-equation.svg",
+    "showcase/dx-ball/": "website/public/assets/figures/dx-ball-sound-pan-investigation.svg",
+    "showcase/notion/": "website/artwork/notion.svg",
+    "showcase/th04/": "website/public/assets/figures/th04-bullet-ring.svg",
+    "guides/": "website/public/assets/figures/rea-investigation-flow.svg",
+    "guides/browser/": "website/artwork/browser-export.svg",
+    "guides/javascript/": "website/artwork/electron-export.svg",
+    "guides/native/": "website/public/assets/figures/dx-ball-sound-pan-investigation.svg",
+    "guides/rl-environments/": "website/artwork/environments.svg",
+    "blog/touhou-reconstruction/": "website/public/assets/figures/th04-bullet-ring.svg",
+}
+
+
+def social_image_path(route):
+    source = SOCIAL_FIGURES.get(route)
+    return f"assets/share/{Path(source).stem}.png" if source else "assets/social-card.png"
+
+
 def checked_contributors(data):
     """Validate the public snapshot once, before rendering or replacing it."""
     if not isinstance(data, dict) or data.get("repository") != "morluto/rea":
@@ -261,6 +284,9 @@ def shared_blocks(root, path, source):
         "navigation": "\n" + "\n".join(links) + "\n    ",
         "canonical": escape(page_url(site, path), quote=True),
         "origin": SITE_ORIGIN,
+        "image": f"{SITE_ORIGIN}/{social_image_path(route)}",
+        "image_alt": escape(metadata.titles[0], quote=True) if route in SOCIAL_FIGURES else DEFAULT_IMAGE_ALT,
+        "og_type": "article" if route.startswith("blog/") and route != "blog/" else "website",
         "title": escape(metadata.titles[0].strip(), quote=True),
         "description": escape(metadata.descriptions[0].strip(), quote=True),
     }

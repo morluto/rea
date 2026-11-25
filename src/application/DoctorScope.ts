@@ -239,6 +239,9 @@ const selectedRegistrationCheck = (
           ok: true,
           classification: "healthy",
           detail: status.config_path,
+          ...(status.scope === undefined
+            ? {}
+            : { details: { scope: status.scope } }),
         }
       : registrationCheck(status);
 };
@@ -250,6 +253,7 @@ const registrationCheck = (
   ok: false,
   classification: status.state === "unknown" ? "unknown" : "config_drift",
   detail: status.config_path,
+  ...(status.scope === undefined ? {} : { details: { scope: status.scope } }),
   remediation: status.remediation,
 });
 

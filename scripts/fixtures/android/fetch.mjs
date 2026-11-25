@@ -25,7 +25,7 @@ for (const item of [
   {
     url: JADX_RELEASE.url,
     sha256: JADX_RELEASE.sha256,
-    filename: "jadx-headless-mcp-0.7.1-all.jar",
+    filename: `jadx-headless-mcp-${JADX_RELEASE.version}-all.jar`,
   },
   fixture,
 ]) {

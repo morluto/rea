@@ -47,28 +47,44 @@ const chargeExpansion = async (
 ): Promise<TsharkJsonFailure | undefined> => {
   let quoted = false;
   let escaped = false;
-  budget.decodedBytes += text.length * 2;
-  for (let index = 0; index < text.length; index += 1) {
-    if (index % YIELD_INTERVAL === 0) {
-      await yieldToEventLoop();
-      if (signal?.aborted) return { kind: "cancelled", cause: signal.reason };
-    }
-    const char = text[index];
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quoted = false;
-    } else if (char === '"') {
-      quoted = true;
-      budget.decodedBytes += 64;
-    } else if (char === "{" || char === "[" || char === ":" || char === ",")
-      budget.decodedBytes += 128;
-    if (budget.decodedBytes > budget.maxDecodedBytes)
-      return {
-        kind: "json-expansion",
-        maxDecodedBytes: budget.maxDecodedBytes,
-      };
+  let decodedBytes = budget.decodedBytes + text.length * 2;
+  const maxDecodedBytes = budget.maxDecodedBytes;
+  if (decodedBytes > maxDecodedBytes) {
+    budget.decodedBytes = decodedBytes;
+    return { kind: "json-expansion", maxDecodedBytes };
   }
+  const len = text.length;
+  for (let start = 0; start < len; start += YIELD_INTERVAL) {
+    await yieldToEventLoop();
+    if (signal?.aborted) {
+      budget.decodedBytes = decodedBytes;
+      return { kind: "cancelled", cause: signal.reason };
+    }
+    const end = Math.min(start + YIELD_INTERVAL, len);
+    for (let index = start; index < end; index += 1) {
+      const code = text.charCodeAt(index);
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (code === 0x5c) escaped = true;
+        else if (code === 0x22) quoted = false;
+      } else if (code === 0x22) {
+        quoted = true;
+        decodedBytes += 64;
+      } else if (
+        code === 0x7b ||
+        code === 0x5b ||
+        code === 0x3a ||
+        code === 0x2c
+      ) {
+        decodedBytes += 128;
+      }
+      if (decodedBytes > maxDecodedBytes) {
+        budget.decodedBytes = decodedBytes;
+        return { kind: "json-expansion", maxDecodedBytes };
+      }
+    }
+  }
+  budget.decodedBytes = decodedBytes;
   return undefined;
 };
 
@@ -92,7 +108,8 @@ export const parseTsharkJsonPackets = (
       reason: "packet root must be an array",
     });
   const packets: TsharkPacketLayers[] = [];
-  for (const [index, packet] of decoded.entries()) {
+  for (let index = 0; index < decoded.length; index += 1) {
+    const packet = decoded[index];
     if (
       !isRecord(packet) ||
       !isRecord(packet._source) ||

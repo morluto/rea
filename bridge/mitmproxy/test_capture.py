@@ -2,24 +2,39 @@
 
 import base64
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
 
 
-def load_capture():
+def load_capture(resource_module=None):
     """Load the adapter with fresh mitmproxy stand-ins scoped to its import."""
     fake_mitmproxy = types.ModuleType("mitmproxy")
     fake_mitmproxy.ctx = types.SimpleNamespace()
-    fake_mitmproxy.version = types.SimpleNamespace(VERSION="12.2.3")
+    fake_mitmproxy.version = types.SimpleNamespace(VERSION="12.3.1")
     fake_io = types.ModuleType("mitmproxy.io")
     fake_io.tnetstring = types.ModuleType("mitmproxy.io.tnetstring")
+    if resource_module is None:
+        try:
+            import resource as resource_module
+        except ImportError:
+            resource_module = types.ModuleType("resource")
+            resource_module.RLIM_INFINITY = -1
+            resource_module.RLIMIT_AS = 9
+            resource_module.RLIMIT_CPU = 0
+            resource_module.RLIMIT_CORE = 4
+            resource_module.RLIMIT_FSIZE = 1
+            resource_module.getrlimit = lambda kind: (resource_module.RLIM_INFINITY, resource_module.RLIM_INFINITY)
+            resource_module.setrlimit = lambda kind, limits: None
     stand_ins = {
         "mitmproxy": fake_mitmproxy,
         "mitmproxy.io": fake_io,
         "mitmproxy.io.tnetstring": fake_io.tnetstring,
+        "resource": resource_module,
     }
     spec = importlib.util.spec_from_file_location(
         "rea_mitmproxy_capture", os.path.join(os.path.dirname(__file__), "capture.py")
@@ -253,6 +268,283 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_non_special_schemes_keep_backslashes_in_the_authority(self):
         self.assertEqual(capture.without_userinfo("foo://a\\b@host/x"), "foo://host/x")
         self.assertEqual(capture.without_userinfo(b"//a\\b@host"), b"//a\\b@host")
+
+
+class ProfileGateTests(unittest.TestCase):
+    def test_profile_matches_verified_mitmproxy_release(self):
+        self.assertEqual(capture.PROFILE, "12.3.1")
+
+    def test_decode_rejects_a_different_runtime_version(self):
+        with mock.patch.object(capture.version, "VERSION", "12.2.3"):
+            with self.assertRaises(capture.CaptureFailure) as raised:
+                capture.decode({"snapshot_path": "/tmp/unused.mitm", "sensitive_values": []})
+        self.assertEqual(raised.exception.reason, "unsupported")
+        self.assertIn("12.3.1", str(raised.exception))
+        self.assertIn("12.2.3", str(raised.exception))
+
+
+class OfflineLimitTests(unittest.TestCase):
+    def load_limited(self, limits, setrlimit):
+        resource = types.ModuleType("resource")
+        resource.RLIM_INFINITY = 2 ** 62
+        resource.RLIMIT_AS = 1
+        resource.RLIMIT_CPU = 2
+        resource.RLIMIT_CORE = 3
+        resource.RLIMIT_FSIZE = 4
+        resource.getrlimit = lambda kind: limits[kind]
+        resource.setrlimit = setrlimit
+        return load_capture(resource)
+
+    def test_tighter_hard_limits_are_kept_and_shutdown_still_runs(self):
+        infinity = 2 ** 62
+        # Linux never reports a soft limit above its hard limit. Start at that ceiling.
+        limits = {
+            1: (1024, 1024),
+            2: (5, 5),
+            3: (infinity, infinity),
+            4: (512, 512),
+        }
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 1000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, encoding="ascii") as handle:
+                reply = json.loads(handle.read())
+        self.assertEqual(
+            calls,
+            [(1, (1024, 1024)), (2, (5, 5)), (3, (0, 0)), (4, (512, 512))],
+        )
+        self.assertEqual(shutdowns, ["down"])
+        self.assertFalse(reply["ok"])
+
+    def test_inherited_hard_limit_stays_above_the_new_soft_limit(self):
+        infinity = 2 ** 62
+        address_limit = 768 * 1024 * 1024
+        output_bytes = 1000
+        # Unlimited CPU, and finite soft limits strictly below their hard limits.
+        # Writing the new soft value into the hard limit fails these pairs.
+        limits = {
+            1: (address_limit * 2, address_limit * 4),
+            2: (infinity, infinity),
+            3: (infinity, infinity),
+            4: (5000, 9000),
+        }
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": output_bytes, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
+                cpu_record = json.load(handle)
+        self.assertEqual(cpu_record, {"requested_seconds": 30, "seconds": 30})
+        self.assertEqual(
+            calls,
+            [
+                (1, (address_limit, address_limit * 4)),
+                (2, (30, infinity)),
+                (3, (0, 0)),
+                (4, (output_bytes, 9000)),
+            ],
+        )
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_tighter_inherited_cpu_limit_is_recorded(self):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (1, 3, 4)}
+        limits[2] = (1, 100)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 1000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
+                cpu_record = json.load(handle)
+        self.assertEqual(calls[1], (2, (1, 100)))
+        self.assertEqual(cpu_record, {"requested_seconds": 30, "seconds": 1})
+        self.assertFalse(os.path.exists(os.path.join(parent, "effective-cpu.json.tmp")))
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_tighter_inherited_file_limit_bounds_the_reply(self):
+        infinity = 2 ** 62
+        file_limit = 4096
+        limits = {kind: (infinity, infinity) for kind in (1, 2, 3)}
+        limits[4] = (file_limit, 8192)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        module.decode = lambda _request: {"pad": "x" * 5000}
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 10000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, "rb") as handle:
+                reply_bytes = handle.read()
+        reply = json.loads(reply_bytes.decode("ascii"))
+        self.assertLessEqual(len(reply_bytes), file_limit)
+        self.assertEqual(reply["reason"], "fixed-limit")
+        self.assertEqual(reply["boundary"], "file-size")
+        self.assertEqual(reply["ceiling"]["limit"], file_limit)
+        self.assertEqual(calls[-1], (4, (file_limit, 8192)))
+        self.assertEqual(shutdowns, ["down"])
+
+    def _memory_failure(self, address_soft, address_hard):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (2, 3, 4)}
+        limits[1] = (address_soft, address_hard)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+
+        def exhausted(_request):
+            raise MemoryError("payload must not enter diagnostics")
+
+        module.decode = exhausted
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 10000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, "rb") as handle:
+                reply_bytes = handle.read()
+        return json.loads(reply_bytes.decode("ascii")), reply_bytes, calls, shutdowns, module
+
+    def test_tighter_inherited_address_limit_names_the_memory_ceiling(self):
+        soft = 512 * 1024 * 1024
+        hard = 1024 * 1024 * 1024
+        reply, reply_bytes, calls, shutdowns, _module = self._memory_failure(soft, hard)
+        self.assertNotIn(b"payload must not enter diagnostics", reply_bytes)
+        self.assertEqual(reply["reason"], "fixed-limit")
+        self.assertEqual(reply["boundary"], "memory")
+        self.assertEqual(reply["ceiling"]["limit"], soft)
+        self.assertEqual(reply["ceiling"]["kind"], "bytes")
+        self.assertIn(str(soft), reply["message"])
+        self.assertNotIn("exhausted its 768 MiB", reply["message"])
+        self.assertEqual(calls[0], (1, (soft, hard)))
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_requested_address_budget_stays_a_resource_limit(self):
+        budget = 768 * 1024 * 1024
+        reply, reply_bytes, calls, shutdowns, module = self._memory_failure(budget * 2, budget * 4)
+        self.assertNotIn(b"payload must not enter diagnostics", reply_bytes)
+        self.assertEqual(reply["reason"], "resource-limit")
+        self.assertEqual(reply["message"], "Native decoder exhausted its 768 MiB address-space budget.")
+        self.assertNotIn("ceiling", reply)
+        self.assertEqual(calls[0], (1, (budget, budget * 4)))
+        self.assertEqual(shutdowns, ["down"])
+        direct = module.failure_reply(MemoryError("payload must not enter diagnostics"))
+        self.assertEqual(direct["reason"], "resource-limit")
+        self.assertNotIn("payload must not enter diagnostics", json.dumps(direct))
+
+    def test_limit_setup_failure_still_shuts_down(self):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (1, 2, 3, 4)}
+
+        def setrlimit(_kind, _pair):
+            raise ValueError("not allowed to raise maximum limit")
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        module.ctx.options = types.SimpleNamespace(rea_request_path="")
+        with self.assertRaisesRegex(ValueError, "not allowed to raise maximum limit"):
+            module.addons[0].running()
+        self.assertEqual(shutdowns, ["down"])
 
 
 if __name__ == "__main__":

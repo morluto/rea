@@ -1,4 +1,5 @@
-import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
@@ -15,12 +16,13 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { jsonObjectSchema, jsonValueSchema } from "../../domain/jsonValue.js";
 import { executeProviderOperation } from "../ProviderOperationExecution.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { adbEvidenceParameters } from "../../domain/adb/adbEvidenceParameters.js";
 import { isAdbUiOperation } from "../../domain/adb/adbUiAnalysis.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for ADB. */
 export class AdbDeviceAnalysisService {
-  constructor(readonly provider: AdbDeviceAnalysisPort) {}
+  constructor(readonly provider: RequestAnalysisPort<AdbRequest>) {}
 
   /** Run one caller-selected ADB request and retain device provenance inline. */
   async execute(
@@ -58,10 +60,15 @@ export class AdbDeviceAnalysisService {
         },
       },
       "observed",
-      {
-        parameters: (request, execution) =>
+      // The caller-selected request is Evidence; applied defaults stay in the
+      // provider's execution facts and never overwrite what the caller chose.
+      (request, execution) =>
+        createAnalysisExecutionEvidence(
+          operation,
           adbEvidenceParameters(request, execution.result),
-      },
+          execution,
+          "observed",
+        ),
     );
   }
 }

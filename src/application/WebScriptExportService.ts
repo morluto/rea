@@ -20,6 +20,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -335,7 +336,7 @@ const captureReadFailure = (
           "Capture read and file-handle close both failed",
           { cause },
         );
-  if (cause instanceof ConfigurationError) {
+  if (cause instanceof WindowsChangeTimeConfigurationError) {
     if (closeFailure === undefined) return cause;
     return new ConfigurationError(cause.message, {
       cause: causeWithClose,

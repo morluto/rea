@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { addAbortListener } from "node:events";
 import { isAbortOf } from "../process/SignalAbort.js";
 import type { Readable } from "node:stream";
@@ -108,19 +109,30 @@ export const parseCliJsonInput = async (
             resources,
             options?.snapshot ?? false,
           );
-    if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
-    return parsed.ok
-      ? { ok: true, value: parsed.value }
+    const finalized = finalizedResult(
+      await runOwned(async () => parsed, {
+        providerId: "rea",
+        operation,
+        signal,
+        diagnostics: () => undefined,
+      }),
+    );
+    return finalized.ok
+      ? { ok: true, value: finalized.value }
       : {
           ok: false,
           error: {
             error: "Application workflow failed",
-            ...projectAnalysisError(parsed.error),
-            input_path: value,
-            input_reason:
-              parsed.error._tag === "AnalysisInputError"
-                ? "invalid-json"
-                : "too-large",
+            ...projectAnalysisError(finalized.error),
+            ...(parsed.ok
+              ? {}
+              : {
+                  input_path: value,
+                  input_reason:
+                    parsed.error._tag === "AnalysisInputError"
+                      ? "invalid-json"
+                      : "too-large",
+                }),
           },
         };
   } catch (cause: unknown) {

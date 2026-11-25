@@ -5,6 +5,7 @@ import type {
   JavaScriptSemanticObjectOperation,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
+import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { semanticBindingMayRejectAssignmentAt } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
@@ -16,8 +17,13 @@ import {
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  clearSemanticValueCaches,
+  evaluateSemanticExpression,
+} from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   createSemanticReadPresenceQuery,
@@ -42,6 +48,8 @@ export const collectJavaScriptSemanticObjects = (
     output,
     writeTargets: new Map(),
     readPresence: createSemanticReadPresenceQuery(state),
+    isNullish: createSemanticExpressionShapeResolver(state).isNullish,
+    skippedBindings: new Set(),
   };
   traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
@@ -84,6 +92,7 @@ export const collectJavaScriptSemanticObjects = (
     },
     exit: (node) => callableStack.exit(node),
   });
+  discardSkippedInitializers(state, context.skippedBindings);
   return output;
 };
 
@@ -92,7 +101,39 @@ interface ObjectCollectionContext {
   readonly output: JavaScriptSemanticObjectOperation[];
   readonly writeTargets: Map<t.Node, t.Node>;
   readonly readPresence: ReturnType<typeof createSemanticReadPresenceQuery>;
+  readonly isNullish: (node: t.Node) => boolean;
+  readonly skippedBindings: Set<t.Identifier>;
 }
+
+const discardSkippedInitializers = (
+  state: JavaScriptSemanticAnalysisState,
+  skipped: ReadonlySet<t.Identifier>,
+): void => {
+  if (skipped.size === 0) return;
+  const discard = (sources: JavaScriptSemanticInitializer[]): void => {
+    let retained = 0;
+    for (const source of sources) {
+      const target = source.patternTarget;
+      if (target === undefined || !skipped.has(target))
+        sources[retained++] = source;
+    }
+    sources.length = retained;
+  };
+  for (const binding of state.bindingsById.values()) {
+    discard(binding.initializers);
+    discard(binding.referenceInitializers);
+  }
+  clearSemanticValueCaches(state);
+};
+
+const isNestedReceiver = (occurrence: t.Node | null): boolean => {
+  if (occurrence === null) return false;
+  const { node } = unwrapJavaScriptExpression(occurrence);
+  const target = t.isAssignmentPattern(node)
+    ? unwrapJavaScriptExpression(node.left).node
+    : node;
+  return t.isObjectPattern(target) || t.isArrayPattern(target);
+};
 
 const collectMember = (
   node: t.MemberExpression | t.OptionalMemberExpression,
@@ -146,25 +187,54 @@ const collectMember = (
   );
 };
 
+/** Distinguish null from undefined because only undefined selects a default. */
+const destructuringNullishKind = (
+  expression: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  isNullish: ObjectCollectionContext["isNullish"],
+): "null" | "undefined" | null => {
+  const { node } = unwrapJavaScriptExpression(expression);
+  if (t.isNullLiteral(node)) return "null";
+  if (isNullish(node)) return "undefined";
+  if (isKnownDefinedSource(node)) return null;
+  const value = evaluateSemanticExpression(node, state);
+  return value.status === "literal" && value.value === null ? "null" : null;
+};
+
 const collectDestructuring = (
   root: t.Node,
   initializer: t.Node | null | undefined,
   ownerCallableId: string | null,
-  { state, output, readPresence }: ObjectCollectionContext,
+  {
+    state,
+    output,
+    readPresence,
+    isNullish,
+    skippedBindings,
+  }: ObjectCollectionContext,
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
   const rootArray = t.isArrayPattern(root);
   const owner = state.parentsByNode.get(root);
   const assignment = t.isAssignmentExpression(owner);
+  const hasNestedReceiver = rootArray
+    ? root.elements.some(isNestedReceiver)
+    : t.isObjectPattern(root) &&
+      root.properties.some(
+        (property) =>
+          t.isObjectProperty(property) && isNestedReceiver(property.value),
+      );
   const sourcePresence =
     initializer != null && source.path !== null
       ? readPresence(source.bindingId, initializer, {
           path: source.path,
           selection: rootArray ? "array-iterator" : "own-data",
+          proveNestedCompletion: hasNestedReceiver,
         })
       : undefined;
   let ownSlot = sourcePresence?.read;
   let assignmentBlocked = false;
+  let abrupt = false;
   // A null path keeps a target in evaluation order without emitting an
   // operation for a source slot we cannot identify.
   const pending: (
@@ -205,16 +275,36 @@ const collectDestructuring = (
     if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
     const hasDefault = t.isAssignmentPattern(occurrence);
+    const pattern = hasDefault
+      ? unwrapJavaScriptExpression(occurrence.left).node
+      : occurrence;
     const plainObjectPath = next.plainObjectPath === true && !hasDefault;
+    // A bounded evaluation can prove the original data slot nullish.
+    const nullish =
+      selected !== undefined &&
+      (t.isObjectPattern(pattern) || t.isArrayPattern(pattern))
+        ? destructuringNullishKind(selected, state, isNullish)
+        : null;
+    if (
+      nullish !== null &&
+      (nullish === "null" ||
+        !hasDefault ||
+        destructuringNullishKind(occurrence.right, state, isNullish) !== null)
+    ) {
+      abrupt = true;
+      ownSlot = undefined;
+    }
+    if (abrupt && path === null) {
+      for (const target of semanticWriteTargets(pattern))
+        if (t.isIdentifier(target)) skippedBindings.add(target);
+      continue;
+    }
     if (
       hasDefault &&
       (!isKnownDefinedSource(selected) ||
         !isLexicalPatternDeclaration(owner, state))
     )
       ownSlot = undefined;
-    const pattern = hasDefault
-      ? unwrapJavaScriptExpression(occurrence.left).node
-      : occurrence;
     if (t.isRestElement(pattern)) {
       ownSlot = undefined;
       if (assignment) pending.push({ pattern: pattern.argument, path: null });
@@ -239,22 +329,23 @@ const collectDestructuring = (
             ? null
             : semanticStaticPropertyKey(prop.key, prop.computed);
         if (path === null || prop === undefined || name === null) {
-          pending.push(
-            assignment
-              ? {
-                  pattern: prop?.value ?? property,
-                  path: null,
-                  lookup: "unproven",
-                }
-              : null,
-          );
+          pending.push({
+            pattern: prop?.value ?? property,
+            path: null,
+            lookup: "unproven",
+          });
           continue;
         }
+        // Computing a known key with effects (for example, void call())
+        // can still invalidate the source slots before the property lookup.
+        const ownLookup =
+          !prop.computed ||
+          t.isPureish(unwrapJavaScriptExpression(prop.key).node);
         pending.push({
           pattern: prop.value,
           path: [...path, name],
-          plainObjectPath: plainObjectPath && !prop.computed,
-          lookup: prop.computed ? "unproven" : "own",
+          plainObjectPath: plainObjectPath && ownLookup,
+          lookup: ownLookup ? "own" : "unproven",
         });
       }
       continue;
@@ -288,8 +379,9 @@ const collectDestructuring = (
       }
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (element === undefined || (!assignment && t.isRestElement(element)))
-          pending.push(null);
+        if (element === undefined) pending.push(null);
+        else if (!assignment && t.isRestElement(element))
+          pending.push({ pattern: element, path: null, lookup: "unproven" });
         else
           pending.push({
             pattern: element ?? undefined,
@@ -308,6 +400,7 @@ const collectDestructuring = (
       pattern,
       pattern.name,
     );
+    if (abrupt) skippedBindings.add(pattern);
     assignmentBlocked ||=
       assignment &&
       targetBinding !== undefined &&
@@ -322,8 +415,9 @@ const collectDestructuring = (
         objectBindingId: source.bindingId,
         targetBindingId: targetBinding?.bindingId ?? null,
         propertyPath,
-        partial: assignmentBlocked,
+        partial: abrupt || assignmentBlocked,
         provenOwnSlot:
+          !abrupt &&
           !assignmentBlocked &&
           (ownSlot !== undefined ||
             (plainObjectPath &&

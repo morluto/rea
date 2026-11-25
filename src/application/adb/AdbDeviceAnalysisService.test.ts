@@ -1,3 +1,5 @@
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import { chmod, readFile } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 import {
@@ -7,7 +9,6 @@ import {
 import { AdbProvider } from "../../adb/AdbProvider.js";
 
 import { AdbDeviceAnalysisService } from "./AdbDeviceAnalysisService.js";
-import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
@@ -32,7 +33,7 @@ const execution = createAnalysisExecution(
   identity,
 );
 
-const refusedPort: AdbDeviceAnalysisPort = {
+const refusedPort: RequestAnalysisPort<AdbRequest> = {
   async inspectAvailability() {
     throw new Error("must not probe");
   },
@@ -106,14 +107,9 @@ it("rejects an unknown operation before any effect", async () => {
 it.each([undefined, "controlled-replay"] as const)(
   "composes observed Evidence while preserving reported authority %s",
   async (authority) => {
-    const port: AdbDeviceAnalysisPort = {
+    const port: RequestAnalysisPort<AdbRequest> = {
       async inspectAvailability() {
-        return {
-          status: "available",
-          code: null,
-          reason: null,
-          diagnostics: {},
-        };
+        return { status: "available", code: null, reason: null, diagnostics: {} };
       },
       async close() {},
       async execute(request) {
@@ -180,7 +176,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
     onTestFinished(() => provider.close());
     const controller = new AbortController();
-    const port: AdbDeviceAnalysisPort = {
+    const port: RequestAnalysisPort<AdbRequest> = {
       inspectAvailability: provider.inspectAvailability.bind(provider),
       close: provider.close.bind(provider),
       async execute(request, options) {

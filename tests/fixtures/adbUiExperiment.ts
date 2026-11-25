@@ -1,4 +1,5 @@
-import type { AdbDeviceAnalysisPort } from "../../src/application/adb/AdbDeviceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../../src/ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../src/domain/adb/adbDeviceAnalysis.js";
 import { AdbDeviceAnalysisService } from "../../src/application/adb/AdbDeviceAnalysisService.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { PROPOSED_ADB_UI_ACTION_CONTRACT } from "../../src/contracts/adb/adbUiToolContracts.js";
@@ -10,7 +11,7 @@ import { applicationToolRegistrationOptions } from "../../src/server/toolRegistr
 /** Explicit test-only binding, never part of normal server composition. */
 export const registerAdbUiExperiment = (
   server: EvidenceMcpServer,
-  provider: AdbDeviceAnalysisPort,
+  provider: RequestAnalysisPort<AdbRequest>,
   session: BinarySession,
 ): void => {
   const contract = PROPOSED_ADB_UI_ACTION_CONTRACT;

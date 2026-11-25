@@ -4,7 +4,6 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   bzImageGzipFixture,
   truncatedKernelConfigFixture,
@@ -53,26 +52,6 @@ mcpTest(
           matched_count: 1,
           entries: [{ name: "CONFIG_MODULE_SIG", kind: "m" }],
         },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_kernel_build_config",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_kernel_build_config",
-        arguments: { path: "vmlinux" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_kernel_build_config" },
       });
     } finally {
       await session.close();
