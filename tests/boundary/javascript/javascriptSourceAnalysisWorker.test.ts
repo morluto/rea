@@ -509,6 +509,7 @@ it("reports an actual startup deadline and closes its owned resources before sub
     expect(result.error.error).toMatchObject({
       _tag: "AnalysisTimeoutError",
       timeoutMs: 1,
+      diagnostics: { phase: "startup" },
     });
   } finally {
     await expired.close();

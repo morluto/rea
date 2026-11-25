@@ -321,6 +321,28 @@ it.each([
   },
 );
 
+it("reports a deadline during checkpoint read and retains the completed static facts", async () => {
+  const timeoutMs = 30_000;
+  const worker = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs });
+  const now = performance.now.bind(performance);
+  const clock = vi.spyOn(performance, "now");
+  faults.onCheckpointRead = () => {
+    clock.mockImplementation(() => now() + timeoutMs);
+  };
+  try {
+    const result = await worker.analyze(file, { nodes: 1, unknowns: 1 });
+    if (result.ok) throw new Error("Expected a checkpoint read deadline");
+    expect(result.error.javascript?.parse_status).toBe("complete");
+    expect(projectAnalysisError(result.error.error)).toMatchObject({
+      code: "provider_timeout",
+      details: { diagnostics: { phase: "checkpoint-read" } },
+    });
+  } finally {
+    clock.mockRestore();
+    await worker.close();
+  }
+});
+
 it.each([
   { readFailed: false, deniedCleanup: false },
   { readFailed: true, deniedCleanup: false },

@@ -973,7 +973,11 @@ memory needed to construct the analysis graph itself.
 JavaScript source parsing, static analysis and semantic projection run in one
 owned analysis process, reused sequentially across files. Target code is never
 executed. The analyzer defaults to 1024 MiB of V8 old-space and a 300000 ms
-deadline per source, including startup and fact transfer. Select
+deadline per source, including startup and fact transfer. In a `provider_timeout` response,
+`details.diagnostics.phase` reports the last analysis phase REA observed.
+For example, `static` means the worker reached static analysis; it does not
+measure how much of the deadline was spent there. Lowering semantic retention
+limits does not skip parsing or static analysis. Select
 `max_heap_mb` and `analysis_timeout_ms` through MCP, or `--max-heap-mb` and
 `--analysis-timeout-ms` on the dedicated CLI command. These choices control the
 analyzer; the caller's `NODE_OPTIONS` still controls the CLI/MCP process heap.
