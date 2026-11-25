@@ -101,6 +101,7 @@ export {
   closeArtifactResources,
   projectArtifactCloseFailure,
   withArtifactCleanupFailure,
+  artifactFileCancellationError,
   projectOwnedArtifactIdentityFailure,
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,

@@ -33,7 +33,7 @@ import {
   readStableArtifact,
   ArtifactResourceScope,
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -54,7 +54,6 @@ import {
   AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
   type AbortedSignal,
   unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
@@ -406,11 +405,7 @@ const evmReplyCompletionFailure = (
 ): AnalysisError => {
   const cancellation =
     cause.reason === "cancelled"
-      ? cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(cause)),
-          { capturedOutput },
-        )
+      ? artifactFileCancellationError(OPERATION, cause, { capturedOutput })
       : undefined;
   if (cause.cleanup === undefined) {
     if (cancellation !== undefined) return cancellation;
@@ -721,11 +716,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          const failure = cancelledBy(
-            OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
-            { capturedOutput, ...(cleanup === undefined ? {} : { cleanup }) },
-          );
+          const failure = artifactFileCancellationError(OPERATION, cause, {
+            capturedOutput,
+            ...(cleanup === undefined ? {} : { cleanup }),
+          });
           if (cause instanceof ArtifactReaderFailure)
             bindArtifactFileCleanup(cause, failure);
           throw failure;

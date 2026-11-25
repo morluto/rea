@@ -5,7 +5,7 @@ import { z } from "zod";
 import {
   ArtifactReaderFailure,
   stableArtifactInputRecovery,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
@@ -24,7 +24,6 @@ import {
   AnalysisInputError,
   AnalysisTargetFailureError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -182,10 +181,7 @@ const webArtifactPrimaryError = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return cancelledBy(
-      context.operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(context.operation, cause);
   if (origin === "owned-or-classified" && isAbortOf(cause, signal))
     return cancelledBy(context.operation, signal);
   const selection = context.callerSelected
