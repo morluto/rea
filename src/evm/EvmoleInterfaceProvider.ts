@@ -51,7 +51,6 @@ import {
 import {
   type AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisTargetFailureError,
   AnalysisOutputError,
   cancelledBy,
@@ -265,7 +264,7 @@ const replySchema = z.discriminatedUnion("ok", [
   }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum(["format", "decoder", "output-limit", "unsupported"]),
+    reason: z.enum(["malformed", "decoder", "output-limit", "unsupported"]),
     message: z.string(),
   }),
 ]);
@@ -767,7 +766,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             { capturedOutput },
           );
         // The worker rejected the selected bytecode, not the request.
-        if (reply.reason === "format")
+        if (reply.reason === "malformed")
           throw new AnalysisTargetFailureError(
             OPERATION,
             input.path,

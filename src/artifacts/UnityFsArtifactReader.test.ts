@@ -281,7 +281,7 @@ describe("UnityFS unavailable and malformed directories", () => {
         bytes.writeBigUInt64BE(1n << 40n, 32);
         return bytes;
       })(),
-      "malformed",
+      "truncated",
     ],
     [
       "a node count that cannot fit",

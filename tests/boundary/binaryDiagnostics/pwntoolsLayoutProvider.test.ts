@@ -462,7 +462,7 @@ it.runIf(!unsupportedHost)(
           request.reply_path,
           JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "Malformed original ELF table.",
           }),
         );
@@ -533,7 +533,7 @@ it
   .runIf(!unsupportedHost)
   .each([
     "success",
-    "format",
+    "malformed",
     "unavailable",
     "unsupported",
     "output-limit",
@@ -567,16 +567,17 @@ it
         } = binaryLayoutFixture(path);
         const encodedReplies: Partial<Record<string, string | Buffer>> = {
           "invalid-utf8": Buffer.concat([
-            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from('{"ok":false,"reason":"malformed","message":"'),
             Buffer.from([0xff]),
             Buffer.from('"}'),
           ]),
           "literal-replacement": JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "valid �",
           }),
-          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+          "bom-reply":
+            '\uFEFF{"ok":false,"reason":"malformed","message":"valid"}',
         };
         const encodedReply = encodedReplies[scenario];
         if (encodedReply !== undefined)
@@ -588,7 +589,7 @@ it
               ? "broken-json"
               : JSON.stringify(
                   [
-                    "format",
+                    "malformed",
                     "unavailable",
                     "unsupported",
                     "output-limit",
@@ -635,7 +636,7 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format" || scenario === "literal-replacement"
+            scenario === "malformed" || scenario === "literal-replacement"
               ? "AnalysisTargetFailureError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"

@@ -530,7 +530,8 @@ not an input error, in inspection and comparison: `unsupported_target` with
 the malformed side by its own path. `details.field` and `details.offset` give
 the reader's structure and byte offset when known. The arguments are not at
 fault, so no input recovery is offered. A metadata layout or signature form
-outside decoder coverage is `unsupported_target` without `failure_kind`.
+outside decoder coverage is `unsupported_target` with `details.failure_kind`
+`unsupported`.
 Inventory status follows the same split: when a reader stops on such a form
 (`unsupported-metadata` or `unsupported-signature`), `metadata.status` is
 `partial` and an artifact's `classification.status` stays `managed`; only a

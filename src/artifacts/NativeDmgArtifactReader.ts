@@ -124,16 +124,15 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
       integrityCheck:
         failure.reason === "integrity" ? "image-checksum" : undefined,
       // hdiutil's own verdict that the bytes are not a disk image it reads.
-      ...(failure.reason === "unsupported"
-        ? {
-            parseFailure: {
+      parseFailure:
+        failure.reason === "unsupported"
+          ? {
               kind: "unsupported",
               format: "dmg",
               detail: message,
               undecodedContent: false,
-            },
-          }
-        : {}),
+            }
+          : undefined,
     });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;

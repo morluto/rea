@@ -52,13 +52,7 @@ const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true), value: recordedCrashDebuggerSchema }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum([
-      "unavailable",
-      "unsupported",
-      "decoder",
-      "format",
-      "output-limit",
-    ]),
+    reason: z.enum(["unavailable", "unsupported", "decoder", "output-limit"]),
     message: z.string(),
   }),
 ]);
@@ -314,13 +308,11 @@ export const inspectPwndbgCore = async ({
           ),
           finalization,
         );
-      if (reply.reason === "format" || reply.reason === "output-limit")
+      if (reply.reason === "output-limit")
         throw pwndbgContextFinalizationFailure(
           new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput: recordedCrashStageOutput(diagnostics, output),
-            ...(reply.reason === "output-limit"
-              ? pwntoolsReplyOutputLimit(producerLimits)
-              : {}),
+            ...pwntoolsReplyOutputLimit(producerLimits),
           }),
           finalization,
         );

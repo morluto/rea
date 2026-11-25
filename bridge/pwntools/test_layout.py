@@ -189,7 +189,7 @@ class LayoutStorageTests(unittest.TestCase):
             with self.subTest(stride=stride):
                 with self.assertRaises(layout["LayoutFailure"]) as raised:
                     self.inspect("SHT_PROGBITS", 0, stride)
-                self.assertEqual(raised.exception.reason, "format")
+                self.assertEqual(raised.exception.reason, "malformed")
                 self.assertIn("section-header entry", str(raised.exception))
         for stride in (64, 96):
             with self.subTest(stride=stride):
