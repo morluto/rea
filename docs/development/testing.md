@@ -99,7 +99,7 @@ it or select another revision.
 Source typechecking needs no compiled runtime or generated test metadata.
 Typecheck, runtime compilation, and Frida binding verification share
 `scripts/run-typescript.mjs`. The pinned tsrs package supplies Linux x64/arm64
-(GNU and musl) and macOS arm64 compilers. Windows and other unsupported hosts
+(GNU and musl) and macOS x64/arm64 compilers. Windows and other unsupported hosts
 retain the existing stable official TypeScript compiler. Its upstream version
 can differ from tsrs, so both compiler tasks hash the selected package and version
 through `scripts/run-turbo.mjs` before cache lookup. Outputs from different
