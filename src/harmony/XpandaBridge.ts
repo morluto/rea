@@ -10,10 +10,32 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { parseXpandaEnvelope } from "./XpandaProtocol.js";
-import { XPANDA_PROVIDER_ID } from "./XpandaRelease.js";
+import {
+  XPANDA_PROVIDER_ID,
+  XPANDA_VERIFIED_VERSION,
+} from "./XpandaRelease.js";
+import type { HarmonyAbcOperation } from "../domain/harmony/harmonyAbcAnalysis.js";
 
 /** The producer's initialize identity; the package version differs from it. */
 export const XPANDA_BRIDGE_IDENTITY = { name: "xpanda" } as const;
+
+/** Producer tools each REA operation requires from the configured release. */
+const OPERATION_TOOLS: Readonly<Record<HarmonyAbcOperation, string>> = {
+  inspect_harmony_abc: "abc_load",
+  list_harmony_abc_classes: "abc_list_classes",
+  inspect_harmony_abc_class: "abc_get_class",
+  decompile_harmony_abc_class: "abc_decompile_class",
+  decompile_harmony_abc_method: "abc_decompile_method",
+  decompile_harmony_abc: "abc_export",
+  disassemble_harmony_abc_method: "abc_disassemble_method",
+  search_harmony_abc_strings: "abc_search_strings",
+  search_harmony_abc_symbols: "abc_search_symbols",
+  search_harmony_abc_code: "abc_search_code",
+  trace_harmony_abc_references: "abc_xrefs",
+  build_harmony_abc_call_graph: "abc_call_graph",
+  inspect_harmony_hap_abc: "hap_read_abc",
+  inspect_harmony_hap_resources: "hap_resources",
+};
 
 interface ObservedCall {
   readonly operation: string;
@@ -36,6 +58,7 @@ export class XpandaBridge {
   readonly #observedCalls: ObservedCall[] = [];
   #serverName: string | null = null;
   #serverVersion: string | null = null;
+  #toolNames: ReadonlySet<string> | undefined;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -109,6 +132,35 @@ export class XpandaBridge {
       response: observedResponse,
     });
     return parseXpandaEnvelope(operation, name, response);
+  }
+
+  /**
+   * Refuse an operation the configured producer does not advertise. Later
+   * majors add tools; REA names the missing tool instead of surfacing an
+   * unknown-tool protocol failure.
+   */
+  async requireTool(
+    operation: HarmonyAbcOperation,
+    context: { readonly signal: AbortSignal; readonly timeoutMs: number },
+  ): Promise<void> {
+    const required = OPERATION_TOOLS[operation];
+    if (this.#toolNames === undefined) {
+      const listed = await this.#client.listTools(undefined, {
+        timeout: context.timeoutMs,
+        signal: context.signal,
+      });
+      this.#toolNames = new Set(listed.tools.map((tool) => tool.name));
+    }
+    if (!this.#toolNames.has(required))
+      throw new AnalysisCapabilityUnavailableError(
+        XPANDA_PROVIDER_ID,
+        operation,
+        `The configured xpanda release does not advertise ${required}, which this operation requires.`,
+        {
+          userMessage: `The configured xpanda release has no ${required} tool.`,
+          remediationAction: `Update the caller-supplied xpanda checkout to a release that provides ${required} (REA verified ${XPANDA_VERIFIED_VERSION}).`,
+        },
+      );
   }
 
   /** Producer JSON tool results parsed and validated at this boundary. */

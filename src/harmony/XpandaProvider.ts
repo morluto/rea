@@ -41,13 +41,21 @@ import {
   XpandaEngineScanError,
 } from "./XpandaEngineIdentity.js";
 import {
-  xpandaClassListSchema,
-  xpandaExportSchema,
-  xpandaLoadSchema,
-  xpandaStringMatchesSchema,
   parseXpandaDecompile,
   parseXpandaDisassembly,
-  type XpandaLoad,
+  xpandaCallGraphSchema,
+  xpandaClassListSchema,
+  xpandaClassMetadataSchema,
+  xpandaCodeSearchSchema,
+  xpandaExportSchema,
+  xpandaHapAbcSchema,
+  xpandaHapResourcesSchema,
+  isHapLoad,
+  xpandaSessionSchema,
+  xpandaStringMatchesSchema,
+  xpandaSymbolSearchSchema,
+  xpandaXrefsSchema,
+  type XpandaSession,
 } from "./XpandaProtocol.js";
 import { captureXpandaFailure } from "./XpandaFailures.js";
 import {
@@ -381,7 +389,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
       const load = await bridge.callJson(
         request.operation,
         "abc_load",
-        xpandaLoadSchema,
+        xpandaSessionSchema,
         { path: staged.stagedPath },
         callContext,
       );
@@ -427,7 +435,9 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           subject: {
             path: request.input.path,
             sha256: staged.sha256,
-            format: "abc" as const,
+            format: request.operation.startsWith("inspect_harmony_hap_")
+              ? ("hap" as const)
+              : ("abc" as const),
           },
           limitations: [
             ...XPANDA_LIMITATIONS,
@@ -624,7 +634,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
   async #dispatch(
     request: HarmonyAbcRequest,
     bridge: XpandaBridge,
-    load: XpandaLoad,
+    load: XpandaSession,
     engine: EngineFacts,
     context: { readonly signal: AbortSignal; readonly timeoutMs: number },
   ): Promise<unknown> {
@@ -639,8 +649,23 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
     const budget =
       request.input.analysis_timeout_ms ??
       DEFAULT_HARMONY_ABC_ANALYSIS_TIMEOUT_MS;
+    const hapOperation = request.operation.startsWith("inspect_harmony_hap_");
+    if (hapOperation !== isHapLoad(load)) {
+      throw new AnalysisInputError(request.operation, undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: hapOperation
+            ? "The selected file is not a HarmonyOS application package (.hap)."
+            : "The selected file is a HarmonyOS application package (.hap); select an .abc entry with inspect_harmony_hap_abc first.",
+        },
+      ]);
+    }
+    if (!hapOperation && isHapLoad(load)) throw new Error("unreachable");
+    await bridge.requireTool(request.operation, context);
     switch (request.operation) {
-      case "inspect_harmony_abc":
+      case "inspect_harmony_abc": {
+        if (isHapLoad(load)) throw new Error("unreachable");
         return {
           analysis_timeout_ms: budget,
           engine: engineFacts,
@@ -654,6 +679,7 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           preview_truncated: load.previewTruncated,
           coverage: "header",
         };
+      }
       case "list_harmony_abc_classes": {
         const listing = await bridge.callJson(
           request.operation,
@@ -793,6 +819,372 @@ export class XpandaProvider implements HarmonyAbcAnalysisPort {
           truncated: matches.truncated,
           strings: matches.strings,
           coverage: "string_pool",
+        };
+      }
+      case "inspect_harmony_abc_class": {
+        const metadata = await bridge.callJson(
+          request.operation,
+          "abc_get_class",
+          xpandaClassMetadataSchema,
+          {
+            fileId: load.fileId,
+            className: request.input.class_name,
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          class_name: metadata.name,
+          raw_name: metadata.rawName,
+          super_class: metadata.superClass,
+          external: metadata.external,
+          access_flags: metadata.accessFlags,
+          fields: metadata.fields.map(({ name, type, external }) => ({
+            name,
+            field_type: type,
+            external,
+          })),
+          methods: metadata.methods.map(
+            ({
+              name,
+              accessFlags,
+              external,
+              hasCode,
+              hasTryCatch,
+              shorty,
+            }) => ({
+              name,
+              access_flags: accessFlags,
+              external,
+              has_code: hasCode,
+              has_try_catch: hasTryCatch,
+              shorty,
+            }),
+          ),
+          imports: metadata.imports.map(
+            ({ localName, importName, path, kind }) => ({
+              local_name: localName,
+              import_name: importName,
+              path,
+              kind,
+            }),
+          ),
+          exports: metadata.exports.map(
+            ({ localName, exportName, path, kind }) => ({
+              local_name: localName,
+              export_name: exportName,
+              path,
+              kind,
+            }),
+          ),
+          coverage: "class_metadata",
+        };
+      }
+      case "decompile_harmony_abc_method": {
+        const decompiled = parseXpandaDecompile(
+          request.operation,
+          await bridge.call(
+            request.operation,
+            "abc_decompile_method",
+            {
+              fileId: load.fileId,
+              className: request.input.class_name,
+              methodName: request.input.method_name,
+              ...(request.input.simplify ? {} : { simplify: false }),
+            },
+            context,
+          ),
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          class_name:
+            decompiled.className.length > 0
+              ? decompiled.className
+              : request.input.class_name,
+          method_name: decompiled.methodName ?? request.input.method_name,
+          simplified: decompiled.simplified,
+          degraded: decompiled.degraded,
+          empty_result: decompiled.emptyResult,
+          truncated: decompiled.truncated,
+          characters: decompiled.characters,
+          content: decompiled.content,
+          coverage: "method_source",
+        };
+      }
+      case "search_harmony_abc_symbols": {
+        const found = await bridge.callJson(
+          request.operation,
+          "abc_search_symbols",
+          xpandaSymbolSearchSchema,
+          {
+            fileId: load.fileId,
+            query: request.input.query,
+            kind: request.input.kind,
+            regex: request.input.regex,
+            caseSensitive: request.input.case_sensitive,
+            ...(request.input.class_filter === undefined
+              ? {}
+              : { classFilter: request.input.class_filter }),
+            includeExternal: request.input.include_external,
+            offset: request.input.offset,
+            limit: request.input.limit,
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          total: found.total,
+          offset: found.offset,
+          limit: found.limit,
+          returned: found.returned,
+          truncated: found.truncated,
+          matches: found.matches.map((match) => ({
+            kind: match.kind,
+            raw_name: match.rawName,
+            name: match.name,
+            ...(match.ownerClass === undefined
+              ? {}
+              : { owner_class: match.ownerClass }),
+            ...(match.ownerClassName === undefined
+              ? {}
+              : { owner_class_name: match.ownerClassName }),
+            ...(match.type === undefined ? {} : { field_type: match.type }),
+            ...(match.methodCount === undefined
+              ? {}
+              : { method_count: match.methodCount }),
+            ...(match.fieldCount === undefined
+              ? {}
+              : { field_count: match.fieldCount }),
+            ...(match.external === undefined
+              ? {}
+              : { external: match.external }),
+            ...(match.hasCode === undefined ? {} : { has_code: match.hasCode }),
+          })),
+          coverage: "symbol_index",
+        };
+      }
+      case "search_harmony_abc_code": {
+        const found = await bridge.callJson(
+          request.operation,
+          "abc_search_code",
+          xpandaCodeSearchSchema,
+          {
+            fileId: load.fileId,
+            pattern: request.input.pattern,
+            regex: request.input.regex,
+            caseSensitive: request.input.case_sensitive,
+            ...(request.input.class_filter === undefined
+              ? {}
+              : { classFilter: request.input.class_filter }),
+            simplify: request.input.simplify,
+            maxClasses: request.input.max_classes,
+            contextLines: request.input.context_lines,
+            offset: request.input.offset,
+            limit: request.input.limit,
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          pattern: found.pattern,
+          simplified: found.simplified,
+          scanned_classes: found.scannedClasses,
+          skipped_classes: found.skippedClasses,
+          failed_classes: found.failedClasses,
+          failed_class_count: found.failedClassCount,
+          candidate_classes: found.candidateClasses,
+          truncated_classes: found.truncatedClasses,
+          total: found.total,
+          offset: found.offset,
+          limit: found.limit,
+          returned: found.returned,
+          truncated: found.truncated,
+          matches: found.matches.map(
+            ({ className, line, text, method, methodKind, context }) => ({
+              class_name: className,
+              line,
+              text,
+              ...(method === undefined ? {} : { method }),
+              ...(methodKind === undefined ? {} : { method_kind: methodKind }),
+              ...(context === undefined
+                ? {}
+                : { context: context.map((entry) => ({ ...entry })) }),
+            }),
+          ),
+          coverage: "decompiled_source",
+        };
+      }
+      case "trace_harmony_abc_references": {
+        const found = await bridge.callJson(
+          request.operation,
+          "abc_xrefs",
+          xpandaXrefsSchema,
+          {
+            fileId: load.fileId,
+            targetType: request.input.target_type,
+            target: request.input.target,
+            ...(request.input.owner_class === undefined
+              ? {}
+              : { ownerClass: request.input.owner_class }),
+            source: request.input.source,
+            maxClasses: request.input.max_classes,
+            offset: request.input.offset,
+            limit: request.input.limit,
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          target_type: found.targetType,
+          target: found.target,
+          target_owner: found.targetOwner,
+          total: found.total,
+          offset: found.offset,
+          limit: found.limit,
+          returned: found.returned,
+          truncated: found.truncated,
+          source_scanned_classes: found.sourceScannedClasses,
+          source_truncated_classes: found.sourceTruncatedClasses,
+          xref_count: found.xrefCount,
+          disassembly_failures: found.disassemblyFailures,
+          matches: found.matches.map((match) => ({
+            from_class: match.fromClass,
+            from_class_raw: match.fromClassRaw,
+            from_method: match.fromMethod,
+            pc: match.pc,
+            line: match.line ?? null,
+            opcode: match.opcode,
+            kind: match.kind,
+            target_type: match.targetType,
+            target_name: match.targetName,
+            target_class: match.targetClass,
+            target_class_raw: match.targetClassRaw,
+            origin: match.origin,
+          })),
+          coverage: "bytecode_references",
+        };
+      }
+      case "build_harmony_abc_call_graph": {
+        const graph = await bridge.callJson(
+          request.operation,
+          "abc_call_graph",
+          xpandaCallGraphSchema,
+          {
+            fileId: load.fileId,
+            className: request.input.class_name,
+            methodName: request.input.method_name,
+            direction: request.input.direction,
+            depth: request.input.depth,
+            maxNodes: request.input.max_nodes,
+            maxClasses: request.input.max_classes,
+            simplify: request.input.simplify,
+            format: request.input.format,
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          root_class: graph.root.class,
+          root_method: graph.root.method,
+          direction: graph.direction,
+          depth: graph.depth,
+          node_count: graph.nodeCount,
+          edge_count: graph.edgeCount,
+          truncated: graph.truncated,
+          disassembly_failures: graph.disassemblyFailures,
+          source_truncated_classes: graph.sourceTruncatedClasses,
+          nodes: graph.nodes.map((node) => ({
+            id: node.id,
+            class_name: node.className,
+            class_raw: node.classRaw,
+            method: node.method,
+            depth: node.depth,
+            via: node.via,
+          })),
+          edges: graph.edges,
+          ...(graph.mermaid === undefined ? {} : { mermaid: graph.mermaid }),
+          coverage: "call_graph",
+        };
+      }
+      case "inspect_harmony_hap_abc": {
+        if (!isHapLoad(load)) throw new Error("unreachable");
+        const extracted = await bridge.callJson(
+          request.operation,
+          "hap_read_abc",
+          xpandaHapAbcSchema,
+          {
+            fileId: load.fileId,
+            ...(request.input.entry === undefined
+              ? {}
+              : { entry: request.input.entry }),
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          entry: extracted.entry,
+          cached: extracted.cached,
+          runtime: extracted.runtime,
+          bytecode_version: extracted.bytecodeVersion,
+          class_count: extracted.classCount,
+          class_name_preview: extracted.classesPreview,
+          preview_truncated: extracted.previewTruncated,
+          coverage: "hap_entry",
+        };
+      }
+      case "inspect_harmony_hap_resources": {
+        if (!isHapLoad(load)) throw new Error("unreachable");
+        const resources = await bridge.callJson(
+          request.operation,
+          "hap_resources",
+          xpandaHapResourcesSchema,
+          {
+            fileId: load.fileId,
+            ...(request.input.name === undefined
+              ? {}
+              : { name: request.input.name }),
+            ...(request.input.type === undefined
+              ? {}
+              : { type: request.input.type }),
+            ...(request.input.limit_key === undefined
+              ? {}
+              : { limitKey: request.input.limit_key }),
+            ...(request.input.id === undefined ? {} : { id: request.input.id }),
+            offset: request.input.offset,
+            limit: request.input.limit,
+          },
+          context,
+        );
+        return {
+          analysis_timeout_ms: budget,
+          engine: engineFacts,
+          format: resources.format,
+          version: resources.version,
+          total: resources.total,
+          matched: resources.matched,
+          by_type: resources.byType,
+          by_limit_key: resources.byLimitKey,
+          offset: resources.offset,
+          limit: resources.limit,
+          returned: resources.items.length,
+          truncated: resources.truncated,
+          resources: resources.items.map(
+            ({ id, name, type, limitKey, value }) => ({
+              id,
+              name,
+              resource_type: type,
+              limit_key: limitKey,
+              value,
+            }),
+          ),
+          coverage: "hap_resources",
         };
       }
     }

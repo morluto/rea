@@ -18,16 +18,23 @@ afterEach(async () => {
 });
 
 /** Create a minimal but structurally valid xpanda checkout. */
-const writeXpandaCheckout = async (version = "2.1.0"): Promise<string> => {
+const writeXpandaCheckout = async (
+  version = "2.1.0",
+  layout: "2.x" | "3.x" = "2.x",
+): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), "rea-xpanda-config-"));
   roots.push(root);
-  await mkdir(join(root, "src", "mcp"), { recursive: true });
+  const entry =
+    layout === "3.x"
+      ? join(root, "packages", "xpanda-mcp", "src", "server.ts")
+      : join(root, "src", "mcp", "server.ts");
+  await mkdir(join(entry, ".."), { recursive: true });
   await mkdir(join(root, "node_modules", "tsx"), { recursive: true });
   await writeFile(
     join(root, "package.json"),
     JSON.stringify({ name: "xpanda", version }),
   );
-  await writeFile(join(root, "src", "mcp", "server.ts"), "// producer entry\n");
+  await writeFile(entry, "// producer entry\n");
   await writeFile(
     join(root, "node_modules", "tsx", "package.json"),
     JSON.stringify({ name: "tsx", version: "4.7.0" }),
@@ -36,14 +43,18 @@ const writeXpandaCheckout = async (version = "2.1.0"): Promise<string> => {
 };
 
 describe("admitXpandaVersion", () => {
-  it("admits 2.x and records the exact version", () => {
+  it("admits 2.x and 3.x and records the exact version", () => {
     expect(admitXpandaVersion("2.1.0")).toEqual({
       status: "admitted",
       version: "2.1.0",
     });
+    expect(admitXpandaVersion("3.6.0")).toEqual({
+      status: "admitted",
+      version: "3.6.0",
+    });
   });
   it("refuses other majors with the verified version in the reason", () => {
-    expect(admitXpandaVersion("3.0.0")).toMatchObject({
+    expect(admitXpandaVersion("4.0.0")).toMatchObject({
       status: "unsupported",
     });
     expect(admitXpandaVersion("1.2.3")).toMatchObject({
@@ -119,8 +130,20 @@ describe("resolveXpandaConfiguration", () => {
     );
   });
 
-  it("refuses checkouts outside the admitted major", async () => {
-    const root = await writeXpandaCheckout("3.1.0");
+  it("admits a 3.x workspace checkout and resolves its MCP package entry", async () => {
+    const root = await writeXpandaCheckout("3.6.0", "3.x");
+    const resolved = await resolveXpandaConfiguration({
+      REA_XPANDA_ROOT: root,
+    });
+    expect(resolved).toMatchObject({ ok: true, value: { version: "3.6.0" } });
+    if (!resolved.ok) return;
+    expect(resolved.value.serverEntry).toBe(
+      join(root, "packages", "xpanda-mcp", "src", "server.ts"),
+    );
+  });
+
+  it("refuses checkouts outside the admitted majors", async () => {
+    const root = await writeXpandaCheckout("4.1.0");
     const resolved = await resolveXpandaConfiguration({
       REA_XPANDA_ROOT: root,
     });

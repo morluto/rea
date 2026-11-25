@@ -7,7 +7,7 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 
 const ENGINE_FACTS =
-  "Requires an absolute REA_XPANDA_ROOT pointing at a caller-supplied xpanda checkout (pure TypeScript, verified with 2.1.0); REA never installs or updates it. Linux and macOS. Adjust analysis_timeout_ms for the analysis wall-clock budget (default 120000); whole-file decompilation of large applications is the slowest operation. No target execution: the bytecode is parsed and rendered, never run.";
+  "Requires an absolute REA_XPANDA_ROOT pointing at a caller-supplied xpanda checkout (pure TypeScript, verified with 3.6.0; 2.x admitted for the original operations); REA never installs or updates it. Linux and macOS. Adjust analysis_timeout_ms for the analysis wall-clock budget (default 120000); whole-file decompilation and decompiled-source searches are the slowest operations. No target execution: the bytecode is parsed and rendered, never run.";
 
 const XPANDA_EFFECTS = toolEffects({
   mutatesSession: true,
@@ -156,6 +156,199 @@ export const HARMONY_ABC_TOOL_CONTRACTS = [
           pattern: "https://",
           limit: 50,
         },
+      },
+    ],
+  },
+  {
+    name: "inspect_harmony_abc_class",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("inspect_harmony_abc_class", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Inspect one class of a local HarmonyOS Ark bytecode (.abc) file with xpanda: superclass, access flags, the field table with types, the method table with shorty prototypes, and import/export module bindings. Metadata only; no decompilation. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.inspect_harmony_abc_class,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.inspect_harmony_abc_class,
+    ),
+    examples: [
+      {
+        title: "Inspect a class declaration",
+        input: {
+          path: "/tmp/modules.abc",
+          class_name: "com.example.MainAbility",
+        },
+      },
+    ],
+  },
+  {
+    name: "decompile_harmony_abc_method",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("decompile_harmony_abc_method", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Decompile one method of a local HarmonyOS Ark bytecode (.abc) file to producer-generated JavaScript with xpanda, returning only that method's source instead of the whole class. Degraded and truncation flags match class decompilation; the producer caps a transfer at 50,000 characters. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.decompile_harmony_abc_method,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.decompile_harmony_abc_method,
+    ),
+    examples: [
+      {
+        title: "Decompile one method",
+        input: {
+          path: "/tmp/modules.abc",
+          class_name: "com.example.MainAbility",
+          method_name: "onCreate",
+        },
+      },
+    ],
+  },
+  {
+    name: "search_harmony_abc_symbols",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("search_harmony_abc_symbols", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Search class, method and field names of a local HarmonyOS Ark bytecode (.abc) file with xpanda without decompiling. Supports substring or regular-expression queries, a symbol kind, a class filter, external symbols and paging. Use it to locate a class or method before inspecting or decompiling. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.search_harmony_abc_symbols,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.search_harmony_abc_symbols,
+    ),
+    examples: [
+      {
+        title: "Find entry-point methods",
+        input: { path: "/tmp/modules.abc", query: "onCreate", kind: "method" },
+      },
+      {
+        title: "List classes in a package",
+        input: {
+          path: "/tmp/modules.abc",
+          query: "",
+          kind: "class",
+          class_filter: "com.example",
+        },
+      },
+    ],
+  },
+  {
+    name: "search_harmony_abc_code",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("search_harmony_abc_code", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Search decompiled JavaScript of a local HarmonyOS Ark bytecode (.abc) file with xpanda: substring or regular expression, optional class filter, context lines, and paging. Matching classes are decompiled on demand, so report scanned, skipped and failed classes and make truncation explicit; use whole-file decompilation for exhaustive searches. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.search_harmony_abc_code,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.search_harmony_abc_code,
+    ),
+    examples: [
+      {
+        title: "Find URL construction",
+        input: {
+          path: "/tmp/modules.abc",
+          pattern: "https://",
+          class_filter: "com.example",
+        },
+      },
+    ],
+  },
+  {
+    name: "trace_harmony_abc_references",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("trace_harmony_abc_references", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Find references to a class, method, field or string in a local HarmonyOS Ark bytecode (.abc) file with xpanda: bytecode cross-references and, for dynamic bytecode, optional decompiled-source call sites. Dynamic call targets live in the accumulator, so source scanning can find indirect calls the bytecode index cannot; report scanned classes, disassembly failures and truncation. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.trace_harmony_abc_references,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.trace_harmony_abc_references,
+    ),
+    examples: [
+      {
+        title: "Find callers of a method",
+        input: {
+          path: "/tmp/modules.abc",
+          target_type: "method",
+          target: "onCreate",
+          owner_class: "com.example.MainAbility",
+          source: true,
+        },
+      },
+    ],
+  },
+  {
+    name: "build_harmony_abc_call_graph",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("build_harmony_abc_call_graph", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Build a call graph around one method of a local HarmonyOS Ark bytecode (.abc) file with xpanda: callers, callees or both, bounded depth and node count, with an optional Mermaid rendering. Static bytecode uses exact instructions; dynamic bytecode derives call edges from decompiled source and reports truncation and disassembly failures. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.build_harmony_abc_call_graph,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.build_harmony_abc_call_graph,
+    ),
+    examples: [
+      {
+        title: "Map callers two levels up",
+        input: {
+          path: "/tmp/modules.abc",
+          class_name: "com.example.MainAbility",
+          method_name: "onCreate",
+          direction: "callers",
+          depth: 2,
+          format: "mermaid",
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_harmony_hap_abc",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("inspect_harmony_hap_abc", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Extract one .abc entry from a local HarmonyOS application package (.hap) with xpanda and report its header facts: runtime (dynamic or static), bytecode version and a class-name preview. Select the entry when the package holds more than one; use the other HarmonyOS tools on an extracted .abc file. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.inspect_harmony_hap_abc,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.inspect_harmony_hap_abc,
+    ),
+    examples: [
+      {
+        title: "Inspect the main module bytecode",
+        input: { path: "/tmp/app.hap", entry: "ets/modules.abc" },
+      },
+    ],
+  },
+  {
+    name: "inspect_harmony_hap_resources",
+    cli: true,
+    availability: { host: "harmonyAbc" },
+    ...toolContractMetadata("inspect_harmony_hap_resources", XPANDA_EFFECTS),
+    kind: "harmony-provider",
+    description:
+      "Inspect the resource table of a local HarmonyOS application package (.hap) with xpanda: parse resources.index (Restool or RestoolV2), filter by name, type, qualifier or ID, and page the rows with type and qualifier totals. Report totals and truncation; this reads declarations, not resolved runtime values. " +
+      ENGINE_FACTS,
+    inputSchema: harmonyAbcInputSchemas.inspect_harmony_hap_resources,
+    outputSchema: evidenceResultOf(
+      harmonyAbcResultSchemas.inspect_harmony_hap_resources,
+    ),
+    examples: [
+      {
+        title: "Find a string resource",
+        input: { path: "/tmp/app.hap", name: "app_name", type: "string" },
       },
     ],
   },

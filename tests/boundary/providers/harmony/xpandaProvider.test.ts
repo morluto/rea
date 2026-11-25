@@ -74,6 +74,7 @@ it("inspects a staged snapshot and closes the producer session", async () => {
   expect(calls_log.map(({ method }) => method)).toEqual([
     "initialize",
     "tools/call",
+    "tools/list",
     "tools/call",
   ]);
 });
@@ -114,6 +115,72 @@ it("executes every named operation against the producer surface", async () => {
         limit: 100,
       },
     },
+    {
+      operation: "inspect_harmony_abc_class",
+      input: { ...targetOf(fixture), class_name: "_GLOBAL" },
+    },
+    {
+      operation: "decompile_harmony_abc_method",
+      input: {
+        ...targetOf(fixture),
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+        simplify: true,
+      },
+    },
+    {
+      operation: "search_harmony_abc_symbols",
+      input: {
+        ...targetOf(fixture),
+        query: "main",
+        kind: "all",
+        regex: false,
+        case_sensitive: false,
+        include_external: true,
+        offset: 0,
+        limit: 50,
+      },
+    },
+    {
+      operation: "search_harmony_abc_code",
+      input: {
+        ...targetOf(fixture),
+        pattern: "md5",
+        regex: false,
+        case_sensitive: false,
+        simplify: true,
+        max_classes: 100,
+        context_lines: 0,
+        offset: 0,
+        limit: 50,
+      },
+    },
+    {
+      operation: "trace_harmony_abc_references",
+      input: {
+        ...targetOf(fixture),
+        target_type: "class",
+        target: "_GLOBAL",
+        source: false,
+        max_classes: 200,
+        offset: 0,
+        limit: 50,
+      },
+    },
+    {
+      operation: "build_harmony_abc_call_graph",
+      input: {
+        ...targetOf(fixture),
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+        direction: "both",
+        depth: 2,
+        max_nodes: 200,
+        max_classes: 200,
+        simplify: true,
+        format: "json",
+      },
+    },
   ];
   for (const request of operations) {
     const execution = await run(fixture, request);
@@ -123,6 +190,42 @@ it("executes every named operation against the producer surface", async () => {
   await access(join(output, "_GLOBAL.js"), constants.R_OK);
   const calls = await fakeXpandaCalls(fixture.callsPath);
   expect(calls.filter(({ method }) => method === "initialize")).toHaveLength(1);
+});
+
+it("inspects a .hap entry and its resources against the producer surface", async () => {
+  const fixture = await xpandaFixture({ hap: true });
+  onTestFinished(() => fixture.provider.close().catch(() => undefined));
+  const entry = await run(fixture, {
+    operation: "inspect_harmony_hap_abc",
+    input: {
+      path: fixture.targetPath,
+      entry: "ets/modules.abc",
+    },
+  });
+  expect(entry.result).toMatchObject({
+    entry: "ets/modules.abc",
+    runtime: "dynamic",
+    class_count: 2,
+    coverage: "hap_entry",
+  });
+  expect(entry.subject).toMatchObject({ format: "hap" });
+  const resources = await run(fixture, {
+    operation: "inspect_harmony_hap_resources",
+    input: {
+      path: fixture.targetPath,
+      name: "app",
+      offset: 0,
+      limit: 50,
+    },
+  });
+  expect(resources.result).toMatchObject({
+    format: "RestoolV2",
+    matched: 1,
+    resources: [
+      { id: "0x03000003", name: "app_name", resource_type: "string" },
+    ],
+    coverage: "hap_resources",
+  });
 });
 
 it("refuses an existing export directory without calling the producer", async () => {

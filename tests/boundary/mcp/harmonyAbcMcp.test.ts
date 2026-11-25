@@ -40,10 +40,40 @@ const argumentsFor = (
         offset: 0,
         limit: 100,
       };
+    case "inspect_harmony_abc_class":
+      return { path: target, class_name: "_GLOBAL" };
+    case "decompile_harmony_abc_method":
+      return {
+        path: target,
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+        simplify: true,
+      };
+    case "search_harmony_abc_symbols":
+      return { path: target, query: "main", kind: "all" };
+    case "search_harmony_abc_code":
+      return { path: target, pattern: "md5" };
+    case "trace_harmony_abc_references":
+      return { path: target, target_type: "class", target: "_GLOBAL" };
+    case "build_harmony_abc_call_graph":
+      return {
+        path: target,
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+      };
+    case "inspect_harmony_hap_abc":
+      return { path: target, entry: "ets/modules.abc" };
+    case "inspect_harmony_hap_resources":
+      return { path: target, name: "app", limit: 50 };
   }
 };
 
-it("executes named HarmonyOS contracts with inline Evidence and no native binary admission", async () => {
+const HAP_CONTRACTS: ReadonlySet<string> = new Set([
+  "inspect_harmony_hap_abc",
+  "inspect_harmony_hap_resources",
+]);
+
+it("executes named HarmonyOS .abc contracts with inline Evidence and no native binary admission", async () => {
   const fixture = await xpandaFixture();
   const session = createTestBinarySession(() => {
     throw new Error(
@@ -69,7 +99,9 @@ it("executes named HarmonyOS contracts with inline Evidence and no native binary
   await client.connect(clientTransport);
   const advertised = await client.listTools();
   const output = join(await tempRoot(), "decompiled");
-  for (const contract of HARMONY_ABC_TOOL_CONTRACTS) {
+  for (const contract of HARMONY_ABC_TOOL_CONTRACTS.filter(
+    ({ name }) => !HAP_CONTRACTS.has(name),
+  )) {
     expect(
       advertised.tools.find((tool) => tool.name === contract.name)?.annotations,
     ).toMatchObject(contract.annotations);
@@ -87,6 +119,49 @@ it("executes named HarmonyOS contracts with inline Evidence and no native binary
       format: "abc",
     });
     expect(evidence.raw_result).not.toBeNull();
+  }
+});
+
+it("inspects a .hap package entry and its resource table as Evidence", async () => {
+  const fixture = await xpandaFixture({ hap: true });
+  const session = createTestBinarySession(() => {
+    throw new Error(
+      "HarmonyOS package analysis must not acquire a native provider",
+    );
+  });
+  const server = createServer(
+    { kind: "session", session },
+    { harmonyAbc: fixture.provider },
+  );
+  const client = new Client(
+    { name: "harmony-hap-regression", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  for (const contract of HARMONY_ABC_TOOL_CONTRACTS.filter(({ name }) =>
+    HAP_CONTRACTS.has(name),
+  )) {
+    const response = await client.callTool({
+      name: contract.name,
+      arguments: argumentsFor(contract.name, fixture.targetPath, ""),
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const result = contract.outputSchema.parse(response.structuredContent);
+    const evidence = parseEvidence(result);
+    expect(evidence.operation).toBe(contract.name);
+    expect(evidence.provider.id).toBe("xpanda");
+    expect(evidence.subject?.identity).toMatchObject({
+      kind: "file",
+      format: "hap",
+    });
   }
 });
 

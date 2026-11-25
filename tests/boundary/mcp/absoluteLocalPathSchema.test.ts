@@ -161,6 +161,70 @@ const harmonyAbcPathCases = (
         limit: 100,
       },
     },
+    {
+      name: "inspect_harmony_abc_class",
+      field: "path",
+      valid: { path: absolute, class_name: "_GLOBAL" },
+      invalid: { path: relative, class_name: "_GLOBAL" },
+    },
+    {
+      name: "decompile_harmony_abc_method",
+      field: "path",
+      valid: {
+        path: absolute,
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+      },
+      invalid: {
+        path: relative,
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+      },
+    },
+    {
+      name: "search_harmony_abc_symbols",
+      field: "path",
+      valid: { path: absolute, query: "main" },
+      invalid: { path: relative, query: "main" },
+    },
+    {
+      name: "search_harmony_abc_code",
+      field: "path",
+      valid: { path: absolute, pattern: "md5" },
+      invalid: { path: relative, pattern: "md5" },
+    },
+    {
+      name: "trace_harmony_abc_references",
+      field: "path",
+      valid: { path: absolute, target_type: "class", target: "_GLOBAL" },
+      invalid: { path: relative, target_type: "class", target: "_GLOBAL" },
+    },
+    {
+      name: "build_harmony_abc_call_graph",
+      field: "path",
+      valid: {
+        path: absolute,
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+      },
+      invalid: {
+        path: relative,
+        class_name: "_GLOBAL",
+        method_name: "func_main_0",
+      },
+    },
+    {
+      name: "inspect_harmony_hap_abc",
+      field: "path",
+      valid: { path: absolute },
+      invalid: { path: relative },
+    },
+    {
+      name: "inspect_harmony_hap_resources",
+      field: "path",
+      valid: { path: absolute },
+      invalid: { path: relative },
+    },
   ].map(({ field, ...entry }) => ({ ...entry, field, issuePath: [field] }));
 
 const inputCases = (

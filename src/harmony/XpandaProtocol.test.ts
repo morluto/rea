@@ -238,6 +238,41 @@ describe("abc_decompile_class text parsing", () => {
     });
   });
 
+  it("parses the 3.6 header with lines, cache and page facts", () => {
+    const parsed = parseXpandaDecompile(
+      "decompile_harmony_abc_class",
+      `// xpanda-mcp class=_GLOBAL simplified=true degraded=false chars=${DECOMPILE_BODY.length} lines=4 cached=true offset=0 returned=4 truncated=false\n${DECOMPILE_BODY}`,
+    );
+    expect(parsed).toMatchObject({
+      className: "_GLOBAL",
+      methodName: null,
+      truncated: false,
+      characters: DECOMPILE_BODY.length,
+    });
+    expect(parsed.content).toBe(DECOMPILE_BODY);
+  });
+
+  it("parses a 3.6 method header and a paged transfer", () => {
+    const method = parseXpandaDecompile(
+      "decompile_harmony_abc_method",
+      `// xpanda-mcp class=_GLOBAL method=onCreate simplified=true degraded=false chars=${DECOMPILE_BODY.length} lines=4 cached=false offset=0 returned=4 truncated=false\n${DECOMPILE_BODY}`,
+    );
+    expect(method).toMatchObject({
+      className: "_GLOBAL",
+      methodName: "onCreate",
+      truncated: false,
+    });
+    const page = parseXpandaDecompile(
+      "decompile_harmony_abc_class",
+      "// xpanda-mcp class=C simplified=true degraded=false chars=90000 lines=4000 cached=false offset=0 returned=1000 truncated=true next_offset=1000\nfirst page",
+    );
+    expect(page).toMatchObject({
+      truncated: true,
+      characters: 90_000,
+      content: "first page",
+    });
+  });
+
   it("recognizes the producer's empty-decompilation marker", () => {
     const parsed = parseXpandaDecompile(
       "decompile_harmony_abc_class",

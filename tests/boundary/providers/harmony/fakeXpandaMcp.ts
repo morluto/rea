@@ -32,6 +32,23 @@ const textReply = (id, text) =>
   reply(id, { content: [{ type: "text", text }] });
 const jsonReply = (id, value) => textReply(id, JSON.stringify(value, null, 2));
 
+const TOOL_NAMES = [
+  "abc_load",
+  "abc_close",
+  "abc_list_classes",
+  "abc_get_class",
+  "abc_decompile_class",
+  "abc_decompile_method",
+  "abc_export",
+  "abc_disassemble_method",
+  "abc_search_strings",
+  "abc_search_symbols",
+  "abc_search_code",
+  "abc_xrefs",
+  "abc_call_graph",
+  "hap_read_abc",
+  "hap_resources",
+];
 const cannedLoad = () => ({
   fileId: "md5-5411df7",
   path: "/rea-fake/staged/input.abc",
@@ -46,6 +63,20 @@ const cannedLoad = () => ({
   previewTruncated: false,
   hint: "使用 abc_list_classes 分页浏览全部类;abc_decompile_class 反编译单个类。",
   ...(behavior.loadFacts ?? {}),
+});
+const cannedHapLoad = () => ({
+  kind: "hap",
+  fileId: "hap-md5",
+  path: "/rea-fake/staged/input.abc",
+  cached: false,
+  bundleName: "com.example.app",
+  moduleName: "entry",
+  versionName: "1.0.0",
+  virtualMachine: "ark",
+  fileSizeBytes: 8016,
+  abcEntries: [{ name: "ets/modules.abc", size: 7000 }],
+  resourceItemCount: 3,
+  hint: "hap_read_abc 把 .abc 条目解出为 abc 会话(返回 abcFileId);hap_resources 查询资源表。",
 });
 const cannedList = (fileId) => ({
   fileId,
@@ -62,7 +93,143 @@ const cannedList = (fileId) => ({
 const DECOMPILE_BODY = "/*\n* class name:L_GLOBAL;\n*/\n(function () {})();\n";
 const cannedDecompile = (className) =>
   "// xpanda-mcp class=" + className + " simplified=true degraded=false chars=" +
-  Buffer.byteLength(DECOMPILE_BODY) + "\n" + DECOMPILE_BODY;
+  Buffer.byteLength(DECOMPILE_BODY) + " lines=4 cached=false offset=0 returned=4 truncated=false\n" +
+  DECOMPILE_BODY;
+const cannedMethodDecompile = (className, methodName) =>
+  "// xpanda-mcp class=" + className + " method=" + methodName +
+  " simplified=true degraded=false chars=" + Buffer.byteLength(DECOMPILE_BODY) +
+  " lines=4 cached=false offset=0 returned=4 truncated=false\n" + DECOMPILE_BODY;
+const cannedClassMetadata = (fileId, className) => ({
+  fileId,
+  name: className,
+  rawName: "L" + className + ";",
+  superClass: "java.lang.Object",
+  external: false,
+  accessFlags: "0x1",
+  fields: [{ name: "slot", type: "i32", external: false }],
+  methods: [
+    {
+      name: "func_main_0",
+      accessFlags: "0x9",
+      external: false,
+      hasCode: true,
+      hasTryCatch: false,
+      shorty: "v ()",
+    },
+  ],
+  imports: [],
+  exports: [],
+});
+const cannedSymbols = (fileId) => ({
+  fileId,
+  total: 1,
+  offset: 0,
+  limit: 50,
+  returned: 1,
+  truncated: false,
+  matches: [
+    {
+      kind: "method",
+      rawName: "func_main_0",
+      name: "func_main_0",
+      ownerClass: "L_GLOBAL;",
+      ownerClassName: "_GLOBAL",
+      hasCode: true,
+      external: false,
+    },
+  ],
+});
+const cannedCodeSearch = (fileId) => ({
+  fileId,
+  pattern: "md5",
+  simplified: true,
+  scannedClasses: 1,
+  skippedClasses: 0,
+  failedClasses: [],
+  failedClassCount: 0,
+  candidateClasses: 1,
+  truncatedClasses: false,
+  total: 1,
+  offset: 0,
+  limit: 50,
+  returned: 1,
+  truncated: false,
+  matches: [
+    { className: "_GLOBAL", line: 2, text: "  md5();", method: "func_main_0", methodKind: "function" },
+  ],
+  hint: "可用 abc_decompile_class 的 offset/limit 查看命中行附近上下文。",
+});
+const cannedXrefs = (fileId) => ({
+  fileId,
+  targetType: "class",
+  target: "_GLOBAL",
+  targetOwner: null,
+  total: 1,
+  offset: 0,
+  limit: 50,
+  returned: 1,
+  truncated: false,
+  sourceScannedClasses: 0,
+  sourceTruncatedClasses: false,
+  xrefCount: 1,
+  disassemblyFailures: 0,
+  matches: [
+    {
+      fromClass: "_GLOBAL",
+      fromClassRaw: "L_GLOBAL;",
+      fromMethod: "func_main_0",
+      pc: 8,
+      opcode: "lda",
+      kind: "call",
+      targetType: "class",
+      targetName: "_GLOBAL",
+      targetClass: null,
+      targetClassRaw: null,
+      origin: "bytecode",
+    },
+  ],
+  hint: "static 字节码的方法/字段/类引用来自精确指令操作数。",
+});
+const cannedCallGraph = (fileId, className, methodName) => ({
+  fileId,
+  root: { class: className, classRaw: "L" + className + ";", method: methodName },
+  direction: "both",
+  depth: 2,
+  nodeCount: 2,
+  edgeCount: 1,
+  truncated: false,
+  disassemblyFailures: 0,
+  sourceTruncatedClasses: false,
+  nodes: [
+    { id: className + "#" + methodName, classRaw: "L" + className + ";", className: className, method: methodName, depth: 0, via: ["root"] },
+    { id: className + "#caller", classRaw: "L" + className + ";", className: className, method: "caller", depth: 1, via: ["callers"] },
+  ],
+  edges: [{ from: className + "#caller", to: className + "#" + methodName, kind: "call" }],
+});
+const cannedHapAbc = () => ({
+  abcFileId: "hap-md5-entry",
+  entry: "ets/modules.abc",
+  cached: false,
+  runtime: "dynamic",
+  bytecodeVersion: "11.0.2.0",
+  classCount: 2,
+  classesPreview: ["_ESSlotNumberAnnotation", "_GLOBAL"],
+  previewTruncated: false,
+  hint: "abcFileId 可用于 abc_list_classes / abc_decompile_class / abc_search_strings 等全部 abc_* 工具。",
+});
+const cannedHapResources = (fileId) => ({
+  fileId,
+  format: "RestoolV2",
+  version: 1,
+  total: 3,
+  matched: 1,
+  byType: { string: 1 },
+  byLimitKey: { base: 1 },
+  offset: 0,
+  limit: 50,
+  items: [{ id: "0x03000003", name: "app_name", type: "string", limitKey: "base", value: "REA" }],
+  truncated: false,
+});
 const cannedDisassembly =
   "method: func_main_0  vregs=0 args=3  blocks=1\n\nentry:\n\t0:definefunc || acc = 0, method:\"#1#\", 0\n\t8:returnundefined || ";
 const cannedStrings = (fileId) => ({
@@ -117,7 +284,12 @@ process.stdin.on("data", (chunk) => {
         serverInfo: { name: "xpanda", version: "1.0.0" },
       });
     } else if (method === "tools/list") {
-      reply(id, { tools: [] });
+      reply(id, {
+        tools: TOOL_NAMES.map((name) => ({
+          name,
+          inputSchema: { type: "object", properties: {} },
+        })),
+      });
     } else if (method === "ping") {
       reply(id, {});
     } else if (method === "tools/call") {
@@ -129,7 +301,7 @@ process.stdin.on("data", (chunk) => {
           replyError(id, "PandaParseException: invalid magic PANDA\\0\\0\\0 missing; the file may not be Ark bytecode");
           return;
         }
-        jsonReply(id, cannedLoad());
+        jsonReply(id, behavior.hap === true ? cannedHapLoad() : cannedLoad());
       } else if (name === "abc_close") {
         jsonReply(id, { fileId: args.fileId, closed: true });
       } else if (name === "abc_list_classes") {
@@ -158,6 +330,38 @@ process.stdin.on("data", (chunk) => {
         if (behavior.abc_export === "hang") return hang();
         if (behavior.abc_export === "error") return replyError(id, "export failed");
         jsonReply(id, cannedExport(args.fileId, args.outDir));
+      } else if (name === "abc_get_class") {
+        jsonReply(
+          id,
+          cannedClassMetadata(args.fileId, args.className ?? "_GLOBAL"),
+        );
+      } else if (name === "abc_decompile_method") {
+        textReply(
+          id,
+          cannedMethodDecompile(
+            args.className ?? "_GLOBAL",
+            args.methodName ?? "func_main_0",
+          ),
+        );
+      } else if (name === "abc_search_symbols") {
+        jsonReply(id, cannedSymbols(args.fileId));
+      } else if (name === "abc_search_code") {
+        jsonReply(id, cannedCodeSearch(args.fileId));
+      } else if (name === "abc_xrefs") {
+        jsonReply(id, cannedXrefs(args.fileId));
+      } else if (name === "abc_call_graph") {
+        jsonReply(
+          id,
+          cannedCallGraph(
+            args.fileId,
+            args.className ?? "_GLOBAL",
+            args.methodName ?? "func_main_0",
+          ),
+        );
+      } else if (name === "hap_read_abc") {
+        jsonReply(id, cannedHapAbc());
+      } else if (name === "hap_resources") {
+        jsonReply(id, cannedHapResources(args.fileId));
       } else if (name === "abc_search_strings") {
         if (behavior.abc_search_strings === "hang") return hang();
         if (behavior.abc_search_strings === "error")
@@ -175,6 +379,7 @@ process.on("disconnect", () => process.exit(0));
 `;
 
 export interface FakeXpandaBehavior {
+  readonly hap?: boolean;
   readonly load?: "ok" | "badmagic" | "hang";
   readonly loadFacts?: Record<string, unknown>;
   readonly abc_list_classes?: "ok" | "error" | "hang" | "not-json";

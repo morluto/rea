@@ -174,6 +174,36 @@ export const xpandaLoadSchema = z.object({
 
 export type XpandaLoad = z.infer<typeof xpandaLoadSchema>;
 
+/** abc_load on a .hap container: the package entry inventory, not bytecode facts. */
+export const xpandaHapLoadSchema = z.object({
+  kind: z.literal("hap"),
+  fileId: z.string().min(1),
+  path: z.string().min(1),
+  cached: producerBoolean,
+  bundleName: z.string().nullable(),
+  moduleName: z.string().nullable(),
+  versionName: z.string().nullable(),
+  virtualMachine: z.string().nullable(),
+  fileSizeBytes: producerInteger,
+  abcEntries: z.array(z.object({ name: z.string(), size: producerInteger })),
+  resourceItemCount: producerInteger,
+  hint: z.string().optional(),
+});
+
+export type XpandaHapLoad = z.infer<typeof xpandaHapLoadSchema>;
+
+/** A loaded producer session: .abc facts (2.x has no `kind`) or a .hap package. */
+export const xpandaSessionSchema = z.union([
+  xpandaHapLoadSchema,
+  xpandaLoadSchema,
+]);
+
+export type XpandaSession = z.infer<typeof xpandaSessionSchema>;
+
+/** Whether a loaded session is a .hap container rather than an .abc file. */
+export const isHapLoad = (load: XpandaSession): load is XpandaHapLoad =>
+  "kind" in load && load.kind === "hap";
+
 /** abc_list_classes: one page of the demangled class inventory. */
 export const xpandaClassListSchema = z.object({
   fileId: z.string().min(1),
@@ -223,9 +253,8 @@ export const xpandaStringMatchesSchema = z.object({
 
 export type XpandaStringMatches = z.infer<typeof xpandaStringMatchesSchema>;
 
-/** Strict header of abc_decompile_class's text result. */
-const DECOMPILE_HEADER =
-  /^\/\/ xpanda-mcp class=(.*) simplified=(true|false) degraded=(true|false) chars=(\d+)( TRUNCATED)?\n/u;
+/** Strict header of decompilation text results (2.x and 3.x producers). */
+const DECOMPILE_HEADER_PREFIX = "// xpanda-mcp ";
 /** Character count the producer caps a single-class transfer at. */
 export const XPANDA_DECOMPILE_TRANSFER_CAP = 50_000;
 /** Producer comment appended to a decompilation that produced nothing. */
@@ -234,6 +263,8 @@ const EMPTY_DECOMPILE_MARKER =
 
 export interface XpandaDecompile {
   readonly className: string;
+  /** The method a 3.x method-scoped decompilation names, else null. */
+  readonly methodName: string | null;
   readonly simplified: boolean;
   readonly degraded: boolean;
   readonly emptyResult: boolean;
@@ -243,7 +274,59 @@ export interface XpandaDecompile {
 }
 
 /**
- * Parse abc_decompile_class output. When the producer did not truncate, the
+ * Read the producer's header tokens. 2.x writes
+ * `class=X simplified=… degraded=… chars=N[ TRUNCATED]`; 3.x appends
+ * `lines=… cached=… offset=… returned=… truncated=…` and, for method-scoped
+ * decompilation, `method=…` after the class.
+ */
+const parseDecompileHeader = (
+  operation: string,
+  headerLine: string,
+): {
+  readonly fields: ReadonlyMap<string, string>;
+  readonly legacyTruncated: boolean;
+} => {
+  if (!headerLine.startsWith(DECOMPILE_HEADER_PREFIX))
+    throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
+      diagnostics: {
+        reason:
+          "decompilation output did not start with the documented xpanda header line",
+        text_prefix: headerLine.slice(0, 256),
+      },
+      remediationAction:
+        "Retry the operation; a repeated malformed header indicates an xpanda release incompatible with this integration.",
+    });
+  const fields = new Map<string, string>();
+  let legacyTruncated = false;
+  for (const token of headerLine
+    .slice(DECOMPILE_HEADER_PREFIX.length)
+    .split(" ")) {
+    if (token.length === 0) continue;
+    if (token === "TRUNCATED") {
+      legacyTruncated = true;
+      continue;
+    }
+    const equals = token.indexOf("=");
+    if (equals <= 0) continue;
+    fields.set(token.slice(0, equals), token.slice(equals + 1));
+  }
+  if (
+    !fields.has("class") ||
+    !fields.has("simplified") ||
+    !fields.has("degraded") ||
+    !fields.has("chars")
+  )
+    throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
+      diagnostics: {
+        reason: "decompilation output header omitted a documented field",
+        header: headerLine,
+      },
+    });
+  return { fields, legacyTruncated };
+};
+
+/**
+ * Parse decompilation output. When the producer did not truncate, the
  * declared character count must match the transferred payload exactly; a
  * mismatch means the transfer lost bytes and fails instead of guessing.
  */
@@ -254,6 +337,7 @@ export const parseXpandaDecompile = (
   if (text.trim() === EMPTY_DECOMPILE_MARKER)
     return {
       className: "",
+      methodName: null,
       simplified: true,
       degraded: false,
       emptyResult: true,
@@ -261,41 +345,55 @@ export const parseXpandaDecompile = (
       characters: 0,
       content: "",
     };
-  const header = DECOMPILE_HEADER.exec(text);
-  if (header === null)
+  const newline = text.indexOf("\n");
+  if (newline <= 0)
     throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
       diagnostics: {
         reason:
-          "abc_decompile_class output did not start with the documented xpanda header line",
+          "decompilation output did not start with the documented xpanda header line",
         text_prefix: text.slice(0, 256),
       },
       remediationAction:
         "Retry the operation; a repeated malformed header indicates an xpanda release incompatible with this integration.",
     });
-  const [, className, simplified, degraded, characters, truncated] = header;
-  const content = text.slice(header[0].length);
-  const declared = Number.parseInt(characters ?? "", 10);
-  const payloadComplete =
-    truncated === undefined && content.length === declared;
+  const header = parseDecompileHeader(operation, text.slice(0, newline));
+  const field = (name: string): string | undefined => header.fields.get(name);
+  const content = text.slice(newline + 1);
+  const declared = Number.parseInt(field("chars") ?? "", 10);
   const payloadTruncated =
-    truncated === " TRUNCATED" &&
-    content.length >= XPANDA_DECOMPILE_TRANSFER_CAP;
+    header.legacyTruncated || field("truncated") === "true";
+  const payloadComplete = !payloadTruncated && content.length === declared;
+  const legacyCapTruncation =
+    header.legacyTruncated && content.length >= XPANDA_DECOMPILE_TRANSFER_CAP;
   if (!payloadComplete && !payloadTruncated)
     throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
       diagnostics: {
         reason:
-          "abc_decompile_class transferred a different payload length than its header declared",
+          "decompilation transferred a different payload length than its header declared",
         declared_characters: declared,
         transferred_characters: content.length,
-        header_truncated: truncated ?? null,
       },
     });
+  if (payloadTruncated && !legacyCapTruncation) {
+    // 3.x pages long output; the header names the complete character count,
+    // so a page must still be a prefix no longer than that count.
+    if (content.length === 0 || content.length > declared)
+      throw new ProviderAdapterError(XPANDA_PROVIDER_ID, operation, {
+        diagnostics: {
+          reason:
+            "decompilation page length is inconsistent with its declared character count",
+          declared_characters: declared,
+          transferred_characters: content.length,
+        },
+      });
+  }
   return {
-    className: className ?? "",
-    simplified: simplified === "true",
-    degraded: degraded === "true",
+    className: field("class") ?? "",
+    methodName: field("method") ?? null,
+    simplified: field("simplified") === "true",
+    degraded: field("degraded") === "true",
     emptyResult: false,
-    truncated: !payloadComplete,
+    truncated: payloadTruncated,
     characters: declared,
     content,
   };
@@ -351,3 +449,217 @@ export const parseXpandaDisassembly = (
     text,
   };
 };
+
+/** abc_get_class: one class's metadata tables. */
+const xpandaAccessFlags = z.string().min(1);
+export const xpandaClassMetadataSchema = z.object({
+  fileId: z.string().min(1),
+  name: z.string().min(1),
+  rawName: z.string().min(1),
+  superClass: z.string().nullable(),
+  external: producerBoolean,
+  accessFlags: xpandaAccessFlags,
+  fields: z.array(
+    z.object({
+      name: z.string(),
+      type: z.string().nullable(),
+      external: producerBoolean,
+    }),
+  ),
+  methods: z.array(
+    z.object({
+      name: z.string(),
+      accessFlags: xpandaAccessFlags,
+      external: producerBoolean,
+      hasCode: producerBoolean,
+      hasTryCatch: producerBoolean,
+      shorty: z.string().nullable(),
+    }),
+  ),
+  imports: z.array(
+    z.object({
+      localName: z.string(),
+      importName: z.string(),
+      path: z.string(),
+      kind: z.union([z.string(), z.number()]).nullable(),
+    }),
+  ),
+  exports: z.array(
+    z.object({
+      localName: z.string(),
+      exportName: z.string(),
+      path: z.string(),
+      kind: z.union([z.string(), z.number()]).nullable(),
+    }),
+  ),
+});
+
+export type XpandaClassMetadata = z.infer<typeof xpandaClassMetadataSchema>;
+
+/** abc_search_symbols: one page of class/method/field matches. */
+export const xpandaSymbolSearchSchema = z.object({
+  fileId: z.string().min(1),
+  total: producerInteger,
+  offset: producerInteger,
+  limit: producerInteger,
+  returned: producerInteger,
+  truncated: producerBoolean,
+  matches: z.array(
+    z.object({
+      kind: z.enum(["class", "method", "field"]),
+      rawName: z.string(),
+      name: z.string(),
+      ownerClass: z.string().optional(),
+      ownerClassName: z.string().optional(),
+      type: z.string().optional(),
+      methodCount: producerInteger.optional(),
+      fieldCount: producerInteger.optional(),
+      external: producerBoolean.optional(),
+      hasCode: producerBoolean.optional(),
+    }),
+  ),
+});
+
+export type XpandaSymbolSearch = z.infer<typeof xpandaSymbolSearchSchema>;
+
+/** abc_search_code: one page of decompiled-source matches. */
+export const xpandaCodeSearchSchema = z.object({
+  fileId: z.string().min(1),
+  pattern: z.string(),
+  simplified: producerBoolean,
+  scannedClasses: producerInteger,
+  skippedClasses: producerInteger,
+  failedClasses: z.array(z.string()),
+  failedClassCount: producerInteger,
+  candidateClasses: producerInteger,
+  truncatedClasses: producerBoolean,
+  total: producerInteger,
+  offset: producerInteger,
+  limit: producerInteger,
+  returned: producerInteger,
+  truncated: producerBoolean,
+  matches: z.array(
+    z.object({
+      className: z.string(),
+      line: producerInteger,
+      text: z.string(),
+      method: z.string().optional(),
+      methodKind: z.string().optional(),
+      context: z
+        .array(z.object({ line: producerInteger, text: z.string() }))
+        .optional(),
+    }),
+  ),
+  hint: z.string().optional(),
+});
+
+export type XpandaCodeSearch = z.infer<typeof xpandaCodeSearchSchema>;
+
+/** abc_xrefs: one page of class/method/field/string references. */
+export const xpandaXrefsSchema = z.object({
+  fileId: z.string().min(1),
+  targetType: z.enum(["class", "method", "field", "string"]),
+  target: z.string(),
+  targetOwner: z.string().nullable(),
+  total: producerInteger,
+  offset: producerInteger,
+  limit: producerInteger,
+  returned: producerInteger,
+  truncated: producerBoolean,
+  sourceScannedClasses: producerInteger,
+  sourceTruncatedClasses: producerBoolean,
+  xrefCount: producerInteger,
+  disassemblyFailures: producerInteger,
+  matches: z.array(
+    z.object({
+      fromClass: z.string(),
+      fromClassRaw: z.string(),
+      fromMethod: z.string(),
+      pc: z.number().int().nullable(),
+      line: z.number().int().nullable().optional(),
+      opcode: z.string().nullable(),
+      kind: z.string(),
+      targetType: z.enum(["class", "method", "field", "string"]),
+      targetName: z.string(),
+      targetClass: z.string().nullable(),
+      targetClassRaw: z.string().nullable(),
+      origin: z.enum(["bytecode", "source"]),
+    }),
+  ),
+  hint: z.string().optional(),
+});
+
+export type XpandaXrefs = z.infer<typeof xpandaXrefsSchema>;
+
+/** abc_call_graph: nodes, edges and an optional Mermaid rendering. */
+export const xpandaCallGraphSchema = z.object({
+  fileId: z.string().min(1),
+  root: z.object({
+    class: z.string(),
+    classRaw: z.string(),
+    method: z.string(),
+  }),
+  direction: z.enum(["callers", "callees", "both"]),
+  depth: producerInteger,
+  nodeCount: producerInteger,
+  edgeCount: producerInteger,
+  truncated: producerBoolean,
+  disassemblyFailures: producerInteger,
+  sourceTruncatedClasses: producerBoolean,
+  nodes: z.array(
+    z.object({
+      id: z.string(),
+      classRaw: z.string(),
+      className: z.string(),
+      method: z.string(),
+      depth: producerInteger,
+      via: z.array(z.enum(["callers", "callees", "root"])),
+    }),
+  ),
+  edges: z.array(
+    z.object({ from: z.string(), to: z.string(), kind: z.string() }),
+  ),
+  mermaid: z.string().optional(),
+});
+
+export type XpandaCallGraph = z.infer<typeof xpandaCallGraphSchema>;
+
+/** hap_read_abc: the extracted .abc entry registered as an abc session. */
+export const xpandaHapAbcSchema = z.object({
+  abcFileId: z.string().min(1),
+  entry: z.string().min(1),
+  cached: producerBoolean,
+  runtime: z.enum(["dynamic", "static"]),
+  bytecodeVersion: z.string().min(1),
+  classCount: producerInteger,
+  classesPreview: z.array(z.string()),
+  previewTruncated: producerBoolean,
+  hint: z.string().optional(),
+});
+
+export type XpandaHapAbc = z.infer<typeof xpandaHapAbcSchema>;
+
+/** hap_resources: one page of the package resource table. */
+export const xpandaHapResourcesSchema = z.object({
+  fileId: z.string().min(1),
+  format: z.enum(["Restool", "RestoolV2"]),
+  version: z.union([z.string(), z.number()]),
+  total: producerInteger,
+  matched: producerInteger,
+  byType: z.record(z.string(), producerInteger),
+  byLimitKey: z.record(z.string(), producerInteger),
+  offset: producerInteger,
+  limit: producerInteger,
+  items: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      type: z.string(),
+      limitKey: z.string(),
+      value: z.string(),
+    }),
+  ),
+  truncated: producerBoolean,
+});
+
+export type XpandaHapResources = z.infer<typeof xpandaHapResourcesSchema>;

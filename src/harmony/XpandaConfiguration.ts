@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
-  XPANDA_ADMITTED_MAJOR_VERSION,
+  XPANDA_ADMITTED_MAJOR_VERSIONS,
   XPANDA_CHECKOUT_REMEDIATION,
   XPANDA_ROOT_REMEDIATION,
   XPANDA_ROOT_VARIABLE,
@@ -55,7 +55,7 @@ const failure = (
             : XPANDA_CHECKOUT_REMEDIATION,
   });
 
-/** Parse the producer package version; admits 2.x and records the exact value. */
+/** Parse the producer package version; admits the listed majors and records the exact value. */
 export const admitXpandaVersion = (
   version: unknown,
 ):
@@ -78,10 +78,10 @@ export const admitXpandaVersion = (
       status: "unresolved",
       reason: `The configured xpanda checkout reports the non-numeric version ${version}.`,
     };
-  if (major !== XPANDA_ADMITTED_MAJOR_VERSION)
+  if (!(XPANDA_ADMITTED_MAJOR_VERSIONS as readonly number[]).includes(major))
     return {
       status: "unsupported",
-      reason: `The configured xpanda checkout reports ${version}; REA verified ${XPANDA_VERIFIED_VERSION} and admits ${String(XPANDA_ADMITTED_MAJOR_VERSION)}.x only.`,
+      reason: `The configured xpanda checkout reports ${version}; REA verified ${XPANDA_VERIFIED_VERSION} and admits ${XPANDA_ADMITTED_MAJOR_VERSIONS.join(".x and ")}.x only.`,
     };
   return { status: "admitted", version };
 };
@@ -124,23 +124,36 @@ const readXpandaVersion = async (
   return ok(admitted.version);
 };
 
+/**
+ * Producer entries by checkout layout. 3.x moved the MCP package into a
+ * workspace; 2.x kept it at src/mcp. First regular file wins.
+ */
+const SERVER_ENTRY_CANDIDATES = [
+  ["packages", "xpanda-mcp", "src", "server.ts"],
+  ["src", "mcp", "server.ts"],
+] as const;
+
 /** Verify the checkout layout without starting any process. */
 const inspectXpandaCheckoutLayout = async (
   root: string,
-): Promise<Result<void, XpandaConfigurationFailure>> => {
-  const serverEntry = join(root, "src", "mcp", "server.ts");
-  try {
-    if (!(await stat(serverEntry)).isFile())
-      return failure(
-        "checkout_invalid",
-        `${serverEntry} is not a regular file.`,
-      );
-  } catch (cause: unknown) {
+): Promise<Result<string, XpandaConfigurationFailure>> => {
+  let serverEntry: string | undefined;
+  for (const candidates of SERVER_ENTRY_CANDIDATES) {
+    const candidate = join(root, ...candidates);
+    try {
+      if ((await stat(candidate)).isFile()) {
+        serverEntry = candidate;
+        break;
+      }
+    } catch {
+      // Try the next layout; only the absence of every entry is an error.
+    }
+  }
+  if (serverEntry === undefined)
     return failure(
       "checkout_invalid",
-      `The configured xpanda checkout is missing src/mcp/server.ts: ${errorMessage(cause)}`,
+      `The configured xpanda checkout has no readable MCP server entry at ${SERVER_ENTRY_CANDIDATES.map((candidates) => join(root, ...candidates)).join(" or ")}.`,
     );
-  }
   try {
     await access(
       join(root, "node_modules", "tsx", "package.json"),
@@ -152,7 +165,7 @@ const inspectXpandaCheckoutLayout = async (
       `The configured xpanda checkout has no readable tsx loader under node_modules: ${errorMessage(cause)}`,
     );
   }
-  return ok(undefined);
+  return ok(serverEntry);
 };
 
 /** Resolve the caller-supplied checkout without probing any runtime behavior. */
@@ -198,7 +211,7 @@ export const resolveXpandaConfiguration = async (
   if (!version.ok) return version;
   return ok({
     root,
-    serverEntry: join(root, "src", "mcp", "server.ts"),
+    serverEntry: layout.value,
     version: version.value,
   });
 };

@@ -431,14 +431,17 @@ The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local naviga
 
 `npm run verify:xpanda` requires a caller-supplied xpanda checkout with its
 dependencies installed, selected by absolute `REA_XPANDA_ROOT` (verified with
-2.1.0; 2.x admitted, other majors refused). It runs the compiled CLI and the
-SDK-connected stdio MCP server against the checkout's
-`test/resources/md5.abc` sample (override with `REA_XPANDA_TEST_ABC`) and
-verifies header facts, class inventory, single-class decompilation, method
-disassembly, string search, whole-file decompilation into a fresh directory,
-CLI/MCP parity of header and inventory facts, and a typed absent-class failure.
-It does not establish decompilation fidelity for arbitrary bytecode versions or
-untested xpanda releases. See
+3.6.0; 2.x and 3.x admitted, other majors refused). It runs the compiled CLI
+and the SDK-connected stdio MCP server against the checkout's `md5.abc` sample
+(`test/resources` for 2.x, `packages/xpanda-core/test/resources` for 3.x;
+override with `REA_XPANDA_TEST_ABC`) and verifies header facts, class
+inventory, class metadata, single-class and single-method decompilation, method
+disassembly, string, symbol and code search, references, call graphs,
+whole-file decompilation into a fresh directory, CLI/MCP parity of header and
+inventory facts, and a typed absent-class failure. HAP entry and resource
+checks run when `REA_XPANDA_TEST_HAP` names a package or a documented sample
+exists. It does not establish decompilation fidelity for arbitrary bytecode
+versions or untested xpanda releases. See
 [HarmonyOS Ark bytecode analysis](guides/harmony/harmony-abc-analysis.md).
 
 ## Kuna lane

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { XPANDA_LIMITS } from "./XpandaRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -56,7 +56,21 @@ const digestOf = async (
   };
 };
 
-/** List the engine source tree depth-first, then sort for a stable digest. */
+const isDirectory = async (path: string): Promise<boolean> =>
+  stat(path)
+    .then((value) => value.isDirectory())
+    .catch(() => false);
+const isFile = async (path: string): Promise<boolean> =>
+  stat(path)
+    .then((value) => value.isFile())
+    .catch(() => false);
+
+/**
+ * List the engine source trees depth-first, then sort for a stable digest.
+ * A 2.x checkout keeps its code under `src`; a 3.x checkout keeps each
+ * workspace under `packages/<name>/src` with its own manifest. Test fixtures,
+ * build output and dependencies stay outside this identity.
+ */
 const collectSourcePaths = async (
   root: string,
   limits: { readonly files: number; readonly bytes: number },
@@ -78,22 +92,41 @@ const collectSourcePaths = async (
         paths.push(relativePath);
         if (paths.length > limits.files)
           throw new XpandaEngineScanError(
-            `The configured xpanda checkout's src tree exceeds the ${String(limits.files)}-file engine scan bound`,
+            `The configured xpanda checkout's source tree exceeds the ${String(limits.files)}-file engine scan bound`,
             "too_many_files",
           );
       }
     }
   };
-  await walk("src");
+  if (await isDirectory(join(root, "src"))) await walk("src");
+  if (await isDirectory(join(root, "packages"))) {
+    const packages = await readdir(join(root, "packages"), {
+      withFileTypes: true,
+    }).catch((cause: unknown) => {
+      throw new XpandaEngineScanError(
+        `The configured xpanda checkout could not be read at packages: ${errorMessage(cause)}`,
+        "unreadable",
+      );
+    });
+    for (const entry of packages) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const directory = `packages/${entry.name}`;
+      const manifest = `${directory}/package.json`;
+      if (await isFile(join(root, manifest))) paths.push(manifest);
+      if (await isDirectory(join(root, directory, "src")))
+        await walk(`${directory}/src`);
+    }
+  }
   return paths.sort((left, right) =>
     left < right ? -1 : left > right ? 1 : 0,
   );
 };
 
 /**
- * Digest the engine code that will answer operations: the checkout's
- * package.json plus its whole src tree. Loaders, dependencies and the Node
- * runtime are intentionally outside this identity and stay unattested.
+ * Digest the engine code that will answer operations: the checkout's root
+ * package.json plus its src tree (2.x) or each workspace's manifest and src
+ * tree (3.x). Loaders, dependencies and the Node runtime are intentionally
+ * outside this identity and stay unattested.
  */
 export const hashXpandaEngine = async (
   root: string,
