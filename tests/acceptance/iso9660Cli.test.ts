@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,9 +14,6 @@ import { pe } from "../../src/domain/binaryTarget.fixture.js";
 import { buildIso9660Image } from "../../src/domain/iso9660/iso9660.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 cliTest(
   "inspects and extracts a Joliet ISO 9660 image through the compiled CLI",

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../../tests/support/sha256.js";
 import { open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -27,9 +27,6 @@ import {
   pyzArchive,
   type CArchiveFixtureMember,
 } from "./CArchive.fixture.js";
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
 

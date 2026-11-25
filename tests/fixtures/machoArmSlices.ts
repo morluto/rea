@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -11,9 +11,6 @@ import {
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
-
-const sha256 = (bytes: Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Self-owned Mach-O headers; lipo reads these bytes without executing the target. */
 export const createArmSliceFixture = async () => {
