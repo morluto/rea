@@ -273,7 +273,7 @@ const projectPrimarySessionError = (
         const pattern = query ?? "entry";
         const suggestion = isAddress
           ? `Ghidra couldn't resolve address${selectorText}${inProject}. Choose an observed procedure entry from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use list_procedures or search_procedures. An inventory miss leaves the function's presence in the artifact unknown.`
-          : `Ghidra couldn't resolve${selectorText}${inProject}. Search the procedure inventory for ${JSON.stringify(pattern)}. If you find a matching entry procedure, retry with its address. CLI: rea search <path> ${shellQuote(pattern)} --kind procedures --provider ghidra. MCP: use search_procedures with ${JSON.stringify({ pattern })} or list_procedures. Choose an observed name or address from the current Ghidra inventory. An inventory miss leaves the function's presence in the artifact unknown.`;
+          : `Ghidra couldn't resolve${selectorText}${inProject}. Search the procedure inventory for ${JSON.stringify(pattern)}. If you find a matching entry procedure, retry with its address. CLI: rea search <path> --pattern=${shellQuote(pattern)} --kind procedures --provider ghidra. MCP: use search_procedures with ${JSON.stringify({ pattern })} or list_procedures. Choose an observed name or address from the current Ghidra inventory. An inventory miss leaves the function's presence in the artifact unknown.`;
         recovery =
           (entryHint === undefined ? "" : `${entryHint} `) +
           (entryHint !== undefined

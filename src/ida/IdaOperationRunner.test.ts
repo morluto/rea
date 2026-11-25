@@ -149,7 +149,7 @@ it("emits actionable procedure lookup remediation on missing function", async ()
     remediationAction: expect.stringContaining("search_procedures"),
   });
   expect((caughtError as any).remediationAction).toContain(
-    "CLI: rea search <path> 'missing_fn' --kind procedures --provider ida",
+    "CLI: rea search <path> --pattern='missing_fn' --kind procedures --provider ida",
   );
   expect((caughtError as any).remediationAction).toContain(
     'MCP: use search_procedures with {"pattern":"missing_fn"} or list_procedures',
@@ -170,7 +170,7 @@ it("shell-quotes special characters in CLI recovery commands while keeping JSON 
     caughtError = err;
   }
   expect((caughtError as any).remediationAction).toContain(
-    "CLI: rea search <path> '$s4Demo3fooyyF' --kind procedures --provider ida",
+    "CLI: rea search <path> --pattern='$s4Demo3fooyyF' --kind procedures --provider ida",
   );
   expect((caughtError as any).remediationAction).toContain(
     'MCP: use search_procedures with {"pattern":"$s4Demo3fooyyF"} or list_procedures',
