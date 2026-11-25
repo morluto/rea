@@ -417,6 +417,26 @@ it.each(['args[0]="real"', 'args[2]="added"', "args.handled=true"])(
   },
 );
 
+// `delete` neither creates an element nor changes the array's length.
+it.each([
+  ["an index deleted past its end", "delete args[2]"],
+  ["an index both deleted and read past its end", "delete args[5]; args[5]"],
+])("positions an argument after a spread of %s", (_name, statement) => {
+  expect(
+    inspectOne(
+      `function g(a,b,c){return c} function f(...args){${statement};return g(...args,"fallback")} inspect(f("first","second"));`,
+    ),
+  ).toEqual({ kind: "literal", value: "fallback" });
+});
+
+it("keeps an argument after a spread unresolved when an index is deleted and written past its end", () => {
+  expect(
+    inspectOne(
+      `function g(a,b,c){return c} function f(...args){delete args[2];args[2]="added";return g(...args,"fallback")} inspect(f("first","second"));`,
+    ).kind,
+  ).toBe("unknown");
+});
+
 it.each([
   [
     "a written length",

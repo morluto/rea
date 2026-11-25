@@ -164,10 +164,13 @@ const isFreshObject = (node: t.Node): boolean =>
  * Writes are not ordered against reads, so a written index is unknown. A
  * written length or an index past the known elements leaves the count
  * unknown from that point, which one unknown-count element stands for.
+ * Only `extending` members can add an element: `delete` past the end
+ * neither creates one nor changes the length.
  */
 const writtenArrayElements = (
   elements: readonly SymbolicValue[],
   members: ReadonlySet<string>,
+  extending: ReadonlySet<string>,
 ): readonly SymbolicValue[] => {
   if (members.has("length"))
     return [symbolicUnknownCount("overwritten array length")];
@@ -180,7 +183,7 @@ const writtenArrayElements = (
     if (index === null) continue;
     if (index < known)
       written[index] = symbolicUnknown("overwritten object members");
-    else grows = true;
+    else if (extending.has(member)) grows = true;
   }
   if (grows && !open)
     written.push(symbolicUnknownCount("overwritten array length"));
@@ -208,6 +211,8 @@ export class JavaScriptSymbolicBindings {
   readonly #aliasMemberWrites = new Map<ReadonlySet<string>, PropertyWrite[]>();
   /** Each binding's written top-level members; null when a write replaces it. */
   readonly #writtenMembers = new Map<string, ReadonlySet<string> | null>();
+  /** Each binding's written members that a write other than `delete` reaches. */
+  readonly #extendingMembers = new Map<string, ReadonlySet<string>>();
   /** Each bound value as read through a binding that writes its members. */
   readonly #writtenViews = new WeakMap<
     SymbolicValue,
@@ -1088,7 +1093,11 @@ export class JavaScriptSymbolicBindings {
           ? {
               ...variant,
               overwrittenMembers,
-              values: writtenArrayElements(variant.values, members),
+              values: writtenArrayElements(
+                variant.values,
+                members,
+                this.#extendingMembersOf(bindingId),
+              ),
             }
           : { ...variant, overwrittenMembers };
       }),
@@ -1109,6 +1118,23 @@ export class JavaScriptSymbolicBindings {
       ? null
       : new Set(writes.map((write) => write.path[0]!));
     this.#writtenMembers.set(bindingId, members);
+    return members;
+  }
+
+  /** Written top-level members with at least one write that is not `delete`. */
+  #extendingMembersOf(bindingId: string): ReadonlySet<string> {
+    const cached = this.#extendingMembers.get(bindingId);
+    if (cached !== undefined) return cached;
+    const members = new Set(
+      this.#bindingWrites(bindingId)
+        .filter(
+          (write) =>
+            write.path.length > 0 &&
+            !t.isUnaryExpression(write.site, { operator: "delete" }),
+        )
+        .map((write) => write.path[0]!),
+    );
+    this.#extendingMembers.set(bindingId, members);
     return members;
   }
 
