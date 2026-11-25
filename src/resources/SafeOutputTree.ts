@@ -320,7 +320,7 @@ export class SafeOutputTree {
       });
       const ownedHandle = this.#trackHandle(handle);
       this.#pendingFiles.set(destination, ownedHandle);
-      const fileIdentity = await readFileIdentity(
+      let fileIdentity = await readFileIdentity(
         ownedHandle.handle,
         destination,
       );
@@ -342,10 +342,11 @@ export class SafeOutputTree {
           );
         // Bind to the open file handle's post-chmod (dev, ino) so virtualized
         // mounts that allocate a new inode on fchmod keep ownership.
-        this.#ownedFiles.set(destination, {
+        fileIdentity = {
           dev: postFileStat.dev,
           ino: postFileStat.ino,
-        });
+        };
+        this.#ownedFiles.set(destination, fileIdentity);
       }
       const hash = createHash("sha256");
       let bytes = 0;
@@ -562,7 +563,6 @@ export class SafeOutputTree {
     identity: DirectoryIdentity,
   ): Promise<DirectoryIdentity> {
     if (this.platform === "win32") return identity;
-    let currentIdentity = identity;
     const stagingHandle = this.#trackHandle(
       await open(path, constants.O_RDONLY | constants.O_DIRECTORY).catch(
         async (cause: unknown) => {
@@ -574,14 +574,9 @@ export class SafeOutputTree {
             throw cause;
           // Owner-read can be masked at mkdir; repair only the proven created
           // directory under the same portable pathname-race boundary.
-          await assertPathIdentity(path, currentIdentity);
+          await assertPathIdentity(path, identity);
           await chmod(path, 0o700);
-          // Shared container mounts (e.g. macOS VirtioFS) can allocate a new
-          // synthetic inode on chmod; refresh identity on the same device.
-          const nextIdentity = await readDirectoryIdentity(path);
-          if (nextIdentity.dev !== currentIdentity.dev)
-            throw replacedDirectory(path);
-          currentIdentity = nextIdentity;
+          await assertPathIdentity(path, identity);
           return open(path, constants.O_RDONLY | constants.O_DIRECTORY);
         },
       ),
@@ -591,12 +586,12 @@ export class SafeOutputTree {
       | {
           readonly kind: "failed";
           readonly cause: unknown;
-        } = { kind: "ready", identity: currentIdentity };
+        } = { kind: "ready", identity };
     try {
-      await assertHandleIdentity(stagingHandle.handle, currentIdentity, path);
+      await assertHandleIdentity(stagingHandle.handle, identity, path);
       await stagingHandle.handle.chmod(0o700);
       const postStat = await stagingHandle.handle.stat({ bigint: true });
-      if (postStat.dev !== currentIdentity.dev) throw replacedDirectory(path);
+      if (postStat.dev !== identity.dev) throw replacedDirectory(path);
       if ((postStat.mode & 0o777n) !== 0o700n)
         throw new ArtifactReaderFailure(
           "path",
