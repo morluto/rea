@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 
 const analyzeFailure = async (input: Record<string, unknown>) => {
   const result = await analyzeJavaScriptApplication(input);
@@ -122,13 +123,88 @@ describe("JavaScript application input selection", () => {
     expect(await analyzeFailure({ input_path: binary })).toMatchObject({
       code: "unsupported_target",
       category: "unsupported_target",
-      remediation: { action: expect.stringContaining(".asar") },
       details: {
         operation: "analyze_javascript_application",
         path: binary,
+        failure_kind: "unsupported",
+        // The owner names the accepted inputs; the projection owns recovery.
+        reason: expect.stringContaining(".asar"),
       },
     });
   });
+
+  it("refuses a directory whose complete inventory has no JavaScript application inputs", async () => {
+    const { root } = await application();
+    const build = join(root, "build");
+    await mkdir(join(build, "CMakeFiles"), { recursive: true });
+    await writeFile(join(build, "tool.exe"), pe(0x8664));
+    await writeFile(join(build, "runtime.dll"), pe(0x8664, 64, 0x2002));
+    await writeFile(join(build, "ctest.json"), '{"tests":[]}');
+    await writeFile(join(build, "CMakeFiles", "cache.txt"), "x\n");
+
+    const projected = await analyzeFailure({ input_path: build });
+    expect(projected).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "analyze_javascript_application",
+        related_operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "inspect_artifact",
+          "open_binary",
+        ],
+        diagnostics: {
+          inventoried_entries: 4,
+          entries_by_format: { file: 2, pe: 2 },
+          json_files: 1,
+          native_addon_files: 0,
+        },
+      },
+    });
+    expect(projected).toMatchObject({
+      details: {
+        failure_kind: "unrecognized",
+        reason: expect.stringContaining("entries_by_format"),
+      },
+    });
+    expect(projected.remediation.action).toContain(
+      "inspect_desktop_application",
+    );
+    expect(JSON.stringify(projected)).not.toContain("tool.exe");
+  });
+
+  it("analyzes an empty directory with an explicit no-input limitation", async () => {
+    const { root } = await application();
+    const empty = join(root, "empty");
+    await mkdir(join(empty, "nested"), { recursive: true });
+
+    const result = await analyzeJavaScriptApplication({ input_path: empty });
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("No JavaScript inputs were found"),
+    );
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("inspect_desktop_application"),
+    );
+  });
+
+  it.each([
+    ["an HTML page", "index.html", "<!doctype html><p>x</p>\n"],
+    ["a package manifest", "package.json", '{"name":"app"}'],
+    ["a source map", "app.js.map", '{"version":3,"sources":[],"mappings":""}'],
+  ])(
+    "analyzes a directory whose only application input is %s",
+    async (_label, name, text) => {
+      const { root } = await application();
+      const directory = join(root, "only");
+      await mkdir(directory);
+      await writeFile(join(directory, name), text);
+      await writeFile(join(directory, "data.json"), "{}");
+      expect(
+        (await analyzeJavaScriptApplication({ input_path: directory })).ok,
+      ).toBe(true);
+    },
+  );
 
   it.each([
     ["a directory", "directory", "asar"],

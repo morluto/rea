@@ -393,8 +393,8 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
       throw new Error("Missing invalid ASAR response");
     expect(JSON.parse(message.text)).toMatchObject({
       error: {
-        code: "artifact_operation_failed",
-        details: { reason: "format" },
+        code: "unsupported_target",
+        details: { path: archive, failure_kind: "unsupported" },
       },
     });
     await client.ping();

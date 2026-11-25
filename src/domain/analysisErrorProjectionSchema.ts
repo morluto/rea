@@ -9,7 +9,7 @@ const categorySchema = z.enum([
   "unsupported_provider",
   "unsupported_target",
   "integrity_mismatch",
-  "truncated",
+  "partial",
   "cancelled",
   "timeout",
   "resource_constraint",
@@ -25,6 +25,7 @@ const common = {
   category: categorySchema,
   message: z.string().min(1),
   retryable: z.boolean(),
+  retry: z.enum(["none", "backoff", "after_change"]).optional(),
   remediation: remediationSchema,
   recovery: analysisErrorRecoverySchema.optional(),
 };
@@ -85,7 +86,7 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
         z
           .object({
             logical_path: z.string(),
-            algorithm: z.literal("dfu-crc32"),
+            algorithm: z.enum(["dfu-crc32", "crc32"]),
             declared_crc32: z.string().regex(/^[a-f0-9]{8}$/u),
             calculated_crc32: z
               .string()
@@ -99,7 +100,10 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
     .strict(),
   generic("artifact_operation_failed"),
   evidenceIntegrityErrorProjectionSchema,
-  generic("truncated"),
+  generic("partial"),
+  generic("target_integrity_mismatch"),
+  generic("input_conflict"),
+  generic("host_io_failed"),
   generic("process_capture_failed"),
   generic("cleanup_incomplete"),
   generic("revision_conflict"),

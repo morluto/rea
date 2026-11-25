@@ -1379,71 +1379,15 @@ const normalizeGraphInput = (
   limitations: uniqueSorted(parsed.limitations),
 });
 
-const parseElementsSync = <Element extends z.ZodType>(
-  element: Element,
-  values: readonly unknown[],
-  path: readonly PropertyKey[],
-  issues: z.core.$ZodIssue[],
-  isPrevalidated?: (value: unknown) => value is z.output<Element>,
-): z.output<Element>[] => {
-  const steps = parseElementSteps(
-    element,
-    values,
-    path,
-    issues,
-    isPrevalidated,
-  );
-  let step = steps.next();
-  while (!step.done) step = steps.next();
-  return step.value;
-};
-
 /** Normalize a complete companion graph and derive its graph ID. */
 export const createJavaScriptSemanticGraph = (
   input: unknown,
 ): JavaScriptSemanticGraph => {
   const container = semanticGraphContainerSchema.parse(input);
-  const parseIssues: z.core.$ZodIssue[] = [];
-  const parsed: JavaScriptSemanticGraphInput = {
-    ...container,
-    evidence_contexts: parseElementsSync(
-      semanticGraphShape.evidence_contexts.element,
-      container.evidence_contexts,
-      ["evidence_contexts"],
-      parseIssues,
-      isValidatedSemanticEvidenceContext,
-    ),
-    nodes: parseElementsSync(
-      semanticGraphShape.nodes.element,
-      container.nodes,
-      ["nodes"],
-      parseIssues,
-      isValidatedSemanticNode,
-    ),
-    relations: parseElementsSync(
-      semanticGraphShape.relations.element,
-      container.relations,
-      ["relations"],
-      parseIssues,
-      isValidatedSemanticRelation,
-    ),
-    fingerprints: parseElementsSync(
-      semanticGraphShape.fingerprints.element,
-      container.fingerprints,
-      ["fingerprints"],
-      parseIssues,
-      isValidatedSemanticFingerprint,
-    ),
-    unknowns: parseElementsSync(
-      semanticGraphShape.unknowns.element,
-      container.unknowns,
-      ["unknowns"],
-      parseIssues,
-      isValidatedSemanticUnknown,
-    ),
-  };
-  if (parseIssues.length > 0) throw new z.ZodError(parseIssues);
-  const semantic = normalizeGraphInput(parsed);
+  const steps = parseSemanticGraphInputSteps(container);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  const semantic = step.value;
   // The input schema or factory sealing already validated every field. Validate
   // normalized relationships in place, then derive the only added field. The
   // public schema still verifies arbitrary records and their commitments.
@@ -1486,6 +1430,13 @@ export const sealTransferredJavaScriptSemanticGraphSteps = (
 function* parseAndSealSemanticGraphSteps(
   container: z.output<typeof semanticGraphContainerSchema>,
 ): Generator<void, JavaScriptSemanticGraph> {
+  const semantic = yield* parseSemanticGraphInputSteps(container);
+  return yield* validateAndSealSemanticGraphSteps(semantic);
+}
+
+function* parseSemanticGraphInputSteps(
+  container: z.output<typeof semanticGraphContainerSchema>,
+): Generator<void, JavaScriptSemanticGraphInput> {
   const issues: z.core.$ZodIssue[] = [];
   const parsed: JavaScriptSemanticGraphInput = {
     ...container,
@@ -1526,7 +1477,7 @@ function* parseAndSealSemanticGraphSteps(
     ),
   };
   if (issues.length > 0) throw new z.ZodError(issues);
-  return yield* validateAndSealSemanticGraphSteps(normalizeGraphInput(parsed));
+  return normalizeGraphInput(parsed);
 }
 
 function* validateAndSealSemanticGraphSteps(

@@ -36,7 +36,10 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../../src/resources/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
@@ -560,9 +563,17 @@ it("orders member probes for Unity predefined script assemblies before every man
     "inspect_managed_members",
     "inspect_managed_members",
   ]);
+  // UnityEngine.CoreModule is a runtime facade: counted, not probed one by one.
   expect(
     rows.filter(([operation]) => operation === "inspect_managed_artifact"),
-  ).toHaveLength(7);
+  ).toHaveLength(6);
+  expect(report.deferred_probes).toMatchObject([
+    {
+      operation: "inspect_managed_artifact",
+      reason: "runtime-facade",
+      count: 1,
+    },
+  ]);
   for (const probe of report.next_probes)
     if (probe.operation === "inspect_managed_members")
       expect(probe.rationale).toContain(
@@ -1167,10 +1178,7 @@ it.each(
     const primary =
       variant === "physical read"
         ? Object.assign(new Error("physical read denied"), { code: "EACCES" })
-        : new ArtifactReaderFailure(
-            "format",
-            "invalid later format declaration",
-          );
+        : malformedArtifact("pe", "invalid later format declaration");
     const validation = Object.assign(
       new Error("final descriptor stat failed"),
       { code: "EIO" },
@@ -1544,7 +1552,10 @@ it("compares exact signature bytes without masking high bits in engine headers o
   badHeader[0] = badHeader[0]! | 0x80;
   await put(root, "bad-header.exe", Buffer.concat([elf, badHeader, trailer]));
   const { report } = await inspect(root);
-  expect(report.candidates).toEqual([]);
+  // Only the native fallback remains: no engine header was recognised.
+  expect(report.candidates.filter(({ family }) => family !== "native")).toEqual(
+    [],
+  );
   expect(report.files.flatMap((file) => file.facts)).not.toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "godot-pck-header" }),

@@ -467,7 +467,7 @@ it("rejects truncated, overlapping, and out-of-range vendor ramdisk rows", () =>
   if (overlapped.ok) return;
   expect(overlapped.error.message).toContain("overlaps entry");
   const overrun = Buffer.from(image);
-  overrun.writeUInt32LE(100, table.offset);
+  overrun.writeUInt32LE(100, table.offset + entrySize);
   const overran = rows(overrun);
   expect(overran.ok).toBe(false);
   if (overran.ok) return;

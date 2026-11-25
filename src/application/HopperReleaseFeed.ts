@@ -41,9 +41,19 @@ export const hopperArchiveIntegrityMatches = (
   bytes.byteLength <= HOPPER_DOWNLOAD_BYTES &&
   createHash("sha1").update(bytes).digest("hex") === release.file_hash;
 
+const archiveLength = z
+  .string()
+  .regex(/^\d+$/u)
+  .refine((text) => {
+    const count = Number(text);
+    return (
+      Number.isSafeInteger(count) && count > 0 && count <= HOPPER_DOWNLOAD_BYTES
+    );
+  });
+
 const archiveReleaseSchema = z.object({
   filename: z.string().url(),
-  file_length: z.string().regex(/^\d+$/u),
+  file_length: archiveLength,
   file_hash: z.string().regex(/^[a-f0-9]{40}$/u),
 });
 export type MacHopperRelease = z.infer<typeof archiveReleaseSchema> &
@@ -155,13 +165,7 @@ export class HopperReleaseError extends Error {
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const releaseSchema = archiveReleaseSchema.extend({
   version: z.string().min(1),
-  file_length: z
-    .string()
-    .regex(/^[1-9]\d*$/u)
-    .refine((text) => {
-      const count = Number(text);
-      return Number.isSafeInteger(count) && count <= HOPPER_DOWNLOAD_BYTES;
-    }),
+  file_length: archiveLength.refine((text) => !text.startsWith("0")),
   main_exe_hash: sha256,
   signature: z
     .string()

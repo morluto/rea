@@ -52,16 +52,21 @@ export const byteEntropySchema = z.strictObject({
 });
 export type ByteEntropy = z.infer<typeof byteEntropySchema>;
 
-/** Shannon entropy in bits per byte, rounded once at the reporting boundary. */
+/**
+ * Shannon entropy in bits per byte, rounded once at the reporting boundary.
+ * When counting a selected block, also add its bins to the whole-file census.
+ */
 export const entropyFromCounts = (
   counts: ArrayLike<number>,
   length: number,
+  fileCounts?: Float64Array,
 ): number => {
   if (length === 0) return 0;
   let entropy = 0;
   for (let i = 0; i < counts.length; i++) {
     const count = counts[i] ?? 0;
     if (count > 0) {
+      if (fileCounts !== undefined) fileCounts[i] = fileCounts[i]! + count;
       const probability = count / length;
       entropy -= probability * Math.log2(probability);
     }
@@ -100,10 +105,14 @@ export const countByteValues = (
   }
 };
 
-export const computeBlockEntropy = (bytes: Uint8Array): number => {
-  const counts = new Float64Array(256);
-  countByteValues(bytes, counts);
-  return entropyFromCounts(counts, bytes.length);
+/** Reuse one block histogram and accumulate its counts into the file census. */
+export const createBlockEntropyCalculator = (fileCounts: Float64Array) => {
+  const counts = wholeFileByteCounts();
+  return (bytes: Uint8Array): number => {
+    counts.fill(0);
+    countByteValues(bytes, counts);
+    return entropyFromCounts(counts, bytes.length, fileCounts);
+  };
 };
 
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */

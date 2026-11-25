@@ -450,7 +450,7 @@ describe.skipIf(process.platform === "win32")(
         );
         const result = await provider.resolveAnalysisProfile(altered);
         if (result.ok) throw new Error("Invalid target was admitted");
-        expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+        expect(result.error._tag).toBe("AnalysisTargetFailureError");
       },
     );
 
@@ -577,7 +577,7 @@ describe.skipIf(process.platform === "win32")(
         );
         const result = await provider.resolveAnalysisProfile(altered);
         if (result.ok) throw new Error("Invalid ABI was admitted");
-        expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+        expect(result.error._tag).toBe("AnalysisTargetFailureError");
         expect(result.error.message).toContain(
           "separate MIPS ABI flags record",
         );
@@ -602,7 +602,7 @@ describe.skipIf(process.platform === "win32")(
         };
         const result = await provider.resolveAnalysisProfile(altered);
         if (result.ok) throw new Error("Missing ABI was inferred");
-        expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
+        expect(result.error._tag).toBe("AnalysisTargetFailureError");
         expect(result.error.message).toContain(
           "inspected separate MIPS ABI flags record",
         );

@@ -1,3 +1,8 @@
+import {
+  CPU,
+  fatImage,
+  fatSliceRange,
+} from "../artifacts/apple/MachoImage.fixture.js";
 import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
@@ -1133,15 +1138,21 @@ describe("Apple dispatch pointer fixup metadata", () => {
       name: "oversized addend whose tail resembles DO_BIND",
       operand: [0x60, ...Array<number>(10).fill(0x80), 0x90, 0x00],
     },
+    {
+      name: "a located bind with no selected symbol",
+      operand: [0x51, 0x70, 0x80, 0x1d, 0x90, 0],
+      missingTarget: true,
+    },
   ])(
     "keeps decoded bindings when an independent stream has $name",
-    ({ operand }) => {
+    ({ operand, missingTarget }) => {
       const bytes = fixture();
       bytes.writeUInt32LE(2, 16);
       bytes.writeUInt32LE(200, 20);
       bytes.writeUInt32LE(0x80000022, 184);
       bytes.writeUInt32LE(48, 188);
       const bindings = Buffer.from([
+        0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
         0x40,
         ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
         0x51, // SET_TYPE_IMM pointer
@@ -1152,7 +1163,10 @@ describe("Apple dispatch pointer fixup metadata", () => {
         0x00,
       ]);
       bindings.copy(bytes, 0xc00);
-      const invalid = Buffer.from([...bindings.subarray(0, -2), ...operand]);
+      const invalid = Buffer.from([
+        ...(missingTarget ? [] : bindings.subarray(0, -2)),
+        ...operand,
+      ]);
       invalid.copy(bytes, 0xc80);
       bytes.writeUInt32LE(0xc00, 200);
       bytes.writeUInt32LE(bindings.length, 204);
@@ -1166,7 +1180,16 @@ describe("Apple dispatch pointer fixup metadata", () => {
       });
       expect(
         result.coverage.find(({ facet }) => facet === "pointer_fixups"),
-      ).toMatchObject({ status: "partial", examined: 2, decoded: 1 });
+      ).toMatchObject({
+        status: "partial",
+        examined: 2,
+        decoded: missingTarget ? 2 : 1,
+        reason: expect.stringContaining(
+          missingTarget
+            ? "bind_target_unresolved at 0x100000e80: Legacy bind has no selected symbol"
+            : "bind_stream_decode_failed",
+        ),
+      });
     },
   );
 
@@ -1264,6 +1287,7 @@ describe("Apple dispatch binary metadata", () => {
           name: "state",
           type_encoding: "i",
           offset: 8,
+          alignment: 1,
           location: { file_offset: 0x508 },
         },
       ]);
@@ -1338,6 +1362,7 @@ describe("Objective-C ivar alignment metadata", () => {
   it("maps the ivar WORD_ALIGN sentinel to 8 and keeps other raw values unknown", () => {
     const bytes = fixture();
     bytes.writeUInt32LE(3, 0x504);
+    bytes.writeUInt32LE(3, 0x520);
     // Second ivar: raw alignment 0xffffffff is objc4's WORD_ALIGN sentinel,
     // which ivar_t::alignment() maps to 1 << WORD_SHIFT (8 on 64-bit).
     bytes.writeBigUInt64LE(base + 0x6a0n, 0x528);
@@ -1359,22 +1384,21 @@ describe("Objective-C ivar alignment metadata", () => {
     bytes.write("q\0", 0x6e8);
     const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
     expect(result.objc_ivars).toMatchObject([
-      { name: "state", offset: 8, alignment: 1 },
-      { name: "sentinel", offset: 16, size: 8, alignment: 8 },
-      { name: "invalid", offset: 24, size: 8, alignment: null },
-    ]);
-  });
-
-  it.each([
-    [0xffffffff, 8],
-    [3, 8],
-    [0xfffffffe, null],
-  ])("decodes ivar alignment raw value %i as %s", (raw, alignment) => {
-    const bytes = fixture();
-    bytes.writeUInt32LE(raw, 0x520);
-    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
-    expect(result.objc_ivars).toMatchObject([
-      { name: "state", alignment, decode: { status: "decoded" } },
+      { name: "state", offset: 8, alignment: 8, decode: { status: "decoded" } },
+      {
+        name: "sentinel",
+        offset: 16,
+        size: 8,
+        alignment: 8,
+        decode: { status: "decoded" },
+      },
+      {
+        name: "invalid",
+        offset: 24,
+        size: 8,
+        alignment: null,
+        decode: { status: "decoded" },
+      },
     ]);
   });
 });
@@ -1524,6 +1548,7 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(0x80000022, 264);
     bytes.writeUInt32LE(48, 268);
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_$s4Main3FooCN\0"),
       0x51, // SET_TYPE_IMM pointer
@@ -1796,25 +1821,42 @@ describe("Objective-C malformed identity recovery", () => {
     "isolates an empty %s before result validation",
     (malformed) => {
       const bytes = fixture(false, "unmapped-class");
+      bytes.writeBigUInt64LE(base + 0xc00n, 0xb88);
+      bytes.write("categoryAction:\0", 0xc00);
       bytes[malformed === "class selector" ? 0x460 : 0xbc0] = 0;
       const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
-      expect(result.objc_categories).toEqual([]);
-      if (malformed === "category name") {
+      if (malformed === "class selector") {
+        expect(result.objc_categories).toMatchObject([
+          { name: "FixtureCategory", instance_methods: ["categoryAction:"] },
+        ]);
+        expect(
+          result.coverage.find(
+            ({ facet }) => facet === "objc_class_method_ivar_metadata",
+          ),
+        ).toMatchObject({
+          status: "partial",
+          reason: expect.stringContaining(
+            "0x100000180: Objective-C method has an empty selector",
+          ),
+        });
+      } else {
+        expect(result.objc_categories).toEqual([]);
         expect(result.objc_classes).toHaveLength(2);
+        expect(result.objc_classes[0]?.methods).toMatchObject([
+          { selector: "performAction:" },
+        ]);
+        expect(
+          result.coverage.find(
+            ({ facet }) => facet === "objc_properties_categories",
+          ),
+        ).toMatchObject({
+          status: "partial",
+          reason: expect.stringContaining("empty name"),
+        });
         expect(result.objc_protocols).toMatchObject([
           { name: "FixtureProtocol" },
         ]);
       }
-      expect(
-        result.coverage.find(
-          ({ facet }) => facet === "objc_properties_categories",
-        ),
-      ).toMatchObject({
-        status: "partial",
-        reason: expect.stringContaining(
-          malformed === "class selector" ? "empty selector" : "empty name",
-        ),
-      });
     },
   );
 
@@ -1827,6 +1869,7 @@ describe("Objective-C malformed identity recovery", () => {
     expect(result.objc_classes[0]).toMatchObject({
       name: "Fixture",
       super_class: null,
+      superclass_address: "0x100000c00",
     });
     expect(
       result.coverage.find(
@@ -2057,74 +2100,92 @@ const decodeAdmitted = (
     admitted,
   );
 
+const dispatchFatOffset = 4096;
+const wrapDispatchSlice = (wide: boolean, littleEndian = false) => {
+  const thin = fixture();
+  return {
+    bytes: Buffer.from(
+      fatImage([{ cpu: CPU.arm64, bytes: thin }], wide, littleEndian),
+    ),
+    admitted: { offset: dispatchFatOffset, size: thin.length },
+  };
+};
+
+const wrapDispatchCapabilities = () => {
+  const slices = [0x81000002, 0x80000002].map((subtype) => {
+    const bytes = fixture();
+    bytes.writeUInt32LE(subtype, 8);
+    return { cpu: { type: CPU.arm64.type, subtype }, bytes };
+  });
+  const bytes = Buffer.from(fatImage(slices));
+  return { bytes, admitted: fatSliceRange(bytes, 1) };
+};
+
 describe("universal Apple dispatch metadata", () => {
-  it.each([false, true])("decodes selected FAT slices (fat64=%s)", (fat64) => {
-    const thin = fixture();
-    const offset = 256;
-    const bytes = Buffer.alloc(offset + thin.length);
-    bytes.writeUInt32BE(fat64 ? 0xcafebabf : 0xcafebabe, 0);
-    bytes.writeUInt32BE(1, 4);
-    bytes.writeUInt32BE(0x0100000c, 8);
-    if (fat64) {
-      bytes.writeBigUInt64BE(BigInt(offset), 16);
-      bytes.writeBigUInt64BE(BigInt(thin.length), 24);
-    } else {
-      bytes.writeUInt32BE(offset, 16);
-      bytes.writeUInt32BE(thin.length, 20);
-    }
-    thin.copy(bytes, offset);
-    const result = decodeAdmitted(bytes, { offset, size: thin.length });
+  it.each([
+    ["big-endian FAT32", false, false],
+    ["big-endian FAT64", true, false],
+    ["byte-swapped FAT32", false, true],
+    ["byte-swapped FAT64", true, true],
+  ] as const)("decodes the selected %s slice", (_, wide, littleEndian) => {
+    // This row also guards against re-selecting a preferred subtype after admission.
+    const { bytes, admitted } =
+      wide || littleEndian
+        ? wrapDispatchSlice(wide, littleEndian)
+        : wrapDispatchCapabilities();
+    const result = decodeAdmitted(bytes, admitted);
     expect(result.objc_classes[0]).toMatchObject({
       name: "Fixture",
-      location: { address: "0x100000200", file_offset: offset + 512 },
+      location: {
+        address: "0x100000200",
+        file_offset: admitted.offset + 512,
+      },
     });
     expect(result.objc_dispatch_implementations[0]).toMatchObject({
       implementation_address: "0x100000700",
-      location: { file_offset: offset + 0x488 },
+      location: { file_offset: admitted.offset + 0x488 },
     });
   });
 });
 
 describe("FAT64 dispatch slice validation", () => {
-  const wrapped = () => {
-    const thin = fixture();
-    const bytes = Buffer.alloc(256 + thin.length);
-    bytes.writeUInt32BE(0xcafebabf, 0);
-    bytes.writeUInt32BE(1, 4);
-    bytes.writeUInt32BE(0x0100000c, 8);
-    bytes.writeBigUInt64BE(256n, 16);
-    bytes.writeBigUInt64BE(BigInt(thin.length), 24);
-    thin.copy(bytes, 256);
-    return bytes;
-  };
-  const admitted = () => ({ offset: 256, size: fixture().length });
-
-  it("does not select from a table that extends past the file", () => {
-    // Generic admission reads such a table as not universal, so the bytes
-    // are read whole and refused as an unsupported header.
+  it("refuses a table that extends past the file as truncated", () => {
+    const { bytes, admitted } = wrapDispatchSlice(true);
+    // A FAT64 header cannot be a JVM class, so a table past the file's end
+    // is a cut-off universal file, measured against the file's size.
     expect(() =>
-      decodeAppleDispatchMetadata(wrapped().subarray(0, 32), 100, provenance),
+      decodeAppleDispatchMetadata(bytes.subarray(0, 32), 100, provenance),
     ).toThrow(
       expect.objectContaining({
-        kind: "unsupported",
-        message: "Only little-endian 64-bit Mach-O metadata is supported",
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
       }),
     );
-    expect(
-      refusalOf(() => decodeAdmitted(wrapped().subarray(0, 32), admitted())),
-    ).toMatchObject({ refusal: "admitted_slice_mismatch" });
+    // Admitted selection reads the same container, so the cut-off file's
+    // own truncation wins over an admission mismatch.
+    expect(() => decodeAdmitted(bytes.subarray(0, 32), admitted)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
+      }),
+    );
   });
 
   it.each([16, 24])(
     "checks the full 64-bit slice extent at field %i",
     (field) => {
-      const bytes = wrapped();
+      const { bytes, admitted } = wrapDispatchSlice(true);
       bytes.writeBigUInt64BE(0x100000000n, field);
       // The declaration still names the admitted range in its other field.
       const range =
         field === 16
-          ? { offset: 0x100000000, size: admitted().size }
-          : { offset: 256, size: 0x100000000 };
+          ? { offset: 0x100000000, size: admitted.size }
+          : { offset: dispatchFatOffset, size: 0x100000000 };
       expect(() => decodeAdmitted(bytes, range)).toThrow(
         "FAT architecture 0 slice range extends beyond the file",
       );
@@ -2132,17 +2193,18 @@ describe("FAT64 dispatch slice validation", () => {
   );
 
   it("rejects an admitted range the FAT table declares twice", () => {
-    const bytes = wrapped();
+    const { bytes, admitted } = wrapDispatchSlice(true);
     bytes.writeUInt32BE(2, 4);
     bytes.copy(bytes, 40, 8, 40);
-    expect(() => decodeAdmitted(bytes, admitted())).toThrow(
+    expect(() => decodeAdmitted(bytes, admitted)).toThrow(
       "Mach-O slices 0 and 1 overlap.",
     );
   });
 
   it("refuses a universal image without the admitted slice", () => {
+    const { bytes } = wrapDispatchSlice(true);
     expect(
-      refusalOf(() => decodeAppleDispatchMetadata(wrapped(), 100, provenance)),
+      refusalOf(() => decodeAppleDispatchMetadata(bytes, 100, provenance)),
     ).toEqual({
       target_path: provenance.path,
       refusal: "admitted_slice_mismatch",
@@ -2150,58 +2212,10 @@ describe("FAT64 dispatch slice validation", () => {
     });
   });
 
-  it("decodes the admitted capability variant rather than re-selecting", () => {
-    const variant = (subtype: number) => {
-      const bytes = fixture();
-      bytes.writeUInt32LE(subtype, 8);
-      return bytes;
-    };
-    const first = variant(0x81000002);
-    const second = variant(0x80000002);
-    const offset = 4096;
-    const secondOffset = offset + Math.ceil(first.length / 4096) * 4096;
-    const bytes = Buffer.alloc(secondOffset + second.length);
-    bytes.writeUInt32BE(0xcafebabe, 0);
-    bytes.writeUInt32BE(2, 4);
-    const writeEntry = (
-      index: number,
-      subtype: number,
-      sliceOffset: number,
-      size: number,
-    ) => {
-      const base = 8 + index * 20;
-      bytes.writeUInt32BE(0x0100000c, base);
-      bytes.writeUInt32BE(subtype, base + 4);
-      bytes.writeUInt32BE(sliceOffset, base + 8);
-      bytes.writeUInt32BE(size, base + 12);
-      bytes.writeUInt32BE(12, base + 16);
-    };
-    writeEntry(0, 0x81000002, offset, first.length);
-    writeEntry(1, 0x80000002, secondOffset, second.length);
-    first.copy(bytes, offset);
-    second.copy(bytes, secondOffset);
-    expect(
-      decodeAppleDispatchMetadata(
-        bytes,
-        100,
-        provenance,
-        "arm64",
-        undefined,
-        true,
-        {
-          offset: secondOffset,
-          size: second.length,
-        },
-      ).objc_classes[0],
-    ).toMatchObject({
-      name: "Fixture",
-      location: { file_offset: secondOffset + 512 },
-    });
-  });
-
   it("rejects an admitted slice of another architecture", () => {
+    const { bytes, admitted } = wrapDispatchSlice(true);
     expect(
-      refusalOf(() => decodeAdmitted(wrapped(), admitted(), "x86_64")),
+      refusalOf(() => decodeAdmitted(bytes, admitted, "x86_64")),
     ).toMatchObject({
       refusal: "admitted_slice_mismatch",
       reason: "Admitted FAT slice does not match the requested architecture",
@@ -2210,77 +2224,48 @@ describe("FAT64 dispatch slice validation", () => {
 });
 
 describe("byte-swapped universal Apple dispatch metadata", () => {
-  const wrapped = (fat64: boolean) => {
-    const thin = fixture();
-    const offset = 256;
-    const bytes = Buffer.alloc(offset + thin.length);
-    bytes.writeUInt32LE(fat64 ? 0xcafebabf : 0xcafebabe, 0);
-    bytes.writeUInt32LE(1, 4);
-    bytes.writeUInt32LE(0x0100000c, 8);
-    if (fat64) {
-      bytes.writeBigUInt64LE(BigInt(offset), 16);
-      bytes.writeBigUInt64LE(BigInt(thin.length), 24);
-    } else {
-      bytes.writeUInt32LE(offset, 16);
-      bytes.writeUInt32LE(thin.length, 20);
-    }
-    thin.copy(bytes, offset);
-    return bytes;
-  };
-  const admitted = () => ({ offset: 256, size: fixture().length });
-
-  it.each([false, true])(
-    "decodes selected little-endian FAT slices (fat64=%s)",
-    (fat64) => {
-      const result = decodeAdmitted(wrapped(fat64), admitted());
-      expect(result.objc_classes[0]).toMatchObject({
-        name: "Fixture",
-        location: { address: "0x100000200", file_offset: 256 + 512 },
-      });
-      expect(result.objc_dispatch_implementations[0]).toMatchObject({
-        implementation_address: "0x100000700",
-        location: { file_offset: 256 + 0x488 },
-      });
-    },
-  );
-
   it("refuses a truncated byte-swapped FAT header", () => {
+    const { bytes } = wrapDispatchSlice(false, true);
     expect(() =>
-      decodeAppleDispatchMetadata(
-        wrapped(false).subarray(0, 6),
-        100,
-        provenance,
-      ),
-    ).toThrow("FAT header is truncated");
+      decodeAppleDispatchMetadata(bytes.subarray(0, 6), 100, provenance),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 6, requiredBytes: 8 },
+        }),
+      }),
+    );
   });
 
   it("reads the selected thin slice's CPU identity in its own byte order", () => {
-    const bytes = wrapped(false);
-    bytes.writeUInt32BE(0xfeedfacf, 256);
-    bytes.writeUInt32BE(0x0100000c, 260);
-    bytes.writeUInt32BE(0, 264);
-    expect(() => decodeAdmitted(bytes, admitted())).toThrow(
+    const { bytes, admitted } = wrapDispatchSlice(false, true);
+    bytes.writeUInt32BE(0xfeedfacf, dispatchFatOffset);
+    bytes.writeUInt32BE(0x0100000c, dispatchFatOffset + 4);
+    bytes.writeUInt32BE(0, dispatchFatOffset + 8);
+    expect(() => decodeAdmitted(bytes, admitted)).toThrow(
       "Unsupported big-endian Mach-O CPU type",
     );
   });
 
   it("rejects a 32-bit slice payload inside a little-endian container", () => {
-    const bytes = wrapped(false);
+    const { bytes, admitted } = wrapDispatchSlice(false, true);
     bytes.writeUInt32LE(12, 8);
     bytes.writeUInt32LE(0, 12);
-    bytes.writeUInt32LE(0xfeedface, 256);
-    bytes.writeUInt32LE(12, 260);
-    bytes.writeUInt32LE(0, 264);
-    expect(() => decodeAdmitted(bytes, admitted(), "arm")).toThrow(
+    bytes.writeUInt32LE(0xfeedface, dispatchFatOffset);
+    bytes.writeUInt32LE(12, dispatchFatOffset + 4);
+    bytes.writeUInt32LE(0, dispatchFatOffset + 8);
+    expect(() => decodeAdmitted(bytes, admitted, "arm")).toThrow(
       "Unsupported 32-bit Mach-O metadata",
     );
   });
 
   it("checks the full little-endian FAT64 slice extent", () => {
-    const bytes = wrapped(true);
+    const { bytes, admitted } = wrapDispatchSlice(true, true);
     bytes.writeBigUInt64LE(0x100000000n, 16);
     expect(() =>
-      decodeAdmitted(bytes, { offset: 0x100000000, size: admitted().size }),
+      decodeAdmitted(bytes, { offset: 0x100000000, size: admitted.size }),
     ).toThrow("FAT architecture 0 slice range extends beyond the file");
   });
 });
@@ -3018,6 +3003,7 @@ describe("Objective-C category class property applicability", () => {
   it("reports a class property list bound to another image as not decoded", () => {
     const bytes = withLegacyFixups(categoryImage(0x40, 0));
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_external_list\0"),
       0x51, // SET_TYPE_IMM pointer

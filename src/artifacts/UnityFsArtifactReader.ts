@@ -18,10 +18,8 @@ import {
 } from "../resources/index.js";
 import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  UnityFsMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {
@@ -376,6 +374,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
         const chunk =
           plain === undefined
             ? await readArtifactFileBytes(
+                "unityfs",
                 handle,
                 this.#dataStart + block.compressedStart + offset,
                 size,
@@ -411,6 +410,7 @@ export class UnityFsArtifactReader implements ArtifactReader {
     this.#reserveMemberRead();
     this.#decodeBytes.charge(block.uncompressedSize, exhausted);
     const encoded = await readArtifactFileBytes(
+      "unityfs",
       handle,
       this.#dataStart + block.compressedStart,
       block.compressedSize,

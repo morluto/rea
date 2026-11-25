@@ -14,7 +14,7 @@ import {
 import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   compareBundles,
@@ -239,7 +239,9 @@ export const compareEvidenceBundlesCommand = async (input: {
       const { left, right } = loaded.value;
       try {
         return ok(
-          jsonValueSchema.parse(compareBundles(left, right, input.recordPairs)),
+          ownedJsonValueSchema.parse(
+            compareBundles(left, right, input.recordPairs),
+          ),
         );
       } catch (cause: unknown) {
         if (cause instanceof AnalysisInputError) return err(cause);
@@ -266,6 +268,7 @@ export const inspectEvidenceBundleCommand = async (
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
     readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly linked_evidence_id?: string | undefined;
     readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
   signal?: AbortSignal,

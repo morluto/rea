@@ -6,7 +6,28 @@ import {
 import {
   RECORDED_LINUX_CORE_PROFILES,
   type RecordedCrash,
+  type RecordedCrashArchitecture,
 } from "../../domain/native/recordedCrash.js";
+
+const buildRegisterOffsetMap = (
+  architecture: RecordedCrashArchitecture,
+): ReadonlyMap<string, number> => {
+  const profile = RECORDED_LINUX_CORE_PROFILES[architecture];
+  return new Map(
+    profile.registers.map((name, index) => [
+      name,
+      profile.registerOffset + index * profile.registerBytes,
+    ]),
+  );
+};
+
+const REGISTER_OFFSETS: Record<
+  RecordedCrashArchitecture,
+  ReadonlyMap<string, number>
+> = {
+  "x86_64-little-endian": buildRegisterOffsetMap("x86_64-little-endian"),
+  "aarch64-little-endian": buildRegisterOffsetMap("aarch64-little-endian"),
+};
 
 /** Bind interpreted values and register identities to recorded source bytes. */
 export function validateRecordedCrashSources(
@@ -16,12 +37,7 @@ export function validateRecordedCrashSources(
 ): void {
   const read = new BinaryReader(snapshot, true, "pwntools-recorded-crash");
   const profile = RECORDED_LINUX_CORE_PROFILES[report.architecture];
-  const registerOffsets = new Map<string, number>(
-    profile.registers.map((name, index) => [
-      name,
-      profile.registerOffset + index * profile.registerBytes,
-    ]),
-  );
+  const registerOffsets = REGISTER_OFFSETS[report.architecture];
   const fail = (
     reason = `Reported PID or signal value differs from its recorded ${report.architecture} source bytes.`,
   ): never => {
@@ -36,11 +52,14 @@ export function validateRecordedCrashSources(
     const note = report.notes[noteIndex];
     if (note === undefined) return fail();
     const { offset, bytes } = note.descriptor_location;
-    const length = BigInt(bytes);
+    const length = bytes.length <= 15 ? BigInt(Number(bytes)) : BigInt(bytes);
     if (length < BigInt(minimumBytes)) return fail();
     try {
-      return read.fileRange(BigInt(offset), length, "core note descriptor")
-        .offset;
+      return read.fileRange(
+        offset.length <= 15 ? BigInt(Number(offset)) : BigInt(offset),
+        length,
+        "core note descriptor",
+      ).offset;
     } catch (cause) {
       if (cause instanceof BinaryFormatFailure) return fail();
       throw cause;
@@ -57,9 +76,16 @@ export function validateRecordedCrashSources(
       fail();
     for (const register of thread.registers) {
       const offset = registerOffsets.get(register.name);
+      if (offset === undefined)
+        fail(
+          `Reported register source does not match its ${report.architecture} register identity.`,
+        );
+      const expected = start + offset!;
+      const actualHex = register.location.offset;
       if (
-        offset === undefined ||
-        BigInt(register.location.offset) !== BigInt(start + offset)
+        actualHex.length <= 15
+          ? Number(actualHex) !== expected
+          : BigInt(actualHex) !== BigInt(expected)
       )
         fail(
           `Reported register source does not match its ${report.architecture} register identity.`,
@@ -80,7 +106,9 @@ export function validateRecordedCrashSources(
   for (const thread of report.threads)
     for (const register of thread.registers) {
       // The source identity and descriptor extent were admitted above.
-      const start = Number(BigInt(register.location.offset));
+      const offsetHex = register.location.offset;
+      const start =
+        offsetHex.length <= 15 ? Number(offsetHex) : Number(BigInt(offsetHex));
       if (read.word(start, 64) !== BigInt(register.value))
         fail("Reported register value differs from its recorded source bytes.");
     }

@@ -172,8 +172,7 @@ The real-tool lane requires Linux and TShark 4.x. A separate kernel-limit
 regression checks the inherited soft/hard limits and verifies an oversized
 allocation is refused before it can consume memory. The Ubuntu workflow uses
 its distribution package; check its outcome before claiming that build verified.
-The earlier macOS check does not establish the current bounded integration,
-which deliberately refuses unsupported hosts. Other formats (including PCAPNG),
+Other formats (including PCAPNG),
 USB, BLE ATT and actual physical capture are not established by these fixtures.
 
 Each provider admits one inspection at a time, including acquisition and cleanup.
