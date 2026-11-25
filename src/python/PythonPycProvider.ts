@@ -1,7 +1,7 @@
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "./PythonPycProviderIdentity.js";
 import {
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -108,16 +108,12 @@ export class PythonPycProvider implements PythonPycPort {
   readonly identity = PYTHON_PYC_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PYTHON_PYC_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PYTHON_PYC_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPythonPycInput, options?: ExecutionOptions) {
