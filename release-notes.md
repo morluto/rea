@@ -713,6 +713,7 @@
 * **analysis-view:** unify 4 retained-summary wrappers into executeRetainedSummaryOperation ([#13810](https://github.com/morluto/rea/issues/13810)) ([55c4f56](https://github.com/morluto/rea/commit/55c4f5633c47411a0b2a2ed85c550d3d1af1adda))
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), refs [#11865](https://github.com/morluto/rea/issues/11865)
 * **apple:** share chained import decoding and proofs ([#13788](https://github.com/morluto/rea/issues/13788)) ([e012b68](https://github.com/morluto/rea/commit/e012b68371e52210785adec3c8f50e613cb4c685))
+* **apple:** share NIB archive marker readers ([#14474](https://github.com/morluto/rea/issues/14474)) ([c76180a](https://github.com/morluto/rea/commit/c76180a442cbd664da0e63d0477622495c97d4c3))
 * **apple:** share readFatSliceHeaders between resolver and inventory ([#13692](https://github.com/morluto/rea/issues/13692)) ([12658e2](https://github.com/morluto/rea/commit/12658e23e7803f605d9b3166bd7d719cecb0ad52))
 * **application:** add executeArtifactInspection runner and migrate 6 services ([#13819](https://github.com/morluto/rea/issues/13819)) ([8df9860](https://github.com/morluto/rea/commit/8df98603d11e01f3c1541076690b5a0186eaf408))
 * **application:** consolidate configuration and observation helpers ([#14322](https://github.com/morluto/rea/issues/14322)) ([2f5f02f](https://github.com/morluto/rea/commit/2f5f02f444ca0449427914538811c13ec0be291b))
