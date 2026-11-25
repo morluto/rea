@@ -96,10 +96,7 @@ export class ProgressiveToolCatalog {
   private rankMatches(query: string | undefined): readonly string[] {
     const words = [
       ...new Set(
-        (query ?? "")
-          .toLowerCase()
-          .split(/[\s_-]+/u)
-          .filter(Boolean),
+        (query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean),
       ),
     ];
     if (words.length === 0) {

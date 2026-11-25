@@ -302,15 +302,19 @@ it("returns ranked matches for multi-word task queries when not every word appea
   );
   expect(repeated.tools[0]?.name).toBe("z_inspector");
 
-  // Hyphen and underscore separators tokenize cleanly without breaking ranking.
-  for (const query of [
-    "alpha-sqlite nonexistent",
-    "alpha_sqlite nonexistent",
-  ]) {
-    const separated = DISCOVER_TOOLS.outputSchema.parse(
-      (await f.discover({ query, limit: 3 })).structuredContent,
-    );
-    expect(separated.total_matches).toBeGreaterThanOrEqual(2);
-    expect(separated.tools[0]?.name).toBe("alpha_sqlite");
-  }
+  // Underscore-named tools and multi-word queries rank cleanly without
+  // splitting hyphenated tokens into accidental substring matches.
+  const exactPrefix = DISCOVER_TOOLS.outputSchema.parse(
+    (await f.discover({ query: "alpha_sqlite nonexistent", limit: 3 }))
+      .structuredContent,
+  );
+  expect(exactPrefix.total_matches).toBeGreaterThanOrEqual(1);
+  expect(exactPrefix.tools[0]?.name).toBe("alpha_sqlite");
+
+  const unmatched = DISCOVER_TOOLS.outputSchema.parse(
+    (await f.discover({ query: "alpha-no-such-tool-9995", limit: 3 }))
+      .structuredContent,
+  );
+  expect(unmatched.total_matches).toBe(0);
+  expect(unmatched.tools).toEqual([]);
 });
