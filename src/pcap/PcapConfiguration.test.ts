@@ -13,7 +13,7 @@ import {
   selectWiresharkTool,
   wiresharkExecutableIdentity,
 } from "./PcapConfiguration.js";
-import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
+import { parseCapinfosOutput, prepareTsharkBaseOutput } from "./PcapOutput.js";
 
 describe("resolvePcapTools", () => {
   it("prefers absolute environment paths for both tools", () => {
@@ -356,9 +356,10 @@ const PARTIAL_TSHARK_JSON = JSON.stringify([
   },
 ]);
 
-describe("parseTsharkJsonOutput", () => {
+describe("prepareTsharkBaseOutput", () => {
   it("projects endpoints, DNS, TLS SNI, protocols, and HTTP URIs", async () => {
-    const result = await parseTsharkJsonOutput(PARTIAL_TSHARK_JSON);
+    const { fallback: result } =
+      await prepareTsharkBaseOutput(PARTIAL_TSHARK_JSON);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         { address: "192.168.1.1", port: null, packet_count: 3 },
@@ -398,7 +399,9 @@ describe("parseTsharkJsonOutput", () => {
         },
       },
     }));
-    const result = await parseTsharkJsonOutput(JSON.stringify(packets));
+    const { fallback: result } = await prepareTsharkBaseOutput(
+      JSON.stringify(packets),
+    );
     expect(result.endpoints).toHaveLength(11);
     expect(result.endpointCount).toBe(11); // 10 src + 1 dst
   });
@@ -411,7 +414,7 @@ describe("parseTsharkJsonOutput", () => {
     "[null]",
     '[{"_source":{"layers":{"ip.src":[3]}}}]',
   ])("rejects malformed producer output %s", async (text) => {
-    await expect(parseTsharkJsonOutput(text)).rejects.toMatchObject({
+    await expect(prepareTsharkBaseOutput(text)).rejects.toMatchObject({
       _tag: "AnalysisProtocolError",
     });
   });
