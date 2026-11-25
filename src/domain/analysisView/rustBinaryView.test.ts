@@ -3,6 +3,7 @@ import {
   changedEvidenceSubject,
   fileIdentity,
 } from "../../../tests/fixtures/evidenceSubject.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
@@ -317,8 +318,9 @@ it("filters packages by name, version, and indices, projecting requested depende
     versions: ["1.0.100"],
     fields: ["name", "version", "dependencies"],
   });
-  if (!matchingPackages.ok || matchingPackages.value.kind !== "rust")
-    throw new Error("Rust package filter failed");
+  if (!matchingPackages.ok) throw matchingPackages.error;
+  expect(matchingPackages.value.kind).toBe("rust");
+  if (matchingPackages.value.kind !== "rust") return;
   expect(matchingPackages.value.page.rows).toEqual([
     {
       index: 1,
@@ -345,8 +347,9 @@ it("filters packages by name, version, and indices, projecting requested depende
     indices: [1],
     fields: ["name", "version", "dependencies"],
   });
-  if (!filteredByIndex.ok || filteredByIndex.value.kind !== "rust")
-    throw new Error("Rust package index filter failed");
+  if (!filteredByIndex.ok) throw filteredByIndex.error;
+  expect(filteredByIndex.value.kind).toBe("rust");
+  if (filteredByIndex.value.kind !== "rust") return;
   expect(filteredByIndex.value.page.rows).toEqual([
     {
       index: 1,
@@ -405,8 +408,9 @@ it("filters dependency edges by from_indices, to_indices, and indices", () => {
     to_indices: [2],
     fields: ["to_index"],
   });
-  if (!filtered.ok || filtered.value.kind !== "rust")
-    throw new Error("Rust edge filter failed");
+  if (!filtered.ok) throw filtered.error;
+  expect(filtered.value.kind).toBe("rust");
+  if (filtered.value.kind !== "rust") return;
   expect(filtered.value.page.rows).toEqual([
     {
       index: 1,
@@ -424,8 +428,9 @@ it("filters dependency edges by from_indices, to_indices, and indices", () => {
     indices: [1],
     fields: ["to_index"],
   });
-  if (!filteredByIndex.ok || filteredByIndex.value.kind !== "rust")
-    throw new Error("Rust edge index filter failed");
+  if (!filteredByIndex.ok) throw filteredByIndex.error;
+  expect(filteredByIndex.value.kind).toBe("rust");
+  if (filteredByIndex.value.kind !== "rust") return;
   expect(filteredByIndex.value.page.rows).toEqual([
     {
       index: 1,
@@ -471,8 +476,9 @@ it("handles null auditable metadata and projects compiler commit hashes count", 
     offset: 0,
     limit: 10,
   });
-  if (!emptyPackages.ok || emptyPackages.value.kind !== "rust")
-    throw new Error("Rust packages on null metadata failed");
+  if (!emptyPackages.ok) throw emptyPackages.error;
+  expect(emptyPackages.value.kind).toBe("rust");
+  if (emptyPackages.value.kind !== "rust") return;
   expect(emptyPackages.value.page.rows).toEqual([]);
   expect(emptyPackages.value.coverage.total).toBe(null);
   expect(emptyPackages.value.coverage.status).toBe("unavailable");
@@ -485,6 +491,7 @@ it("rejects unsupported view kinds with an input error", () => {
   } as unknown as AnalysisViewRequest);
   expect(invalid.ok).toBe(false);
   if (!invalid.ok) {
+    expect(invalid.error).toBeInstanceOf(AnalysisInputError);
     expect(invalid.error).toMatchObject({
       operation: "inspect_analysis_view",
       issues: [{ path: ["view"], reason: "invalid_value" }],
