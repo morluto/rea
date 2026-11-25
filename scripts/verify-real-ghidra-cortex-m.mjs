@@ -24,7 +24,7 @@ import {
   v8mBaselineFixture,
   v8mMsplimFixture,
 } from "../tests/conformance/ghidra/cortexM.fixture.mjs";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { llvmThumbMnemonics } from "./lib/llvm-thumb-oracle.mjs";
 import {
   requireMcpLifecycleResult,
@@ -53,13 +53,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.equal(installation.status, "available", JSON.stringify(installation));
 const run = createVerifierRun();
 // Every LLVM and CLI command runs as an owned process tree with a deadline.
