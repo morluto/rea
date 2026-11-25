@@ -745,7 +745,7 @@ reject `rea setup --client freebuff` as an unsupported client. `lm_studio`
 requires a release after 6.8.0. `cline_vscode`, `cline_vscode_insiders`,
 `cline_vscodium`, `cline_cursor`, `cline_windsurf`, `kiro`, `mastracode`, `zed`,
 `amp`, `mcporter`, `fx`, `junie`, `goose` and `kilo` require a release after
-6.10.1. Setup never selects
+6.9.0. Setup never selects
 `mcporter` from detection, because MCPorter already imports the registrations
 setup writes for other clients; select it with `--client mcporter`.
 
