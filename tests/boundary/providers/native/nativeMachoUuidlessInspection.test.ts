@@ -48,6 +48,7 @@ class UuidlessDyldRunner implements NativeCommandRunner {
     readonly diagnostic = missingUuidDiagnostic,
     readonly stderr = "",
     readonly signal: string | null = null,
+    readonly exitCode = 1,
   ) {
     this.fixture = new NativeFixtureRunner({
       lipo: "Non-fat file: fixture is architecture: arm64\n",
@@ -75,10 +76,10 @@ class UuidlessDyldRunner implements NativeCommandRunner {
         dyldDiagnosticOutput(arguments_.at(-1) ?? "", this.diagnostic),
       ),
       stderrBytes: Buffer.byteLength(this.stderr),
-      exitCode: 1,
+      exitCode: this.exitCode,
       signal: this.signal,
     };
-    if (options.acceptNonZero) return ok(capture);
+    if (this.exitCode === 0 || options.acceptNonZero) return ok(capture);
     return err(
       new NativeCommandFailure(tool, "nonzero-exit", 1, undefined, {
         stdout: capture.stdout,
@@ -161,43 +162,54 @@ it.each([
   },
 );
 
-it("returns readable Mach-O Evidence when dyld_info identifies a missing UUID", async () => {
-  const target = await makeTarget("no-uuid");
-  const runner = new UuidlessDyldRunner();
-  const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(target)
-    .execute("inspect_macho", {});
+// Xcode 26 dyld_info exits 1 after the diagnostic; Xcode 16 exits 0.
+it.for([1, 0])(
+  "returns readable Mach-O Evidence when dyld_info identifies a missing UUID with exit %i",
+  async (exitCode) => {
+    const target = await makeTarget("no-uuid");
+    const runner = new UuidlessDyldRunner(
+      missingUuidDiagnostic,
+      "",
+      null,
+      exitCode,
+    );
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
 
-  expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(true);
-  if (!result.ok) return;
-  expect(result.value.result).toMatchObject({
-    uuid: null,
-    load_commands: { exhaustive: true },
-    imports: { items: [], total: null, exhaustive: false },
-    exports: {
-      items: expect.arrayContaining([
-        expect.objectContaining({ name: "_main", source: "nm" }),
+    expect(result.ok, JSON.stringify(result.ok ? null : result.error)).toBe(
+      true,
+    );
+    if (!result.ok) return;
+    expect(result.value.result).toMatchObject({
+      uuid: null,
+      load_commands: { exhaustive: true },
+      imports: { items: [], total: null, exhaustive: false },
+      exports: {
+        items: expect.arrayContaining([
+          expect.objectContaining({ name: "_main", source: "nm" }),
+        ]),
+        total: null,
+        exhaustive: false,
+      },
+      provenance: expect.arrayContaining([
+        expect.objectContaining({
+          tool: "dyld_info",
+          exit: { code: exitCode, signal: null },
+          stdout_bytes: Buffer.byteLength(
+            dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
+          ),
+        }),
       ]),
-      total: null,
-      exhaustive: false,
-    },
-    provenance: expect.arrayContaining([
-      expect.objectContaining({
-        tool: "dyld_info",
-        exit: { code: 1, signal: null },
-        stdout_bytes: Buffer.byteLength(
-          dyldDiagnosticOutput(target.path, missingUuidDiagnostic),
-        ),
-      }),
-    ]),
-  });
-  expect(result.value.limitations).toContain(
-    "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
-  );
-  expect(result.value.limitations).toContain(
-    "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.",
-  );
-});
+    });
+    expect(result.value.limitations).toContain(
+      "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable.",
+    );
+    expect(result.value.limitations).toContain(
+      "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.",
+    );
+  },
+);
 
 it.each([
   { stdout: "malformed load command table", stderr: "" },
