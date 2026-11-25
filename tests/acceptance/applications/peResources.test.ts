@@ -10,7 +10,10 @@ import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 type PeResourceCall = (
@@ -53,16 +56,11 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   const response = await call({ path });
   expect(response.isError).toBe(true);
   expect(response.structuredContent).toBeUndefined();
-  // Both adapters report the same facts; the recovery names each adapter's
-  // own spelling of the operation.
-  const { remediation: mcpRecovery, ...mcpFacts } =
-    parseMcpToolError(response).error;
-  const { remediation: cliRecovery, ...cliFacts } = result.json as {
-    remediation: { action: string };
-  };
-  expect(mcpFacts).toEqual(cliFacts);
-  expect(cliRecovery.action).not.toContain("inspect_pe_resources");
-  expect(typeof mcpRecovery.action).toBe("string");
+  expectAdapterErrorParity(
+    parseMcpToolError(response).error,
+    result.json,
+    "inspect_pe_resources",
+  );
 };
 
 const expectPeInputFailuresAcrossAdapters = async (input: {
