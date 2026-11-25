@@ -390,7 +390,7 @@ const staticFileUrlPathFact = (
   if (rawArgument === undefined) return undefined;
   const argument = unwrapJavaScriptExpression(rawArgument).node;
   if (t.isNewExpression(argument) && pathIntrinsics?.(argument, "source-url")) {
-    const resolved = staticSourceRelativeUrlPath(argument);
+    const resolved = staticSourceRelativeUrlPath(argument, pathIntrinsics);
     return resolved === undefined
       ? undefined
       : { path: resolved.path, base: "source-directory" };
@@ -423,11 +423,36 @@ const staticFileUrlPathFact = (
   }
 };
 
-/** Decode a source-relative URL after the caller proves constructor and base identity. */
+/**
+ * String text of a literal, or of a `const` chain that ends at one. Each read
+ * spends the query's substitution bound; other expressions stay unknown.
+ */
+const constantStringValue = (
+  raw: t.Node | undefined,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
+): string | undefined => {
+  let node =
+    raw === undefined ? undefined : unwrapJavaScriptExpression(raw).node;
+  while (t.isIdentifier(node)) {
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    node =
+      initializer === undefined
+        ? undefined
+        : unwrapJavaScriptExpression(initializer).node;
+  }
+  return stringValue(node);
+};
+
+/**
+ * Decode a source-relative URL after the caller proves constructor and base
+ * identity. With a constant query, its first argument may also be a `const`
+ * chain that ends at a string literal.
+ */
 export const staticSourceRelativeUrlPath = (
   node: t.NewExpression,
+  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): JavaScriptStaticSourceUrlPath | undefined => {
-  const value = stringValue(node.arguments[0]);
+  const value = constantStringValue(node.arguments[0], pathIntrinsics);
   if (
     value === undefined ||
     (value.split(/[?#]/u, 1)[0] ?? "") === "" ||

@@ -302,6 +302,52 @@ describe("file URL path bases", () => {
   );
 });
 
+describe("source-relative URL constants", () => {
+  const inline = pathFacts(
+    analyze(
+      "main.mjs",
+      `${MODULE_HEADER}\n${consumers('fileURLToPath(new URL("./preload.mjs", import.meta.url))')}`,
+    ),
+  );
+  it("resolves the inline URL form", () => {
+    expect(inline).toEqual(resolved("./preload.mjs", "filesystem-expression"));
+  });
+  it.each([
+    [
+      "a constant",
+      'const REL = "./preload.mjs";',
+      "fileURLToPath(new URL(REL, import.meta.url))",
+    ],
+    [
+      "a constant alias",
+      'const NAME = "./preload.mjs"; const REL = NAME;',
+      "fileURLToPath(new URL(REL, import.meta.url))",
+    ],
+    [
+      "a constant path",
+      'const REL = "./preload.mjs"; const PRELOAD = fileURLToPath(new URL(REL, import.meta.url));',
+      "PRELOAD",
+    ],
+  ])(
+    "resolves %s inside the URL like the literal",
+    (_label, declarations, expression) => {
+      const text = `${MODULE_HEADER}\n${declarations}\n${consumers(expression)}`;
+      expect(pathFacts(analyze("main.mjs", text))).toEqual(inline);
+    },
+  );
+  it.each([
+    ["a mutable binding", 'let REL = "./preload.mjs";'],
+    ["a joined path", 'const REL = path.join(".", "preload.mjs");'],
+    [
+      "a source-directory path",
+      'const REL = path.join(path.dirname(fileURLToPath(import.meta.url)), "preload.mjs");',
+    ],
+  ])("keeps %s inside the URL unknown", (_label, declarations) => {
+    const text = `${MODULE_HEADER}\n${declarations}\n${consumers("fileURLToPath(new URL(REL, import.meta.url))")}`;
+    expect(pathFacts(analyze("main.mjs", text))).toEqual(UNKNOWN);
+  });
+});
+
 describe("constant substitution bound", () => {
   it.each([
     {
