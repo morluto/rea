@@ -7,6 +7,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
@@ -434,6 +435,36 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
     true,
   );
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
+});
+
+// Linux lanes skip a test gated to macOS; changing one runs the macOS lane.
+it.for([
+  [`it.skipIf(process.platform !== "darwin")("runs", () => {});\n`, true],
+  [`it.skipIf(process.platform === "linux")("runs", () => {});\n`, true],
+  [`it("runs everywhere", () => {});\n`, false],
+] as const)(
+  "selects the macOS lane for a changed test that may be gated to it: %j",
+  async ([source, apple]) => {
+    const { directory, base } = await fixture();
+    const test = "tests/boundary/filesystem/gated.test.ts";
+    const head = await change(directory, [test], source);
+    expect(await classify(directory, base, head)).toMatchObject({ apple });
+  },
+);
+
+it("does not select the macOS lane for a deleted macOS-gated test", async () => {
+  const { directory } = await fixture();
+  const test = "tests/boundary/filesystem/gated.test.ts";
+  const base = await change(
+    directory,
+    [test],
+    `it.skipIf(process.platform !== "darwin")("runs", () => {});\n`,
+  );
+  await rm(join(directory, test));
+  const head = await commit(directory);
+  expect(await classify(directory, base, head)).toMatchObject({
+    apple: false,
+  });
 });
 
 it("does not credit a fixture test as coverage for an unrelated shared script", async () => {

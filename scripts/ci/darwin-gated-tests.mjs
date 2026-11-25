@@ -7,6 +7,7 @@ import { parse } from "@babel/parser";
 import { traverseFast } from "@babel/types";
 
 import { projectForTest } from "../lib/test-projects.mjs";
+import { mayGateTestToDarwin } from "./darwin-gate-candidates.mjs";
 
 // Tests gated to macOS never run on the Linux lanes, so the macOS lane runs
 // every one of them. A gate is a Vitest `skipIf`/`runIf` condition, or a
@@ -139,6 +140,7 @@ const calleeMethod = (node) =>
  * `source` is TypeScript module text; a syntax error is thrown, not ignored.
  */
 export const isDarwinGatedTestSource = (source) => {
+  if (!mayGateTestToDarwin(source)) return false;
   const tree = parse(source, { sourceType: "module", plugins: ["typescript"] });
   const constants = moduleConstants(tree.program);
   let gated = false;
@@ -154,7 +156,8 @@ export const isDarwinGatedTestSource = (source) => {
     }
     if ((method === "for" || method === "each") && node.arguments[0])
       traverseFast(node.arguments[0], (child) => {
-        // `...(process.platform === "darwin" ? [cases] : [])`
+        // `...(process.platform === "darwin" ? [cases] : [])`. The candidate
+        // filter admits only a conditional that names the platform literal.
         if (gated || child.type !== "ConditionalExpression") return;
         const linux = evaluate(child.test, "linux", constants);
         const darwin = evaluate(child.test, "darwin", constants);
