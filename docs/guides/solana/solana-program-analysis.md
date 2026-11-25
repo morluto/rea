@@ -123,6 +123,13 @@ coverage, per-item analysis path, and status or error.
 - Disassembly is a linear sweep by the bundled sBPF decoder
   (`rea-sbpf-decoder`). It is not a Ghidra/IDA-grade lift: no control-flow
   recovery, Rust source, types, or account layouts are produced.
+- `elf.e_flags` keeps the raw ELF flags and `elf.sbpf_version` the version
+  they declare (0–4, or 2 for the legacy `0x20` flag). An unrecognized
+  declaration reports `sbpf_version: null` and a limitation; decoding then
+  uses version 0 rules, which select the `callx` register field.
+- Distinct dynamic-symbol names are decoded once each, up to the fixed
+  16 MiB `solana-elf-symbol-name-bytes` allowance; exceeding it is a named
+  resource refusal, not a malformed-ELF verdict.
 
 ## Differential receipts
 

@@ -608,6 +608,10 @@
     "\"The Solana program intake allowance\"": {
       "class": "format",
       "reason": "Solana caps account data, and so every deployable program ELF, at 10 MiB (MAX_PERMITTED_DATA_LENGTH); the 64 MiB intake allowance admits every program a loader can hold."
+    },
+    "\"The Solana symbol name allowance\"": {
+      "class": "derived",
+      "reason": "Distinct dynamic-symbol name strings are decoded once per string-table offset; 16 MiB exceeds the 10 MiB ceiling on any deployable program ELF, so it only stops suffix-sharing string tables whose decoded total would grow quadratically."
     }
   },
   "src/solana/SolanaReceiptsProvider.ts": {

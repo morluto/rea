@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   parseSolanaElf,
+  solanaSbpfVersion,
   solanaTextSection,
   SolanaElfFailure,
 } from "./SolanaElf.js";
@@ -209,4 +210,35 @@ it("bounds the whole parse when symbol tables overlap", () => {
     view.setBigUint64(base + 32, BigInt(elf.length - (elf.length % 24)), true);
   }
   expect(() => parseSolanaElf(elf)).toThrow(/tables overlap/);
+});
+
+it("decodes symbols that share one string once and keeps every symbol", () => {
+  const elf = buildElf(0);
+  const view = new DataView(elf.buffer);
+  const sectionHeaderOffset = Number(view.getBigUint64(40, true));
+  let dynsymOffset = -1;
+  let dynsymSize = 0;
+  for (let index = 0; index < 7; index += 1) {
+    const base = sectionHeaderOffset + index * 64;
+    if (view.getUint32(base + 4, true) !== 11) continue;
+    dynsymOffset = Number(view.getBigUint64(base + 24, true));
+    dynsymSize = Number(view.getBigUint64(base + 32, true));
+  }
+  expect(dynsymOffset).toBeGreaterThan(0);
+  // Every symbol names the same dynstr offset: valid ELF, one decoded string.
+  for (let entry = 0; entry < dynsymSize; entry += 24)
+    view.setUint32(dynsymOffset + entry, 1, true);
+  const image = parseSolanaElf(elf);
+  const named = image.dynamicSymbols.filter((symbol) => symbol.name !== "");
+  expect(named.length).toBeGreaterThan(1);
+  expect(new Set(named.map((symbol) => symbol.name))).toEqual(
+    new Set(["sol_log_"]),
+  );
+});
+
+it("keeps unrecognized e_flags distinct from a declared version 0", () => {
+  expect(solanaSbpfVersion(0)).toBe(0);
+  expect(solanaSbpfVersion(0x20)).toBe(2);
+  expect(solanaSbpfVersion(3)).toBe(3);
+  expect(solanaSbpfVersion(0x99)).toBeNull();
 });

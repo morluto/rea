@@ -3,6 +3,7 @@ import {
   BinaryReader,
 } from "../domain/binaryContainer.js";
 import { firstKeyed, keyedBy } from "../domain/keyedCollection.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 /**
  * Expected ELF carrier failure, carried as a shared parser failure so the
  * provider projects its kind, offset and field through
@@ -31,14 +32,21 @@ export class SolanaElfFailure extends BinaryFormatFailure {
 
 /**
  * Whole-parse expansion budget, derived from the capture size: the records
- * and name bytes that all symbol and relocation tables together may expand
- * to. Tables can overlap, so a per-table extent check alone does not bound
- * the parse.
+ * that all symbol and relocation tables together may expand to. Tables can
+ * overlap, so a per-table extent check alone does not bound the parse.
  */
 interface ExpansionBudget {
   records: number;
-  stringBytes: number;
 }
+
+/** Name of the fixed allowance on distinct decoded dynamic-symbol name bytes. */
+export const SOLANA_SYMBOL_NAME_LIMIT = "solana-elf-symbol-name-bytes";
+/**
+ * Distinct symbol names decoded per ELF. Names that share string bytes are
+ * decoded once; suffix-sharing names can still expand quadratically in the
+ * string table, so the retained total is bounded by this named allowance.
+ */
+export const SOLANA_MAX_SYMBOL_NAME_BYTES = 16 * 1024 * 1024;
 
 export interface SolanaElfSection {
   readonly name: string;
@@ -314,6 +322,8 @@ const readDynamicSymbols = (
   budget: ExpansionBudget,
 ): SolanaElfSymbol[] => {
   const symbols: SolanaElfSymbol[] = [];
+  const names = new Map<number, string>();
+  let nameBytes = 0;
   for (const section of sections) {
     if (section.type !== SECTION_TYPE_DYNSYM) continue;
     const strings = sections[section.link];
@@ -327,18 +337,25 @@ const readDynamicSymbols = (
     );
     for (let index = 0; index < count; index += 1) {
       const offset = section.offset + index * section.entrySize;
-      const name = readString(
-        bytes,
-        strings.offset,
-        strings.size,
-        reader.u32(offset),
-      );
-      budget.stringBytes -= name.length;
-      if (budget.stringBytes < 0)
-        throw new SolanaElfFailure(
-          "Dynamic symbol names across all tables exceed the captured file size; string tables overlap.",
-          { offset: section.offset, field: "Dynamic symbol table" },
-        );
+      const nameOffset = reader.u32(offset);
+      const key = strings.offset + nameOffset;
+      let name = names.get(key);
+      if (name === undefined) {
+        name = readString(bytes, strings.offset, strings.size, nameOffset);
+        names.set(key, name);
+        nameBytes += name.length;
+        if (nameBytes > SOLANA_MAX_SYMBOL_NAME_BYTES)
+          throw decodeLimit(
+            "elf",
+            `Distinct dynamic symbol names exceed the ${String(SOLANA_MAX_SYMBOL_NAME_BYTES)}-byte symbol name allowance.`,
+            {
+              name: SOLANA_SYMBOL_NAME_LIMIT,
+              maximum: SOLANA_MAX_SYMBOL_NAME_BYTES,
+              required: nameBytes,
+            },
+            { offset: section.offset, field: "Dynamic symbol table" },
+          );
+      }
       symbols.push({
         name,
         info: bytes[offset + 4] ?? 0,
@@ -477,7 +494,6 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
   );
   const budget: ExpansionBudget = {
     records: Math.floor(bytes.length / ELF64_REL_SIZE),
-    stringBytes: bytes.length,
   };
   const declaredEnd = declaredExtentEnd(
     programHeaders,
@@ -509,11 +525,11 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
 
 /**
  * The sBPF bytecode version an ELF declares in e_flags: 0 through 4 as
- * written, the legacy EF_SBPF_V2 flag (0x20) as version 2, anything else as
- * version 0, the loader's default.
+ * written, the legacy EF_SBPF_V2 flag (0x20) as version 2, and null for any
+ * declaration this reader does not recognize (never silently version 0).
  */
-export const solanaSbpfVersion = (elfFlags: number): number =>
-  elfFlags === 0x20 ? 2 : elfFlags >= 0 && elfFlags <= 4 ? elfFlags : 0;
+export const solanaSbpfVersion = (elfFlags: number): number | null =>
+  elfFlags === 0x20 ? 2 : elfFlags >= 0 && elfFlags <= 4 ? elfFlags : null;
 
 /** The executable code section: `.text` when named, else the first executable PROGBITS section. */
 export const solanaTextSection = (

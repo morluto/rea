@@ -29,6 +29,7 @@ const analysis: SolanaProgramAnalysis = {
     program_header_count: 3,
     section_header_count: 9,
     trailing_bytes: 0,
+    e_flags: 0,
     sbpf_version: 0,
     sections: [],
   },

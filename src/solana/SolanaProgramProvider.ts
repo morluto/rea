@@ -16,6 +16,7 @@ import {
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import {
+  isParseLimit,
   parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
@@ -40,6 +41,7 @@ import {
   parseSolanaElf,
   solanaElfMachineName,
   solanaSbpfVersion,
+  SOLANA_MAX_SYMBOL_NAME_BYTES,
   solanaTextSection,
   ELF_MACHINE_BPF,
   type SolanaElfImage,
@@ -49,6 +51,7 @@ import {
   disassembleSbpf,
   isUnknownSbpfInstruction,
   sbpfCodeBoundaryIssues,
+  type SbpfInstruction,
 } from "./SbpfDisassembler.js";
 import {
   anchorDiscriminator,
@@ -276,6 +279,8 @@ const extractStrings = (
 interface AnalyzedProgram {
   readonly report: SolanaProgramAnalysis;
   readonly callResolutions: readonly SolanaCallResolution[];
+  /** The decoded code section, reused to render disassembly.txt. */
+  readonly instructions: readonly SbpfInstruction[];
 }
 
 /**
@@ -327,10 +332,22 @@ const analyzeAcquired = (
   } catch (cause) {
     // SolanaElfFailure and BinaryReader range failures are shared parser
     // failures; project their kind, offset and field unchanged.
+    if (isParseLimit(cause, "elf"))
+      return err(
+        parseLimitConstraint(OPERATION, "memory", cause, {
+          path: acquired.path,
+          ...fixedAllowanceOptions(
+            "The Solana symbol name allowance",
+            "input",
+            { limit: SOLANA_MAX_SYMBOL_NAME_BYTES, unit: "bytes" },
+          ),
+        }),
+      );
     const refusal = parseFailureAnalysisError(OPERATION, acquired.path, cause);
     if (refusal !== undefined) return err(refusal);
     return err(adapterError(cause));
   }
+  const sbpfVersion = solanaSbpfVersion(image.elfFlags);
   if (image.machine !== ELF_MACHINE_BPF)
     return err(
       unsupportedTarget(
@@ -368,7 +385,7 @@ const analyzeAcquired = (
           ),
           textSection.address,
           textSection.offset,
-          solanaSbpfVersion(image.elfFlags),
+          sbpfVersion ?? 0,
         );
   const dispatch = scanSolanaDispatch(instructions, image);
   const handlers = dispatch.candidates;
@@ -392,17 +409,37 @@ const analyzeAcquired = (
     limitations.push(
       `${String(dispatch.truncatedTables)} jump table(s) still held code targets past the ${String(SOLANA_MAX_TABLE_ENTRIES)}-slot table allowance; slots beyond it were not examined and are not listed as candidates.`,
     );
+  if (sbpfVersion === null)
+    limitations.push(
+      `The ELF declares unrecognized e_flags 0x${image.elfFlags.toString(16)}; sbpf_version is null and the code was decoded with version 0 rules, so callx registers and version-specific opcodes may be misread.`,
+    );
   if (acquired.source === "solana-rpc")
     limitations.push(
       "Fetched at finalized commitment from the selected RPC endpoint; the deployed program may differ from any earlier capture if it was upgraded.",
     );
 
-  const definedSymbols = image.dynamicSymbols.filter(
-    (symbol) => symbol.sectionIndex !== 0,
-  ).length;
-  const undefinedSymbols = image.dynamicSymbols.filter(
-    (symbol) => symbol.sectionIndex === 0 && symbol.name.length > 0,
-  );
+  let definedSymbols = 0;
+  const undefinedSymbols: SolanaElfImage["dynamicSymbols"][number][] = [];
+  for (const symbol of image.dynamicSymbols) {
+    if (symbol.sectionIndex !== 0) definedSymbols += 1;
+    else if (symbol.name.length > 0) undefinedSymbols.push(symbol);
+  }
+  const counts = { unknown: 0, call: 0, exit: 0, lddw: 0 };
+  for (const instruction of instructions) {
+    if (isUnknownSbpfInstruction(instruction)) counts.unknown += 1;
+    else if (instruction.mnemonic === "call") counts.call += 1;
+    else if (instruction.mnemonic === "exit") counts.exit += 1;
+    else if (instruction.mnemonic === "lddw") counts.lddw += 1;
+  }
+  const byMethod = {
+    "lddw-compare": 0,
+    "split-compare": 0,
+    "table-dispatch": 0,
+  };
+  for (const handler of handlers) byMethod[handler.method] += 1;
+  let resolvedCalls = 0;
+  for (const resolution of callResolutions)
+    if (resolution.resolvedName !== null) resolvedCalls += 1;
 
   const report: SolanaProgramAnalysis = {
     artifact: {
@@ -424,7 +461,8 @@ const analyzeAcquired = (
       program_header_count: image.programHeaders.length,
       section_header_count: image.sections.length,
       trailing_bytes: image.trailingBytes,
-      sbpf_version: solanaSbpfVersion(image.elfFlags),
+      e_flags: image.elfFlags,
+      sbpf_version: sbpfVersion,
       sections: image.sections.map((section) => ({
         name: section.name,
         type: section.type,
@@ -437,16 +475,10 @@ const analyzeAcquired = (
       engine: "rea-sbpf-decoder",
       text_section: textSection?.name ?? null,
       instruction_count: instructions.length,
-      unknown_opcodes: instructions.filter(isUnknownSbpfInstruction).length,
-      call_sites: instructions.filter(
-        (instruction) => instruction.mnemonic === "call",
-      ).length,
-      exit_sites: instructions.filter(
-        (instruction) => instruction.mnemonic === "exit",
-      ).length,
-      lddw_constants: instructions.filter(
-        (instruction) => instruction.mnemonic === "lddw",
-      ).length,
+      unknown_opcodes: counts.unknown,
+      call_sites: counts.call,
+      exit_sites: counts.exit,
+      lddw_constants: counts.lddw,
       coverage: textSection === undefined ? "no-text-section" : "complete",
     },
     handlers: handlers.map((handler) => ({
@@ -470,17 +502,7 @@ const analyzeAcquired = (
     })),
     dispatch: {
       total_candidates: handlers.length,
-      by_method: {
-        "lddw-compare": handlers.filter(
-          (handler) => handler.method === "lddw-compare",
-        ).length,
-        "split-compare": handlers.filter(
-          (handler) => handler.method === "split-compare",
-        ).length,
-        "table-dispatch": handlers.filter(
-          (handler) => handler.method === "table-dispatch",
-        ).length,
-      },
+      by_method: byMethod,
       computed_jumps_unresolved: dispatch.computedJumpsUnresolved,
     },
     syscalls: {
@@ -494,17 +516,13 @@ const analyzeAcquired = (
         basis: resolution.basis,
         note: resolution.note,
       })),
-      resolved_calls: callResolutions.filter(
-        (resolution) => resolution.resolvedName !== null,
-      ).length,
-      unresolved_calls: callResolutions.filter(
-        (resolution) => resolution.resolvedName === null,
-      ).length,
+      resolved_calls: resolvedCalls,
+      unresolved_calls: callResolutions.length - resolvedCalls,
     },
     strings: extractStrings(image),
     limitations,
   };
-  return ok({ report, callResolutions });
+  return ok({ report, callResolutions, instructions });
 };
 
 interface PlannedOutputFile {
@@ -518,6 +536,7 @@ const plannedOutputs = (
   acquired: AcquiredProgram,
   report: SolanaProgramAnalysis,
   callResolutions: readonly SolanaCallResolution[],
+  instructions: readonly SbpfInstruction[],
 ): PlannedOutputFile[] => {
   const files: PlannedOutputFile[] = [];
   const text = (value: string): Uint8Array => Buffer.from(value, "utf8");
@@ -531,34 +550,22 @@ const plannedOutputs = (
     bytes: text(`${JSON.stringify(report, null, 2)}\n`),
   });
   if (report.disassembly.coverage === "complete") {
-    const image = parseSolanaElf(acquired.bytes);
-    const textSection = solanaTextSection(image);
-    if (textSection !== undefined) {
-      const resolvedByAddress = new Map(
-        callResolutions
-          .filter((resolution) => resolution.resolvedName !== null)
-          .map((resolution) => [resolution.address, resolution]),
-      );
-      const lines = disassembleSbpf(
-        acquired.bytes.subarray(
-          textSection.offset,
-          textSection.offset + textSection.size,
-        ),
-        textSection.address,
-        textSection.offset,
-        report.elf.sbpf_version,
-      ).map((instruction) => {
-        const line = `${instruction.address.toString(16).padStart(8, "0")}  ${instruction.text}`;
-        const resolution = resolvedByAddress.get(instruction.address);
-        return resolution === undefined
-          ? line
-          : `${line}  ; ${resolution.resolvedName as string}`;
-      });
-      files.push({
-        relativePath: DISASSEMBLY_FILE,
-        bytes: text(`${lines.join("\n")}\n`),
-      });
-    }
+    const resolvedByAddress = new Map(
+      callResolutions
+        .filter((resolution) => resolution.resolvedName !== null)
+        .map((resolution) => [resolution.address, resolution]),
+    );
+    const lines = instructions.map((instruction) => {
+      const line = `${instruction.address.toString(16).padStart(8, "0")}  ${instruction.text}`;
+      const resolution = resolvedByAddress.get(instruction.address);
+      return resolution === undefined
+        ? line
+        : `${line}  ; ${resolution.resolvedName as string}`;
+    });
+    files.push({
+      relativePath: DISASSEMBLY_FILE,
+      bytes: text(`${lines.join("\n")}\n`),
+    });
   }
   if (input.handoff === true) {
     const elfFileName = `${HANDOFF_ELF_DIRECTORY}/${basename(acquired.path)}`;
@@ -619,6 +626,7 @@ const writeArtifacts = async (
   acquired: AcquiredProgram,
   report: SolanaProgramAnalysis,
   callResolutions: readonly SolanaCallResolution[],
+  instructions: readonly SbpfInstruction[],
   signal: AbortSignal | undefined,
 ): Promise<AnalysisError | undefined> => {
   if (input.out_dir === undefined) return undefined;
@@ -628,6 +636,7 @@ const writeArtifacts = async (
     acquired,
     report,
     callResolutions,
+    instructions,
   );
   let tree: SafeOutputTree | undefined;
   try {
@@ -708,6 +717,7 @@ export class SolanaProgramProvider implements SolanaProgramPort {
       acquired.value,
       analyzed.value.report,
       analyzed.value.callResolutions,
+      analyzed.value.instructions,
       signal,
     );
     if (writeFailure !== undefined) return err(writeFailure);
