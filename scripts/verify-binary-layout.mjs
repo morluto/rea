@@ -579,13 +579,14 @@ try {
   const overflowingTablePath = join(root.path, "overflowing-program-table");
   await writeFile(overflowingTablePath, overflowingTable);
   for (const mode of ["cli", "mcp"]) {
-    const error = await inspect(mode, overflowingTablePath, "invalid_input");
-    assert.equal(error.code, "invalid_request");
-    assert.ok(
-      error.details.issues.some(
-        ({ path, reason }) => path[0] === "path" && reason === "invalid_format",
-      ),
+    const error = await inspect(
+      mode,
+      overflowingTablePath,
+      "unsupported_target",
     );
+    assert.equal(error.code, "unsupported_target");
+    assert.equal(error.details.failure_kind, "malformed");
+    assert.equal(error.details.format, "elf");
     cases++;
   }
   assert.deepEqual(await readFile(overflowingTablePath), overflowingTable);
@@ -774,8 +775,8 @@ try {
           : await inspect(
               mode,
               path,
-              fixture.expectation === "invalid_input"
-                ? "invalid_input"
+              fixture.expectation === "malformed"
+                ? "unsupported_target"
                 : undefined,
             );
       if (fixture.expectation === "absent") {
@@ -840,7 +841,7 @@ try {
       const path = join(root.path, `invalid-dependency-${profile}-${problem}`);
       await writeFile(path, bytes);
       for (const mode of ["cli", "mcp"]) {
-        await inspect(mode, path, "invalid_input");
+        await inspect(mode, path, "unsupported_target");
         cases++;
       }
       assert.deepEqual(await readFile(path), bytes);
@@ -887,7 +888,7 @@ try {
       const path = join(root.path, `invalid-symbol-link-${type}-${problem}`);
       await writeFile(path, bytes);
       for (const mode of ["cli", "mcp"]) {
-        await inspect(mode, path, "invalid_input");
+        await inspect(mode, path, "unsupported_target");
         cases++;
       }
       assert.deepEqual(await readFile(path), bytes);
@@ -942,7 +943,7 @@ try {
       0n,
       Number(BigInt(section.header_location.offset)) + 56,
     );
-    return [`zero-entry-${type}`, bytes, "invalid_input"];
+    return [`zero-entry-${type}`, bytes, "unsupported_target"];
   });
   const undersizedSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
@@ -951,7 +952,7 @@ try {
     const header = Number(BigInt(section.header_location.offset));
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
-    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+    return [`undersized-entry-${type}`, bytes, "unsupported_target"];
   });
   const nonintegralSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
@@ -961,7 +962,7 @@ try {
     const size = bytes.readBigUInt64LE(header + 32);
     assert.ok(size + 1n <= BigInt(bytes.length) - BigInt(section.offset));
     bytes.writeBigUInt64LE(size + 1n, header + 32);
-    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+    return [`nonintegral-entry-count-${type}`, bytes, "unsupported_target"];
   });
   const relocationSection = relocatable.sections.find(
     (item) => item.type === "SHT_RELA",
@@ -976,7 +977,7 @@ try {
     bytes.writeUInt32LE(sectionType, header + 4);
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
-    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+    return [`undersized-entry-${type}`, bytes, "unsupported_target"];
   });
   const nonintegralRelocationEntries = [
     ["RELA", 4, 24],
@@ -987,7 +988,7 @@ try {
     bytes.writeUInt32LE(sectionType, header + 4);
     bytes.writeBigUInt64LE(BigInt(entrySize + 1), header + 32);
     bytes.writeBigUInt64LE(BigInt(entrySize), header + 56);
-    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+    return [`nonintegral-entry-count-${type}`, bytes, "unsupported_target"];
   });
   const invalidRelocationReferences = [
     ["missing-symbol-table", relocatable.sections.length + 100],
@@ -1002,7 +1003,7 @@ try {
       const type = bytes.readBigUInt64LE(offset) & 0xffffffffn;
       bytes.writeBigUInt64LE((0xffffffffn << 32n) | type, offset);
     } else bytes.writeUInt32LE(link, header + 40);
-    return [name, bytes, "invalid_input"];
+    return [name, bytes, "unsupported_target"];
   });
   const inactiveTarget = relocatable.sections.find(
     (section) => section.name.display === ".comment",
@@ -1398,12 +1399,12 @@ try {
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
   for (const [name, bytes, category] of [
-    ["not-elf", Buffer.from("ordinary local text"), "invalid_input"],
-    ["truncated", object.subarray(0, 32), "invalid_input"],
+    ["not-elf", Buffer.from("ordinary local text"), "unsupported_target"],
+    ["truncated", object.subarray(0, 32), "unsupported_target"],
     [
       "truncated-tables",
       object.subarray(0, object.length - 1),
-      "invalid_input",
+      "unsupported_target",
     ],
     ...zeroSymbolEntries,
     ...undersizedSymbolEntries,
@@ -1411,14 +1412,18 @@ try {
     ...undersizedRelocationEntries,
     ...nonintegralRelocationEntries,
     ...invalidRelocationReferences,
-    ["unterminated-dynamic-segment", shortDynamic, "invalid_input"],
-    ["unterminated-interpreter", unterminatedInterpreter, "invalid_input"],
+    ["unterminated-dynamic-segment", shortDynamic, "unsupported_target"],
+    ["unterminated-interpreter", unterminatedInterpreter, "unsupported_target"],
     [
       "missing-relocation-target-section",
       missingTargetSection,
-      "invalid_input",
+      "unsupported_target",
     ],
-    ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
+    [
+      "undersized-program-header",
+      undersizedProgramHeader,
+      "unsupported_target",
+    ],
     ["riscv64", unsupported, "unsupported_target"],
     ["core", core, "unsupported_target"],
   ]) {
@@ -1438,7 +1443,7 @@ try {
   const badPackedPath = join(root.path, "relr-bitmap-without-anchor");
   await writeFile(badPackedPath, packedFile);
   for (const mode of ["cli", "mcp"]) {
-    await inspect(mode, badPackedPath, "invalid_input");
+    await inspect(mode, badPackedPath, "unsupported_target");
     assert.deepEqual(await readFile(badPackedPath), packedFile);
     cases++;
   }

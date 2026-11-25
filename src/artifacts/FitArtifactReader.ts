@@ -9,7 +9,11 @@ import {
   readDevicetreeHeader,
 } from "../domain/firmware/devicetreeHeader.js";
 import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
+} from "../resources/index.js";
 import {
   PositionalArtifactReader,
   type PositionalArtifactEntries,
@@ -48,10 +52,7 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
   protected override entryEndedEarly(
     entry: PositionalArtifactEntry,
   ): ArtifactReaderFailure {
-    return new ArtifactReaderFailure(
-      "format",
-      `FIT image ended early: ${entry.path}`,
-    );
+    return malformedArtifact("fit", `FIT image ended early: ${entry.path}`);
   }
 
   protected override async prepareEntries(
@@ -70,16 +71,27 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
       ({ totalsize } = readDevicetreeHeader(prefix).header);
     } catch (cause) {
       if (cause instanceof BinaryFormatFailure)
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "fit",
           `FIT devicetree header: ${cause.message}`,
+          {
+            cause,
+            offset: 0,
+            field: "devicetree-header",
+          },
         );
       throw cause;
     }
     if (totalsize > initial.size)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw truncatedArtifact(
+        "fit",
         `FIT devicetree is truncated: totalsize ${String(totalsize)} exceeds the ${String(initial.size)}-byte file`,
+        {
+          offset: 0,
+          field: "totalsize",
+          availableBytes: initial.size,
+          requiredBytes: totalsize,
+        },
       );
     if (totalsize > MAX_DEVICETREE_FILE_BYTES)
       throw new ArtifactReaderFailure(

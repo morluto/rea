@@ -3,6 +3,10 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -86,10 +90,11 @@ process.exit(1);
         device_path: devicePath,
         ...transfer.input,
       });
-      expect(reply.isError).toBe(true);
-      const content = reply.content.find((item) => item.type === "text");
-      if (content?.type !== "text") throw new Error("Missing error response");
-      expect(JSON.parse(content.text)).toEqual({ error: output.json });
+      expectAdapterErrorParity(
+        parseMcpToolError(reply).error,
+        output.json,
+        scenario.operation,
+      );
       await client.ping();
     }
     expect(await readFile(source, "utf8")).toBe("caller bytes");

@@ -768,7 +768,7 @@ it("orders a scenario capture by request order and needs its response bodies", (
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       message: expect.stringContaining("response_body selected"),
     },
   });

@@ -21,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisTargetFailureError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -80,15 +79,11 @@ export const projectOwnedArtifactInputFailure = (
     !(cause instanceof ArtifactReaderFailure)
   )
     return undefined;
-  if (cause.reason === "unsupported")
-    return new AnalysisUnsupportedTargetError(operation, path, cause.message, {
-      cause,
-    });
-  // A parser's malformed or truncated bytes keep the format owner's parsed
-  // facts and are a target refusal; the request that selected the file is not
-  // at fault. The reader records those facts only for its own malformed or
-  // truncated reason, so a cancelled read whose opaque abort reason happens to
-  // be a parser failure stays a cancellation.
+  // A format owner's malformed, truncated or unsupported bytes keep its facts
+  // and are a target refusal; the request that selected the file is not at
+  // fault. The reader records those facts only for its own target reason, so
+  // a cancelled read whose opaque abort reason happens to be a parser failure
+  // stays a cancellation.
   if (cause.parseFailure !== undefined)
     return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
       cause,
@@ -172,12 +167,11 @@ export const stableArtifactInputFailure = (
   );
 
 const artifactCleanupFailure = (
-  cause: unknown,
+  cause: ArtifactReaderFailure,
   providerId: string,
   operation: string,
 ): ProviderCleanupError | undefined => {
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return undefined;
+  if (cause.cleanup === undefined) return undefined;
   return new ProviderCleanupError(
     providerId,
     cause.cleanup.resources,
@@ -192,8 +186,36 @@ export const projectArtifactCloseFailure = (
   providerId: string,
   operation: string,
 ): unknown => {
+  if (!(cause instanceof ArtifactReaderFailure)) return cause;
   const error = artifactCleanupFailure(cause, providerId, operation);
   if (error === undefined) return cause;
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Close a provider's descriptor scope and preserve its cleanup leases on failure. */
+export const closeArtifactResources = async (
+  close: () => Promise<void>,
+  provider: { readonly id: string },
+  operation: string,
+): Promise<void> => {
+  try {
+    await close();
+  } catch (cause: unknown) {
+    throw projectArtifactCloseFailure(cause, provider.id, operation);
+  }
+};
+
+/** Keep the primary failure and bind any descriptor cleanup to its returned error. */
+export const withArtifactCleanupFailure = (
+  cause: ArtifactReaderFailure,
+  primary: AnalysisError,
+  providerId: string,
+  operation: string,
+): AnalysisError => {
+  const cleanup = artifactCleanupFailure(cause, providerId, operation);
+  if (cleanup === undefined) return primary;
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
   bindArtifactFileCleanup(cause, error);
   return error;
 };
@@ -209,9 +231,6 @@ export const projectStableArtifactFailure = (
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);
-  const cleanup = artifactCleanupFailure(cause, providerId, operation);
-  if (cleanup === undefined) return primary;
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
-  bindArtifactFileCleanup(cause, error);
-  return error;
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
+  return withArtifactCleanupFailure(cause, primary, providerId, operation);
 };

@@ -326,7 +326,6 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
     super(info, { ...options, maxToolInputElements: maximumInputElements });
     this.maximumInputElements = maximumInputElements;
-    this.delivery = delivery;
     this.presentation = advertisedToolPresentation(
       outputSchemaProfile,
       compactPresentation,

@@ -1,3 +1,4 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -38,7 +39,7 @@ import { z } from "zod";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
-import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
+import { unsupportedTarget } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -356,9 +357,10 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     inspect: async ({ path }) => {
       goCalls += 1;
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           path,
+          "fixture",
           "fixture rejection",
         ),
       );
@@ -544,19 +546,14 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     {
       name: "integration-test",
       version: "1.0.0",
     },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 const text = (result: CallToolResult): string => {

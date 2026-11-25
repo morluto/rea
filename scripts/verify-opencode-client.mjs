@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -239,7 +239,7 @@ await withVerifierCleanup(async () => {
         2,
       );
     await writeFile(configPath, original);
-    await verifyClientSetup({
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
       client: "opencode",
       commands,
       runtimeRoot,
@@ -255,22 +255,6 @@ await withVerifierCleanup(async () => {
           assert(configured.includes("// Keep caller configuration."));
       },
     });
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const skillLines = installedSkill.split("\n");
-    const headerEnd = skillLines.indexOf("---", 1);
-    assert(
-      skillLines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = skillLines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(

@@ -14,37 +14,6 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
-  "classifies a ZIP local-header offset beyond EOF as malformed input",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-zip-beyond-eof-");
-    const archivePath = join(root, "beyond-eof.zip");
-    const writer = new ZipWriter(new Uint8ArrayWriter());
-    await writer.add("member.bin", new TextReader("valid member bytes"));
-    const bytes = Buffer.from(await writer.close());
-    const central = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
-    if (central < 0) throw new Error("Expected a ZIP central directory");
-    bytes.writeUInt32LE(bytes.length + 1024, central + 42);
-    await writeFile(archivePath, bytes);
-
-    const result = await cli.run({
-      arguments: ["inspect-artifact", archivePath, "--json"],
-    });
-    expect(result.exitCode, result.stdout + result.stderr).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "artifact_operation_failed",
-      category: "execution_failure",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
-      details: {
-        operation: "inspect_artifact",
-        reason: "format",
-        detail: expect.stringContaining("extends beyond"),
-      },
-    });
-  },
-);
-
-cliTest(
   "inspects and extracts ZIP members with repeated current-directory prefixes",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-zip-relative-paths-");

@@ -214,7 +214,7 @@ it("reports impossible over-cap component extents as malformed", async () => {
   );
   try {
     await expect(collectEntries(reader)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
   } finally {
     await reader.close();

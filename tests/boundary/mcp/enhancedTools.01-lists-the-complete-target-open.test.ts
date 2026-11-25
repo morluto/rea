@@ -1,5 +1,5 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
@@ -15,7 +15,6 @@ import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js"
 import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const targetObservation = (value: unknown) =>
@@ -225,16 +224,11 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "enhanced-test", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 // oxlint-disable-next-line max-lines-per-function -- keep the complete production registration checks together.

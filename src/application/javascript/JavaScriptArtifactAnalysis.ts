@@ -44,7 +44,7 @@ import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGrap
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ArtifactReaderFailure,
-  translateArtifactFailure,
+  translateArtifactOperationFailure,
 } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
@@ -231,7 +231,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         cause instanceof ArtifactReaderFailure &&
         cause.reason === "cancelled"
       )
-        interruption = translateArtifactFailure(
+        interruption = translateArtifactOperationFailure(
           "analyze_javascript_application",
           cause,
         );

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { verifyClientSetup } from "./verify/clients/setup.mjs";
+import { verifyClientSetupAndReadSkillBody } from "./verify/clients/setup.mjs";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -24,6 +24,7 @@ import {
   sortVerifierNames,
 } from "./lib/mcp-verifier-results.mjs";
 import {
+  containsText,
   findClientResult,
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
@@ -103,14 +104,6 @@ await withVerifierCleanup(async () => {
       strict: false,
       validateFormats: false,
     });
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      if (value && typeof value === "object")
-        return Object.values(value).some((nested) =>
-          containsText(nested, text),
-        );
-      return false;
-    };
     const decodeClaudeResult = (text) =>
       JSON.parse(
         // Native Claude appends this resource hint. Original bodies remain in request artifacts.
@@ -269,7 +262,7 @@ await withVerifierCleanup(async () => {
       2,
     );
     await writeFile(configPath, original);
-    await verifyClientSetup({
+    expectedSkillBody = await verifyClientSetupAndReadSkillBody({
       client: "claude_code",
       commands,
       runtimeRoot,
@@ -283,22 +276,6 @@ await withVerifierCleanup(async () => {
         assert.equal(JSON.parse(configured).theme, "light");
       },
     });
-    const installedSkill = await readFile(
-      join(skillDirectory, "SKILL.md"),
-      "utf8",
-    );
-    assert(installedSkill.includes("name: reverse-engineer-anything"));
-    const lines = installedSkill.split("\n");
-    const headerEnd = lines.indexOf("---", 1);
-    assert(
-      lines[0] === "---" && headerEnd > 0,
-      "Installed skill must have its authored frontmatter",
-    );
-    expectedSkillBody = lines
-      .slice(headerEnd + 1)
-      .join("\n")
-      .trim();
-    assert(expectedSkillBody.length > 0);
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(

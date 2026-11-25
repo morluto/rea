@@ -1287,7 +1287,11 @@ it.each([
       expect(marker.operationCause).toBe(raw);
       expect(projected.cleanupLease).toBe(failure.cleanupLease);
       expect(projected.cleanupLeases).toEqual([failure.cleanupLease]);
-      const error = translateArtifactFailure("inspect_artifact", projected);
+      const error = translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        projected,
+      );
       expect(error.cleanupResources).toEqual([path]);
       expect(error.cleanupIncomplete).toBe(true);
       expect(error.partialObservation).toBeUndefined();

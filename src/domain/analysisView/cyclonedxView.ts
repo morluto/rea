@@ -2,7 +2,7 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import {
   fixedCeilingConstraint,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../analysisErrorCore.js";
 import type { GoModule } from "../go/goBinary.js";
 import { goBinarySchema } from "../go/goBinary.js";
@@ -750,9 +750,10 @@ export const projectCycloneDxView = (
   if (parent.operation === "inspect_rust_binary")
     return projectRustCycloneDx(parent, view);
   return err(
-    new AnalysisUnsupportedTargetError(
+    unsupportedTarget(
       INSPECT_ANALYSIS_VIEW_OPERATION,
       parentArtifactPath(parent),
+      "evidence",
       `View cyclonedx is unsupported for parent operation ${parent.operation}; cyclonedx requires inspect_go_binary or inspect_rust_binary.`,
     ),
   );

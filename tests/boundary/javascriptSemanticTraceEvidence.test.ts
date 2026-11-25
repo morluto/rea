@@ -7,7 +7,10 @@ import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { closeCliResources, createCli } from "../../src/cli.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
@@ -116,7 +119,7 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
       arguments: arguments_,
     });
     const { error: mcpError } = parseMcpToolError(mcpTrace);
-    expect(mcpError).toEqual(cliError);
+    expectAdapterErrorParity(mcpError, cliError, "trace_javascript_semantics");
   } finally {
     await harness.close();
   }

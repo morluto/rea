@@ -1,4 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { connectFixtureClient } from "../support/mcp/mcpFixture.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -11,7 +11,6 @@ import { run } from "../../src/main.js";
 import { createServer } from "../../src/server/createServer.js";
 import type { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => {
@@ -19,18 +18,12 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-const connect = async (server: EvidenceMcpServer) => {
-  const client = new Client(
+const connect = (server: EvidenceMcpServer) =>
+  connectFixtureClient(
+    server,
     { name: "selected-delivery", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
-};
 
 it("keeps independent server budgets for successful results and oversized errors after environment mutation", async () => {
   const smallBudget = STDIO_DEFAULT_MAX_BUFFER_SIZE;

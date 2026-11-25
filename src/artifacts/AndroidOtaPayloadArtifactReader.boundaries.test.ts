@@ -62,7 +62,13 @@ it("applies the manifest allowance only when the declared bytes fit the file", a
       await expect(collectEntries(reader)).rejects.toMatchObject(
         offset === 0
           ? { reason: "limit", boundary: "capacity" }
-          : { reason: "format", cause: { kind: "truncated" } },
+          : {
+              reason: "truncated",
+              parseFailure: {
+                kind: "truncated",
+                format: "android-ota-payload",
+              },
+            },
       );
     } finally {
       await reader.close();

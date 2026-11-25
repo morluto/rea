@@ -2,8 +2,11 @@ import {
   ArtifactReaderFailure,
   projectOwnedArtifactInputFailure,
   type ArtifactFilePrimaryFacts,
+  artifactOperationReason,
 } from "../resources/index.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import type { ProviderFailureDialect } from "./classifyProviderFailure.js";
@@ -12,7 +15,7 @@ type ArtifactOperation = ConstructorParameters<
   typeof ArtifactOperationError
 >[0];
 
-interface OfflineArtifactDialectBase {
+export type OfflineArtifactDialectOptions = {
   readonly providerId: string;
   readonly path: string;
   readonly description: string;
@@ -28,25 +31,15 @@ interface OfflineArtifactDialectBase {
   ) => AnalysisError | undefined;
   /** Projection for a selected file exceeding the caller's `file-size` budget. */
   readonly fileSize?: (cause: ArtifactReaderFailure) => AnalysisError;
-}
-
-export type OfflineArtifactDialectOptions =
-  | (OfflineArtifactDialectBase & {
-      readonly operation: ArtifactOperation;
-      readonly fallbackMessage: string;
-      readonly unclassified?: (
-        cause: unknown,
-        origin: ArtifactFilePrimaryFacts["origin"],
-      ) => AnalysisError;
-    })
-  | (OfflineArtifactDialectBase & {
-      readonly operation: string;
-      readonly fallbackMessage?: never;
-      readonly unclassified: (
-        cause: unknown,
-        origin: ArtifactFilePrimaryFacts["origin"],
-      ) => AnalysisError;
-    });
+  /** A provider-specific projection for failures outside the shared file and parser cases. */
+  readonly unclassified?: (
+    cause: unknown,
+    origin: ArtifactFilePrimaryFacts["origin"],
+  ) => AnalysisError;
+} & (
+  | { readonly operation: ArtifactOperation; readonly fallbackMessage: string }
+  | { readonly operation: string; readonly fallbackMessage?: never }
+);
 
 /**
  * Shared `ProviderFailureDialect` for offline single-file artifact providers:
@@ -79,22 +72,24 @@ export const offlineArtifactFailureDialect = (
       ...(field === undefined ? {} : { field }),
       ...(options.fileSize === undefined ? {} : { fileSize: options.fileSize }),
     },
-    unclassified: (failure) =>
-      options.fallbackMessage === undefined
-        ? options.unclassified(failure, origin)
-        : options.unclassified !== undefined
-          ? options.unclassified(failure, origin)
-          : new ArtifactOperationError(
-              options.operation,
-              origin === "owned-or-classified" &&
-                failure instanceof ArtifactReaderFailure
-                ? failure.reason
-                : "io",
-              undefined,
-              failure instanceof Error
-                ? failure.message
-                : options.fallbackMessage,
-              { cause: failure },
-            ),
+    unclassified: (failure) => {
+      if (options.unclassified !== undefined)
+        return options.unclassified(failure, origin);
+      if (options.fallbackMessage !== undefined)
+        return new ArtifactOperationError(
+          options.operation,
+          origin === "owned-or-classified" &&
+            failure instanceof ArtifactReaderFailure
+            ? artifactOperationReason(failure)
+            : "io",
+          undefined,
+          failure instanceof Error ? failure.message : options.fallbackMessage,
+          { cause: failure },
+        );
+      return new ProviderAdapterError(providerId, operation, {
+        cause: failure,
+        diagnostics: { path, reason: errorMessage(failure) },
+      });
+    },
   };
 };

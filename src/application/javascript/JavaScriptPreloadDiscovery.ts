@@ -6,7 +6,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
-import { translateArtifactFailure } from "../../resources/index.js";
+import { translateArtifactOperationFailure } from "../../resources/index.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { ArtifactResourceScope } from "../../resources/index.js";
@@ -129,7 +129,7 @@ export const discoverJavaScriptPreloadPaths = async (
       if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError)
         throw analysisErrorWithCleanupFailure(
           outcome.cause,
-          translateArtifactFailure(
+          translateArtifactOperationFailure(
             "analyze_javascript_application",
             scope.cleanupFailure({ kind: "completed" }, [cleanup]),
           ),

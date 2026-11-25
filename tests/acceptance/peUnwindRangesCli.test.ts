@@ -8,7 +8,10 @@ import {
   unwindInfo,
 } from "../../src/native/pe/PeUnwindRanges.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const primary = { begin: 0x1000, end: 0x1100, unwind: 0x2000 };
@@ -83,6 +86,10 @@ cliTest(
       path: truncated,
     });
     expect(mcpRefused.isError).toBe(true);
-    expect(parseMcpToolError(mcpRefused)).toEqual({ error: refused.json });
+    expectAdapterErrorParity(
+      parseMcpToolError(mcpRefused).error,
+      refused.json,
+      "inspect_pe_unwind_ranges",
+    );
   },
 );

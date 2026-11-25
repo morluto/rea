@@ -384,8 +384,16 @@ it("selects code checks for documentation filenames containing line separators",
 });
 
 it.each([
+  "artifacts.d.mts",
+  "artifacts.mjs",
+  "failure-report.d.mts",
+  "failure-report.mjs",
+  "github-api.d.mts",
+  "github-api.mjs",
   "job-timings.mjs",
   "job-timings-batch.mjs",
+  "pr-ci-health.d.mts",
+  "pr-ci-health.mjs",
   "test-report.mjs",
   "test-timing-reporter.mjs",
   "test-history.mjs",

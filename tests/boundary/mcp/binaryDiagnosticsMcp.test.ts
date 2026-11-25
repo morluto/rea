@@ -26,6 +26,7 @@ import {
   binaryLayoutFixture,
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import {
   elfExportImage,
   peStoredExportTableImage,
@@ -290,14 +291,10 @@ it("records inline layout with compact schemas and canonical path checks", async
   let providerClosed = false;
   let providerCalls = 0;
   const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => {
+    ...inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () => {
       providerCalls++;
       return Promise.resolve(ok(value));
-    },
+    }),
     close: async () => {
       providerClosed = true;
     },
