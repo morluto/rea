@@ -64,3 +64,25 @@ export async function verifyClientSetup({
   assert.equal(await readFile(configPath, "utf8"), configured);
   assert.equal(await readFile(backup, "utf8"), original);
 }
+
+/** Read the instruction body that Claude Code, Copilot CLI and OpenCode inject. */
+export async function verifyClientSetupAndReadSkillBody(options) {
+  await verifyClientSetup(options);
+  const installedSkill = await readFile(
+    join(options.skillDirectory, "SKILL.md"),
+    "utf8",
+  );
+  assert(installedSkill.includes("name: reverse-engineer-anything"));
+  const lines = installedSkill.split("\n");
+  const headerEnd = lines.indexOf("---", 1);
+  assert(
+    lines[0] === "---" && headerEnd > 0,
+    "Installed skill must have its authored frontmatter",
+  );
+  const expectedSkillBody = lines
+    .slice(headerEnd + 1)
+    .join("\n")
+    .trim();
+  assert(expectedSkillBody.length > 0);
+  return expectedSkillBody;
+}
