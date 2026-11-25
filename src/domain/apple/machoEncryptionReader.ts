@@ -23,7 +23,7 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type MachoLoadCommand,
-  type MachoReadIssue,
+  type MachoReadFailed,
   type MachoSliceHeader,
   type ReadAt,
 } from "./machoLoadCommandReader.js";
@@ -59,7 +59,7 @@ export const readMachoEncryption = async (
   const container = await readMachoContainer(readAt, size);
   if (container.kind === "not-mach-o") return { status: "not-mach-o" };
   if (container.kind === "issue")
-    return { status: container.status, reason: container.reason };
+    return { status: "failed", failure: container.failure };
   if (container.kind === "thin")
     return {
       status: "parsed",
@@ -70,7 +70,7 @@ export const readMachoEncryption = async (
   // unknown before any declared slice is read.
   const { hidden } = container;
   if (hidden !== null && hidden.status !== "declared")
-    return { status: hidden.status, reason: hidden.reason };
+    return { status: "failed", failure: hidden.failure };
   const slices: MachoSliceEncryption[] = [];
   for (const [index, declaration] of container.header.slices.entries()) {
     const rangeIssue = container.header.rangeIssues[index] ?? null;
@@ -87,8 +87,8 @@ export const readMachoEncryption = async (
           )
         : unread(
             declaration,
-            rangeIssue.category === "unsupported" ? "unknown" : "malformed",
-            rangeIssue.reason,
+            rangeIssue.kind === "unsupported" ? "unknown" : "malformed",
+            rangeIssue.detail,
           ),
     );
   }
@@ -159,14 +159,11 @@ const readSlice = async (
   let segmentRecords = 0;
   // Commands seen before a failure stay as partial facts; an incomplete walk
   // can never prove the command is absent.
-  const incomplete = ({
-    status,
-    reason,
-  }: MachoReadIssue): MachoSliceEncryption => ({
+  const incomplete = ({ failure }: MachoReadFailed): MachoSliceEncryption => ({
     ...base,
-    status: status === "unsupported" ? "unknown" : "malformed",
-    malformed_kind: status === "unsupported" ? null : "structure",
-    reason,
+    status: failure.kind === "unsupported" ? "unknown" : "malformed",
+    malformed_kind: failure.kind === "unsupported" ? null : "structure",
+    reason: failure.detail,
     commands,
     range: null,
   });

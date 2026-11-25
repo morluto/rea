@@ -28,7 +28,11 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { LimitRef } from "../domain/parseFailure.js";
-import type { FormatTargetFailure } from "../domain/targetFailure.js";
+import type {
+  FormatTargetFailure,
+  TargetFailureOf,
+} from "../domain/targetFailure.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -570,6 +574,23 @@ export const malformedArtifact = (
     { kind: "malformed", format, detail, ...located(offset, field) },
     options,
   );
+
+/**
+ * The throwable for a failure a reader established. Bytes that came up short
+ * after the file's size was measured mean the file changed during the read,
+ * a read-coverage integrity failure; any other kind is the owner's parse
+ * failure, which a stable-file owner re-verifies before reporting.
+ */
+export const readFailureError = (
+  failure: FormatTargetFailure | TargetFailureOf<"changed">,
+):
+  | ArtifactReaderFailure
+  | ParseFailureError<"malformed" | "truncated" | "unsupported"> =>
+  failure.kind === "changed"
+    ? new ArtifactReaderFailure("integrity", failure.detail, {
+        integrityCheck: "read-coverage",
+      })
+    : new ParseFailureError(failure);
 
 /**
  * The bytes use a form outside what this reader of `format` decodes.

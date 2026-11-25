@@ -382,9 +382,11 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
   );
   bytes.writeUInt32BE(0, 4);
   expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    // The universal container's owner names its own format.
     new BinaryFormatFailure(
       "malformed",
       "FAT header declares no architectures",
+      { format: "macho" },
     ),
   );
 });

@@ -1,6 +1,5 @@
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
-  malformedInput,
   unsupportedInput,
   ParseFailureError,
   type LimitRef,
@@ -35,6 +34,7 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
+  readFailureError,
 } from "../resources/index.js";
 
 /** Admission and search bounds for one Electron executable. */
@@ -245,13 +245,12 @@ const identifyMacho = async (
 }> => {
   const facts = await readMachoImage(readAt, size);
   if (facts.status !== "parsed") {
-    const reason =
-      facts.status === "not-mach-o"
-        ? `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`
-        : facts.reason;
-    throw facts.status === "malformed"
-      ? malformedInput("macho", reason)
-      : unsupportedInput("macho", reason);
+    throw facts.status === "not-mach-o"
+      ? unsupportedInput(
+          "macho",
+          `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`,
+        )
+      : readFailureError(facts.failure);
   }
   const fat = readFatHeaderPrefix(head);
   const format =

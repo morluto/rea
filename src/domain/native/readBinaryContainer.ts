@@ -72,7 +72,11 @@ export const readBinaryContainerFromReader = async (
       const fat = await readUniversalMachoImageFromReader(source);
       if (!fat.ok) {
         const { failure } = fat.error;
-        const { kind, detail, offset } = failure;
+        // A read short of the measured file is raised as the bytes ending
+        // early; the stable-file owner re-verifies the file on any parse
+        // failure and reports a changed file as changed.
+        const kind = failure.kind === "changed" ? "truncated" : failure.kind;
+        const { detail, offset } = failure;
         throw new BinaryFormatFailure(kind, detail, {
           format: failure.format,
           ...(offset === undefined ? {} : { offset }),
@@ -103,7 +107,9 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
     if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fatHeader = readFatContainerHeader(bytes, bytes.length);
       if (fatHeader.state === "malformed")
-        throw new BinaryFormatFailure("malformed", fatHeader.reason);
+        throw new BinaryFormatFailure("malformed", fatHeader.reason, {
+          format: MACHO_FORMAT,
+        });
       if (fatHeader.state === "truncated")
         throw new BinaryFormatFailure("truncated", fatHeader.reason, {
           format: MACHO_FORMAT,

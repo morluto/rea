@@ -58,6 +58,7 @@ export {
   malformedArtifact,
   truncatedArtifact,
   unsupportedArtifact,
+  readFailureError,
   artifactPrimaryCleanupLeases,
   assertProducedEntry,
   copyArtifactEntry,
