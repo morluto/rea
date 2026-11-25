@@ -341,6 +341,7 @@
 * **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
 * **mcp:** retain doctor initialization when catalog requests fail ([#13255](https://github.com/morluto/rea/issues/13255)) ([87889b8](https://github.com/morluto/rea/commit/87889b8729da8a02a4159bc7274c92be52464031))
 * **mcp:** settle independent launch preparation owners ([#13259](https://github.com/morluto/rea/issues/13259)) ([178467f](https://github.com/morluto/rea/commit/178467f6a7c77f6c61f81008ccffeaa7d0061d38))
+* **model:** name and size Q4_0_4_4 GGUF tensors ([#14532](https://github.com/morluto/rea/issues/14532)) ([ed9e664](https://github.com/morluto/rea/commit/ed9e664c2a046737ffae7e17aa23e41b867bf8e7))
 * **model:** recognize F8_E4M3 GGUF tensors from ggml v0.29.0 ([afc040c](https://github.com/morluto/rea/commit/afc040ccebb9af1f8b9eb6c5dbbdbc322a58ded2))
 * **native-exports:** preserve uncertainty in incomplete ELF version lookups ([#13666](https://github.com/morluto/rea/issues/13666)) ([02d5e6e](https://github.com/morluto/rea/commit/02d5e6e3f83727f4234303bf6fadbc3509d1aedd))
 * **native-exports:** verify the declared PE directory size ([#13661](https://github.com/morluto/rea/issues/13661)) ([ef3eb1e](https://github.com/morluto/rea/commit/ef3eb1e46e37836fe91984ec15a8a1d0a352fe5c))
