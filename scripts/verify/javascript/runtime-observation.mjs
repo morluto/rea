@@ -3,17 +3,17 @@
 import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
 
-import { readStableArtifact } from "../../../dist/artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../../dist/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { readStableArtifact } from "../../../dist/resources/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../../../dist/resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
-} from "../../../dist/artifacts/ArtifactFileOperation.js";
+} from "../../../dist/resources/ArtifactFileOperation.js";
 
 import { reconcileJavaScriptRuntimeEvidence } from "../../../dist/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { analyzeJavaScriptApplicationWithOwnedScope } from "../../lib/javascript-application-analysis.mjs";
+import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 import {
   completeVerifierRun,
   createVerifierRun,
@@ -106,32 +106,22 @@ process.stdout.write(
 );
 
 async function readEvidenceFile(path) {
-  const scope = new ArtifactResourceScope();
   let outcome;
   try {
     outcome = {
       ok: true,
-      value: await readStableArtifact(
-        await realpath(path),
-        64 * 1024 * 1024,
-        undefined,
-        undefined,
-        scope,
+      value: await withVerifierArtifactScope(async (scope) =>
+        readStableArtifact(
+          await realpath(path),
+          64 * 1024 * 1024,
+          undefined,
+          undefined,
+          scope,
+        ),
       ),
     };
   } catch (cause) {
     outcome = { ok: false, cause };
-  }
-  try {
-    await scope.close();
-  } catch (cleanupCause) {
-    if (!outcome.ok)
-      throw new AggregateError(
-        [outcome.cause, cleanupCause],
-        "Verifier cleanup failed",
-        { cause: outcome.cause },
-      );
-    throw cleanupCause;
   }
   if (!outcome.ok && outcome.cause instanceof ArtifactFileCleanupFailure) {
     const completion = artifactFileCompletion(outcome.cause);

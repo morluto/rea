@@ -1,10 +1,9 @@
+import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { copyFile, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import {
@@ -21,6 +20,7 @@ import {
   verifyHopperSearch,
   verifyHopperRegexIsolation,
 } from "./real-hopper-search.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 const dispatcher = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 
@@ -40,15 +40,19 @@ export async function verifyHopperBoundaryContracts(
       ajv.validateSchema(tool.inputSchema),
       `${tool.name} input schema`,
     );
-    assert.ok(tool.outputSchema, `${tool.name} omitted its output schema`);
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      canonicalOutputSchema(tool.name),
+      `${tool.name} omitted its output schema`,
+    );
+    assert.ok(
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name} output schema`,
     );
     validators.set(
       tool.name,
-      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
-        ajv.compile(tool.outputSchema),
+      (canonicalOutputSchema(tool.name)?.$id &&
+        ajv.getSchema(canonicalOutputSchema(tool.name).$id)) ||
+        ajv.compile(canonicalOutputSchema(tool.name)),
     );
   }
   let successfulCalls = 0;
@@ -225,6 +229,7 @@ export async function verifyHopperBoundaryContracts(
     );
     assert.equal(await call("address_name", { address }), renamed);
     const matches = await call("search_procedures", {
+      detail: "complete",
       pattern: renamed,
       case_sensitive: true,
     });
@@ -247,7 +252,7 @@ export async function verifyHopperBoundaryContracts(
       true,
     );
     assert.equal(
-      await call("procedure_address", { procedure: "add" }),
+      await call("procedure_address", { detail: "complete", procedure: "add" }),
       address,
     );
     assert.equal(
@@ -259,7 +264,10 @@ export async function verifyHopperBoundaryContracts(
       address,
     );
     assert.equal(
-      await call("procedure_address", { procedure: address.slice(2) }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: address.slice(2),
+      }),
       address,
     );
 
@@ -398,7 +406,16 @@ export async function verifyHopperBoundaryContracts(
 }
 
 /** Prove actual document disposal and shared CLI/MCP behavior on disposable copies. */
-export async function verifyHopperLifecycleAndCli(client, options, targets) {
+export async function verifyHopperLifecycleAndCli(
+  client,
+  options,
+  targets,
+  commands,
+) {
+  if (commands === undefined)
+    throw new Error(
+      "Hopper boundary verification requires the supervised command owner",
+    );
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "hopper-boundary-")),
   );
@@ -410,15 +427,22 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       await client.callTool({ name, arguments: args }, options),
       name,
     );
-  const cli = promisify(execFile);
-  const runCli = (args) => {
-    const pending = cli(process.execPath, args, {
-      timeout: 180_000,
-      maxBuffer: 1_048_576,
-    });
-    if (pending.child.pid !== undefined)
-      targets.ownedProcessIds.add(pending.child.pid);
-    return pending;
+  // Non-zero CLI exits keep the execFile-shaped code and stdout the refusal
+  // assertion reads. The process itself belongs to the command owner.
+  const runCli = async (args) => {
+    try {
+      return await commands.exec(process.execPath, args, {
+        timeout: 180_000,
+        maxBuffer: 1_048_576,
+      });
+    } catch (error) {
+      if (error?.name !== "VerifierCommandExitError") throw error;
+      const failed = new Error(error.message, { cause: error });
+      failed.code = error.code;
+      failed.stdout = error.snapshot.stdout.text;
+      failed.stderr = error.snapshot.stderr.text;
+      throw failed;
+    }
   };
   try {
     await copyFile(targets.primary, primary);
@@ -461,7 +485,10 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
     });
     await call("open_binary", { path: primary });
     const query = "REA_C_LEAF __rea_missing_phrase__";
-    const expectedTrace = await call("trace_feature", { query });
+    const expectedTrace = await call("trace_feature", {
+      detail: "complete",
+      query,
+    });
     assert.deepEqual(expectedTrace.matches, []);
     await call("close_binary");
 
@@ -486,26 +513,30 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
     assert.deepEqual(evidence.normalized_result, expected);
     const traced = await runCli([
       dispatcher,
-      "trace",
-      primary,
-      query,
-      "--provider",
-      "hopper",
-      "--format",
-      "json",
+      ...(await completeEvidenceCliArguments([
+        "trace",
+        primary,
+        query,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ])),
     ]);
     const traceEvidence = JSON.parse(traced.stdout);
     assert.equal(traceEvidence.subject.local_path, primary);
     assert.deepEqual(traceEvidence.normalized_result, expectedTrace);
     const analyzed = await runCli([
       dispatcher,
-      "function",
-      primary,
-      entry.value,
-      "--provider",
-      "hopper",
-      "--format",
-      "json",
+      ...(await completeEvidenceCliArguments([
+        "function",
+        primary,
+        entry.value,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ])),
     ]);
     assert.deepEqual(
       JSON.parse(analyzed.stdout).normalized_result,
@@ -529,13 +560,15 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       await call("close_binary");
       const analyzed = await runCli([
         dispatcher,
-        "function",
-        objc,
-        delegate.address,
-        "--provider",
-        "hopper",
-        "--format",
-        "json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          objc,
+          delegate.address,
+          "--provider",
+          "hopper",
+          "--format",
+          "json",
+        ])),
       ]);
       assert.deepEqual(JSON.parse(analyzed.stdout).normalized_result, expected);
       cliTerminalFunctionParity = true;
@@ -596,7 +629,10 @@ const verifyBatchCancellation = async (client, options, procedures) => {
     client.callTool(
       {
         name: "batch_decompile",
-        arguments: { addresses: procedures.map((item) => item.address) },
+        arguments: {
+          detail: "complete",
+          addresses: procedures.map((item) => item.address),
+        },
       },
       {
         ...options,
@@ -615,7 +651,10 @@ const verifyBatchCancellation = async (client, options, procedures) => {
   );
   assert.ok(cancelled, "cancellation did not follow a real Hopper response");
   const recovered = requireMcpEvidenceResult(
-    await client.callTool({ name: "list_procedures", arguments: {} }, options),
+    await client.callTool(
+      { name: "list_procedures", arguments: { detail: "complete" } },
+      options,
+    ),
     "list_procedures",
   );
   assert.deepEqual(recovered, procedures);

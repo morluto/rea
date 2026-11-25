@@ -67,7 +67,7 @@ describe("parseX11WindowProperties", () => {
         [
           'WM_CLASS = "app"',
           "_NET_WM_NAME:  not found.",
-          'WM_NAME = "a \\"quoted\\" title"',
+          'WM_NAME(STRING): bytes = "a \\"quoted\\" title"',
           "_NET_WM_PID:  not found.",
           "_NET_WM_WINDOW_TYPE:  not found.",
         ].join("\n"),

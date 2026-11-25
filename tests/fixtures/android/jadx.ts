@@ -1,11 +1,4 @@
-import {
-  access,
-  chmod,
-  mkdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
@@ -93,27 +86,29 @@ export const createJadxProtocolFixture = async (
           options.env?._JAVA_OPTIONS ?? options.hostEnvironment?._JAVA_OPTIONS,
       });
       if (mode === "cleanup-failure" || cleanupFailure !== undefined) {
-        onTestFinished(async () => {
-          const supervisor = new ProviderProcessSupervisor({
+        // Supervise from launch: a supervisor attached after the child closed
+        // never observes that close and waits out the output-close grace.
+        const supervisor = new ProviderProcessSupervisor(
+          {
             ...spawned,
             ownsProcessLifetime: true,
             cleanup: () => cleanupOwnedProcessGroup(spawned.ownership),
-          });
+          },
+          { captureStdout: false, maxDiagnosticBytes: 0 },
+        );
+        onTestFinished(async () => {
           // The SDK can close the child transport before process exit settles.
           // Retry retained ownership without bypassing the supervisor's proof.
           // Retain the entire stop result so an incomplete teardown failure reports its reason.
           await expect
-            .poll(
-              async () => {
-                const stopped = await supervisor.stop();
-                if (stopped.status === "incomplete")
-                  throw new Error(
-                    `Owned process cleanup incomplete: ${stopped.reason}`,
-                  );
-                return stopped.status;
-              },
-              { timeout: 5_000 },
-            )
+            .poll(async () => {
+              const stopped = await supervisor.stop();
+              if (stopped.status === "incomplete")
+                throw new Error(
+                  `Owned process cleanup incomplete: ${stopped.reason}`,
+                );
+              return stopped.status;
+            })
             .not.toBe("incomplete");
           if (options.cwd !== undefined)
             await rm(options.cwd, { recursive: true, force: true });
@@ -157,21 +152,4 @@ export const createJadxProtocolFixture = async (
       return contents.split("\n").filter(Boolean).length;
     },
   };
-};
-
-/** Verify only this fixture's acquired group and workspace, without scanning unrelated host environments. */
-export const verifyJadxFixtureCleanup = async (
-  launches: Awaited<ReturnType<typeof createJadxProtocolFixture>>["launches"],
-): Promise<void> => {
-  for (const launch of launches) {
-    const pid = launch.pid;
-    if (pid !== undefined)
-      expect(() => process.kill(-pid, 0)).toThrowError(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
-    if (launch.cwd !== undefined)
-      await expect(access(launch.cwd)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-  }
 };

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -20,6 +21,8 @@ import {
   validateJadxConfiguration,
 } from "../../../src/android/JadxConfiguration.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   LinuxOwnedProcessPrerequisiteError,
   systemProcessOwnershipHost,
@@ -38,6 +41,7 @@ const inspectJadxAvailability = (
   signal?: AbortSignal,
 ) =>
   inspectAvailability(environment, {
+    host: HOST_PLATFORM,
     resourceOwner: inspectionOwner(),
     signal,
   });
@@ -51,6 +55,7 @@ const resolveConfiguration = async (
   const configuration = await resolveJadxConfigurationInputs(
     environment,
     operation,
+    HOST_PLATFORM,
   );
   await validateJadxConfiguration(configuration, environment, operation, {
     resourceOwner: inspectionOwner(),
@@ -358,13 +363,11 @@ it("cancels an in-flight Java readiness probe", async () => {
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(marker, "utf8").then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 10_000 },
+      .poll(() =>
+        readFile(marker, "utf8").then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort();
@@ -431,6 +434,22 @@ const createFakeJdk = async (
   await chmod(java, 0o700);
   return javaHome;
 };
+
+test("keeps the JAR repair on an unconfigured analysis error", async () => {
+  const failure = await resolveJadxConfigurationInputs(
+    {},
+    "inspect_android_package",
+    HOST_PLATFORM,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  const projected = projectAnalysisError(failure as AnalysisError);
+  // The observation and the repair stay separate fields.
+  expect(projected.message).toContain("REA_JADX_MCP_JAR is not set.");
+  expect(projected.remediation.action).toContain(
+    "set REA_JADX_MCP_JAR to its absolute path",
+  );
+  expect(projected.remediation.action).not.toBe("REA_JADX_MCP_JAR is not set.");
+});
 
 it("tags unavailable diagnostics with the boundary failure kind", async () => {
   const availability = await inspectJadxAvailability({});
@@ -510,7 +529,9 @@ const check = setInterval(() => {
   }
 }, 10);
 const watchdog = setTimeout(() => { process.exitCode = 99; clearInterval(check); }, 10000);
-fs.writeFileSync(ready, String(process.pid));
+// The test polls for this path; publish only the complete PID by renaming.
+fs.writeFileSync(ready + ".pending", String(process.pid));
+fs.renameSync(ready + ".pending", ready);
 `,
   );
   await chmod(java, 0o700);

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { nativeGraphViewItemsSchema } from "../../domain/analysisView/nativeObservationSchemas.js";
@@ -13,11 +14,11 @@ import {
   nativeCallGraphSchema,
   type NativeCallGraph,
 } from "../../domain/native/nativeCallGraph.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewResultSchema,
-  type AnalysisViewRequest,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectAnalysisView,
   projectRetainedAnalysis,
@@ -225,7 +226,7 @@ it("pages complete context fields and changes its digest when source profile or 
 });
 
 it("keeps absent profile and inapplicable result caveats distinct from observed empty data", async () => {
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "procedure_address",
     parameters: {},
     result: "0x0000",
@@ -331,11 +332,6 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
       coverage.diagnostic_ids === undefined
         ? {}
         : { diagnostics: coverage.diagnostic_ids.map((i) => messages[i]!) };
-    const directions =
-      "limited_directions" in coverage &&
-      coverage.limited_directions !== undefined
-        ? { limited_directions: coverage.limited_directions }
-        : {};
     const originalCoverage =
       coverage.status === "complete"
         ? { status: "complete" as const, ...diagnostics }
@@ -343,13 +339,13 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
           ? {
               status: "partial" as const,
               limitations: coverage.limitation_ids.map((i) => messages[i]!),
-              ...directions,
+              limited_directions: coverage.limited_directions,
               ...diagnostics,
             }
           : {
               status: "unknown" as const,
               reason: messages[coverage.reason_id]!,
-              ...directions,
+              limited_directions: coverage.limited_directions,
               ...diagnostics,
             };
     decoded[row.level] = [
@@ -607,12 +603,20 @@ it("pages recorded empty graph levels without inventing nodes or dropping their 
 });
 
 it.each([
-  { status: "partial" as const, limitations: ["Unresolved indirect edges"] },
-  { status: "unknown" as const, reason: "Provider did not establish coverage" },
+  {
+    status: "partial" as const,
+    limitations: ["Unresolved indirect edges"],
+    limited_directions: ["callees"] as ["callees"],
+  },
+  {
+    status: "unknown" as const,
+    reason: "Provider did not establish coverage",
+    limited_directions: ["callees"] as ["callees"],
+  },
 ])(
   "keeps $status relationship coverage on every context facet",
   async (coverage) => {
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_callees",
       parameters: {},
       result: [],

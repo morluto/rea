@@ -2,6 +2,9 @@ import type { z } from "zod";
 
 import { isSwiftMangledSymbolName } from "../../domain/swiftSymbolClassification.js";
 import type { demangleSwiftSchema } from "../../domain/native/nativeInspection.js";
+import { malformedInput } from "../../domain/parseFailure.js";
+
+const SWIFT_DEMANGLE_OUTPUT = "swift-demangle-output";
 
 type DemangledSymbol = z.infer<typeof demangleSwiftSchema>["symbols"][number];
 
@@ -26,20 +29,29 @@ export const parseDemangledSymbols = (
 ): DemangledSymbol[] => {
   if (inputs.length === 0) {
     if (output === "" || output === "\n") return [];
-    throw new TypeError("swift-demangle emitted output for an empty input");
+    throw malformedInput(
+      SWIFT_DEMANGLE_OUTPUT,
+      "swift-demangle emitted output for an empty input",
+    );
   }
   // The command-line producer warns and skips exact `_` arguments. Other
   // single-line inputs each own one record, including undecoded spellings.
   const expectedRecords = inputs.filter((input) => input !== "_").length;
   const lines = output === "" ? [] : output.replace(/\n$/u, "").split("\n");
   if (lines.length !== expectedRecords)
-    throw new TypeError("swift-demangle output count does not match input");
+    throw malformedInput(
+      SWIFT_DEMANGLE_OUTPUT,
+      "swift-demangle output count does not match input",
+    );
   let record = 0;
   return inputs.map<DemangledSymbol>((input) => {
     if (input === "_") return { input, output: "", status: "invalid" };
     const value = lines[record++];
     if (value === undefined || value.length === 0)
-      throw new TypeError("swift-demangle omitted an output line");
+      throw malformedInput(
+        SWIFT_DEMANGLE_OUTPUT,
+        "swift-demangle omitted an output line",
+      );
     const decoded = value !== input && value !== undecodedSpelling(input);
     return {
       input,

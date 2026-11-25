@@ -1,9 +1,51 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { readLinuxCgroupMemoryState } from "./LinuxCgroupMemory.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+
+it("retains a failed kernel file close for the caller to retry", async () => {
+  const directory = await createTestTempDirectory("rea-cgroup-retained-");
+  const path = join(directory, "cgroup");
+  await writeFile(path, "0::/jobs/rea\n");
+  const failure = new Error("close denied");
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValueOnce(failure);
+  let retained: OwnedFileHandle | undefined;
+  try {
+    await expect(
+      readLinuxCgroupMemoryState({
+        platform: "linux",
+        procCgroupPath: path,
+        retainFailedClose: (_path, owner) => {
+          retained = owner;
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(retained).toBeDefined();
+    await retained?.close();
+    close.mockRejectedValueOnce(failure);
+    let unretained: unknown;
+    try {
+      await readLinuxCgroupMemoryState({
+        platform: "linux",
+        procCgroupPath: path,
+      });
+    } catch (cause: unknown) {
+      unretained = cause;
+    }
+    expect(unretained).toBeInstanceOf(RegularFileCleanupFailure);
+    if (unretained instanceof RegularFileCleanupFailure)
+      await unretained.owner.close();
+  } finally {
+    close.mockRestore();
+    await retained?.close();
+  }
+});
 
 const events = (oomKill: number) =>
   `low 0\nhigh 0\nmax 772\noom 3\noom_kill ${String(oomKill)}\noom_group_kill 0\n`;
@@ -181,4 +223,67 @@ it("is unavailable without memory.events, a covering mount, cgroup v2, or Linux"
   await expect(
     readLinuxCgroupMemoryState({ ...linux, platform: "darwin" }),
   ).resolves.toBeUndefined();
+});
+
+it("does not alias an undecodable cgroup path to a real replacement-character directory", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-non-utf8-");
+  const group = join(root, "group-�");
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  const options = {
+    platform: "linux" as const,
+    procCgroupPath,
+    procMountInfoPath,
+  };
+  await mkdir(group);
+  await writeFile(join(group, "memory.events"), events(12));
+  await writeFile(procMountInfoPath, mountInfoRow("/", root));
+  const membership = "0::/group-�\n";
+  await writeFile(procCgroupPath, membership);
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toMatchObject({
+    path: "/group-�",
+    oomKills: 12,
+  });
+  await writeFile(
+    procCgroupPath,
+    Buffer.concat([
+      Buffer.from("0::/group-"),
+      Buffer.from([0xff]),
+      Buffer.from("\n"),
+    ]),
+  );
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
+});
+
+it("uses valid cgroup mounts alongside unrelated non-UTF-8 mount records", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-mount-encoding-");
+  const mount = join(root, "mount-�");
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  const options = {
+    platform: "linux" as const,
+    procCgroupPath,
+    procMountInfoPath,
+  };
+  await mkdir(mount);
+  await writeFile(join(mount, "memory.events"), events(3));
+  await writeFile(procCgroupPath, "0::/\n");
+  const valid = mountInfoRow("/", mount);
+  const byte = Buffer.from([0xff]);
+  const invalidRow = (row: string) => {
+    const [prefix, suffix] = row.split("�");
+    return Buffer.concat([Buffer.from(prefix!), byte, Buffer.from(suffix!)]);
+  };
+  await writeFile(
+    procMountInfoPath,
+    Buffer.concat([
+      invalidRow(mountInfoRow("/", "/other-�", "ext4")),
+      Buffer.from(`\n${valid}\n`),
+    ]),
+  );
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toMatchObject({
+    oomKills: 3,
+  });
+  await writeFile(procMountInfoPath, invalidRow(valid));
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
 });

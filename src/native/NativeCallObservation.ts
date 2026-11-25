@@ -1,8 +1,8 @@
 import { nativeCallCaptureLimits } from "../domain/native/nativeCallCaptureLimits.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -21,7 +21,7 @@ import {
   nativeCallTargetFailure,
   verifyNativeCallTarget,
 } from "./NativeCallTarget.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   nativeCallPartialObservationSchema,
@@ -70,10 +70,7 @@ export const observeNativeCalls = async (
     return await resources.run(async () => {
       const selected = await verifyNativeCallTarget(target, resources, signal);
       if (!selected.ok) return selected;
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy(OPERATION, signal));
       try {
         const traced = await tracer.trace(
           {
@@ -87,8 +84,7 @@ export const observeNativeCalls = async (
         if (!traced.ok) return traced;
         return signal?.aborted
           ? err(
-              new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
+              cancelledBy(OPERATION, signal, {
                 partialObservation: projectPartialNativeCalls(
                   target,
                   parsed.data,
@@ -142,7 +138,9 @@ const nativeCallFacts = (
         ? traceFrameBudget
         : `${traceByteBudget} or ${traceFrameBudget}`;
   const breakpointLocationLimit = run.breakpoint_locations_truncated === true;
+  const unattributedStops = run.unattributed_breakpoint_stops;
   const partial =
+    unattributedStops > 0 ||
     eventLimit ||
     resourceLimit ||
     breakpointLocationLimit ||
@@ -200,6 +198,9 @@ const nativeCallFacts = (
       ...(breakpointLocationLimit
         ? { breakpoint_locations_truncated: true }
         : {}),
+      ...(unattributedStops > 0
+        ? { unattributed_breakpoint_stops: unattributedStops }
+        : {}),
       unresolved_breakpoints: unresolved,
     },
     limitations: [
@@ -228,6 +229,11 @@ const nativeCallFacts = (
       ...(run.outcome === "stop-limit"
         ? [
             `Observation stopped at capture_limits.other_stops (${String(limits.other_stops)} signal or exception stops); ${terminationSummary}. Select a larger budget before a new authorized observation; earlier omitted stops cannot be recovered.`,
+          ]
+        : []),
+      ...(unattributedStops > 0
+        ? [
+            `${String(unattributedStops)} stop(s) in process.other_stops were breakpoint traps or stops on a requested breakpoint location that REA could not attribute to a recorded hit, so calls may be missing from events.`,
           ]
         : []),
       ...(unresolved.length === 0

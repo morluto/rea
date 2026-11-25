@@ -2,6 +2,8 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
@@ -54,21 +56,13 @@ export class KunaQueryWork {
   ): Promise<Result<KunaTargetCommandSnapshot, AnalysisError>> {
     const local = await this.#nativeSlots.acquire(request.signal);
     if (local === undefined)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: request.signal.reason,
-        }),
-      );
+      return err(cancelledBy(request.operation, request.signal));
     let release: (() => void) | undefined;
     try {
       const foreground = await this.lifetime.runSlots.acquire(request.signal);
       if (foreground === undefined) {
         local();
-        return err(
-          new AnalysisCancelledError(request.operation, {
-            cause: request.signal.reason,
-          }),
-        );
+        return err(cancelledBy(request.operation, request.signal));
       }
       release = () => {
         foreground();
@@ -133,10 +127,7 @@ export class KunaQueryWork {
     signal: AbortSignal,
   ): ReturnType<typeof matchRegexValues> {
     const release = await this.#regexSlots.acquire(signal);
-    if (release === undefined)
-      return err(
-        new AnalysisCancelledError(input.operation, { cause: signal.reason }),
-      );
+    if (release === undefined) return err(cancelledBy(input.operation, signal));
     try {
       return await matchRegexValues({
         ...input,
@@ -177,9 +168,7 @@ export class KunaQueryWork {
     // Final departure retains all producer failures, including a typed
     // cancellation with captured facts or incomplete cleanup.
     if (waited.status === "stopped" && !waited.value.ok) return waited.value;
-    return err(
-      new AnalysisCancelledError(operation, { cause: signal?.reason }),
-    );
+    return err(cancelledBy(operation, carriedReason(signal?.reason)));
   }
 
   /** Retire abandoned work before retrying, retaining its physical failures. */
@@ -195,8 +184,6 @@ export class KunaQueryWork {
         result.error.cleanupIncomplete)
     )
       return result;
-    return signal?.aborted
-      ? err(new AnalysisCancelledError(operation, { cause: signal.reason }))
-      : ok(null);
+    return signal?.aborted ? err(cancelledBy(operation, signal)) : ok(null);
   }
 }

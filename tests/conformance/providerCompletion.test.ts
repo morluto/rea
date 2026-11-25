@@ -13,12 +13,10 @@ import {
   binaryLayoutFixture,
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../fixtures/binaryDiagnostics/inspectionProvider.js";
 import { PeResourcesService } from "../../src/application/binaryDiagnostics/PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../src/domain/investigationProviders.js";
-import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { parsePeResources } from "../../src/native/pe/PeResourceParser.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
-import { createHash } from "node:crypto";
+import { peResourceReportFixture } from "../fixtures/binaryDiagnostics/peResources.js";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
 import {
   recordedCrashFixture,
@@ -29,7 +27,7 @@ import {
   evmInterfaceExecution,
   evmInterfaceFixture,
 } from "../fixtures/evm/interface.js";
-import type { EvmInterfaceExecution } from "../../src/application/evm/EvmInterfacePort.js";
+import type { EvmInterfaceExecution } from "../../src/ports/evm/EvmInterfacePort.js";
 
 it("retains valid web-network observations and validates malformed ones before cancellation", async () => {
   const report = {
@@ -142,11 +140,9 @@ it("retains valid binary-layout Evidence while preserving malformed output prece
     controller.abort();
     return Promise.resolve(ok(binaryLayoutFixture()));
   };
-  const valid = await new BinaryLayoutService({
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: layoutInspect,
-    inspectAndClose: layoutInspect,
-  }).inspect(
+  const valid = await new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, layoutInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: controller.signal },
   );
@@ -164,11 +160,9 @@ it("retains valid binary-layout Evidence while preserving malformed output prece
     invalidController.abort();
     return Promise.resolve(ok(malformed));
   };
-  const invalid = await new BinaryLayoutService({
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: malformedLayoutInspect,
-    inspectAndClose: malformedLayoutInspect,
-  }).inspect(
+  const invalid = await new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, malformedLayoutInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: invalidController.signal },
   );
@@ -178,25 +172,13 @@ it("retains valid binary-layout Evidence while preserving malformed output prece
   });
 });
 
-const peReport = async () => {
-  const { bytes } = peResourceFixture();
-  return await parsePeResources(
-    bytes,
-    {
-      path: "/fixtures/example.exe",
-      bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    },
-    inspectPeResourcesInputSchema.parse({ path: "/fixtures/example.exe" }),
-  );
-};
 it("retains valid PE-resource Evidence and preserves malformed output precedence", async () => {
   const controller = new AbortController();
   const valid = await new PeResourcesService({
     identity: PE_RESOURCES_PROVIDER,
     inspect: () => {
       controller.abort();
-      return peReport().then(ok);
+      return peResourceReportFixture().then(ok);
     },
   }).inspect({ path: "/fixtures/example.exe" }, { signal: controller.signal });
   expect(valid).toMatchObject({
@@ -207,7 +189,7 @@ it("retains valid PE-resource Evidence and preserves malformed output precedence
     },
   });
   const invalidController = new AbortController();
-  const malformed = await peReport();
+  const malformed = await peResourceReportFixture();
   malformed.artifact.path = "/other.exe";
   const invalid = await new PeResourcesService({
     identity: PE_RESOURCES_PROVIDER,
@@ -231,11 +213,9 @@ it("retains valid recorded-crash Evidence and preserves malformed output precede
     controller.abort();
     return Promise.resolve(ok(recordedCrashFixture()));
   };
-  const valid = await new RecordedCrashService({
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: crashInspect,
-    inspectAndClose: crashInspect,
-  }).inspect(
+  const valid = await new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, crashInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.core", include_debugger_context: false },
     { signal: controller.signal },
   );
@@ -253,11 +233,9 @@ it("retains valid recorded-crash Evidence and preserves malformed output precede
     invalidController.abort();
     return Promise.resolve(ok(malformed));
   };
-  const invalid = await new RecordedCrashService({
-    identity: RECORDED_CRASH_TEST_PROVIDER,
-    inspect: malformedCrashInspect,
-    inspectAndClose: malformedCrashInspect,
-  }).inspect(
+  const invalid = await new RecordedCrashService(
+    inspectionTestProvider(RECORDED_CRASH_TEST_PROVIDER, malformedCrashInspect),
+  ).inspect(
     { path: "/artifacts/source-owned.core", include_debugger_context: false },
     { signal: invalidController.signal },
   );

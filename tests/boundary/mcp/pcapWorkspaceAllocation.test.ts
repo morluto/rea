@@ -14,6 +14,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // POSIX fixtures use real mkdtemp under caller-controlled temporary parents.
 const it = test.skipIf(process.platform === "win32");
@@ -54,7 +55,10 @@ const inspectWith = async (allocate: Allocate, path: string) => {
     { kind: "session", session },
     { pcapAnalysis: provider },
   );
-  const client = new Client({ name: "pcap-workspace-test", version: "1" });
+  const client = new Client(
+    { name: "pcap-workspace-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(() =>
@@ -73,7 +77,7 @@ const inspectWith = async (allocate: Allocate, path: string) => {
   return parseMcpToolError(
     await client.callTool({
       name: "inspect_pcap_capture",
-      arguments: { path },
+      arguments: { detail: "complete", path },
     }),
   ).error;
 };
@@ -217,7 +221,7 @@ test.skipIf(process.platform === "win32" || !nonRoot)(
 it("still reports a capture over the snapshot budget as a file-size limit", async () => {
   const root = await createTestTempDirectory("rea-pcap-workspace-");
   const capture = join(root, "oversized.pcap");
-  // Sparse: one byte over the 2 GiB owned-snapshot allowance, no data blocks.
+  // Sparse: one byte over the default producer_limits.input_bytes, no data blocks.
   const handle = await open(capture, "w");
   await handle.truncate(2 * 1024 ** 3 + 1);
   await handle.close();
@@ -230,8 +234,16 @@ it("still reports a capture over the snapshot budget as a file-size limit", asyn
     details: {
       resource: "file-size",
       reported_limits: { max_capture_bytes: 2 * 1024 ** 3 },
+      limit: {
+        control_kind: "parameter",
+        parameter: "producer_limits.input_bytes",
+        effective_value: 2 * 1024 ** 3,
+        default_value: 2 * 1024 ** 3,
+        applies_at: "next_call",
+      },
     },
   });
+  expect(error).not.toHaveProperty("details.refusal");
   expect(
     (await readdir(root)).filter((name) => name.startsWith("rea-pcap-")),
   ).toEqual([]);

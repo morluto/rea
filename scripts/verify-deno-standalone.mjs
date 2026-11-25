@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 /** Layout reference in docs/deno-standalone.md. Not "whatever deno is on PATH". */
 const REQUIRED_DENO_VERSION = "2.9.8";
@@ -36,10 +40,6 @@ try {
   );
 }
 
-const { PrivateRuntimeRoot } = await importVerifierSource(
-  new URL("../src/process/PrivateRuntimeRoot.ts", import.meta.url).href,
-  import.meta.url,
-);
 const { parseEvidence } = await importVerifierSource(
   new URL("../src/domain/evidence.ts", import.meta.url).href,
   import.meta.url,
@@ -52,8 +52,9 @@ const longModuleText = 'export const long: string = "long";\n';
 const sourceText = `import text from "./asset.txt" with { type: "text" };\nimport { long } from "./${longModule}";\nconsole.log(text, long);\n`;
 const assetText = "hello-asset\n";
 const HOST_CARRIERS = { darwin: "mach-o", linux: "elf", win32: "pe" };
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-deno-verifier-" });
-let commandsClosed = false;
+const root = await VerifierFixture.open({ prefix: "rea-deno-verifier-" });
+// The root is removed only after the commands that use it confirm.
+root.releaseAfter(() => commands.close());
 
 const cli = async (binary) =>
   JSON.parse(
@@ -99,7 +100,7 @@ const member = (graph, suffix) =>
         row.format_metadata.source_path?.endsWith(`/${suffix}`)),
   );
 
-await withVerifierCleanup(async () => {
+await withVerifierFixture(root, async () => {
   const app = join(root.path, "main.ts");
   const asset = join(root.path, "asset.txt");
   const envFile = join(root.path, "app.env");
@@ -119,7 +120,13 @@ await withVerifierCleanup(async () => {
   ]);
   const hostOutput = await producedBinary(hostBinary);
   const inspectedText = JSON.stringify(
-    await cli(["inspect-artifact", hostOutput, "--json"]),
+    await cli([
+      "inspect-artifact",
+      "--detail",
+      "complete",
+      hostOutput,
+      "--json",
+    ]),
   );
   assert.ok(inspectedText.includes(secret));
   const graph = inventoryOf(JSON.parse(inspectedText));
@@ -202,7 +209,7 @@ await withVerifierCleanup(async () => {
       continue;
     }
     const crossGraph = inventoryOf(
-      await cli(["inspect-artifact", output, "--json"]),
+      await cli(["inspect-artifact", "--detail", "complete", output, "--json"]),
     );
     assert.equal(crossGraph.manifest.root_format, "deno-standalone");
     const metadata = crossGraph.occurrences.find(
@@ -239,7 +246,13 @@ await withVerifierCleanup(async () => {
       const damaged = join(root.path, "damaged-native-elf");
       await writeFile(damaged, image);
       nativeElfRootFormat = inventoryOf(
-        await cli(["inspect-artifact", damaged, "--json"]),
+        await cli([
+          "inspect-artifact",
+          "--detail",
+          "complete",
+          damaged,
+          "--json",
+        ]),
       ).manifest.root_format;
       assert.notEqual(nativeElfRootFormat, "deno-standalone");
     }
@@ -276,12 +289,4 @@ await withVerifierCleanup(async () => {
       2,
     ),
   );
-}, [
-  async () => {
-    await commands.close();
-    commandsClosed = true;
-  },
-  async () => {
-    if (commandsClosed) await root.close();
-  },
-]);
+});

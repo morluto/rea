@@ -12,7 +12,6 @@ it.each([
   "{ bytes = (<ffzz0>, <0>, <a b c d>, <>); }",
   '/* header */ ("//text", "/*text*/", /* before */ value, // after\n)',
   "{ first = x second = y; third = (a, b,); }",
-  "{ (one, two) = array; { nested = key; } = object; <01ff> = data; }",
   "{} /* unterminated",
   "() ((((((((((",
 ])("preserves pinned lexical and container values for %s", (text) => {
@@ -56,31 +55,43 @@ it.each(containerRefusals)(
   "reports %s before and after a deep suffix",
   (text, diagnosis, deep = diagnosis) => {
     expect(syntaxFailure(() => decodeOpenStepPropertyList(text))).toMatchObject(
-      { _tag: "OpenStepPropertyListError", ...diagnosis },
+      { name: "OpenStepPropertyListError", ...diagnosis },
     );
     expect(
       syntaxFailure(() => decodeOpenStepPropertyList(text + "(".repeat(130))),
-    ).toMatchObject({ _tag: "OpenStepPropertyListError", ...deep });
+    ).toMatchObject({ name: "OpenStepPropertyListError", ...deep });
   },
 );
 
-it.each([
-  '{ key = "unterminated',
-  '{ key = "escape\\',
-  "{ key = <01",
-  "{ { toString = text; } = value; }",
-])(
+it.each(['{ key = "unterminated', '{ key = "escape\\', "{ key = <01"])(
   "keeps the pinned scalar decoder's diagnosis for %s before a deep suffix",
   (prefix) => {
     for (const text of [prefix, prefix + "(".repeat(130)]) {
       const pinned = syntaxFailure(() => parseOpenStep(text));
       const owned = syntaxFailure(() => decodeOpenStepPropertyList(text));
-      expect(owned).not.toHaveProperty("_tag", "OpenStepPropertyListError");
+      expect(owned).not.toHaveProperty("name", "OpenStepPropertyListError");
       expect(owned.constructor).toBe(pinned.constructor);
       expect(owned.message).toBe(pinned.message);
     }
   },
 );
+
+it("preserves compound key coercion and its first failure", () => {
+  expect(
+    decodeOpenStepPropertyList(
+      "{ (one, two) = array; { nested = key; } = object; <01ff> = data; }",
+    ),
+  ).toEqual({
+    "one,two": "array",
+    "[object Object]": "object",
+    "1,255": "data",
+  });
+  for (const suffix of ["", "(".repeat(130)]) {
+    expect(() =>
+      decodeOpenStepPropertyList("{ { toString = text; } = value; }" + suffix),
+    ).toThrow(TypeError);
+  }
+});
 
 it("retains every compound-coerced dictionary key with last assignment winning", () => {
   const value = decodeOpenStepPropertyList(
@@ -118,7 +129,7 @@ it.each([
   ["{ key =", "unexpected_end", 7],
 ] as const)("reports incomplete %s as %s at %s", (text, code, position) => {
   expect(syntaxFailure(() => decodeOpenStepPropertyList(text))).toMatchObject({
-    _tag: "OpenStepPropertyListError",
+    name: "OpenStepPropertyListError",
     code,
     position,
   });
@@ -157,7 +168,7 @@ it("does not treat nonterminating whitespace or quoted comment text as line ends
     decodeOpenStepPropertyList("// comment without a line end"),
   );
   expect(error).toMatchObject({
-    _tag: "OpenStepPropertyListError",
+    name: "OpenStepPropertyListError",
     code: "unexpected_end",
   });
 });

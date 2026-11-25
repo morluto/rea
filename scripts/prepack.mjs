@@ -49,18 +49,19 @@ if (await pathExists(join(root, "src"))) {
   ]);
 } else {
   for (const path of [
+    "scripts/lib/cli-compiled-runtime.mjs",
     "scripts/lib/cli-process-environment.mjs",
     "scripts/lib/runtime-admission.mjs",
     "dist/main.js",
     "dist/mcp/main.js",
     "dist/cli-runtime/cli.js",
-    "dist/cli-runtime/cliOutput.js",
+    "dist/cli-runtime/cliOneShot.js",
     "dist/cli-runtime/cliBuiltinArguments.js",
     "dist/cli-runtime/cliResultOutput.js",
     "dist/cli-runtime/mcpDoctor.js",
     "dist/mcpDoctor.js",
     "dist/cli.js",
-    "dist/cliOutput.js",
+    "dist/cli/cliOutput.js",
     "skills/reverse-engineer-anything/SKILL.md",
   ])
     await access(join(root, path));

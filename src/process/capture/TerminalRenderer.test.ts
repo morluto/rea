@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
@@ -229,7 +230,7 @@ it("retains disposal failures for a later cleanup retry", async () => {
     normalize: boundedNormalize((value) => value),
   });
   const scope = new ProcessCaptureResourceScope();
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-terminal-retry-"));
+  const temporaryRoot = await createTestTempDirectory("rea-terminal-retry-");
   try {
     const cleanup = await scope.release({
       timers: new Set(),
@@ -251,7 +252,6 @@ it("retains disposal failures for a later cleanup retry", async () => {
       await scope.close();
     } finally {
       terminalDispose.mockRestore();
-      await rm(temporaryRoot, { recursive: true, force: true });
     }
   }
 });

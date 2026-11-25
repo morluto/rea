@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ProcessCaptureReadFailure } from "./ProcessCaptureRead.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -13,6 +13,7 @@ import {
   type ProcessCaptureCleanupOutcome,
 } from "./ProcessCaptureLifecycle.js";
 import type { ProcessCaptureCleanupReport } from "../../domain/process/processCapture.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const cleanupReport = {
   owned_process_group: { state: "not_required" as const, reason: null },
@@ -71,7 +72,7 @@ it("preserves the compiler output and live cleanup owner at capture normalizatio
   expect(projectAnalysisError(error)).toMatchObject({
     code: "cleanup_incomplete",
   });
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(error.cleanupIncomplete).toBe(false);
   expect(error.capturedOutput?.exit_code).toBe(7);
 });
@@ -121,13 +122,13 @@ it("retains compiler facts and cleanup dependency through capture finalization",
     capturedOutput: { stderr: "controlled compiler diagnostic", exit_code: 7 },
     cleanupReport,
   });
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(finalized).toMatchObject({ cleanupIncomplete: false });
 });
 
 it("does not recreate unresolved cleanup after the exact owner already confirmed retry", () => {
   const { cleanup, compiler } = fixture();
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   const normalized = normalizeCaptureFailure(compiler);
   expect(normalized).toMatchObject({
     cleanupIncomplete: false,
@@ -161,7 +162,7 @@ it("keeps later capture cleanup unresolved after compiler cleanup succeeds", () 
       "temporary_root",
     ]),
   });
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(finalized).toMatchObject({ cleanupIncomplete: true });
 });
 
@@ -180,9 +181,9 @@ it.each(["compiler first", "capture first"] as const)(
     });
     const first = order === "compiler first" ? cleanup : captureCleanup;
     const second = order === "compiler first" ? captureCleanup : cleanup;
-    first.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(finalized.cleanupIncomplete).toBe(true);
-    second.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(finalized.cleanupIncomplete).toBe(false);
     expect(finalized.capturedOutput?.exit_code).toBe(7);
   },

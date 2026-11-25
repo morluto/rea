@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   cancel,
   confirm,
@@ -59,6 +60,10 @@ export const confirmInteractiveSetup = async (
   }
   if (actions.length === 0) return { approved: true, selectedActionIds: [] };
   renderPreflight(actions);
+  if (context?.remediation !== undefined) {
+    writeLine("│");
+    writeLine(`│  ${context.remediation}`);
+  }
   const approved = await confirm({
     ...promptStreams,
     ...(signal === undefined ? {} : { signal }),
@@ -90,9 +95,17 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
 };
 
 /** Show the resolved dry-run plan to a human at an interactive terminal. */
-export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+export const renderSetupDryRun = (
+  actions: readonly SetupAction[],
+  remediation?: string,
+): void => {
   intro("REA setup plan", promptStreams);
   renderPreflight(actions);
+  // A known manual step belongs to the plan, as it does at approval.
+  if (remediation !== undefined) {
+    writeLine("│");
+    writeLine(`│  ${remediation}`);
+  }
   outro("Dry run complete. No changes were made.", promptStreams);
 };
 
@@ -175,11 +188,13 @@ const selectSetupActions = async (
 const clientHint = (state: SetupClientState): string =>
   state.configured
     ? "REA already configured · selected from existing configuration"
-    : state.status === "invalid"
-      ? "Existing configuration needs repair before setup"
-      : state.detected
-        ? "Detected · choose to configure"
-        : "Not detected · configuration is still available";
+    : state.client.configPathError !== undefined
+      ? state.client.configPathError
+      : state.status === "invalid"
+        ? "Existing configuration needs repair before setup"
+        : state.detected
+          ? "Detected · choose to configure"
+          : "Not detected · configuration is still available";
 
 const selectClients = async (
   states: readonly SetupClientState[],
@@ -249,7 +264,7 @@ const renderKeyboardHelp = (accessible: boolean): void => {
 };
 
 const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
-  const runner = invokingPackageRunner(environment);
+  const runner = invokingPackageRunner(environment, HOST_PLATFORM.platform);
   return runner === undefined ? "rea" : `${runner} rea-agents`;
 };
 

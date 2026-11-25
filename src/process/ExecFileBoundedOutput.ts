@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { BoundedOutputExcerpt } from "./BoundedOutputExcerpt.js";
+import { launcherFailureOf } from "./launchFailure.js";
 
 export interface BoundedCommandOutput {
   readonly exitCode: string | number | null;
@@ -18,10 +19,23 @@ export const execFileBoundedOutput = (
   },
 ): Promise<BoundedCommandOutput> =>
   new Promise((resolve) => {
-    const child = spawn(executable, [...args], {
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawn(executable, [...args], {
+        env: options.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (cause) {
+      const code = launcherFailureOf(cause)?.code;
+      if (code === undefined) throw cause;
+      resolve({
+        exitCode: code,
+        stdout: "",
+        stderr: "",
+        outputTruncated: false,
+      });
+      return;
+    }
     const stdout = new BoundedOutputExcerpt(options.limit);
     const stderr = new BoundedOutputExcerpt(options.limit);
     child.stdout.on("data", (chunk: Buffer) => stdout.append(chunk));

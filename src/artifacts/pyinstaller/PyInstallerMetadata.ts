@@ -1,7 +1,7 @@
 import type {
   PyInstallerMetadata,
   PyInstallerEntryMetadata,
-} from "../../domain/artifactFormatMetadata.js";
+} from "../../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   isCArchivePythonModule,
   type CArchiveEntry,

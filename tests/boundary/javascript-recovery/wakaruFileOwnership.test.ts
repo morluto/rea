@@ -2,13 +2,11 @@ import { createHash } from "node:crypto";
 import { access, readFile, type FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../src/resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import {
-  assertRecoveryCleanup,
-  recoveryFixture,
-} from "../../fixtures/javascript-recovery/provider.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { recoveryFixture } from "../../fixtures/javascript-recovery/provider.js";
 
 const fileClose = vi.hoisted(() => ({
   selected: (_path: string): boolean => false,
@@ -137,7 +135,7 @@ linuxX64.each([
     await expect(access(fixture.output)).rejects.toMatchObject({
       code: "ENOENT",
     });
-    await assertRecoveryCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
