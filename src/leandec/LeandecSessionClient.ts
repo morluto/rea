@@ -266,7 +266,8 @@ export class LeandecSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions = {},
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (this.#cleanupFailure?.cleanupIncomplete === true) return err(this.#cleanupFailure);
+    if (this.#cleanupFailure?.cleanupIncomplete === true)
+      return err(this.#cleanupFailure);
     if (this.#closed)
       return err(
         this.#unavailable(operation, "This Leandec session is already closed."),
@@ -326,7 +327,7 @@ export class LeandecSessionClient implements AnalysisClient {
   close(): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
     this.#owner.abort(OwnerCancellation.ownerClosed);
-    this.#closing ??= this.#closeOwned().then(result => {
+    this.#closing ??= this.#closeOwned().then((result) => {
       if (!result.ok) this.#closing = undefined;
       return result;
     });
@@ -354,7 +355,10 @@ export class LeandecSessionClient implements AnalysisClient {
     }
   }
 
-  #retainCleanupFailure(operation: string, cause: unknown): ProviderCleanupError {
+  #retainCleanupFailure(
+    operation: string,
+    cause: unknown,
+  ): ProviderCleanupError {
     this.#cleanupFailure ??= new ProviderCleanupError(
       "leandec",
       ["Leandec MCP process and owned input resources"],
@@ -365,7 +369,9 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   reuseReadiness(): "ready" | "blocked" | "unknown" {
-    return this.#closed || this.#cleanupFailure?.cleanupIncomplete === true ? "blocked" : "unknown";
+    return this.#closed || this.#cleanupFailure?.cleanupIncomplete === true
+      ? "blocked"
+      : "unknown";
   }
 
   #identity() {
@@ -441,10 +447,7 @@ export class LeandecSessionClient implements AnalysisClient {
     };
   }
 
-  async #listProcedures(
-    key: string,
-    options: RequestOptions,
-  ): Promise<Answer> {
+  async #listProcedures(key: string, options: RequestOptions): Promise<Answer> {
     const inventory = await this.#inventoryOf(key, options);
     return {
       result: inventory.entries.map((entry) => ({
@@ -878,7 +881,8 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   async #ensureSession(options: RequestOptions): Promise<string> {
-    if (this.#cleanupFailure?.cleanupIncomplete === true) throw this.#cleanupFailure;
+    if (this.#cleanupFailure?.cleanupIncomplete === true)
+      throw this.#cleanupFailure;
     const token = Symbol("leandec waiter");
     if (options.progress !== undefined)
       this.#progress.set(token, options.progress);
@@ -1189,10 +1193,7 @@ export class LeandecSessionClient implements AnalysisClient {
     }
   }
 
-  async #inventoryOf(
-    key: string,
-    options: RequestOptions,
-  ): Promise<Inventory> {
+  async #inventoryOf(key: string, options: RequestOptions): Promise<Inventory> {
     this.#inventory ??= this.#loadInventory(key, {
       operation: "list_procedures",
       signal: this.#owner.signal,
@@ -1241,12 +1242,13 @@ export class LeandecSessionClient implements AnalysisClient {
   async #stringsOf(
     options: RequestOptions,
   ): Promise<{ items: readonly StringEntry[]; total: number }> {
-    this.#strings ??= this.#loadStrings({ operation: "list_strings", signal: this.#owner.signal }).catch(
-      (cause: unknown) => {
-        this.#strings = undefined;
-        throw cause;
-      },
-    );
+    this.#strings ??= this.#loadStrings({
+      operation: "list_strings",
+      signal: this.#owner.signal,
+    }).catch((cause: unknown) => {
+      this.#strings = undefined;
+      throw cause;
+    });
     return waitShared(this.#strings, options.operation, options.signal);
   }
 

@@ -61,10 +61,14 @@ describe.skipIf(process.platform === "win32")("Leandec stdio transport", () => {
   });
 
   it("rejects an incompatible handshake", async () => {
-    const client = await clientFor(fixture.replace("2024-11-05", "unsupported"));
+    const client = await clientFor(
+      fixture.replace("2024-11-05", "unsupported"),
+    );
     try {
       await expect(client.initialize()).rejects.toBeInstanceOf(LeandecRpcError);
-    } finally { await client.close(); }
+    } finally {
+      await client.close();
+    }
   });
 
   it("rejects malformed MCP envelopes instead of returning empty output", async () => {

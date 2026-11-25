@@ -3,9 +3,11 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import * as ownedRegularFile from "../filesystem/OwnedRegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import { LEANDEC_DOCTOR_SETTINGS, inspectLeandecProvider } from "./LeandecDoctor.js";
+import {
+  LEANDEC_DOCTOR_SETTINGS,
+  inspectLeandecProvider,
+} from "./LeandecDoctor.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { LeandecProvider } from "./LeandecProvider.js";
 
@@ -131,9 +133,15 @@ describe.skipIf(process.platform === "win32")(
       const stop = vi.spyOn(ProviderProcessSupervisor.prototype, "stop");
       try {
         expect((await client.execute("list_procedures", {})).ok).toBe(true);
-        stop.mockResolvedValueOnce({ status: "incomplete", reason: "fixture cleanup failure" });
+        stop.mockResolvedValueOnce({
+          status: "incomplete",
+          reason: "fixture cleanup failure",
+        });
         const first = await client.close();
-        expect(first).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+        expect(first).toMatchObject({
+          ok: false,
+          error: { cleanupIncomplete: true },
+        });
         expect(client.reuseReadiness?.()).toBe("blocked");
         expect(await client.close()).toEqual({ ok: true, value: null });
         if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
@@ -146,9 +154,20 @@ describe.skipIf(process.platform === "win32")(
 
     it("blocks replacement startup after an unconfirmed file close", async () => {
       const { client } = await make();
-      const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+      const original = ownedRegularFile.withOwnedFileHandle;
+      const close = vi.spyOn(ownedRegularFile, "withOwnedFileHandle").mockImplementation(
+        async (path, owner, options, operation) => {
+          if (!path.endsWith("/input") || !path.includes("rea-leandec-"))
+            return original(path, owner, options, operation);
+          const descriptor = vi.spyOn(owner, "close").mockRejectedValueOnce(new Error("fixture descriptor close failure"));
+          try {
+            return await original(path, owner, options, operation);
+          } finally {
+            descriptor.mockRestore();
+          }
+        },
+      );
       try {
-        close.mockRejectedValueOnce(new Error("fixture descriptor close failure"));
         const first = await client.execute("list_procedures", {});
         expect(first).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
         expect(client.reuseReadiness?.()).toBe("blocked");
@@ -168,12 +187,19 @@ describe.skipIf(process.platform === "win32")(
       try {
         expect((await client.execute("health", {})).ok).toBe(true);
         const cancellation = new AbortController();
-        const first = client.execute("list_procedures", {}, { signal: cancellation.signal });
+        const first = client.execute(
+          "list_procedures",
+          {},
+          { signal: cancellation.signal },
+        );
         const second = client.execute("list_procedures", {});
         const reason = new Error("fixture caller cancellation");
         setTimeout(() => cancellation.abort(reason), 30);
         const result = await first;
-        expect(result).toMatchObject({ ok: false, error: { operation: "list_procedures", cause: reason } });
+        expect(result).toMatchObject({
+          ok: false,
+          error: { operation: "list_procedures", cause: reason },
+        });
         expect((await second).ok).toBe(true);
       } finally {
         await client.close();
@@ -182,14 +208,24 @@ describe.skipIf(process.platform === "win32")(
 
     it("preserves unexpected write failure diagnostics", async () => {
       const { client } = await make();
-      const failure = Object.assign(new Error("fixture ENOSPC"), { code: "ENOSPC" });
-      const spy = vi.spyOn(ownedRegularFile, "withOwnedFileHandle").mockImplementationOnce(async (_path, owner) => {
-        await owner.close();
-        throw failure;
+      const failure = Object.assign(new Error("fixture ENOSPC"), {
+        code: "ENOSPC",
       });
+      const original = ownedRegularFile.withOwnedFileHandle;
+      const spy = vi.spyOn(ownedRegularFile, "withOwnedFileHandle").mockImplementation(
+        async (path, owner, options, operation) => {
+          if (!path.endsWith("/input") || !path.includes("rea-leandec-"))
+            return original(path, owner, options, operation);
+          await owner.close();
+          throw failure;
+        },
+      );
       try {
         const result = await client.execute("list_procedures", {});
-        expect(result).toMatchObject({ ok: false, error: { cause: failure, diagnostics: { reason: "fixture ENOSPC" } } });
+        expect(result).toMatchObject({
+          ok: false,
+          error: { cause: failure, diagnostics: { reason: "fixture ENOSPC" } },
+        });
       } finally {
         spy.mockRestore();
         await client.close();
@@ -199,12 +235,28 @@ describe.skipIf(process.platform === "win32")(
     it("declares every configuration input used by doctor and rejects invalid settings", async () => {
       const { client, server } = await make();
       try {
-        for (const name of ["LEANDEC_CALL_TIMEOUT_MS", "LEANDEC_IMPORT_TIMEOUT_MS", "LEANDEC_INVENTORY_LIMIT", "LEANDEC_STRING_LIMIT", "LEANDEC_AUTO_ANALYZE"] as const) {
+        for (const name of [
+          "LEANDEC_CALL_TIMEOUT_MS",
+          "LEANDEC_IMPORT_TIMEOUT_MS",
+          "LEANDEC_INVENTORY_LIMIT",
+          "LEANDEC_STRING_LIMIT",
+          "LEANDEC_AUTO_ANALYZE",
+        ] as const) {
           expect(LEANDEC_DOCTOR_SETTINGS).toContain(name);
-          const doctor = inspectLeandecProvider({ ...process.env, LEANDEC_MCP_SERVER: server, LEANDEC_PYTHON: process.execPath, [name]: "-1" }, process.platform);
+          const doctor = inspectLeandecProvider(
+            {
+              ...process.env,
+              LEANDEC_MCP_SERVER: server,
+              LEANDEC_PYTHON: process.execPath,
+              [name]: "-1",
+            },
+            process.platform,
+          );
           expect(doctor.available).toBe(false);
         }
-      } finally { await client.close(); }
+      } finally {
+        await client.close();
+      }
     });
 
     it("rejects bytes changed after target admission", async () => {

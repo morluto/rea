@@ -278,7 +278,13 @@ export class LeandecMcpClient {
     if (this.#supervisor === undefined) return;
     const stopped = await this.#supervisor.stop();
     if (stopped.status === "incomplete" || stopped.status === "not-owned")
-      throw new LeandecRpcError("exit", stopped.status === "incomplete" ? stopped.reason : "Leandec process ownership was not confirmed", this.#stderr);
+      throw new LeandecRpcError(
+        "exit",
+        stopped.status === "incomplete"
+          ? stopped.reason
+          : "Leandec process ownership was not confirmed",
+        this.#stderr,
+      );
   }
 
   #cancel(id: number, method: string, reason: string): void {
