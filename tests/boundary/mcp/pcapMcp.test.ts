@@ -1,13 +1,16 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { PcapRequest } from "../../../src/domain/pcap/pcapAnalysis.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { PcapAnalysisPort } from "../../../src/application/pcap/PcapAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "pcap", name: "Packet capture analysis", version: null };
 
@@ -27,7 +30,7 @@ const clientIdentity = {
 };
 
 it("advertises exact valid pcap schemas and records inline evidence through MCP", async () => {
-  const provider: PcapAnalysisPort = {
+  const provider: RequestAnalysisPort<PcapRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -61,6 +64,7 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
             dns_queries: [
               {
                 query: "example.com",
+                query_labels_hex: ["6578616d706c65", "636f6d"],
                 response_addresses: ["93.184.216.34"],
                 response_address_count: 1,
               },
@@ -97,7 +101,10 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "pcap-boundary", version: "0.0.0" });
+  const client = new Client(
+    { name: "pcap-boundary", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 
@@ -116,6 +123,12 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
     .map((part) => part.text ?? "")
     .join("");
   const evidence = parseEvidence(JSON.parse(text));
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.isError).not.toBe(true);
+  expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
   expect(evidence.normalized_result).toMatchObject({
     packet_count: 50,
     capture_start: "2026-10-11T14:13:40.608505Z",

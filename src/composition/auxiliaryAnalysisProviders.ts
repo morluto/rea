@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
@@ -7,19 +8,29 @@ import {
   MANAGED_STATIC_PROVIDER,
 } from "../domain/investigationProviders.js";
 import { managedStaticCapabilities } from "../dotnet/ManagedStaticProviderMetadata.js";
-import {
-  NATIVE_MACOS_PROVIDER_IDENTITY,
-  nativeMacOSCapabilities,
-} from "../native/NativeMacOSProviderMetadata.js";
+import { nativeMacOSCapabilities } from "../native/NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIdentity.js";
 
 type AuxiliaryProviderDeclaration = ConstructorParameters<
   typeof LazyAnalysisProvider
 >[0];
 
+/** Declare the lazy execution-free .NET static provider wiring. */
+export const managedStaticProviderDeclaration =
+  (): AuxiliaryProviderDeclaration => ({
+    identity: MANAGED_STATIC_PROVIDER,
+    capabilities: managedStaticCapabilities(),
+    load: async () => {
+      const { ManagedStaticProvider } =
+        await import("../dotnet/ManagedStaticProvider.js");
+      return new ManagedStaticProvider();
+    },
+  });
+
 /** Wire the three existing auxiliary AnalysisProvider implementations lazily. */
 export const auxiliaryAnalysisProviderDeclarations = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   settings?: AnalysisSettingsReader,
 ): readonly AuxiliaryProviderDeclaration[] => {
   const environment = snapshotEnvironment(selectedEnvironment, platform);
@@ -42,14 +53,6 @@ export const auxiliaryAnalysisProviderDeclarations = (
         return new NativeMacOSProvider(environment, undefined, platform);
       },
     },
-    {
-      identity: MANAGED_STATIC_PROVIDER,
-      capabilities: managedStaticCapabilities(),
-      load: async () => {
-        const { ManagedStaticProvider } =
-          await import("../dotnet/ManagedStaticProvider.js");
-        return new ManagedStaticProvider();
-      },
-    },
+    managedStaticProviderDeclaration(),
   ];
 };

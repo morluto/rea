@@ -1,3 +1,4 @@
+import { jsonStringSourceSpans } from "../domain/jsonStringSourceSpans.js";
 import { constants } from "node:buffer";
 import { createScanner, type ScanError, type SyntaxKind } from "jsonc-parser";
 import {
@@ -21,35 +22,6 @@ type Matches = (value: string) => Iterable<IdaDiagnosticMatch>;
 const JSON_CHARACTER_RUN =
   /(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[\dA-Fa-f]{4}))+/gu;
 
-function* stringMatches(
-  encoded: string,
-  decoded: string,
-  offset: number,
-  matches: Matches,
-): Generator<IdaDiagnosticMatch> {
-  // Match offsets and JSON escape widths are both UTF-16 units. No source bytes
-  // outside a matched value need to be normalized or serialized again.
-  let sourceCursor = 0;
-  let decodedCursor = 0;
-  const sourceOffset = (boundary: number): number => {
-    while (decodedCursor < boundary) {
-      sourceCursor +=
-        encoded[sourceCursor] === "\\"
-          ? encoded[sourceCursor + 1] === "u"
-            ? 6
-            : 2
-          : 1;
-      decodedCursor++;
-    }
-    return offset + sourceCursor;
-  };
-  for (const match of matches(decoded))
-    yield {
-      start: sourceOffset(match.start),
-      end: sourceOffset(match.end),
-    };
-}
-
 function* characterRunMatches(
   encoded: string,
   offset: number,
@@ -69,7 +41,7 @@ function* characterRunMatches(
     const decoded: unknown = JSON.parse('"' + run[0] + '"');
     if (typeof decoded !== "string")
       throw new TypeError("A JSON character run did not decode to a string.");
-    yield* stringMatches(run[0], decoded, offset + run.index, matches);
+    yield* jsonStringSourceSpans(run[0], offset + run.index, matches(decoded));
   }
 }
 
@@ -91,11 +63,10 @@ function* decodedMatches(
         text.length,
       );
     if (scanner.getTokenError() === JSON_NO_ERROR)
-      yield* stringMatches(
+      yield* jsonStringSourceSpans(
         text.slice(start + 1, end - 1),
-        scanner.getTokenValue(),
         start + 1,
-        matches,
+        matches(scanner.getTokenValue()),
       );
     else
       yield* characterRunMatches(

@@ -1,20 +1,22 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
-import { z } from "zod";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const syntheticCaptureService = () =>
   new WebNetworkCaptureService({
@@ -47,10 +49,13 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
     { kind: "session", session },
     { webNetworkCapture: service },
   );
-  const client = new Client({
-    name: "historical-capture-contract",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "historical-capture-contract",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -63,24 +68,22 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_web_network_capture",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Capture inspection must advertise both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   const args = { capture_path: "/capture.har", format: "har" };
   expect(ajv.validate(inputSchema, args)).toBe(true);
-  const response = await client.callTool({
-    name: "inspect_web_network_capture",
-    arguments: args,
-  });
+  const response = await client.callTool(
+    { name: "inspect_web_network_capture", arguments: args },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("inspect_web_network_capture").outputSchema.parse(
     response.structuredContent,
   );
@@ -152,8 +155,8 @@ it.each([false, true])(
       arguments: {},
     });
     const availability = expandToolAvailability(
-      z.object({ result: sessionProvider }).parse(status.structuredContent)
-        .result.tool_availability,
+      sessionOutputSchemas.binary_session.parse(status.structuredContent).result
+        .tool_availability,
     );
     const entry = (name: string) =>
       availability.find((tool) => tool.name === name);

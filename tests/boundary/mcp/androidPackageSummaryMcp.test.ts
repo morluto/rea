@@ -1,18 +1,39 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { join } from "node:path";
+import {
+  Client,
+  InMemoryTransport,
+  type CallToolRequestOptions,
+} from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
-import { inspectAndroidPackage } from "../../../src/application/android/AndroidPackageInspection.js";
-import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import {
+  executeRetainedSummaryOperation,
+  inspectAnalysisView,
+} from "../../../src/application/analysisView/AnalysisViewService.js";
+import {
+  androidPackageInspectionInputSchema,
+  androidResultSchemas,
+} from "../../../src/domain/android/androidAnalysis.js";
 import {
   androidPackageSummaryViewResultSchema,
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidJniSummaryViewResultSchema,
+  androidJniPageViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   createEvidence,
   parseEvidence,
@@ -24,36 +45,37 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 async function assertAndroidPackageSelectedFacetContract(options: {
   client: Pick<Client, "callTool">;
-  ajv: Ajv2020;
-  outputSchema: Record<string, unknown>;
+  toolDefinition: NonNullable<CallToolRequestOptions["toolDefinition"]>;
   apk: string;
   parent: Evidence;
   retained: (id: string) => Evidence | undefined;
   sourceStatus: string;
 }): Promise<void> {
-  const { client, ajv, outputSchema, apk, parent, retained, sourceStatus } =
+  const { client, toolDefinition, apk, parent, retained, sourceStatus } =
     options;
   for (const facet of ["components", "component-summary"] as const) {
-    const selected = await client.callTool({
-      name: "inspect_android_package",
-      arguments: {
-        path: apk,
-        detail: "summary",
-        view: { kind: "android", facet },
+    const selected = await client.callTool(
+      {
+        name: "inspect_android_package",
+        arguments: {
+          path: apk,
+          detail: "summary",
+          view: { kind: "android", facet },
+        },
       },
-    });
+      { toolDefinition },
+    );
     expect(selected.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, selected.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const result = parseEvidence(selected.structuredContent).normalized_result;
     const projected =
       facet === "components"
@@ -68,6 +90,203 @@ async function assertAndroidPackageSelectedFacetContract(options: {
   }
 }
 
+const createJniSummaryContractFixture = async () => {
+  const root = await createTestTempDirectory("rea-jni-default-summary-");
+  const apk = join(root, "selected.apk");
+  await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
+  const selection = {
+    class_name: "fixture.Native",
+    method_names: ["readNative"],
+    abis: ["arm64-v8a"],
+  };
+  const raw = {
+    diagnostic: "retained native producer bytes: " + "x".repeat(8192),
+  };
+  const declarations = ["fixture.Native", "fixture.Other"].map(
+    (class_name, index) => ({
+      declaration_id: `jni-declaration-${index}`,
+      source_index: index,
+      class_name,
+      method_name: index === 0 ? "readNative" : "notSelected",
+      descriptor: "(I)I",
+      dex_entry: "classes.dex",
+      dex_entry_index: 1,
+      class_index: index,
+      method_index: index,
+    }),
+  );
+  const execute = vi.fn<AndroidAnalysisPort["execute"]>(
+    async (target, request) => {
+      expect(request).toEqual({
+        operation: "inspect_android_jni_bindings",
+        input: { path: apk, ...selection },
+      });
+      const result = androidResultSchemas.inspect_android_jni_bindings.parse({
+        engine: {
+          name: "contract fixture",
+          version: "1",
+          artifact_sha256: "b".repeat(64),
+          source_revision: null,
+          worker_count: 1,
+          heap_limit_mib: null,
+        },
+        apk: { path: apk, sha256: target.sha256 },
+        selection,
+        native_inventory: {
+          scope: "apk-root-dex-declarations",
+          coverage: {
+            status: "complete",
+            dex_entries: 1,
+            examined_dex_entries: 1,
+            examined_classes: 2,
+            examined_methods: 2,
+          },
+          unknowns: [],
+          manifest_splits: {
+            status: "observed",
+            required_split_types: [],
+            split_required: false,
+          },
+        },
+        library_inventory: {
+          status: "complete",
+          examined_entries: 2,
+          selected_libraries: 0,
+          unknowns: [],
+        },
+        declarations,
+        selected_declaration_ids: [declarations[0]!.declaration_id],
+        libraries: [],
+        candidates: [],
+        bindings: [
+          {
+            declaration_id: declarations[0]!.declaration_id,
+            abi: "arm64-v8a",
+            status: "unmatched",
+            coverage: "complete",
+            candidate_ids: [],
+            unknowns: [],
+          },
+        ],
+        unknowns: ["Static fixture facts do not establish runtime execution."],
+      });
+      return ok(
+        createAnalysisExecution(
+          result,
+          {
+            id: "jni-contract-fixture",
+            name: "JNI contract fixture",
+            version: "1",
+          },
+          { rawResult: raw },
+        ),
+      );
+    },
+  );
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      androidAnalysis: {
+        execute,
+        close: async () => {},
+        inspectAvailability: vi.fn(),
+      },
+      environment: {
+        REA_MCP_TOOL_FAMILIES: "android,application,session",
+      },
+    },
+  });
+  return { ...harness, apk, selection, raw, declarations, execute };
+};
+
+it("defaults JNI MCP inspection to a retained summary while preserving explicit complete delivery and selectors", async () => {
+  const { client, session, apk, selection, raw, declarations, execute } =
+    await createJniSummaryContractFixture();
+  const catalog = (await client.listTools()).tools;
+  const definition = catalog.find(
+    (tool) => tool.name === "inspect_android_jni_bindings",
+  );
+  if (definition === undefined) throw new Error("Missing JNI output schema");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const request = { path: apk, ...selection };
+  expect(
+    ajv.validate(definition.inputSchema, request),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const compact = await client.callTool(
+    { name: "inspect_android_jni_bindings", arguments: request },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
+  );
+  expect(compact.isError).not.toBe(true);
+  const summaryEvidence = parseEvidence(compact.structuredContent);
+  const summary = androidJniSummaryViewResultSchema.parse(
+    summaryEvidence.normalized_result,
+  );
+  expect(summary.summary.selection).toEqual(selection);
+  expect(summary.summary.counts).toMatchObject({
+    declarations: 2,
+    selected_declarations: 1,
+    bindings: 1,
+    unmatched: 1,
+  });
+  expect(
+    summary.summary.declarations.map((method) => method.class_name),
+  ).toEqual(["fixture.Native"]);
+  expect(summaryEvidence.raw_result).toBeNull();
+  const parent = session.evidenceById(summary.parent_evidence_id);
+  if (parent === undefined)
+    throw new Error("Complete JNI parent Evidence was not retained");
+  const fullReport = androidResultSchemas.inspect_android_jni_bindings.parse(
+    parent.normalized_result,
+  );
+  expect(parent.raw_result).toEqual(raw);
+  expect(fullReport.declarations).toEqual(declarations);
+  expect(parent.parameters).toEqual(request);
+  expect(summaryEvidence.evidence_links).toEqual([parent.evidence_id]);
+  const complete = await client.callTool(
+    {
+      name: "inspect_android_jni_bindings",
+      arguments: { ...request, detail: "complete" },
+    },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
+  );
+  expect(complete.isError).not.toBe(true);
+  const completeEvidence = parseEvidence(complete.structuredContent);
+  expect(completeEvidence.normalized_result).toEqual(fullReport);
+  expect(completeEvidence.raw_result).toEqual(raw);
+  expect(JSON.stringify(compact.structuredContent).length).toBeLessThan(
+    JSON.stringify(complete.structuredContent).length,
+  );
+  expect(execute).toHaveBeenCalledTimes(2);
+  await unlink(apk);
+  const retained = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: {
+        kind: "android-jni",
+        collection: "declarations",
+        indices: [1],
+        fields: ["declaration_id", "class_name", "method_name"],
+        limit: 1,
+      },
+    },
+  });
+  expect(retained.isError).not.toBe(true);
+  const page = androidJniPageViewResultSchema.parse(
+    parseEvidence(retained.structuredContent).normalized_result,
+  );
+  expect(page.parent_evidence_id).toBe(parent.evidence_id);
+  expect(page.items).toEqual([
+    {
+      row_index: 1,
+      declaration_id: declarations[1]!.declaration_id,
+      class_name: "fixture.Other",
+      method_name: "notSelected",
+    },
+  ]);
+  expect(execute).toHaveBeenCalledTimes(2);
+});
+
 it.skipIf(process.platform === "win32")(
   "retains complete APK Evidence and reads exact manifest without its source or another engine launch",
   async () => {
@@ -76,7 +295,9 @@ it.skipIf(process.platform === "win32")(
     const harness = await createApplicationMcpHarness({
       serverOptions: {
         androidAnalysis: provider,
-        environment: { REA_MCP_TOOL_FAMILIES: "android,application,session" },
+        environment: {
+          REA_MCP_TOOL_FAMILIES: "android,application,session",
+        },
       },
     });
     onTestFinished(harness.close);
@@ -85,9 +306,10 @@ it.skipIf(process.platform === "win32")(
     const definition = catalog.find(
       (tool) => tool.name === "inspect_android_package",
     );
-    if (definition?.outputSchema === undefined)
-      throw new Error("Missing APK schema");
-    const outputSchema: Record<string, unknown> = definition.outputSchema;
+    if (definition === undefined) throw new Error("Missing APK schema");
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      definition.name,
+    );
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
@@ -104,16 +326,15 @@ it.skipIf(process.platform === "win32")(
           detail: "summary",
         },
       ),
-    ).toBe(false);
-    const reply = await client.callTool({
-      name: "inspect_android_package",
-      arguments: { path: apk, detail: "summary" },
-    });
-    expect(reply.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
     ).toBe(true);
+    const reply = await client.callTool(
+      {
+        name: "inspect_android_package",
+        arguments: { path: apk, detail: "summary" },
+      },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
+    );
+    expect(reply.isError).not.toBe(true);
     const receipt = parseEvidence(reply.structuredContent);
     const view = androidPackageSummaryViewResultSchema.parse(
       receipt.normalized_result,
@@ -126,7 +347,7 @@ it.skipIf(process.platform === "win32")(
     );
     expect(parent.operation).toBe("inspect_android_package");
     expect(parent.parameters).toEqual({ path: apk });
-    expect(view.artifact.sha256).toBe(parent.subject?.digest.sha256);
+    expect(view.artifact.sha256).toBe(fileIdentity(parent.subject).sha256);
     expect(view.artifact.sha256).not.toBe(report.engine.artifact_sha256);
     expect(receipt.evidence_id).not.toBe(parent.evidence_id);
     expect(receipt.evidence_links).toEqual([parent.evidence_id]);
@@ -159,8 +380,7 @@ it.skipIf(process.platform === "win32")(
     }
     await assertAndroidPackageSelectedFacetContract({
       client,
-      ajv,
-      outputSchema,
+      toolDefinition: withCanonicalOutputSchema(definition),
       apk,
       parent,
       retained: (id) => session.evidenceById(id),
@@ -211,10 +431,9 @@ it.skipIf(process.platform === "win32")(
     await harness.close();
     await verifyJadxFixtureCleanup(launches);
   },
-  30000,
 );
 
-it("preserves partial/unknown declarations and Unicode text while rejecting missing APK identity and malformed source", async () => {
+it("preserves partial manifest text and Unicode while rejecting missing APK identity and malformed source", async () => {
   const report = {
     engine: {
       name: "jadx",
@@ -231,6 +450,7 @@ it("preserves partial/unknown declarations and Unicode text while rejecting miss
     target_sdk: null,
     permissions: [],
     manifest: { status: "partial", text: "a😀b", reported_total_bytes: null },
+    components: { status: "unavailable", items: [], limitations: [] },
     class_count: 0,
     resource_count: 0,
     signature_verification: "not_performed",
@@ -239,8 +459,8 @@ it("preserves partial/unknown declarations and Unicode text while rejecting miss
     createEvidence(
       hasSubject
         ? { path: "/original.apk", sha256: "a".repeat(64), format: "apk" }
-        : undefined,
-      { id: "jadx", name: "JADX", version: "0.7.1" },
+        : unknownTarget("not-observed"),
+      { id: "jadx", name: "JADX", version: JADX_RELEASE.version },
       {
         operation: "inspect_android_package",
         parameters: {},
@@ -269,6 +489,7 @@ it("preserves partial/unknown declarations and Unicode text while rejecting miss
   const result = analysisViewResultSchema.parse(page.value.normalized_result);
   expect(result).toMatchObject({
     kind: "android",
+    facet: "manifest",
     item: {
       text: "a😀b",
       source_status: "partial",
@@ -306,8 +527,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
   const service = new AndroidAnalysisService(provider);
   const retention = { recordEvidence: undefined, evidenceById: undefined };
   expect(
-    await inspectAndroidPackage(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_android_package",
+      androidPackageInspectionInputSchema,
       { path: "/missing.apk", detail: "summary" },
       retention,
     ),
@@ -316,15 +539,19 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
   expect(
-    await inspectAndroidPackage(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_android_package",
+      androidPackageInspectionInputSchema,
       { path: "/missing.apk", detail: "other" },
       retention,
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const reason = { request: "cancel before Android admission" };
-  const cancelled = await inspectAndroidPackage(
+  const cancelled = await executeRetainedSummaryOperation(
     service,
+    "inspect_android_package",
+    androidPackageInspectionInputSchema,
     { path: "/missing.apk", detail: "summary" },
     retention,
     { signal: AbortSignal.abort(reason) },
@@ -334,8 +561,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
   expect(cancelled.error.cause).toBe(reason);
   for (const detail of [undefined, "complete"]) {
     expect(
-      await inspectAndroidPackage(
+      await executeRetainedSummaryOperation(
         service,
+        "inspect_android_package",
+        androidPackageInspectionInputSchema,
         {
           path: "/missing.apk",
           ...(detail === undefined ? {} : { detail }),
@@ -353,7 +582,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
     { kind: "fixed", analysis: session },
     { androidAnalysis: provider },
   );
-  const client = new Client({ name: "android-fixed-summary", version: "1" });
+  const client = new Client(
+    { name: "android-fixed-summary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -373,7 +605,7 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
 it("delivers the selected retained page in one analysis and reads it later without a provider or source APK", async () => {
   const parent = createEvidence(
     { path: "/never-reopened.apk", sha256: "a".repeat(64), format: "apk" },
-    { id: "jadx", name: "JADX", version: "0.7.1" },
+    { id: "jadx", name: "JADX", version: JADX_RELEASE.version },
     {
       operation: "inspect_android_package",
       parameters: { path: "/never-reopened.apk" },
@@ -415,6 +647,16 @@ it("delivers the selected retained page in one analysis and reads it later witho
               foreground_service_type: null,
               authorities: null,
               target_activity: null,
+              declaration_coverage: "complete",
+              declaration_index: 0,
+              location: null,
+              enabled: null,
+              enabled_declaration: null,
+              process: null,
+              grant_uri_permissions: null,
+              grant_uri_permissions_declaration: null,
+              intent_filters: [],
+              meta_data: [],
             },
           ],
         },
@@ -445,8 +687,10 @@ it("delivers the selected retained page in one analysis and reads it later witho
     fields: ["name"],
     limit: 1,
   };
-  const selected = await inspectAndroidPackage(
+  const selected = await executeRetainedSummaryOperation(
     service,
+    "inspect_android_package",
+    androidPackageInspectionInputSchema,
     { path: "/never-reopened.apk", detail: "summary", view },
     {
       recordEvidence: session.recordEvidence.bind(session),
@@ -458,7 +702,7 @@ it("delivers the selected retained page in one analysis and reads it later witho
     selected.value.normalized_result,
   );
   expect(first.items).toEqual([
-    { source_index: 0, name: "example.Main", declaration_coverage: "unknown" },
+    { source_index: 0, name: "example.Main", declaration_coverage: "complete" },
   ]);
   expect(
     session.evidenceById(first.parent_evidence_id)?.normalized_result,

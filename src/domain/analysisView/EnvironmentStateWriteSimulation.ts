@@ -1,12 +1,19 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 import { CapturedWriteCompletion } from "./environmentStateWriteCompletion.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   at,
   changesState,
   isObject,
   isStateWrite,
+  listItems,
   listsAll,
+  markedDeleted,
   normalizedPath,
+  ownMember,
+  same,
+  scalarText,
   type JsonObject,
   type ParsedRequestBody,
   type StateEntity,
@@ -20,10 +27,18 @@ import { FailedReadBlame } from "./environmentStateWriteBlame.js";
 import { addressedWrite } from "./environmentStateWriteAddress.js";
 import { withoutMembers } from "./environmentStateResponseMembers.js";
 import { linkedTarget } from "./environmentStateWriteLinks.js";
-import { updatedEntity } from "./environmentStateWriteApply.js";
+import {
+  laterItemFields,
+  updatedEntity,
+} from "./environmentStateWriteApply.js";
 import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import { SortedArrays } from "./environmentStateWriteSorted.js";
+
+const sortRuleKey = (rule: {
+  readonly field: string;
+  readonly direction: "ascending" | "descending";
+}): string => `${rule.direction === "ascending" ? "a:" : "d:"}${rule.field}`;
 import { sameQuery } from "./environmentStateWriteStamps.js";
 import {
   checkDocumentRead,
@@ -33,11 +48,11 @@ import {
   entityTarget,
   isAbsence,
   itemTarget,
-  succeeded,
   withBodies,
   showsPlacement,
   SimulatedState,
   type CheckOutcome,
+  type PendingWrite,
 } from "./environmentStateWriteChecks.js";
 import {
   checkedLines,
@@ -76,10 +91,66 @@ import {
   classifyWrite,
   prefixRelated,
   unservedPlan,
+  type InsertRule,
   type StateWritePlan,
 } from "./environmentStateWriteRules.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
 import { writeVerdict } from "./environmentStateWriteVerdict.js";
+import { compareValues, orderedBy } from "./environmentStateWriteExplain.js";
+
+/** Whether members are in a sorted rule's order, ties kept in place as an insert keeps them. */
+const keptInOrder = (
+  members: readonly JsonObject[],
+  rule: Extract<InsertRule, { rule: "sorted" }>,
+): boolean =>
+  members.every((member, index) => {
+    if (index === 0) return true;
+    const order = compareValues(
+      ownMember(members[index - 1]!, rule.field),
+      ownMember(member, rule.field),
+    );
+    return (
+      order !== undefined &&
+      (rule.direction === "ascending" ? order <= 0 : order >= 0)
+    );
+  });
+
+/** The sorts by a field every listed item holds as a string or number, and whether the items follow each. */
+const listedSorts = (
+  items: readonly JsonObject[],
+): {
+  readonly rule: Extract<InsertRule, { rule: "sorted" }>;
+  readonly follows: boolean;
+}[] =>
+  [...new Set(items.flatMap((item) => Object.keys(item)))]
+    .filter((field) =>
+      items.every((item) =>
+        ["string", "number"].includes(typeof ownMember(item, field)),
+      ),
+    )
+    .flatMap((field) =>
+      (["ascending", "descending"] as const).map((direction) => ({
+        rule: { rule: "sorted", field, direction } as const,
+        follows: orderedBy(items, field, direction),
+      })),
+    );
+
+/** Whether a list read's query sets a parameter the view's query model reads as a sort or its direction. */
+const sortedByQuery = (
+  view: Extract<StateView, { shape: "list" }>,
+  record: StateRecordFacts,
+): boolean => {
+  const sent = new Set(
+    [...new URLSearchParams(record.query ?? "").keys()].map((key) =>
+      key.toLowerCase(),
+    ),
+  );
+  return Object.entries(view.query?.parameters ?? {}).some(
+    ([parameter, { role }]) =>
+      (role === "sort" || role === "direction") &&
+      sent.has(parameter.toLowerCase()),
+  );
+};
 
 const APPLY = {
   create: applyCreate,
@@ -113,15 +184,13 @@ export class EnvironmentStateWriteSimulation {
   readonly #lastCheck = new Map<string, number>();
   /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
-  /** Timeline indexes of writes the gate does not model. */
-  readonly #unmodelledAt: number[] = [];
   readonly #writeCompletion: CapturedWriteCompletion;
-  readonly #history: WriteHistory = {
+  readonly #history = {
     touched: this.#touched,
     pending: this.#touchedSince,
     checked: this.#lastCheck,
-    unmodelledAt: this.#unmodelledAt,
-  };
+    lastUnmodelledAt: -1,
+  } satisfies WriteHistory;
   readonly #log: {
     readonly index: number;
     readonly tool: string;
@@ -129,14 +198,45 @@ export class EnvironmentStateWriteSimulation {
   }[] = [];
   /** Entities a create inserted, by target, with the create's tool. */
   readonly #inserted = new Map<string, string>();
+  /** Targets a write changed or placed since a passing list read last showed them, whose position no read has confirmed. */
+  readonly #moved = new Set<string>();
+  /** The writes to those targets' entities, in order. */
+  #pending: PendingWrite[] = [];
+  /** Sorts, by type, that a whole list in collection order ruled out: moving the writes it showed by them gives another order. */
+  readonly #refutedSorts = new Map<string, Set<string>>();
   /** Creates whose insert rule a passing list check relied on, so it is no longer changed. */
   readonly #placed = new Set<string>();
+  /** Placed creates a read other than a whole listing in collection order placed, whose insert stays as it is. */
+  readonly #settledInserts = new Set<string>();
+  /** Sorts a whole listing that placed a create did not follow, by create, which no later listing adds back. */
+  readonly #unfollowedSorts = new Map<string, Set<string>>();
+  /** The order a read showed a type's collections sorted in after an update, when no create of it showed one. */
+  readonly #learnedSorts = new Map<string, InsertRule>();
   /** Entities writes no plan models made, taken when an item read first shows them. */
   readonly #unseen: UnseenEntities;
   readonly #blame: FailedReadBlame;
+  readonly #documentsByTool = new Map<
+    string,
+    WriteSimulationInput["documents"][number]
+  >();
+  readonly #entitiesByType = new Map<string, StateEntity[]>();
+  readonly #laterFieldsByType = new Map<string, ReadonlySet<string>>();
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
+    for (const document of input.documents) {
+      if (this.#documentsByTool.has(document.tool)) continue;
+      input.io.retain(ENTRY_BYTES);
+      this.#documentsByTool.set(document.tool, document);
+    }
+    for (const entity of input.entities) {
+      const list = this.#entitiesByType.get(entity.type);
+      input.io.retain(ENTRY_BYTES);
+      if (list === undefined) {
+        input.io.retain(ENTRY_BYTES);
+        this.#entitiesByType.set(entity.type, [entity]);
+      } else list.push(entity);
+    }
     this.#writeCompletion = new CapturedWriteCompletion(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
     this.#unseen = new UnseenEntities(input.entities, {
@@ -174,6 +274,28 @@ export class EnvironmentStateWriteSimulation {
       ),
       this.#state,
     );
+    this.#state.keepSorted((type) => this.#sortOf(type));
+  }
+
+  /**
+   * The sorted order a type's placed creates insert by, when they agree on one and nothing contradicted them: updates
+   * move their entity only by an order a list read showed, in replay as in serving.
+   */
+  #sortOf(type: string): InsertRule | undefined {
+    const rules = new Map<string, InsertRule>();
+    for (const { plan, observed, contradictedBy } of this.#drafts.values())
+      if (
+        plan.effect === "create" &&
+        plan.target === type &&
+        observed !== undefined &&
+        plan.reason === null &&
+        contradictedBy === undefined &&
+        plan.insert?.rule === "sorted" &&
+        this.#placed.has(plan.tool)
+      )
+        rules.set(JSON.stringify(plan.insert), plan.insert);
+    if (rules.size === 0) return this.#learnedSorts.get(type);
+    return rules.size === 1 ? [...rules.values()][0] : undefined;
   }
 
   /** Every state-changing tool's plan, in manifest order, with its verdict. */
@@ -220,6 +342,9 @@ export class EnvironmentStateWriteSimulation {
         calls: 0,
         updates: [],
         sequences: new Map(),
+        starts: new Map(),
+        createCollections: [],
+        sentLargest: new Map(),
         steady: new Set(),
         unstamped: new Set(),
         kept: new Set(),
@@ -236,6 +361,7 @@ export class EnvironmentStateWriteSimulation {
           record.path,
           this.#input.chronology.endMs(record),
           this.#input.chronology.startMs(record),
+          record.ordinal,
         );
     this.#input.records.forEach((record, index) => this.#step(record, index));
     const views = new Map(
@@ -243,6 +369,9 @@ export class EnvironmentStateWriteSimulation {
         view.tool,
         view,
       ]),
+    );
+    const sorts = new Map(
+      [...this.#types.keys()].map((type) => [type, this.#sortOf(type)]),
     );
     return [...this.#drafts.values()].map((draft) => {
       // A view that became recorded cannot supply proof for a served write.
@@ -253,6 +382,16 @@ export class EnvironmentStateWriteSimulation {
           draft.confirmed[kept++] = ordinal;
       }
       draft.confirmed.length = kept;
+      // An update moves its entity in a sorted collection when it writes the field sorted by.
+      const sort =
+        draft.plan.effect === "update" && draft.plan.target !== null
+          ? sorts.get(draft.plan.target)
+          : undefined;
+      if (
+        sort?.rule === "sorted" &&
+        draft.plan.rules.some((rule) => rule.field === sort.field)
+      )
+        draft.plan.insert = sort;
       return writeVerdict(draft, this.#input);
     });
   }
@@ -294,6 +433,7 @@ export class EnvironmentStateWriteSimulation {
             },
       records: this.#input.records,
       chronology: this.#input.chronology,
+      overlapsWrite: (record, exclude) => this.#overlapsWrite(record, exclude),
       viewOf: (ordinal) => {
         const view = this.#input.views.get(
           this.#toolOf.get(ordinal)?.name ?? "",
@@ -301,6 +441,7 @@ export class EnvironmentStateWriteSimulation {
         return view === undefined ? undefined : this.#viewOf(view);
       },
       idField: (type) => this.#types.get(type)!.id_field,
+      volatileOf: this.#input.volatileOf,
       observed: (ordinal) =>
         this.#observations.set(
           ordinal,
@@ -308,14 +449,28 @@ export class EnvironmentStateWriteSimulation {
         ),
       unknown: (type, collection, id) =>
         this.#taint.unknown(type, collection, id),
-      initialDocument: (tool) =>
-        this.#input.documents.find((document) => document.tool === tool),
-      startedWith: (type) =>
-        this.#input.entities.filter((entity) => entity.type === type),
-      pending: (target) =>
-        [...(this.#touched.get(target)?.keys() ?? [])].some(
-          (name) => name !== writer,
-        ),
+      initialDocument: (tool) => this.#documentsByTool.get(tool),
+      startedWith: (type) => this.#entitiesByType.get(type) ?? [],
+      laterFields: (type) => {
+        let cached = this.#laterFieldsByType.get(type);
+        if (cached === undefined) {
+          this.#input.io.retain(ENTRY_BYTES);
+          cached = laterItemFields(
+            this.#input.views.values(),
+            this.#input.entities,
+            type,
+            this.#input.io.retain,
+          );
+          this.#laterFieldsByType.set(type, cached);
+        }
+        return cached;
+      },
+      pending: (target) => {
+        const touched = this.#touched.get(target);
+        if (touched === undefined) return false;
+        for (const name of touched.keys()) if (name !== writer) return true;
+        return false;
+      },
     };
   }
 
@@ -349,6 +504,7 @@ export class EnvironmentStateWriteSimulation {
     const { address } = draft.plan;
     const bulk = address !== undefined && address.by !== "action";
     const apply = (body?: ParsedRequestBody): void => {
+      this.#state.track();
       const context = this.#context(
         tool.name,
         body === undefined ? undefined : { ordinal: record.ordinal, body },
@@ -403,11 +559,19 @@ export class EnvironmentStateWriteSimulation {
       return;
     }
     this.#effects.supersede(this.#touched, write.tool, result);
-    for (const target of result.targets)
+    if (result.entity !== undefined) {
+      const { type, collection, id } = result.entity;
+      const target = entityTarget(type, collection, id);
+      const before = this.#state.priorFields(target);
+      if (before !== undefined) this.#pending.push({ target, before });
+    }
+    for (const target of result.targets) {
+      this.#moved.add(target);
       touchTarget(this.#touched, this.#touchedSince, target, {
         ...write,
         fields: result.fields,
       });
+    }
     this.#log.push(write);
     if (result.inserted === undefined) return;
     this.#inserted.set(result.inserted, write.tool);
@@ -426,21 +590,31 @@ export class EnvironmentStateWriteSimulation {
   ): void {
     const target = entityTarget(entity.type, entity.collection, entity.id);
     const writes = this.#touched.get(target) ?? new Map();
-    this.#taint.known(entity.type, entity.collection, entity.id);
-    this.#touched.delete(target);
-    if (isAbsence(record.status)) {
+    if (
+      isAbsence(record.status) ||
+      this.#input.io.withBody(record.ordinal, (body) =>
+        markedDeleted(
+          body === undefined || body === null
+            ? undefined
+            : at(body, view.pointer),
+        ),
+      )
+    ) {
+      this.#taint.known(entity.type, entity.collection, entity.id);
+      this.#touched.delete(target);
       this.#removeEntity(entity);
       return;
     }
     const object = this.#checkFields(view, record, entity, writes);
-    if (object !== undefined)
-      this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
+    if (object === undefined) return;
+    this.#taint.known(entity.type, entity.collection, entity.id);
+    this.#touched.delete(target);
+    this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
   }
 
   /** Whether an item read shows an entity an unmodelled write made, or one left unknown, again rather than checks it. */
   #resynced(view: StateView, record: StateRecordFacts, index: number): boolean {
     if (view.shape !== "item") return false;
-    if (this.#writeOverlapsRead(record)) return true;
     const adopted = this.#unseen.adopt(view, { record, index });
     if (adopted !== undefined) {
       this.#taint.known(adopted.type, adopted.collection, adopted.id);
@@ -551,7 +725,7 @@ export class EnvironmentStateWriteSimulation {
     if (original === undefined) return;
     let view = this.#sorted.comparisonView(this.omitted.view(original));
     if (projectedRead(view, record, this.#input.io)) return;
-    if (this.#writeOverlapsRead(record)) return;
+    if (this.#overlapsWrite(record)) return;
     const borrowers = this.#observations.get(record.ordinal);
     if (
       this.#viewOf(original).shape !== "recorded" &&
@@ -606,7 +780,9 @@ export class EnvironmentStateWriteSimulation {
       return;
     }
     if (!outcome.pass && view.shape === "list") {
-      const retried = this.#retryInsert(view, record, exercised);
+      const retried =
+        this.#retryInsert(view, record, exercised) ??
+        this.#retrySort(view, record, exercised);
       if (retried !== undefined) {
         // Reordering can replace the entities on a query page. Confirmation
         // and pending-write cleanup must use the successful check's coverage.
@@ -618,11 +794,22 @@ export class EnvironmentStateWriteSimulation {
     }
     // Retain omissions only after the final check's coverage passes the ownership guards.
     this.omitted.keep(view, outcome);
-    const interferes = interference(this.#history, outcome);
     const unseen = outcome.pass
       ? this.#confirm(view, record, outcome, exercised)
       : undefined;
+    // Only a read whose order the state decides for every entity it lists shows them in place.
+    if (
+      outcome.pass &&
+      view.shape === "list" &&
+      outcome.positional === undefined
+    ) {
+      this.#refuteSorts(view, record);
+      const shown = new Set(outcome.targets);
+      for (const target of shown) this.#moved.delete(target);
+      this.#pending = this.#pending.filter((write) => !shown.has(write.target));
+    }
     if (!outcome.pass) {
+      const interferes = interference(this.#history, outcome);
       const interfered = new Set([...exercised].filter(interferes));
       if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
@@ -670,24 +857,29 @@ export class EnvironmentStateWriteSimulation {
     });
     for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
-      if (showsPlacement(view, outcome, this.#inserted, name))
+      if (showsPlacement(view, outcome, this.#inserted, name)) {
         this.#placed.add(name);
+        // Only whole listings in collection order narrow the inserts a later list may still choose among.
+        if (view.shape !== "list" || !this.#narrowInserts(view, record, name))
+          this.#settledInserts.add(name);
+      }
     }
     return shown.unseen;
   }
 
   /** An overlapping captured write cannot supply a stable read baseline. */
-  #writeOverlapsRead(read: StateRecordFacts): boolean {
+  #overlapsWrite(read: StateRecordFacts, exclude?: number): boolean {
     return this.#writeCompletion.runningAt(
       read.path,
       this.#input.chronology.startMs(read),
       this.#input.chronology.endMs(read),
+      exclude,
     );
   }
 
   #unmodelled(path: string, index: number): void {
     this.#taint.write(path);
-    this.#unmodelledAt.push(index);
+    this.#history.lastUnmodelledAt = index;
   }
 
   /** Check the writes to an item read's entity on the members they sent, as a resynchronising read does. */
@@ -741,7 +933,7 @@ export class EnvironmentStateWriteSimulation {
     const object = this.#input.io.withBody(record.ordinal, (body) =>
       body === undefined || body === null ? undefined : at(body, view.pointer),
     );
-    if (isObject(object))
+    if (isObject(object) && !markedDeleted(object))
       this.#state.put(updatedEntity(entity, { ...entity.fields, ...object }));
     else this.#removeEntity(entity);
   }
@@ -780,6 +972,215 @@ export class EnvironmentStateWriteSimulation {
       for (const key of failed.keys) this.#taint.fail(key);
   }
 
+  /** What `use` makes of a read's items when the read lists the whole collection the state holds, the only read that shows the order it is kept in. */
+  #wholeListing<T>(
+    view: Extract<StateView, { shape: "list" }>,
+    record: StateRecordFacts,
+    use: (items: readonly JsonObject[]) => T,
+  ): T | undefined {
+    const line = this.#line(view, record);
+    const idField = this.#types.get(view.type)?.id_field;
+    if (line === undefined || idField === undefined) return undefined;
+    const held = new Set(
+      this.#state
+        .members(view.type, line.collection)
+        .map((entity) => entity.id),
+    );
+    return this.#input.io.withBody(record.ordinal, (body) => {
+      const items =
+        body === undefined ? undefined : listItems(body, view.pointer);
+      if (
+        items === undefined ||
+        items.length < 2 ||
+        items.length !== held.size ||
+        !items.every((item) =>
+          held.has(scalarText(ownMember(item, idField)) ?? ""),
+        )
+      )
+        return undefined;
+      return use(items);
+    });
+  }
+
+  /** A whole-collection read in collection order that placed a create leaves it only the sorted inserts whose order the read follows, adding those by a field its items all hold, and says whether it did; one its query sorts shows the query's order instead. */
+  #narrowInserts(
+    view: Extract<StateView, { shape: "list" }>,
+    record: StateRecordFacts,
+    name: string,
+  ): boolean {
+    if (sortedByQuery(view, record)) return false;
+    const draft = this.#drafts.get(name)!;
+    const kept = this.#wholeListing(view, record, (items) => {
+      const followed = draft.candidates.filter(
+        (candidate) =>
+          candidate.rule !== "sorted" ||
+          same(candidate, draft.plan.insert) ||
+          orderedBy(items, candidate.field, candidate.direction),
+      );
+      const sorts = listedSorts(items);
+      const unfollowed = this.#unfollowedSorts.get(name) ?? new Set<string>();
+      for (const { rule, follows } of sorts)
+        if (!follows) unfollowed.add(sortRuleKey(rule));
+      this.#unfollowedSorts.set(name, unfollowed);
+      // A list shown in the order of the field that names its items says less than one in a field people read.
+      const idField = this.#types.get(view.type)?.id_field;
+      const learned = sorts
+        .map(({ rule }) => rule)
+        .filter(
+          (rule) =>
+            !unfollowed.has(sortRuleKey(rule)) &&
+            !followed.some((candidate) => same(candidate, rule)),
+        )
+        .sort(
+          (left, right) =>
+            Number(left.field === idField) - Number(right.field === idField),
+        );
+      return [...followed, ...learned];
+    });
+    if (kept === undefined) return false;
+    draft.candidates = kept;
+    return true;
+  }
+
+  /**
+   * The successful check with the collection sorted by a field an update the read exercised writes, when the read
+   * lists the whole collection in that order and no create of the type was placed by a sort that excludes it; the
+   * type's creates then insert by it, and its updates move their entity by it. A sort the creates chose by a field the
+   * update did not write does not stop this when every whole-collection read that placed them followed this order too.
+   */
+  #retrySort(
+    view: Extract<StateView, { shape: "list" }>,
+    record: StateRecordFacts,
+    exercised: ReadonlySet<string>,
+  ): CheckOutcome | undefined {
+    const line = this.#line(view, record);
+    // A read its query sorts shows the query's order, which may break ties otherwise than the collection.
+    if (line === undefined || sortedByQuery(view, record)) return undefined;
+    const written = new Set(
+      [...exercised].flatMap((name) => {
+        const { plan } = this.#drafts.get(name)!;
+        return plan.effect === "update" && plan.target === view.type
+          ? plan.rules.map((rule) => rule.field)
+          : [];
+      }),
+    );
+    // A sort by a field the update wrote has moved its entity already; one by another field may be a guess both fit.
+    const current = this.#sortOf(view.type);
+    if (current?.rule === "sorted" && written.has(current.field))
+      return undefined;
+    const creates = [...this.#drafts.values()].filter(
+      (draft) =>
+        draft.plan.effect === "create" &&
+        draft.plan.target === view.type &&
+        draft.observed !== undefined,
+    );
+    const rules =
+      this.#wholeListing(view, record, (items) =>
+        [...written].flatMap((field) =>
+          (["ascending", "descending"] as const).flatMap((direction) =>
+            orderedBy(items, field, direction)
+              ? [{ rule: "sorted", field, direction } as const]
+              : [],
+          ),
+        ),
+      ) ?? [];
+    // Serving moves only the entities writes changed since a list last showed them, so the others, including one an
+    // earlier write moved that a list then showed in place, must already be in the order tried.
+    const kept = this.#state
+      .members(view.type, line.collection)
+      .filter(
+        (entity) =>
+          !this.#moved.has(
+            entityTarget(entity.type, entity.collection, entity.id),
+          ),
+      )
+      .map((entity) => entity.fields);
+    const refuted = this.#refutedSorts.get(view.type);
+    for (const rule of rules.filter(
+      (candidate) =>
+        (current === undefined || !same(candidate, current)) &&
+        refuted?.has(sortRuleKey(candidate)) !== true &&
+        keptInOrder(kept, candidate),
+    )) {
+      // A create placed by another sort shows the collection is not kept in this order.
+      if (
+        creates.some(
+          ({ candidates }) =>
+            candidates.some((candidate) => candidate.rule === "sorted") &&
+            !candidates.some((candidate) => same(candidate, rule)),
+        )
+      )
+        continue;
+      // Serving moves each written entity in turn, against the others' values before their own writes.
+      const before = this.#state.replay(
+        view.type,
+        line.collection,
+        rule,
+        this.#pending,
+      );
+      const outcome = this.#check(view, record);
+      if (outcome?.pass === true) {
+        for (const draft of creates) draft.plan.insert = rule;
+        this.#learnedSorts.set(view.type, rule);
+        return outcome;
+      }
+      this.#state.restore(view.type, line.collection, before);
+    }
+    return undefined;
+  }
+
+  /** Note the sorts by a field a pending write changed that this passing whole list in collection order rules out. */
+  #refuteSorts(
+    view: Extract<StateView, { shape: "list" }>,
+    record: StateRecordFacts,
+  ): void {
+    const line = this.#line(view, record);
+    if (
+      line === undefined ||
+      this.#wholeListing(view, record, () => true) === undefined
+    )
+      return;
+    const members = new Map(
+      this.#state
+        .members(view.type, line.collection)
+        .map((entity) => [
+          entityTarget(entity.type, entity.collection, entity.id),
+          entity.fields,
+        ]),
+    );
+    const writes = this.#pending.filter((write) => members.has(write.target));
+    const fields = new Set<string>();
+    const nextBeforeByTarget = new Map<
+      string,
+      (typeof writes)[number]["before"]
+    >();
+    for (let index = writes.length - 1; index >= 0; index -= 1) {
+      const { target, before } = writes[index]!;
+      if (before !== null) {
+        const after = nextBeforeByTarget.get(target) ?? members.get(target)!;
+        for (const field of Object.keys(after))
+          if (!same(ownMember(before, field), ownMember(after, field)))
+            fields.add(field);
+      }
+      nextBeforeByTarget.set(target, before);
+    }
+    const order = [...members.keys()];
+    const refuted = this.#refutedSorts.get(view.type) ?? new Set<string>();
+    for (const field of fields)
+      for (const direction of ["ascending", "descending"] as const) {
+        const rule = { rule: "sorted", field, direction } as const;
+        const replayed = this.#state.replayedOrder(
+          view.type,
+          line.collection,
+          rule,
+          writes,
+        );
+        if (replayed !== undefined && !same(replayed, order))
+          refuted.add(sortRuleKey(rule));
+      }
+    if (refuted.size > 0) this.#refutedSorts.set(view.type, refuted);
+  }
+
   /** The successful check under another create insertion candidate, including its possibly different query-page coverage. */
   #retryInsert(
     view: Extract<StateView, { shape: "list" }>,
@@ -800,9 +1201,25 @@ export class EnvironmentStateWriteSimulation {
     if (creates.size !== 1) return undefined;
     const [name] = creates;
     const draft = this.#drafts.get(name!)!;
-    // An item read confirms the entity, not where a list places it.
-    if (!exercised.has(name!) || this.#placed.has(name!)) return undefined;
-    for (const candidate of draft.candidates.slice(1)) {
+    // An item read confirms the entity, not where a list places it; a read that placed it otherwise than a whole
+    // listing did settles where it goes.
+    if (!exercised.has(name!) || this.#settledInserts.has(name!))
+      return undefined;
+    // A create whole listings placed may still take a sort they followed: one placed last fits it before the next shows the order.
+    const options = this.#placed.has(name!)
+      ? draft.candidates.filter(
+          (candidate) =>
+            candidate.rule === "sorted" && !same(candidate, draft.plan.insert),
+        )
+      : draft.candidates.slice(1);
+    // A sort an earlier update's whole list ruled out must not become this create's order: serving would move those updates by it.
+    const refuted = this.#refutedSorts.get(view.type);
+    for (const candidate of options) {
+      if (
+        candidate.rule === "sorted" &&
+        refuted?.has(sortRuleKey(candidate)) === true
+      )
+        continue;
       this.#state.reinsert(view.type, line.collection, inserted, candidate);
       const outcome = this.#check(view, record);
       if (outcome?.pass === true) {
@@ -810,6 +1227,13 @@ export class EnvironmentStateWriteSimulation {
         return outcome;
       }
     }
+    if (draft.plan.insert !== null)
+      this.#state.reinsert(
+        view.type,
+        line.collection,
+        inserted,
+        draft.plan.insert,
+      );
     return undefined;
   }
 }

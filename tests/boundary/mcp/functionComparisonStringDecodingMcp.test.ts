@@ -1,5 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -9,8 +8,8 @@ import {
   type FunctionComparisonResult as Comparison,
 } from "../../../src/domain/functionComparisonSchemas.js";
 
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const template = FUNCTION_COMPARISON_EXAMPLE.left;
 const base = functionDossierSchema.parse(template.normalized_result);
@@ -88,20 +87,22 @@ type Compare = (
   right: ReturnType<typeof evidence>,
 ) => Promise<Comparison>;
 
-const session = createTestBinarySession(() => {
-  throw new Error("Function comparison must not launch a provider");
-});
-const server = createServer({ kind: "session", session });
-const client = new Client({
-  name: "function-string-decoding-test",
-  version: "1",
-});
-const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 let compare: Compare;
 
-beforeAll(async () => {
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+beforeEach(async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Function comparison must not launch a provider");
+  });
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "function-string-decoding-test", version: "1" },
+    serverOptions: {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+      },
+    },
+  });
   compare = async (left, right) => {
     const response = await client.callTool({
       name: "compare_functions",
@@ -117,12 +118,44 @@ beforeAll(async () => {
   };
 });
 
-afterAll(async () => {
-  await Promise.allSettled([client.close(), server.close(), session.close()]);
-});
-
 const stringsNames = (result: Comparison) =>
   result.dimensions.find(({ dimension }) => dimension === "strings_names");
+
+it("keeps located membership changes when only that side has an unlocated reference", async () => {
+  const located = reference("known", { sourceAddress: "0x1004" });
+  const unlocated = reference("unplaced", { sourceAddress: "0x0fff" });
+  const mixed = evidence("mixed", [located, unlocated]);
+  const empty = evidence("empty", []);
+  const unknown = evidence("unknown", [unlocated]);
+
+  for (const [left, right, leftCount, rightCount] of [
+    [mixed, empty, 2, 0],
+    [empty, mixed, 0, 2],
+  ] as const) {
+    expect(stringsNames(await compare(left, right))).toMatchObject({
+      status: "changed",
+      left_count: leftCount,
+      right_count: rightCount,
+      evidence_links: [left.evidence_id, right.evidence_id],
+      limitations: [
+        "Referenced string source location could not be normalized.",
+      ],
+    });
+  }
+
+  for (const [left, right] of [
+    [mixed, unknown],
+    [unknown, mixed],
+  ] as const)
+    expect(stringsNames(await compare(left, right))).toMatchObject({
+      status: "unknown",
+      left_digest: null,
+      right_digest: null,
+      limitations: expect.arrayContaining([
+        "Referenced string membership at source offset 4 is ambiguous because another source location is unavailable.",
+      ]),
+    });
+});
 
 describe("compare_functions referenced string decoding", () => {
   const reason = "The native string bytes are unavailable";
@@ -211,8 +244,7 @@ describe("compare_functions referenced string decoding", () => {
       termination:
         | "missing"
         | "present_or_not_required" = "present_or_not_required",
-      byteLength = 6,
-    ) => evidence(id, [reference("hello", { termination, byteLength })]);
+    ) => evidence(id, [reference("hello", { termination })]);
     const equal = await compare(decoded("5"), decoded("6"));
     expect(equal.status).toBe("unchanged");
     expect(stringsNames(equal)).toMatchObject({
@@ -225,7 +257,7 @@ describe("compare_functions referenced string decoding", () => {
       stringsNames(equal)?.left_digest,
     );
 
-    const different = await compare(decoded("7"), decoded("8", "missing", 5));
+    const different = await compare(decoded("7"), decoded("8", "missing"));
     expect(different.status).toBe("changed");
     expect(stringsNames(different)).toMatchObject({ status: "changed" });
   });
@@ -260,6 +292,8 @@ describe("compare_functions referenced string decoding", () => {
       status: "changed",
       left_count: 2,
       right_count: 2,
+      left_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      right_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
     expect(stringsNames(changed)?.left_digest).not.toBe(
       stringsNames(changed)?.right_digest,

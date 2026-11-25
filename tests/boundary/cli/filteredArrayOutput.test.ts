@@ -1,17 +1,17 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { expect, it } from "vitest";
+import { parseAllDocuments } from "yaml";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
-} from "../../../src/cliOutput.js";
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+} from "../../../src/cli/cliOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const source = [{ selected: 1 }, { other: 2 }, { selected: null }];
 
@@ -24,16 +24,17 @@ const freezeRecursively = <T>(value: T): T => {
 
 const runFilteredCli = async (
   value: unknown,
-  format: "json" | "jsonl" | "yaml" | "toon" | "md",
+  format: "json" | "jsonl" | "yaml" | "toon" | "md" | "csv" | "tsv",
   filter?: string,
+  fields?: readonly string[],
+  expectedExitCode = 0,
 ): Promise<string> => {
-  const cli = Cli.create("filtered-array-test", { sync: false });
-  cli.command("rows", { run: () => value });
   const args = [
     "rows",
     "--format",
     format,
     ...(filter === undefined ? [] : ["--filter-output", filter]),
+    ...(fields === undefined ? [] : ["--columns", fields.join(",")]),
   ];
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
@@ -46,11 +47,12 @@ const runFilteredCli = async (
     }),
   );
   if (output === undefined) throw new Error("Missing CLI output owner");
-  streamCliCommandResults(cli, output);
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "rows", { run: () => value });
   let fallback = "";
   await cli.serve(args, {
     exit: (code) => {
-      expect(code).toBe(0);
+      expect(code).toBe(expectedExitCode);
     },
     stdout: (text) => {
       if (!output.handled) fallback += text;
@@ -61,6 +63,158 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it.each(["yaml", "toon", "md"] as const)(
+  "emits a selected null as %s",
+  async (format) => {
+    const stdout = await runFilteredCli({ binding: null }, format, "binding");
+    if (format === "yaml") {
+      const documents = parseAllDocuments(stdout);
+      expect(documents).toHaveLength(1);
+      expect(documents[0]?.toJSON()).toBeNull();
+    } else {
+      expect(stdout).toBe("null\n");
+    }
+  },
+);
+
+it.each(["csv", "tsv"] as const)(
+  "exports only explicitly selected %s fields and retains page metadata",
+  async (format) => {
+    const value = {
+      normalized_result: {
+        rows: [{ name: "alpha", note: "café", other: "not selected" }],
+        coverage: {
+          status: "page",
+          examined: 1,
+          total: 3,
+          next_offset: 1,
+          exhausted: false,
+        },
+        source_coverage: { status: "partial" },
+        source_complete: false,
+        view: { offset: 0, limit: 1, fields: ["name", "note"] },
+      },
+    };
+    const output = await runFilteredCli(
+      value,
+      format,
+      "normalized_result.rows",
+      ["note", "name"],
+    );
+    const [metadataLine, header, row] = output.trimEnd().split(/\r?\n/u);
+    expect(
+      JSON.parse(metadataLine!.slice("# rea-delimited-v1 ".length)),
+    ).toMatchObject({
+      selected_path: ["normalized_result", "rows"],
+      coverage: { total: 3, next_offset: 1 },
+      source_coverage: { status: "partial" },
+      source_complete: false,
+      view: { offset: 0, limit: 1 },
+    });
+    expect(header).toBe(format === "csv" ? "note,name" : "note\tname");
+    expect(row).toBe(format === "csv" ? "café,alpha" : "café\talpha");
+    expect(output).not.toContain("not selected");
+  },
+);
+
+it("retains owning-view metadata when rows are selected through a nested page", async () => {
+  const value = {
+    normalized_result: {
+      kind: "managed-members",
+      parent_evidence_id: "evd_parent",
+      parent_operation: "inspect_managed_members",
+      parent_digest: "parent",
+      coverage: { total: 4, next_offset: 2, exhausted: false },
+      source_coverage: { status: "partial" },
+      limitations: ["Source bodies were not available"],
+      unknowns: [{ reason: "body_unavailable", member: "Run" }],
+      view: {
+        kind: "managed-members",
+        collection: "methods",
+        offset: 1,
+        limit: 1,
+      },
+      page: { collection: "methods", rows: [{ name: "Run" }] },
+    },
+  };
+  const output = await runFilteredCli(
+    value,
+    "csv",
+    "normalized_result.page.rows",
+    ["name"],
+  );
+  const [metadataLine] = output.split(/\r?\n/u);
+  expect(
+    JSON.parse(metadataLine!.slice("# rea-delimited-v1 ".length)),
+  ).toMatchObject({
+    selected_path: ["normalized_result", "page", "rows"],
+    coverage: { total: 4, next_offset: 2 },
+    source_coverage: { status: "partial" },
+    limitations: ["Source bodies were not available"],
+    unknowns: [{ reason: "body_unavailable", member: "Run" }],
+    view: { collection: "methods", offset: 1, limit: 1 },
+    provenance: {
+      parent_evidence_id: "evd_parent",
+      parent_operation: "inspect_managed_members",
+      parent_digest: "parent",
+    },
+  });
+});
+
+it("refuses spreadsheet formula-leading text in CSV but preserves it in JSON", async () => {
+  const value = { rows: [{ logical_path: "=1+1" }] };
+  const csv = await runFilteredCli(value, "csv", "rows", ["logical_path"], 1);
+  expect(JSON.parse(csv)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    message: expect.stringContaining("formula-leading"),
+  });
+  const json = await runFilteredCli(value, "json");
+  expect(JSON.parse(json)).toEqual(value);
+});
+
+it("returns a structured limitation when a selected CSV cell is nested", async () => {
+  const output = await runFilteredCli(
+    { normalized_result: { rows: [{ nested: { value: "not flattened" } }] } },
+    "csv",
+    "normalized_result.rows",
+    ["nested"],
+    1,
+  );
+  expect(JSON.parse(output)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      issues: [
+        {
+          message: expect.stringContaining("not flattened"),
+        },
+      ],
+    },
+  });
+});
+
+it("returns a structured limitation when the selected view is not a row array", async () => {
+  const output = await runFilteredCli(
+    { normalized_result: { summary: { count: 1 } } },
+    "tsv",
+    "normalized_result.summary",
+    ["count"],
+    1,
+  );
+  expect(JSON.parse(output)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      issues: [
+        {
+          message: expect.stringContaining("row-array path"),
+        },
+      ],
+    },
+  });
+});
 
 it("renders only each record's own fields in heterogeneous Markdown tables", async () => {
   const value: unknown = JSON.parse(
@@ -100,7 +254,7 @@ it("formats arrays of empty objects without columns as JSON in Markdown", async 
   const json = await runFilteredCli(value, "json");
   expect(JSON.parse(json)).toEqual(value);
   const markdown = await runFilteredCli(value, "md");
-  expect(markdown).toBe("\\[{},{}\\]\n");
+  expect(markdown).toBe("\\[\\{\\},\\{\\}\\]\n");
 });
 
 it.each(
@@ -113,8 +267,6 @@ it.each(
     const value = Object.freeze(
       source.map((item) => Object.freeze({ ...item })),
     );
-    const cli = Cli.create("filtered-array-test", { sync: false });
-    cli.command("rows", { run: () => value });
     const args = [
       "rows",
       "--format",
@@ -134,7 +286,8 @@ it.each(
       }),
     );
     if (output === undefined) throw new Error("Missing CLI output owner");
-    streamCliCommandResults(cli, output);
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "rows", { run: () => value });
     let fallback = "";
     let status = 0;
     await cli.serve(args, {
@@ -178,8 +331,6 @@ it.each(
 it.each(["json", "jsonl"] as const)(
   "counts the normalized filtered %s records",
   async (format) => {
-    const cli = Cli.create("filtered-count-test", { sync: false });
-    cli.command("rows", { run: () => source });
     const args = [
       "rows",
       "--format",
@@ -199,7 +350,8 @@ it.each(["json", "jsonl"] as const)(
       }),
     );
     if (output === undefined) throw new Error("Missing CLI output owner");
-    streamCliCommandResults(cli, output);
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "rows", { run: () => source });
     let fallback = "";
     await cli.serve(args, {
       exit: (code) => {
@@ -210,7 +362,7 @@ it.each(["json", "jsonl"] as const)(
       },
     });
     expect(Buffer.concat(chunks).toString()).toBe(
-      `${estimateTokenCount(Formatter.format([1, null, null], format))}\n`,
+      `${estimateTokenCount(format === "json" ? renderCliDocument([1, null, null], "json", false) : formatCliOutput([1, null, null], format) + "\n")}\n`,
     );
     expect(fallback).toBe("");
   },
@@ -234,7 +386,6 @@ it.each(["selected", "toString", "constructor"])(
     await output?.write(value, {
       command: "rows",
       duration: "0ms",
-      format: "json",
     });
     expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(
       filter === "selected"
@@ -267,7 +418,6 @@ it("finishes JSONL after a bounded large record before a missing selection", asy
   await output.write(value, {
     command: "rows",
     duration: "0ms",
-    format: "jsonl",
   });
   const lines = Buffer.concat(chunks).toString().trimEnd().split("\n");
   expect(lines.map((line) => JSON.parse(line))).toEqual([
@@ -344,7 +494,7 @@ it("projects consecutive slices through nested root arrays and merges cell field
 it.each([
   ["rows[0,2][-2,-1]", { rows: [[1], [3]] }],
   ["rows[0,2][1,1]", { rows: [[], []] }],
-  ["rows[0,2][invalid,1]", { rows: [[1], [3]] }],
+  ["rows[0,2][,1]", { rows: [[1], [3]] }],
 ] as const)("retains parsed slice bounds for %s", async (filter, expected) => {
   const output = await runFilteredCli(
     {
@@ -388,7 +538,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
       ).toEqual(expected);
     else if (format === "md")
       expect(outputs[0]).toBe(renderCliDocument(expected, format, false));
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else expect(outputs[0]).toBe(`${formatCliOutput(expected, format)}\n`);
     expect(projectionSource[0]?.rows[0]?.retained).toEqual([0, 10]);
   },
 );
@@ -413,7 +563,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .map((line) => JSON.parse(line)),
       ).toEqual([1, null, null]);
     else if (format === "md") expect(output).toBe("\\[1,null,null\\]\n");
-    else expect(output).toBe(`${Formatter.format(selected, format)}\n`);
+    else expect(output).toBe(`${formatCliOutput(selected, format)}\n`);
     expect(value).toEqual([{ selected: 1 }, {}, { selected: null }]);
   },
 );
@@ -447,7 +597,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
       ).toEqual(expected);
     else if (format === "md")
       expect(outputs[0]).toBe(renderCliDocument(expected, format, false));
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else expect(outputs[0]).toBe(`${formatCliOutput(expected, format)}\n`);
     expect(projectionSource).toEqual(before);
   },
 );
@@ -541,10 +691,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
         },
       }),
     );
-    await output?.write(
-      { rows: [1, 2] },
-      { command: "rows", duration: "0ms", format },
-    );
+    await output?.write({ rows: [1, 2] }, { command: "rows", duration: "0ms" });
     expect(output?.error).toMatchObject({
       code: "invalid_request",
       message: expect.stringContaining("non-index property"),

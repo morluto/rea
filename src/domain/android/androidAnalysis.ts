@@ -1,10 +1,21 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
 import {
   androidViewRequestSchema,
   validateAndroidPackageDelivery,
 } from "./androidPackageQuery.js";
+import { androidMappingReportSchema } from "./androidMapping.js";
+import { dexDescriptorSchema } from "./dexTypes.js";
+import {
+  androidJniSelectionSchema,
+  androidJniReportSchema,
+} from "./androidJniBindings.js";
+import { androidJniViewRequestSchema } from "./androidJniQuery.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -15,19 +26,40 @@ const classTarget = {
   ...target,
   class_name: z.string().min(1).describe("Exact fully qualified class name"),
 };
+const mappingPath = {
+  mapping_path: absoluteLocalPathStringSchema
+    .optional()
+    .describe(
+      "Absolute local R8/ProGuard mapping.txt; names are annotated, never replaced",
+    ),
+};
 
 /** Caller intent for static Android inspection, independent of its engine. */
 export const androidInputSchemas = {
   inspect_android_package: z.strictObject(target),
+  inspect_android_jni_bindings: androidJniSelectionSchema.extend(target),
   search_android_classes: z.strictObject({
     ...target,
     query: z
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
+    limit: z
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        "Maximum number of matching class names to return; omit to return all matches",
+      ),
+    offset: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Zero-based starting match index; defaults to 0"),
   }),
-  inspect_android_class: z.strictObject(classTarget),
+  inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
   inspect_android_method: z.strictObject({
     ...classTarget,
+    ...mappingPath,
     method_name: z.string().min(1),
     overload_index: z
       .int()
@@ -39,6 +71,9 @@ export const androidInputSchemas = {
   }),
   trace_android_references: z.strictObject({
     ...classTarget,
+    class_name: classTarget.class_name.describe(
+      "Exact APK-defined class, or an externally referenced DEX class when method_name is selected",
+    ),
     method_name: z
       .string()
       .min(1)
@@ -51,7 +86,7 @@ export const androidInputSchemas = {
       .nonnegative()
       .optional()
       .describe(
-        "Index among same-name methods from inspect_android_class; requires method_name",
+        "Index among same-name APK methods or observed external DEX prototypes; requires method_name",
       ),
   }),
 } as const;
@@ -62,6 +97,25 @@ export const androidPackageInspectionInputSchema =
     .extend({
       detail: z.enum(["complete", "summary"]).optional(),
       view: androidViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
+
+/** Delivery is an adapter/application choice, never a provider analysis option. */
+export const androidSymbolInspectionInputSchemas = {
+  inspect_android_class: androidInputSchemas.inspect_android_class.extend({
+    detail: z.enum(["complete", "summary"]).optional(),
+  }),
+  inspect_android_method: androidInputSchemas.inspect_android_method.extend({
+    detail: z.enum(["complete", "summary"]).optional(),
+  }),
+} as const;
+
+/** JNI selection changes analysis; delivery only selects retained views. */
+export const androidJniInspectionInputSchema =
+  androidInputSchemas.inspect_android_jni_bindings
+    .extend({
+      detail: z.enum(["complete", "summary"]).default("summary"),
+      view: androidJniViewRequestSchema.optional(),
     })
     .superRefine(validateAndroidPackageDelivery);
 
@@ -77,6 +131,10 @@ export type AndroidRequest = {
 
 /** Validate operation and input together so their types remain correlated. */
 export const androidRequestSchema = z.discriminatedUnion("operation", [
+  z.strictObject({
+    operation: z.literal("inspect_android_jni_bindings"),
+    input: androidInputSchemas.inspect_android_jni_bindings,
+  }),
   z.strictObject({
     operation: z.literal("inspect_android_package"),
     input: androidInputSchemas.inspect_android_package,
@@ -100,17 +158,10 @@ export const androidRequestSchema = z.discriminatedUnion("operation", [
 ]);
 
 const textCoverage = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   text: z.string(),
   reported_total_bytes: z.int().nonnegative().nullable(),
 });
-
-/** A DEX prototype; hex parentheses also keep the advertised class valid in v mode. */
-export const dexDescriptorSchema = z
-  .string()
-  .regex(
-    /^\((?:\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))*\)(?:V|\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))$/u,
-  );
 
 const integral = <Type extends string>(type: Type, min: number, max: number) =>
   z.strictObject({
@@ -149,8 +200,11 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
     type: z.literal("long"),
     value: z
       .string()
-      .regex(/^(?:0|-?[1-9]\d*)$/u)
-      .refine((text) => BigInt(text) >= LONG_MIN && BigInt(text) <= LONG_MAX),
+      .regex(/^(?:0|-?[1-9]\d*)$/u, { abort: true })
+      .refine((text) => {
+        const value = BigInt(text);
+        return value >= LONG_MIN && value <= LONG_MAX;
+      }),
   }),
   floating("float", Math.fround),
   floating("double", (value) => value),
@@ -164,6 +218,12 @@ const method = z.strictObject({
   is_constructor: z.boolean(),
   dex_descriptor: dexDescriptorSchema,
 });
+/** Exact member selector shared with follow-up APK method inspection. */
+export const androidMethodSelectorSchema = z.strictObject({
+  class_name: z.string().min(1),
+  method_name: z.string().min(1),
+  overload_index: z.int().nonnegative(),
+});
 const engine = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
@@ -175,7 +235,16 @@ const engine = z.strictObject({
 const common = { engine };
 
 /** Portable observations with explicit decompiler and identity limitations. */
+const methodInspectionIdentity = {
+  ...common,
+  class_name: z.string(),
+  method,
+  overload_count: z.int().positive(),
+  mapping: androidMappingReportSchema.exactOptional(),
+};
+
 export const androidResultSchemas = {
+  inspect_android_jni_bindings: androidJniReportSchema.extend(common),
   inspect_android_package: z.strictObject({
     ...common,
     package_name: z.string().nullable(),
@@ -185,15 +254,7 @@ export const androidResultSchemas = {
     target_sdk: z.string().nullable(),
     permissions: z.array(z.string()),
     manifest: textCoverage,
-    // Evidence retained before the component projection existed re-parses
-    // with an explicit unavailable inventory; current results always carry it.
-    components: androidManifestComponentsSchema.default(() => ({
-      status: "unavailable" as const,
-      items: [],
-      limitations: [
-        "This Evidence predates the manifest component projection; run inspect_android_package again to obtain it.",
-      ],
-    })),
+    components: androidManifestComponentsSchema,
     class_count: z.int().nonnegative(),
     resource_count: z.int().nonnegative(),
     signature_verification: z.literal("not_performed"),
@@ -209,7 +270,7 @@ export const androidResultSchemas = {
         occurrences: z.int().min(2),
       }),
     ),
-    coverage: z.literal("complete"),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_android_class: z.strictObject({
     ...common,
@@ -224,26 +285,45 @@ export const androidResultSchemas = {
       }),
     ),
     inner_classes: z.array(z.string()),
+    mapping: androidMappingReportSchema.exactOptional(),
   }),
-  inspect_android_method: z.strictObject({
-    ...common,
-    class_name: z.string(),
-    method: method,
-    overload_count: z.int().positive(),
-    representation: z.enum(["java", "smali"]),
-    body_status: z.enum(["available", "not_available"]),
-    fell_back: z.boolean(),
-    markers: z.array(z.string()),
-    source: textCoverage,
-  }),
+  inspect_android_method: z.union([
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.enum(["java", "smali"]),
+      body_status: z.enum(["available", "not_available"]),
+      fell_back: z.boolean(),
+      markers: z.array(z.string()),
+      source: textCoverage,
+    }),
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.null(),
+      body_status: z.literal("not_available"),
+      body_unavailable_reason: z.string().min(1),
+      fell_back: z.literal(false),
+      markers: z.array(z.string()),
+      source: z.null(),
+    }),
+  ]),
   trace_android_references: z.strictObject({
     ...common,
+    target_definition: z.enum(["defined", "external"]),
+    /** External results inventory directly encoded invokes, not reflection or dispatch. */
+    reference_scope: z.literal("direct_dex_invokes").exactOptional(),
     class_name: z.string(),
     method_name: z.string().nullable(),
     overload_index: z.int().nonnegative().nullable(),
     reported_signature: z.string().nullable(),
     dex_descriptor: dexDescriptorSchema.nullable(),
     total: z.int().nonnegative(),
+    /** Position coverage is separate from the complete using-node inventory. */
+    direct_invokes_coverage: z.strictObject({
+      complete_using_nodes: z.int().nonnegative(),
+      partial_using_nodes: z.int().nonnegative(),
+      unknown_using_nodes: z.int().nonnegative(),
+      recorded_sites: z.int().nonnegative(),
+    }),
     references: z.array(
       z.strictObject({
         kind: z.string(),
@@ -253,6 +333,8 @@ export const androidResultSchemas = {
         top_class: z.string(),
         source_line: z.null(),
         dex_offset: z.null(),
+        /** An explicit follow-up selector accepted by inspect_android_method. */
+        source_selector: androidMethodSelectorSchema.exactOptional(),
         /** false means transport-bounded instruction evidence; null is unknown. */
         direct_invokes_exhaustive: z.boolean().nullable(),
         /** Raw direct invoke instructions inside this using node, when available. */

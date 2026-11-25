@@ -1,19 +1,22 @@
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { providerSchema } from "../evidence.js";
 import { fridaSessionStatusSchema } from "../fridaSessionStatus.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
 export const fridaSessionStatusSummarySchema = fridaSessionStatusSchema
   .omit({ messages: true })
@@ -24,22 +27,19 @@ export const fridaSessionStatusViewContext = {
   source_parameters: z.strictObject({ session_id: z.string().uuid() }),
 };
 
+const readFridaSessionStatus = createAnalysisViewResultReader(
+  fridaSessionStatusSchema,
+);
+
 /** Summarize captured facts without interpreting caller-authored message payloads. */
 export const projectFridaSessionStatusView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Frida session status supports summary views.",
-        },
-      ]),
-    );
-  const report = parseAnalysisViewResult(fridaSessionStatusSchema, parent);
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<SummaryAnalysisView>(admitted, "summary");
+  if (view === undefined)
+    return invalidAnalysisView("Frida session status supports summary views.");
+  const report = readFridaSessionStatus(parent);
   if (!report.ok) return report;
   const parameters = fridaSessionStatusViewContext.source_parameters.safeParse(
     parent.parameters,
@@ -60,16 +60,16 @@ export const projectFridaSessionStatusView = (
     );
   const { messages, ...status } = report.value;
   return ok({
-    kind: "summary",
+    kind: "summary" as const,
     view,
     parent_evidence_id: parent.evidenceId,
     parent_digest: parent.evidenceId.slice(3),
-    parent_operation: "frida_session_status",
+    parent_operation: "frida_session_status" as const,
     artifact: null,
     source_provider: parent.provider ?? null,
     source_parameters: parameters.data,
     summary: { ...status, messages_retained: messages.length },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       [
         ...parent.limitations,

@@ -106,7 +106,10 @@ export async function verifyBrowserCaptureMetadataBudget(endpoint) {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [fileURLToPath(new URL("../rea.mjs", import.meta.url)), "mcp"],
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+      },
       stderr: "pipe",
     });
     const client = new Client({ name: "browser-metadata-e2e", version: "1" });
@@ -118,6 +121,8 @@ export async function verifyBrowserCaptureMetadataBudget(endpoint) {
           allowed_origins: [fixtureOrigin],
           target_id: targetId,
           observation_ms: 0,
+          // The assertions read the complete capture, whatever its size.
+          detail: "complete",
         }),
       );
       assertBundleMetadataOmissions(

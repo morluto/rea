@@ -167,7 +167,7 @@ const slugOf = (title: string): string =>
     .replace(/^-|-$/gu, "");
 
 /** A folder named by the uid its creator chose, with an address from that uid and its title, and a time-based numeric id. */
-export const folder = (
+const folder = (
   uid: string,
   title: string,
   id: number,

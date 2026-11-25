@@ -16,7 +16,7 @@ it("validates selected and existing JEB endpoints without losing caller selectio
     JSON.stringify({
       mcpServers: {
         rea: {
-          command: "rea-agents",
+          command: "rea",
           args: ["mcp"],
           env: { REA_JEB_MCP_URL: endpoint },
         },

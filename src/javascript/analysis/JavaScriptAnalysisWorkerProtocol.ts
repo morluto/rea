@@ -1,6 +1,8 @@
+import { javaScriptMemberMutationAllowanceSchema } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import { javaScriptSemanticPrecisionSchema } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { ANALYSIS_RESOURCE_KINDS } from "../../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
 import { digestSchema } from "../../domain/digests.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
@@ -25,6 +27,8 @@ export const javaScriptCheckpointCeilingRemediation = (
 /** Caller-selected artifact identity, separate from the decoded source-text digest. */
 export const javaScriptWorkerRequestSchema = z.strictObject({
   id: z.uuid(),
+  semantic_precision: javaScriptSemanticPrecisionSchema.optional(),
+  member_mutation_allowance: javaScriptMemberMutationAllowanceSchema,
   unknown_budget: z.int().min(0).max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM),
   node_budget: z.int().min(0).max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM),
   text_sha256: digestSchema,
@@ -37,6 +41,9 @@ export const javaScriptWorkerRequestSchema = z.strictObject({
     kind: z.literal("javascript"),
     unpacked: z.boolean(),
   }),
+  /** Type of the source's inventoried package scope, observed by the parent. */
+  package_type: z.enum(["module", "commonjs", "unspecified", "unknown"]),
+  purpose: z.enum(["analysis", "preload-discovery", "structure-only"]),
 });
 
 /** Parent admission after validated static observations have been retained. */
@@ -75,7 +82,7 @@ export const javaScriptWorkerMessageSchema = z.discriminatedUnion("kind", [
     ...identity,
     reason: z.enum(["resource", "output", "io"]),
     resource: z.enum(ANALYSIS_RESOURCE_KINDS).nullable(),
-    limits: z.record(z.string(), jsonValueSchema).nullable(),
+    limits: z.record(z.string(), ownedJsonValueSchema).nullable(),
     message: z.string(),
   }),
 ]);

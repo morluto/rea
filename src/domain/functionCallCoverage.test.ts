@@ -5,21 +5,27 @@ import {
   combineFunctionRelationshipCoverage,
   isCallerOnlyIncompleteCoverage,
 } from "./functionCallCoverage.js";
-import type { RelationshipCoverage } from "./relationshipCoverage.js";
+import {
+  relationshipCoverageSchema,
+  type RelationshipCoverage,
+} from "./relationshipCoverage.js";
 
 const unknownCallers: RelationshipCoverage = {
   status: "unknown",
   reason: "Upstream xrefs do not establish direct caller relationships.",
+  limited_directions: ["callers"],
 };
 const unknownCallees: RelationshipCoverage = {
   status: "unknown",
   reason: "Upstream callees are not observed in this profile.",
+  limited_directions: ["callees"],
 };
 const cappedCallees: RelationshipCoverage = {
   status: "partial",
   limitations: [
     "Upstream callees capped results at 500; additional callees remain unknown.",
   ],
+  limited_directions: ["callees"],
 };
 const complete: RelationshipCoverage = { status: "complete" };
 
@@ -65,7 +71,11 @@ describe("isCallerOnlyIncompleteCoverage", () => {
 
   it("retains caller-only partial coverage without relying on limitation wording", () => {
     const combined = combineFunctionRelationshipCoverage(
-      { status: "partial", limitations: ["Missing incoming references."] },
+      {
+        status: "partial",
+        limitations: ["Missing incoming references."],
+        limited_directions: ["callers"],
+      },
       complete,
     );
     expect(combined).toMatchObject({ limited_directions: ["callers"] });
@@ -88,6 +98,36 @@ describe("isCallerOnlyIncompleteCoverage", () => {
       }),
     ).toBe(false);
   });
+
+  it("rejects partial and unknown relationship coverage missing limited_directions", () => {
+    expect(
+      relationshipCoverageSchema.safeParse({
+        status: "partial",
+        limitations: ["Missing callers."],
+      }).success,
+    ).toBe(false);
+    expect(
+      relationshipCoverageSchema.safeParse({
+        status: "unknown",
+        reason: "Callers: unavailable.",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("fails closed without prose matching when historical format-2 coverage omits limited_directions", () => {
+    expect(
+      isCallerOnlyIncompleteCoverage({
+        status: "unknown",
+        reason: "Callers: unavailable.",
+      }),
+    ).toBe(false);
+    expect(
+      isCallerOnlyIncompleteCoverage({
+        status: "partial",
+        limitations: ["Callers: truncated."],
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("assessFunctionCallCoverage", () => {
@@ -97,6 +137,7 @@ describe("assessFunctionCallCoverage", () => {
         {
           status: "partial",
           limitations: ["Read limit reached."],
+          limited_directions: ["callees"],
           diagnostics: ["Indirect calls are unresolved."],
         },
         {
@@ -110,6 +151,10 @@ describe("assessFunctionCallCoverage", () => {
       ],
       unresolvedCallCaveats: ["Unresolved call at 0x1004: Computed target."],
       diagnostics: ["Indirect calls are unresolved."],
+      discoveryStatus: "unknown",
+      discoveryLimitations: [
+        "Static direct-call discovery is not established for callers and callees.",
+      ],
     });
   });
 });

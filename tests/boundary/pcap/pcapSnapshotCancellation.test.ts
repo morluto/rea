@@ -124,6 +124,7 @@ test("verify maps cancellation after final descriptor close exactly once", async
 test("close failure during final cancellation retains owner and resolves its marker on retry", async () => {
   const { path, contents } = await makeCapture();
   const snapshot = await PcapSnapshot.create();
+  onTestFinished(() => snapshot.close());
   const identity = {
     bytes: contents.length,
     sha256: createHash("sha256").update(contents).digest("hex"),
@@ -140,6 +141,7 @@ test("close failure during final cancellation retains owner and resolves its mar
       controller.abort(reason);
       throw closeFailure;
     });
+  onTestFinished(() => closeSpy.mockRestore());
 
   const error = await snapshot
     .verify(identity, path, controller.signal)
@@ -185,6 +187,7 @@ test("retains an open descriptor after failed close and releases it on retry", a
       retained = this.handle;
       throw closeFailure;
     });
+  onTestFinished(() => closeSpy.mockRestore());
 
   const error = await snapshot.verify(identity, path).catch((e) => e);
   expect(error).toBeInstanceOf(ProviderCleanupError);
@@ -198,4 +201,31 @@ test("retains an open descriptor after failed close and releases it on retry", a
   expect(retained?.fd).toBe(-1);
   expect(error.cleanupIncomplete).toBe(false);
   await expect(stat(snapshot.path)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("bounds the owned snapshot by the selected producer_limits.input_bytes", async () => {
+  const { path, contents } = await makeCapture();
+  const refusing = await PcapSnapshot.create();
+  onTestFinished(() => refusing.close());
+  const error = await refusing
+    .capture(path, undefined, contents.length - 1)
+    .catch((cause: unknown) => cause);
+  expect(error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "file-size",
+    retryable: false,
+    fixedAllowance: undefined,
+    limit: {
+      control_kind: "parameter",
+      parameter: "producer_limits.input_bytes",
+      effective_value: contents.length - 1,
+      default_value: 2 * 1024 ** 3,
+      applies_at: "next_call",
+    },
+  });
+  const admitting = await PcapSnapshot.create();
+  onTestFinished(() => admitting.close());
+  await expect(
+    admitting.capture(path, undefined, contents.length),
+  ).resolves.toMatchObject({ bytes: contents.length });
 });

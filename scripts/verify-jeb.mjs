@@ -1,12 +1,15 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { JebAnalysisService } from "../dist/application/jeb/JebAnalysisService.js";
+import { createJebAnalysisService } from "../dist/application/ProviderOperationServices.js";
 import { createJebAnalysisProvider } from "../dist/composition/jeb.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const run = promisify(execFile);
 
@@ -25,11 +28,16 @@ if (options.help) {
 }
 
 const provider = createJebAnalysisProvider(process.env);
-const service = new JebAnalysisService(provider);
+const service = createJebAnalysisService(provider);
+let fixture;
 let fixtureDirectory;
 try {
   const report = await withVerifierCleanup(async () => {
-    fixtureDirectory = await mkdtemp(join(tmpdir(), "rea-jeb-"));
+    fixture = await VerifierFixture.open({
+      prefix: "rea-jeb-",
+      private: false,
+    });
+    fixtureDirectory = fixture.path;
     const client = await service.execute("inspect_jeb_client", {});
     if (!client.ok) throw new Error(client.error.message);
     const engine = client.value.normalized_result.engine;
@@ -68,7 +76,9 @@ try {
     });
     if (!decompiled.ok) throw new Error(decompiled.error.message);
     const text = decompiled.value.normalized_result.text;
-    if (!text.includes(target.marker))
+    if (text.trim().length === 0)
+      throw new Error("Decompiled pseudo-code was empty");
+    if (target.marker !== undefined && !text.includes(target.marker))
       throw new Error(
         "Decompiled pseudo-code did not contain the fixture marker",
       );
@@ -83,24 +93,22 @@ try {
       open_project_observed: openRefusal === null,
       ...(openRefusal === null ? {} : { open_project_refusal: openRefusal }),
       unit_count: units.value.normalized_result.units.length,
-      decompiled_marker_observed: true,
+      decompiled_marker_observed: target.marker !== undefined,
     };
   }, [
     async () => {
+      // The fixture is removed only after the provider confirms it closed.
       await provider.close();
-      if (fixtureDirectory !== undefined) {
-        await rm(fixtureDirectory, { recursive: true, force: true });
-        fixtureDirectory = undefined;
-      }
+      await fixture?.release();
     },
   ]);
   process.stdout.write(`${JSON.stringify(report)}\n`);
 } catch (cause) {
-  if (fixtureDirectory !== undefined)
+  if (fixture !== undefined && !fixture.released)
     process.stderr.write(`JEB fixture retained at ${fixtureDirectory}\n`);
-  const causes = cause instanceof AggregateError ? cause.errors : [cause];
+  // Fixture and cleanup failures nest AggregateErrors; report each leaf reason.
   process.stderr.write(
-    `JEB real-provider verification failed: ${causes.map((reason) => (reason instanceof Error ? reason.message : String(reason))).join("; ")}\n`,
+    `JEB real-provider verification failed: ${verifierFailureReasons(cause).join("; ")}\n`,
   );
   process.exitCode = 1;
 }
@@ -110,7 +118,7 @@ async function resolveTarget(selected, directory) {
     return {
       path: "/engine-side/target",
       itemAddress: selected.itemAddress,
-      marker: selected.marker ?? "",
+      marker: selected.marker,
     };
   await writeFile(
     join(directory, "Hello.java"),
@@ -153,6 +161,8 @@ function parseArguments(args) {
     values.set(flag, value);
     index += 1;
   }
+  if (values.get("--marker") === "")
+    throw new Error("--marker must not be empty");
   return {
     help: false,
     ...(values.has("--item-address")

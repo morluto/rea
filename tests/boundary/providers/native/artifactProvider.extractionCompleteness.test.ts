@@ -1,19 +1,26 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   materializeArtifactInventory,
   scanArtifactInventory,
 } from "../../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
+import { DirectoryArtifactReader } from "../../../../src/resources/index.js";
 
 it.for([false, true])(
   "preserves source traversal coverage when invalid-byte names are present: %s",
@@ -97,8 +104,8 @@ it.each(["file", "directory"] as const)(
     );
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message:
-        "Inventoried regular artifact entries were not materialized: z/missing.txt",
+      integrityCheck: "traversal-coverage",
+      message: expect.stringContaining("z/missing.txt"),
     });
     await expect(access(output)).rejects.toThrow();
     expect(
@@ -106,6 +113,31 @@ it.each(["file", "directory"] as const)(
         .update(await readFile(join(source, "a.txt")))
         .digest("hex"),
     ).toBe(createHash("sha256").update(bytes).digest("hex"));
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "rolls back when a previously inventoried directory becomes unreadable",
+  async () => {
+    const root = await createTestTempDirectory("rea-extract-denied-late-");
+    const source = join(root, "source");
+    const child = join(source, "child");
+    await mkdir(child, { recursive: true });
+    await writeFile(join(child, "selected.txt"), "selected bytes\n");
+    const output = join(root, "output");
+    const materialize = await inventoriedExtraction(source, output);
+    await chmod(child, 0);
+    onTestFinished(() => chmod(child, 0o755));
+    await expect(materialize()).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "traversal-coverage",
+      message: expect.stringContaining("child/selected.txt"),
+    });
+    await expect(access(output)).rejects.toThrow();
+    await chmod(child, 0o755);
+    expect(await readFile(join(child, "selected.txt"), "utf8")).toBe(
+      "selected bytes\n",
+    );
   },
 );
 
@@ -119,7 +151,8 @@ it("still refuses a regular file added after inventory and rolls back", async ()
   await writeFile(join(source, "z.txt"), "new\n");
   await expect(materialize()).rejects.toMatchObject({
     reason: "integrity",
-    message: "Regular artifact entry is missing from inventory: z.txt",
+    integrityCheck: "inventory-node",
+    message: expect.stringContaining("z.txt"),
   });
   await expect(access(output)).rejects.toThrow();
 });
@@ -155,9 +188,7 @@ it
     expect(result.limitations).toContainEqual(
       expect.stringContaining("not valid UTF-8"),
     );
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("source traversal coverage is unknown"),
-    );
+    expect(result.coverage.status).toBe("unknown");
     expect(
       result.limitations.some((value) => value.startsWith("All regular files")),
     ).toBe(false);
@@ -197,8 +228,9 @@ it.each(["inventory", "materialization"] as const)(
       stage = "materialization";
       const result = await materialize();
       expect(result.limitations).toContain(limitation);
+      expect(result.coverage.status).toBe("unknown");
       expect(result.limitations).toContainEqual(
-        expect.stringContaining("source traversal coverage is unknown"),
+        expect.stringMatching(/traversal coverage.*unknown.*not.*complete/iu),
       );
       expect(
         result.limitations.some((value) =>
@@ -257,9 +289,7 @@ it("normalizes an NFD omission once across inventory and materialization", async
           value.startsWith("Artifact traversal omitted"),
         ),
       ).toEqual([omission]);
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("source traversal coverage is unknown"),
-    );
+    expect(result.coverage.status).toBe("unknown");
     expect(await readFile(join(output, "known.txt"), "utf8")).toBe(
       "retained bytes\n",
     );
@@ -397,7 +427,7 @@ const extractDirectory = async (source: string, output: string) => {
 const extractArchive = async (source: string, output: string) => {
   const target = await parseBinaryTarget(source);
   if (!target.ok) throw target.error;
-  return new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("extract_artifact", { output_root: output });
+  return createOwnedArtifactClient(target.value).execute("extract_artifact", {
+    output_root: output,
+  });
 };

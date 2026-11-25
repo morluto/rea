@@ -1,18 +1,21 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import { err, ok, type Result } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { err, ok } from "../result.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
 } from "../wasm/wasmArtifact.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -21,6 +24,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 /** Source forms and text from completed WASM Evidence; this never executes a VM. */
 export const wasmViewRequestSchema = z.strictObject({
@@ -71,33 +75,27 @@ export const wasmSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
+const readWasmArtifact = createAnalysisViewResultReader(wasmArtifactSchema);
+
 /** Read the exact retained WABT forms with source identity and explicit uncertainty. */
 export const projectWasmArtifactView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "wasm")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "WASM Evidence supports summary and wasm views.",
-        },
-      ]),
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof wasmViewRequestSchema>
+  >(admitted, "summary", "wasm");
+  if (view === undefined)
+    return invalidAnalysisView(
+      "WASM Evidence supports summary and wasm views.",
     );
-  const parsed = parseAnalysisViewResult(wasmArtifactSchema, parent);
+  const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (
     !wasmArtifactMatchesSubject(
       report.artifact,
-      parent.subject == null
-        ? null
-        : {
-            sha256: parent.subject.digest.sha256,
-            format: parent.subject.format,
-          },
+      evidenceSubjectTarget(parent.subject),
     )
   )
     return err(
@@ -131,7 +129,7 @@ export const projectWasmArtifactView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -158,7 +156,6 @@ export const projectWasmArtifactView = (
       },
       coverage: completeWithinViewCoverage(
         report.sections.length + report.imports.length + report.exports.length,
-        report.sections.length + report.imports.length + report.exports.length,
       ),
     });
   if (view.facet === "tool_profile") {
@@ -173,10 +170,10 @@ export const projectWasmArtifactView = (
         ]),
       );
     return ok({
-      kind: "wasm",
+      kind: "wasm" as const,
       view,
       item: report.tool_profile,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
       ...shared,
     });
   }
@@ -188,13 +185,13 @@ export const projectWasmArtifactView = (
     const text = view.facet === "wat" ? report.wat.text : report[view.facet];
     const page = analysisTextPage(text, view.offset, view.limit, view.facet);
     return page.ok
-      ? ok({ kind: "wasm", view, ...page.value, ...shared })
+      ? ok({ kind: "wasm" as const, view, ...page.value, ...shared })
       : page;
   }
   const rows = report[view.facet];
   const item = rows.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "wasm",
+    kind: "wasm" as const,
     view,
     item,
     coverage: pageViewCoverage(view.offset, item.length, rows.length),

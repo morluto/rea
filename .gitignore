@@ -23,6 +23,7 @@ env/
 *~
 
 # Local agent tooling
+.claude/
 .codex/
 .devin/
 .factory/

@@ -85,7 +85,7 @@ it.skipIf(process.platform === "win32")(
       assert.equal(fixture.process.listenerCount('error'), 0);
       const { createSystemProcessOwnershipHost } = await import(${JSON.stringify(new URL("../../../dist/process/ProcessOwnershipObservation.js", import.meta.url).href)});
       const { liveProcesses } = await import(${JSON.stringify(new URL("../../../dist/process/ProcessOwnershipProcessTree.js", import.meta.url).href)});
-      const live = liveProcesses(await createSystemProcessOwnershipHost().listProcesses());
+      const live = liveProcesses(await createSystemProcessOwnershipHost(process.platform).listProcesses());
       assert.equal(live.some(item => item.pid === fixture.process.pid || item.pid === descendant), false);
       // The process may finish while the separately owned socket still needs retry.
       const { CdpConnection } = await import(${JSON.stringify(new URL("../../../dist/browser/CdpConnection.js", import.meta.url).href)});
@@ -169,7 +169,7 @@ it.skipIf(process.platform === "win32")(
       assert.equal(existsSync(failedProfile), true);
       await lease.release();
       assert.equal(existsSync(failedProfile), false);
-      const afterRetry = liveProcesses(await createSystemProcessOwnershipHost().listProcesses());
+      const afterRetry = liveProcesses(await createSystemProcessOwnershipHost(process.platform).listProcesses());
       assert.equal(afterRetry.some(item => item.pid === lateDescendant), false);
       console.log(JSON.stringify({ retried: true, descendant_removed: true, startup_retry: true, socket_retry: true }));
     `;
@@ -198,12 +198,20 @@ async function writeFixtureBrowser(root: string): Promise<string> {
 const { spawn } = require('node:child_process');
 const { writeFileSync } = require('node:fs');
 const { join } = require('node:path');
+const { createServer } = require('node:http');
 const profile = process.argv.find(value => value.startsWith('--user-data-dir=')).split('=').slice(1).join('=');
 const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
 writeFileSync(join(profile, 'descendant'), String(child.pid));
-if (!process.argv.at(-1).endsWith('/startup-fail'))
-  writeFileSync(join(profile, 'DevToolsActivePort'), '1\\n/devtools/browser/fixture');
-else setTimeout(() => process.exit(3), 30);
+if (!process.argv.at(-1).endsWith('/startup-fail')) {
+  const origin = process.argv.at(-1);
+  const server = createServer((req, res) => {
+    const port = server.address().port;
+    res.end(JSON.stringify(req.url === '/json/version'
+      ? { Browser: 'Fixture/1', 'Protocol-Version': '1.3', 'User-Agent': 'Fixture', 'V8-Version': '1', 'WebKit-Version': '1', webSocketDebuggerUrl: 'ws://127.0.0.1:' + port + '/devtools/browser/fixture' }
+      : [{ id: 'fixture', type: 'page', title: 'fixture', url: origin }]));
+  });
+  server.listen(0, '127.0.0.1', () => writeFileSync(join(profile, 'DevToolsActivePort'), String(server.address().port) + '\\n/devtools/browser/fixture'));
+} else setTimeout(() => process.exit(3), 30);
 console.error('owned fixture diagnostics');
 setInterval(() => {}, 1000);
 `,

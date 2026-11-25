@@ -1,6 +1,7 @@
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
+  succeeded,
   ownMember,
   collectionPathOf,
   IDENTITY_NAMES,
@@ -23,6 +24,8 @@ import {
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   pathValuesOf,
+  pathParameterKeys,
+  type FieldRule,
   type WriteEffect,
 } from "./environmentStateWriteRules.js";
 
@@ -31,9 +34,6 @@ const MIN_ID_LENGTH = 4;
 
 /** Identity names that describe an entity rather than number it, so its own suffix-named id may sit beside them. */
 const DESCRIPTIVE_NAMES: ReadonlySet<string> = new Set(["key", "slug", "name"]);
-
-const succeeded = (record: StateRecordFacts): boolean =>
-  record.status !== null && record.status >= 200 && record.status < 300;
 
 /** An object's identity-named scalar members. */
 const identityValues = (object: JsonValue | undefined): string[] =>
@@ -44,9 +44,14 @@ const identityValues = (object: JsonValue | undefined): string[] =>
       })
     : [];
 
+/** The one object a one-element array holds, else the value itself. */
+const unwrapped = (value: JsonValue): JsonValue =>
+  Array.isArray(value) && value.length === 1 ? value[0]! : value;
+
 /**
  * The ids a write's response names for an entity it made: an identity-named member of the body or of
- * an object member (an envelope) at any length, or a scalar body or sole scalar member long enough to name one.
+ * an object member (an envelope, or the one object of a one-element array member) at any length, or a
+ * scalar body or sole scalar member long enough to name one.
  */
 export const respondedIds = (body: JsonValue | undefined): string[] => {
   if (body === undefined || body === null) return [];
@@ -60,7 +65,7 @@ export const respondedIds = (body: JsonValue | undefined): string[] => {
     ...new Set([
       ...identityValues(body),
       ...(members.length === 1 ? named(members[0]) : []),
-      ...members.flatMap(identityValues),
+      ...members.flatMap((member) => identityValues(unwrapped(member))),
     ]),
   ];
 };
@@ -299,11 +304,8 @@ export const linkedCreate = (input: {
   const post = records[first]!;
   const ids = new Set(input.respondedIds(post.ordinal));
   if (ids.size === 0) return undefined;
-  // Only a read finished before the call began shows what was there before it, as `freshIds` decides.
-  const before = records
-    .slice(0, first)
-    .filter((record) => input.chronology.completedBefore(record, post));
-  for (const record of records.slice(first + 1)) {
+  for (let index = first + 1; index < records.length; index++) {
+    const record = records[index]!;
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
     const view = input.viewOf(record.ordinal);
@@ -318,6 +320,10 @@ export const linkedCreate = (input: {
       continue;
     const id = lastSegmentValue(record.path);
     const collection = collectionPathOf(record, true);
+    // Only reads finished before the call began can show that the candidate already existed.
+    const before = records
+      .slice(0, first)
+      .filter((earlier) => input.chronology.completedBefore(earlier, post));
     // An earlier read of the id under another type or collection names another entity.
     const readBefore = before.some((earlier) => {
       const read = input.viewOf(earlier.ordinal);
@@ -394,6 +400,23 @@ export const recordedPathValues = (
     ),
   );
 };
+
+/** Whether a linked create may take any path arguments: it creates into its type's own collection, whose path has no parameters, and stores each path value in a field, so none changes where it creates. */
+export const anyLinkedSource = (
+  plan: {
+    readonly target: string | null;
+    readonly collection: string | null;
+    readonly rules: readonly FieldRule[];
+  },
+  template: string,
+): boolean =>
+  plan.target !== null &&
+  plan.collection !== null &&
+  normalizedPath(plan.collection) === plan.target &&
+  !segmentsOf(plan.target).some(isParam) &&
+  [...pathParameterKeys(template).values()].every((name) =>
+    plan.rules.some((rule) => rule.rule === "path" && rule.from === name),
+  );
 
 /**
  * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the

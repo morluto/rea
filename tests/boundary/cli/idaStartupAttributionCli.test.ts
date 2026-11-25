@@ -227,7 +227,6 @@ workspaceCliTest.for([
           REA_IDA_MCP_CONFIG: registration,
           REA_LOG_LEVEL: "silent",
         },
-        timeoutMs: 15000,
       });
       expect(result.stderr).toBe("");
       expect(supervisor.database).toBeUndefined();
@@ -279,6 +278,10 @@ workspaceCliTest.for([
           : "execution_failure",
         details: { operation: "procedure_pseudo_code" },
       });
+      if (mode === "catalog-refused")
+        expect(result.json).toMatchObject({
+          details: { diagnostics: { reason: "fixture catalog refused" } },
+        });
       if (mode === "missing-profile")
         expect(result.json).toMatchObject({
           details: {

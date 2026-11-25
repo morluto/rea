@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -38,7 +38,6 @@ it("retains provider coverage caveats in a composed MCP overview without repeate
   expect(response.isError).not.toBe(true);
   const evidence = parseEvidence(response.structuredContent);
   expect(evidence.limitations).toEqual([
-    "Artifact identity is unavailable for this observation.",
     "Derived by an REA composed workflow.",
     `Fixture (fixture 1) current_document, list_procedures, list_segments, list_strings: ${limitation}`,
   ]);
@@ -50,11 +49,12 @@ it("retains provider coverage caveats in a composed MCP overview without repeate
   expect(calls.length).toBe(new Set(calls).size);
 });
 
-it("counts all own inventory dictionary entries in the composed overview", async () => {
-  const procedures = JSON.parse(
-    '{"__proto__":"observed procedure","0x1000":"ordinary procedure"}',
-  );
-  const strings = JSON.parse('{"__proto__":"observed string"}');
+it("counts canonical inventory rows in the composed overview without altering labels", async () => {
+  const procedures = [
+    { address: "0x1000", value: "__proto__" },
+    { address: "0x2000", value: "ordinary procedure" },
+  ];
+  const strings = [{ address: "0x3000", value: "__proto__" }];
   const before = [JSON.stringify(procedures), JSON.stringify(strings)];
   const client = await connect({
     execute: async (operation) => {
@@ -70,7 +70,7 @@ it("counts all own inventory dictionary entries in the composed overview", async
         operation === "current_document"
           ? "fixture"
           : operation === "list_procedures"
-            ? { procedures }
+            ? procedures
             : operation === "list_strings"
               ? strings
               : [];
@@ -91,8 +91,8 @@ it("counts all own inventory dictionary entries in the composed overview", async
   const evidence = parseEvidence(response.structuredContent);
   expect(evidence.normalized_result).toMatchObject({
     document: "fixture",
-    procedure_count: Object.keys(procedures).length,
-    string_count: Object.keys(strings).length,
+    procedure_count: procedures.length,
+    string_count: strings.length,
   });
   expect([JSON.stringify(procedures), JSON.stringify(strings)]).toEqual(before);
 });

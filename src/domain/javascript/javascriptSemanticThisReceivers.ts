@@ -1,6 +1,6 @@
 import * as t from "@babel/types";
 
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticClassCandidates } from "./javascriptSemanticObjectReferences.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
@@ -60,7 +60,7 @@ const receiverBoundary = (
 ): Receiver | undefined => {
   if (parent === undefined) return undefined;
   if (t.isFunction(parent) && !t.isArrowFunctionExpression(parent)) {
-    if (semanticComputedMethodKey(parent, child)) return undefined;
+    if (semanticMethodDefinitionExpression(parent, child)) return undefined;
     return t.isClassMethod(parent) || t.isClassPrivateMethod(parent)
       ? classReceiver(parent, state)
       : { owner: parent };
