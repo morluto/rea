@@ -651,10 +651,21 @@ jobs:
     env:
       SHARD_RESULT: ${{ needs[needs.changes.outputs.test_shard_job].result }}
     steps:
-      - name: Require successful change classification
+      - name: Require portable test inputs
+        id: inputs
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-        run: test "${CHANGES_RESULT}" = "success"
+          REPORTS_EXPECTED: >-
+            ${{ needs.changes.outputs.code == 'true' &&
+                (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
+                 (needs.changes.outputs.tier == 'fast' &&
+                  (needs.test-source.result == 'success' || needs.test-source.result == 'failure'))) }}
+        run: |
+          test "${CHANGES_RESULT}" = "success" || exit 1
+          if [ "${REPORTS_EXPECTED}" != "true" ]; then
+            echo "::error::No portable test group ran to produce a report."
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: needs.changes.outputs.code == 'true' && success()
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -669,11 +680,7 @@ jobs:
       - if: needs.changes.outputs.code == 'true' && success()
         run: npm ci
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: >-
-          !cancelled() && needs.changes.outputs.code == 'true' &&
-          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
-           (needs.changes.outputs.tier == 'fast' &&
-            (needs.test-source.result == 'success' || needs.test-source.result == 'failure')))
+        if: steps.inputs.outcome == 'success' && !cancelled()
         with:
           path: .vitest/blob
           pattern: vitest-report-*
@@ -681,9 +688,8 @@ jobs:
       - name: Merge coverage, JUnit, and timing reports
         id: merge
         if: >-
-          !cancelled() && needs.changes.outputs.code == 'true' &&
-          needs.changes.outputs.tier == 'full' &&
-          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure')
+          !cancelled() && steps.inputs.outcome == 'success' &&
+          needs.changes.outputs.tier == 'full'
         run: >-
           npm run test:ci:merge --
           --coverage.reportsDirectory=coverage
@@ -699,10 +705,8 @@ jobs:
       - name: Merge fast-suite JUnit and timing reports
         id: merge-fast
         if: >-
-          !cancelled() && needs.changes.outputs.code == 'true' &&
-          needs.changes.outputs.tier == 'fast' &&
-          (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
-           needs.test-source.result == 'success' || needs.test-source.result == 'failure')
+          !cancelled() && steps.inputs.outcome == 'success' &&
+          needs.changes.outputs.tier == 'fast'
         run: >-
           npm exec -- vitest --merge-reports
           --reporter=dot
@@ -722,7 +726,7 @@ jobs:
           merge-multiple: true
       - name: Summarize slowest test files
         id: test-report
-        if: needs.changes.outputs.code == 'true' && !cancelled()
+        if: steps.inputs.outcome == 'success' && !cancelled()
         env:
           SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
