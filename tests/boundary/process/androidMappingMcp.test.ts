@@ -1,4 +1,5 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createHash } from "node:crypto";
 import { readFile, truncate, unlink, writeFile } from "node:fs/promises";
@@ -11,13 +12,14 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -31,22 +33,20 @@ const connect = async () => {
     { kind: "session", session },
     {
       androidAnalysis: fixture.provider,
-      environment: { REA_MCP_TOOL_FAMILIES: "android,application,session" },
+      environment: {
+        REA_MCP_TOOL_FAMILIES: "android,application,session",
+      },
     },
   );
-  const client = new Client({
+  const mcp = createTestMcp();
+  onTestFinished(async () => {
+    await mcp.close();
+    await session.close();
+  });
+  const client = await mcp.connect(server, {
     name: "android-mapping-regression",
     version: "1",
   });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const inspect = (mapping_path: string) =>
     client.callTool({
       name: "inspect_android_class",
@@ -81,14 +81,11 @@ it("keeps exact class and selected-method facts in summaries with readable compl
     "inspect_android_method",
   ] as const) {
     const definition = catalog.find((tool) => tool.name === name);
-    if (definition?.outputSchema === undefined)
-      throw new Error(`Missing ${name} schema`);
+    if (definition === undefined) throw new Error(`Missing ${name} schema`);
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(
-      z.record(z.string(), z.unknown()).parse(definition.outputSchema),
-    );
+    }).compile(canonicalOutputSchema(definition.name));
     const args = {
       path: apk,
       class_name: "fixture.Target",
@@ -142,25 +139,50 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   const first = join(root, "first.txt");
   const second = join(root, "second.txt");
   await writeFile(first, mappingText("com.example.Original"));
-  await writeFile(second, mappingText("com.example.Renamed"));
+  await writeFile(
+    second,
+    [
+      '# {"id":"com.android.tools.r8.mapping","version":"2.2"}',
+      "com.example.Renamed -> fixture.Target:",
+      '    # {"id":"com.android.tools.r8.residualsignature","signature":"()V"}',
+      '    # {"id":"sourceFile","fileName":"Renamed.java"}',
+      "    # An ordinary comment",
+      "    void onCreate(android.os.Bundle) -> onCreate",
+      "    void pick(java.lang.String) -> choose",
+      "    void pick(boolean) -> choose",
+      '    # {"id":"com.android.tools.r8.residualsignature","signature":"(I)V"}',
+    ].join("\n"),
+  );
   const wire = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_android_class",
   );
   const contract = ANDROID_TOOL_CONTRACTS.find(
     (candidate) => candidate.name === "inspect_android_class",
   );
-  if (wire?.outputSchema === undefined || contract === undefined)
+  if (wire === undefined || contract === undefined)
     throw new Error("Missing inspect_android_class contract");
   const validateOutput = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(wire.outputSchema));
+  }).compile(canonicalOutputSchema(wire.name));
   const apkSha256 = createHash("sha256")
     .update(await readFile(apk))
     .digest("hex");
-  for (const [path, original] of [
-    [first, "com.example.Original"],
-    [second, "com.example.Renamed"],
+  for (const [path, original, parameterType, reported, malformed] of [
+    [
+      first,
+      "com.example.Original",
+      "int",
+      { compiler: "R8", pg_map_id: "7f00" },
+      [],
+    ],
+    [
+      second,
+      "com.example.Renamed",
+      "boolean",
+      { map_version: "2.2" },
+      [{ line: 3, reason: "metadata" }],
+    ],
   ] as const) {
     const response = await inspect(path);
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -169,7 +191,7 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
       contract.outputSchema.parse(response.structuredContent),
     );
     expect(evidence.parameters.mapping_path).toBe(path);
-    expect(evidence.subject?.digest.sha256).toBe(apkSha256);
+    expect(fileIdentity(evidence.subject).sha256).toBe(apkSha256);
     expect(evidence.limitations.join(" ")).toContain("pg_map_id");
     const result = androidResultSchemas.inspect_android_class.parse(
       evidence.normalized_result,
@@ -186,7 +208,9 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
           .update(await readFile(path))
           .digest("hex"),
       },
-      reported: { compiler: "R8", pg_map_id: "7f00" },
+      reported,
+      records: { malformed: malformed.length },
+      malformed,
       coverage: { symbols: 4, mapped: 4, ambiguous: 0, unmapped: 0 },
     });
     expect(result.mapping?.symbols[0]?.resolution).toEqual({
@@ -195,8 +219,11 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
       verified_by: "class",
     });
     expect(result.mapping?.symbols[3]?.resolution).toMatchObject({
-      mapped: { name: "pick", parameter_types: ["int"] },
+      mapped: { name: "pick", parameter_types: [parameterType] },
     });
+    expect(
+      evidence.limitations.some((text) => text.includes("malformed records")),
+    ).toBe(malformed.length > 0);
   }
   expect(launches).toHaveLength(1);
   // Content changes invalidate the mapping without restarting the APK engine.

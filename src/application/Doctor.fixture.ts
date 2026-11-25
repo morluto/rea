@@ -1,4 +1,4 @@
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { ok } from "../domain/result.js";
 import type { DoctorHost } from "./Doctor.js";
@@ -13,7 +13,9 @@ export const createDoctorHostFixture = (
   runtime: { id: "node", version: "24.22.1" },
   macosVersion: () => Promise.resolve("14.0"),
   linuxDistribution: () => Promise.resolve(undefined),
-  validTarget: (path) => Promise.resolve(path.includes("Hopper")),
+  inspectTarget: async (path) => {
+    throw new Error(`Unexpected target check for ${path}`);
+  },
   executable: (path) => Promise.resolve(path.includes("Hopper")),
   inspectLinuxHopper: () =>
     Promise.resolve(
@@ -41,3 +43,20 @@ export const createDoctorHostFixture = (
     }),
   ...overrides,
 });
+
+/** The explicit scope's checks; an audit-wide report has none. */
+export const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
+export const ubuntu2404Distribution: DoctorHost["linuxDistribution"] = () =>
+  Promise.resolve({
+    id: "ubuntu",
+    versionId: "24.04",
+    packageFamily: "deb",
+    hopperSetupSupported: true,
+  });

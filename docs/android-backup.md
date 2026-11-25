@@ -41,11 +41,12 @@ global PAX headers and GNU long-name extensions are unsupported.
 
 ## Bounds and verification
 
-This in-memory importer limits both the encoded payload and expanded TAR to
-64 MiB. It admits at most 8 MiB of conservatively estimated directory metadata
-and four simultaneous member streams. Oversized input and expansion are
-resource refusals; lowering extraction selection does not bypass validation of
-the full archive. Extraction reuses the existing destination ownership,
+The importer defaults to 64 MiB each for the encoded payload and decoded TAR
+and 8 MiB for the directory representation. Set `encoded_bytes`,
+`expanded_bytes` or `directory_bytes` in `artifact_limits.android_backup`
+to change those allowances for the next call. In the CLI, pass the same object
+through `--artifact-limits`. The reader admits four simultaneous member streams.
+Selecting fewer members still requires validation of the full archive. Extraction reuses the existing destination ownership,
 path-safety, durable-readback and cleanup rules.
 
 Tests use authored archives and public CLI/MCP workflows, including compressed

@@ -61,12 +61,33 @@ describe("MZ artifact classification", () => {
     ).toBe("unknown");
   });
 
+  it.each([
+    {
+      name: "truncated COFF header",
+      bytes: truncatedCoffPeFixture(),
+    },
+    {
+      name: "truncated optional header",
+      bytes: truncatedOptionalPeFixture(),
+    },
+  ])("rejects a PE with a $name", ({ bytes }) => {
+    expect(classifyArtifactBytesAtPath("truncated.exe", bytes)).toEqual({
+      kind: "unknown",
+      format: "unknown",
+    });
+  });
+
   it("keeps standalone and embedded DOS identities through inventory", async () => {
     const directory = await createTestTempDirectory("rea-mz-inventory-");
     const dosPath = join(directory, "LEGACY.EXE");
     const pePath = join(directory, "NATIVE.EXE");
+    const distantPePath = join(directory, "DISTANT.EXE");
     await writeFile(dosPath, dosFixture());
     await writeFile(pePath, peFixture(128));
+    await writeFile(
+      distantPePath,
+      peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES + 64),
+    );
     const standalone = artifactInventoryResultSchema.parse(
       await scanCanonicalArtifactInventory(dosPath),
     );
@@ -74,6 +95,10 @@ describe("MZ artifact classification", () => {
     expect(standalone.nodes).toContainEqual(
       expect.objectContaining({ format: "dos-mz" }),
     );
+    const distant = artifactInventoryResultSchema.parse(
+      await scanCanonicalArtifactInventory(distantPePath),
+    );
+    expect(distant.manifest.root_format).toBe("pe");
 
     const tree = join(directory, "tree");
     await mkdir(tree);
@@ -110,6 +135,38 @@ describe("MZ artifact classification", () => {
     ).toMatchObject({ format: "pe", size: bytes.length });
     expect(inventory.coverage.status).toBe("complete");
   });
+
+  it("does not inventory truncated PE entries as executables", async () => {
+    const root = await createTestTempDirectory("rea-mz-truncated-pe-");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "truncated-coff.exe",
+      new Uint8ArrayReader(truncatedCoffPeFixture()),
+      { level: 0 },
+    );
+    await writer.add(
+      "truncated-optional.exe",
+      new Uint8ArrayReader(truncatedOptionalPeFixture()),
+      { level: 0 },
+    );
+    const path = join(root, "fixture.zip");
+    await writeFile(path, Buffer.from(await writer.close()));
+
+    const inventory = await inventoryArtifact(path);
+    for (const logicalPath of [
+      "truncated-coff.exe",
+      "truncated-optional.exe",
+    ]) {
+      expect(inventory.occurrences).toContainEqual(
+        expect.objectContaining({
+          logical_path: logicalPath,
+          artifact_kind: "unknown",
+          artifact_format: "unknown",
+        }),
+      );
+    }
+    expect(inventory.coverage.status).toBe("complete");
+  });
 });
 
 const dosFixture = (): Buffer => {
@@ -122,12 +179,32 @@ const dosFixture = (): Buffer => {
 };
 
 const peFixture = (offset: number): Buffer => {
-  const bytes = Buffer.alloc(Math.max(512, offset + 24));
+  const bytes = Buffer.alloc(Math.max(512, offset + 24 + 240));
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt16LE(4, 8);
   bytes.writeUInt16LE(64, 24);
   bytes.writeUInt32LE(offset, 60);
   bytes.set([0x50, 0x45, 0, 0], offset);
+  bytes.writeUInt16LE(0x8664, offset + 4);
+  bytes.writeUInt16LE(240, offset + 20);
+  bytes.writeUInt16LE(0x0002, offset + 22);
+  bytes.writeUInt16LE(0x20b, offset + 24);
+  return bytes;
+};
+
+const truncatedCoffPeFixture = (): Buffer =>
+  Buffer.from(
+    "4d5a" + "00".repeat(58) + "40000000" + "50450000" + "00".repeat(8),
+    "hex",
+  );
+
+const truncatedOptionalPeFixture = (): Buffer => {
+  const bytes = Buffer.alloc(88);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt32LE(64, 60);
+  bytes.write("PE\0\0", 64, "binary");
+  bytes.writeUInt16LE(0x8664, 68);
+  bytes.writeUInt16LE(240, 84);
   return bytes;
 };
 

@@ -4,7 +4,6 @@ import type { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { buildMultiPayload, buildUImage } from "../../tests/fixtures/uimage.js";
 import {
@@ -317,9 +316,8 @@ it("splits a script image's size table like a multi image", async () => {
   }
 });
 
-it("fails closed on corrupt CRCs, truncation, and bad size tables", async () => {
-  const cases: [string, Buffer, RegExp][] = [
-    ["data CRC", buildUImage({ corruptDataCrc: true }), /data CRC32 mismatch/u],
+it("fails closed on corrupt header CRC, truncation, and default-policy data CRC mismatch", async () => {
+  const formatCases: [string, Buffer, RegExp][] = [
     [
       "header CRC",
       buildUImage({ corruptHeaderCrc: true }),
@@ -330,26 +328,83 @@ it("fails closed on corrupt CRCs, truncation, and bad size tables", async () => 
       buildUImage({ payload: Buffer.from("twelve-bytes") }).subarray(0, 70),
       /truncated/u,
     ],
-    [
-      "multi table without terminator",
-      buildUImage({
-        type: 4,
-        payload: Buffer.from([0, 0, 0, 3, 0x61, 0x62, 0x63]),
-      }),
-      /no zero terminator/u,
-    ],
-    [
-      "script without size table",
-      buildUImage({ type: 6, payload: Buffer.from("echo hi\n") }),
-      /no zero terminator/u,
-    ],
   ];
-  for (const [label, bytes, pattern] of cases) {
+  for (const [label, bytes, pattern] of formatCases) {
     const path = await writeCarrier(
       `uimage-bad-${label.replaceAll(" ", "-")}`,
       bytes,
     );
     await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(pattern);
+  }
+
+  const badDataCrcPath = await writeCarrier(
+    "uimage-bad-data-crc",
+    buildUImage({ corruptDataCrc: true }),
+  );
+  await expect(
+    scanCanonicalArtifactInventory(badDataCrcPath),
+  ).rejects.toMatchObject({
+    reason: "integrity",
+    integrityCheck: "declared-digest",
+    details: {
+      logicalPath: ".",
+      algorithm: "crc32",
+    },
+  });
+
+  const continued = await scanCanonicalArtifactInventory(badDataCrcPath, {
+    integrity: "record-and-continue",
+  });
+  expect(continued.manifest.root_format).toBe("uimage");
+  expect(
+    continued.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({ kind: "uimage", crc_verified: false });
+  expect(
+    continued.occurrences.find((row) => row.logical_path === "payload.bin"),
+  ).toBeDefined();
+  expect(continued.integrity_contradictions).toEqual([
+    expect.objectContaining({
+      logical_path: ".",
+      algorithm: "crc32",
+    }),
+  ]);
+});
+
+it("fails closed under default policy and retains payload.bin under record-and-continue on malformed multi/script size tables", async () => {
+  const cases: [string, Buffer][] = [
+    [
+      "multi-table-without-terminator",
+      buildUImage({
+        type: 4,
+        payload: Buffer.from([0, 0, 0, 3, 0x61, 0x62, 0x63]),
+      }),
+    ],
+    [
+      "script-without-size-table",
+      buildUImage({ type: 6, payload: Buffer.from("echo hi\n") }),
+    ],
+  ];
+  for (const [label, bytes] of cases) {
+    const path = await writeCarrier(`uimage-${label}`, bytes);
+    await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+      /no zero terminator/u,
+    );
+    const snapshot = await scanCanonicalArtifactInventory(path, {
+      integrity: "record-and-continue",
+    });
+    expect(snapshot.manifest.root_format).toBe("uimage");
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(snapshot.limitations.join(" ")).toContain("no zero terminator");
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({ kind: "uimage", sub_image_count: 0, crc_verified: true });
+    expect(
+      snapshot.occurrences
+        .filter((row) => row.logical_path !== ".")
+        .map((row) => row.logical_path),
+    ).toEqual(["payload.bin"]);
   }
 });
 
@@ -360,9 +415,15 @@ it("rejects an entry that does not match its owning inventory", async () => {
     const entries = [];
     for await (const item of reader.entries()) entries.push(item);
     const forged = { ...entries[0]!, declaredSize: 999 };
-    await expect(reader.open(forged)).rejects.toBeInstanceOf(
-      ArtifactReaderFailure,
-    );
+    await expect(reader.open(forged)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+    const foreign = { ...entries[0]!, adapterKey: "foreign" };
+    await expect(reader.open(foreign)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
   } finally {
     await reader.close();
   }

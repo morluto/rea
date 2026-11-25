@@ -1,11 +1,9 @@
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
-import { resolveArtifactSourcePath } from "../ArtifactSelectedSource.js";
 
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../../domain/artifactGraph.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import {
   scanCanonicalArtifactInventoryInScope,
   scanCanonicalArtifactInventoryForExtractionInScope,
@@ -14,6 +12,10 @@ import {
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactEmbeddedFormatProbeFacts } from "../ArtifactEmbeddedFormatProbes.js";
+import {
+  abortIfNeeded,
+  resolveArtifactSourcePath,
+} from "../../resources/index.js";
 
 /** Inventory one local artifact and return every graph collection inline. */
 export const inventoryArtifact = async (
@@ -23,8 +25,22 @@ export const inventoryArtifact = async (
   const snapshot = await options.resourceScope.run(() =>
     scanArtifactInventoryInScope(inputPath, options),
   );
-  return artifactInventoryResultSchema.parse(snapshot);
+  return artifactInventoryResultSchema.parse({
+    ...snapshot,
+    ...(options.readerLimits === undefined
+      ? {}
+      : { effective_limits: options.readerLimits }),
+  });
 };
+
+/** Inventory under an admission the caller already holds on its scope. */
+export const inventoryArtifactInScope = async (
+  inputPath: string,
+  options: ArtifactInventoryOptions,
+): Promise<ArtifactInventoryResult> =>
+  artifactInventoryResultSchema.parse(
+    await scanArtifactInventoryInScope(inputPath, options),
+  );
 
 export const scanArtifactInventoryInScope = async (
   inputPath: string,

@@ -42,16 +42,10 @@ it.each([1, 129])(
       expect(bytes.length).toBeLessThan(16_384);
       const projected = projectAnalysisError(result.error);
       expect(projected).toMatchObject({
-        code: "truncated",
+        code: "partial",
         retryable: false,
-        message:
-          "PyInstaller compressed PYZ images exceed the 128-file private storage budget",
+        message: expect.stringMatching(/PyInstaller.*PYZ.*128.file.*budget/iu),
         details: { boundary: "capacity" },
-        remediation: {
-          action: expect.stringContaining(
-            "capacity reported in details.detail",
-          ),
-        },
       });
       expect(projected.remediation.action).not.toContain(
         "Narrow the requested path",

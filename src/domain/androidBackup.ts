@@ -1,7 +1,13 @@
 import { err, ok, type Result } from "./result.js";
+import { strictUtf8Decoder } from "./strictUtf8.js";
+import {
+  isZeroBlock,
+  TAR_BLOCK_BYTES,
+  TAR_TYPEFLAGS,
+  tarPaddedSize,
+} from "./tarFormat.js";
 
 export const ANDROID_BACKUP_MAGIC = "ANDROID BACKUP\n";
-export const ANDROID_BACKUP_DIRECTORY_BYTES = 8 * 1024 * 1024;
 
 export interface AndroidBackupHeader {
   readonly version: number;
@@ -11,14 +17,18 @@ export interface AndroidBackupHeader {
   readonly payloadOffset: number | null;
 }
 
-export interface AndroidBackupDecodeFailure {
-  readonly kind: "format" | "unsupported" | "limit";
-  readonly message: string;
-}
+export type AndroidBackupDecodeFailure =
+  | {
+      readonly kind: "malformed" | "truncated" | "unsupported";
+      readonly message: string;
+    }
+  | { readonly kind: "limit"; readonly requiredBytes: number };
 
 type Decoded<Value> = Result<Value, AndroidBackupDecodeFailure>;
 const malformed = (message: string): Decoded<never> =>
-  err({ kind: "format", message });
+  err({ kind: "malformed", message });
+const truncated = (message: string): Decoded<never> =>
+  err({ kind: "truncated", message });
 const unsupported = (message: string): Decoded<never> =>
   err({ kind: "unsupported", message });
 
@@ -39,7 +49,7 @@ export const parseAndroidBackupHeader = (
   let position = ANDROID_BACKUP_MAGIC.length;
   for (let index = 0; index < 3; index++) {
     const end = bytes.indexOf(10, position);
-    if (end < 0) return malformed("truncated Android backup header");
+    if (end < 0) return truncated("truncated Android backup header");
     const line = bytes.subarray(position, end);
     if (line.some((byte) => byte < 0x20 || byte > 0x7e))
       return malformed("non-ASCII Android backup header field");
@@ -73,11 +83,10 @@ export interface AndroidBackupTarEntry {
   readonly pax: Readonly<Record<string, string>>;
 }
 
+const utf8 = strictUtf8Decoder("preserve");
 const text = (bytes: Buffer): Decoded<string> => {
   try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
-    );
+    return ok(utf8.decode(bytes));
   } catch {
     return malformed("TAR text is not valid UTF-8");
   }
@@ -106,12 +115,12 @@ const octal = (
     : malformed("TAR integer exceeds the safe range");
 };
 
-const paxFields = (bytes: Buffer): Decoded<Record<string, string>> => {
-  if (bytes.length > Math.floor(ANDROID_BACKUP_DIRECTORY_BYTES / 6))
-    return err({
-      kind: "limit",
-      message: "PAX metadata exceeds the directory representation budget",
-    });
+const paxFields = (
+  bytes: Buffer,
+  directoryLimit: number,
+): Decoded<Record<string, string>> => {
+  if (bytes.length > Math.floor(directoryLimit / 6))
+    return err({ kind: "limit", requiredBytes: bytes.length * 6 });
   const fields: Record<string, string> = Object.create(null) as Record<
     string,
     string
@@ -188,7 +197,12 @@ const tarHeader = (header: Buffer): Decoded<TarHeader> => {
     header.subarray(257, 263).some((byte) => byte !== 0)
   )
     return unsupported("TAR header dialect");
-  if (type !== 0 && type !== 0x30 && type !== 0x35 && type !== 0x78)
+  if (
+    type !== 0 &&
+    type !== 0x30 &&
+    type !== TAR_TYPEFLAGS.directory &&
+    type !== TAR_TYPEFLAGS.paxLocal
+  )
     return unsupported(`TAR entry type ${String(type)}`);
   return ok({
     path:
@@ -205,7 +219,8 @@ const tarMemberSize = (
   header: TarHeader,
   pax: Record<string, string> | undefined,
 ): Decoded<number> => {
-  if (header.type === 0x78 || pax?.size === undefined) return ok(header.size);
+  if (header.type === TAR_TYPEFLAGS.paxLocal || pax?.size === undefined)
+    return ok(header.size);
   if (
     !/^(0|[1-9][0-9]*)$/u.test(pax.size) ||
     !Number.isSafeInteger(Number(pax.size))
@@ -217,20 +232,21 @@ const tarMemberSize = (
 /** Validate each header and extent once; offsets address the decoded TAR stream. */
 export function* androidBackupTarEntries(
   bytes: Buffer,
+  directoryLimit: number,
 ): Generator<Decoded<AndroidBackupTarEntry>> {
-  if (bytes.length % 512 !== 0) {
-    yield malformed("truncated TAR block");
+  if (bytes.length % TAR_BLOCK_BYTES !== 0) {
+    yield truncated("truncated TAR block");
     return;
   }
   let position = 0;
   let pax: Record<string, string> | undefined;
-  while (position + 512 <= bytes.length) {
-    const header = bytes.subarray(position, position + 512);
-    if (header.every((byte) => byte === 0)) {
+  while (position + TAR_BLOCK_BYTES <= bytes.length) {
+    const header = bytes.subarray(position, position + TAR_BLOCK_BYTES);
+    if (isZeroBlock(header)) {
       if (
         pax !== undefined ||
-        bytes.length - position < 1024 ||
-        bytes.subarray(position).some((byte) => byte !== 0)
+        bytes.length - position < 2 * TAR_BLOCK_BYTES ||
+        !isZeroBlock(bytes.subarray(position))
       )
         yield malformed("invalid TAR end marker or trailing payload");
       return;
@@ -248,19 +264,20 @@ export function* androidBackupTarEntries(
       return;
     }
     const memberSize = parsedSize.value;
-    const dataOffset = position + 512;
-    const next = dataOffset + Math.ceil(memberSize / 512) * 512;
+    const dataOffset = position + TAR_BLOCK_BYTES;
+    const next = dataOffset + tarPaddedSize(memberSize);
     if (!Number.isSafeInteger(next) || next > bytes.length) {
-      yield malformed("truncated TAR member or padding");
+      yield truncated("truncated TAR member or padding");
       return;
     }
-    if (type === 0x78) {
+    if (type === TAR_TYPEFLAGS.paxLocal) {
       if (pax !== undefined) {
         yield malformed("consecutive local PAX headers");
         return;
       }
       const parsed = paxFields(
         bytes.subarray(dataOffset, dataOffset + memberSize),
+        directoryLimit,
       );
       if (!parsed.ok) {
         yield parsed;
@@ -268,13 +285,13 @@ export function* androidBackupTarEntries(
       }
       pax = parsed.value;
     } else {
-      if (type === 0x35 && memberSize !== 0) {
+      if (type === TAR_TYPEFLAGS.directory && memberSize !== 0) {
         yield malformed("TAR directory contains data");
         return;
       }
       yield ok({
         path: pax?.path ?? facts.path,
-        kind: type === 0x35 ? "directory" : "file",
+        kind: type === TAR_TYPEFLAGS.directory ? "directory" : "file",
         headerOffset: position,
         dataOffset,
         size: memberSize,
@@ -285,5 +302,5 @@ export function* androidBackupTarEntries(
     }
     position = next;
   }
-  yield malformed("missing complete TAR end marker");
+  yield truncated("missing complete TAR end marker");
 }

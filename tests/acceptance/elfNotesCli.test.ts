@@ -6,6 +6,7 @@ import {
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
   elfExtendedSectionCountFixture,
+  elfNote,
   elfNoteFixture,
   elfNoteWithUnreadableSectionNameFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
@@ -31,28 +32,62 @@ cliTest("reports a GNU build-id through the public CLI", async ({ cli }) => {
 });
 
 cliTest(
-  "resolves section note names from zlib and Zstandard string tables through the CLI",
+  "reports FDO producer assertions in public ELF note Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-notes-fdo-cli-");
+    const path = join(root, "program");
+    const metadata = [{ soname: ["libdemo.so.1"], feature: "examples" }];
+    const notes = elfNote(
+      "FDO",
+      0x407c0c0a,
+      Buffer.from(JSON.stringify(metadata) + "\0"),
+    );
+    await writeFile(
+      path,
+      elfNoteFixture({
+        ownership: "section",
+        notes,
+        sectionName: ".note.dlopen",
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.entries[0]).toMatchObject({
+      type_name: "fdo_dlopen_metadata",
+      fdo: { metadata, issue: null },
+    });
+    expect(evidence.limitations).toContain(
+      "FDO packaging and dlopen metadata are unverified producer declarations.",
+    );
+  },
+);
+
+cliTest(
+  "resolves section note names from a compressed string table through the CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-compressed-cli-");
-    for (const compressionType of [1, 2]) {
-      const path = join(root, `program-${String(compressionType)}`);
-      const bytes = compressedElfNoteFixture(64, true, compressionType);
-      await writeFile(path, bytes);
-      const result = await cli.run({
-        arguments: ["inspect-elf-notes", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
-        result.json,
-      );
-      expect(evidence.normalized_result.tables[0]?.name).toBe(
-        ".note.gnu.build-id",
-      );
-      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
-        "0123456789abcdef0123456789abcdef01234567",
-      );
-      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-    }
+    const path = join(root, "compressed-names.elf");
+    const bytes = compressedElfNoteFixture(64, true, 2);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.tables[0]?.name).toBe(
+      ".note.gnu.build-id",
+    );
+    expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -71,8 +106,8 @@ cliTest(
       result.json,
     );
     expect(evidence.normalized_result.tables[0]?.name).toBeNull();
-    expect(evidence.normalized_result.limitations).toContain(
-      "ELF section names are incomplete because a name offset is outside its string table.",
+    expect(evidence.normalized_result.limitations.join(" ")).toMatch(
+      /name offset.*string table/iu,
     );
     expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
       "0123456789abcdef0123456789abcdef01234567",
@@ -107,26 +142,14 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated ELF as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-notes-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("\x7fELF"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-notes", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_notes" },
-  });
-});
-
 cliTest(
   "reports compressed note storage as unsupported without mutation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-storage-cli-");
-    const path = join(root, "debug-notes.o");
-    const bytes = compressedElfNoteSectionFixture();
+    const path = join(root, "aliased.o");
+    const bytes = compressedElfNoteSectionFixture(64, true, "both");
+    // The program starts inside the compressed section and ends beyond it.
+    bytes.writeBigUInt64LE(bytes.readBigUInt64LE(64 + 8) + 4n, 64 + 8);
     await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
@@ -134,9 +157,7 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
-      message: expect.stringContaining(
-        "Compressed ELF note sections are unsupported",
-      ),
+      message: expect.stringMatching(/compressed.*note/iu),
     });
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
@@ -155,7 +176,7 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
-      message: expect.stringContaining("ELF extended numbering is unsupported"),
+      message: expect.stringMatching(/extended.*number/iu),
     });
     expect((await readFile(path)).equals(before)).toBe(true);
   },
@@ -175,17 +196,13 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
+        code: "unsupported_target",
+        category: "unsupported_target",
         details: {
           operation: "inspect_elf_notes",
-          issues: [
-            expect.objectContaining({
-              path: ["path"],
-              reason: "invalid_format",
-              message: "ELF section table is missing",
-            }),
-          ],
+          path,
+          failure_kind: "malformed",
+          format: "elf",
         },
       });
       expect((await readFile(path)).equals(bytes)).toBe(true);

@@ -1,3 +1,7 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createPackageWithOptions } from "@electron/asar";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -5,7 +9,7 @@ import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 
@@ -19,12 +23,20 @@ import {
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const createSelectionClient = () => {
-  const client = new Client({
-    name: "javascript-source-selection",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-source-selection",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -33,7 +45,6 @@ const createSelectionClient = () => {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
       // Exact advertised constraints require the complete schema profile.
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     },
     stderr: "pipe",
   });
@@ -82,7 +93,7 @@ it("resolves ESM whitespace specifiers through the public application tool", asy
       () => transport.close(),
     ]);
   }
-}, 60_000);
+});
 
 it("retains missing ASAR native-addon inventory through the public application tool", async () => {
   const { archive, addon } = await createStrippedAsarAddon();
@@ -115,7 +126,7 @@ it("retains missing ASAR native-addon inventory through the public application t
       () => transport.close(),
     ]);
   }
-}, 60_000);
+});
 
 it("advertises exact source selection and retains its scope through summary, Evidence retrieval and invalid-input recovery", async () => {
   const root = await createTestTempDirectory("rea-js-selected-mcp-");
@@ -134,7 +145,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(schema);
+    }).compile(canonicalInputSchema("analyze_javascript_application"));
     expect(validate({ input_path: root, source_paths: ["main.mjs"] })).toBe(
       true,
     );
@@ -149,14 +160,12 @@ it("advertises exact source selection and retains its scope through summary, Evi
       },
     });
     expect(selected.isError, JSON.stringify(selected.content)).not.toBe(true);
-    if (definition?.outputSchema === undefined)
+    if (definition === undefined)
       throw new Error("Missing advertised application output contract");
     const validateOutput = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(
-      z.record(z.string(), z.unknown()).parse(definition.outputSchema),
-    );
+    }).compile(canonicalOutputSchema(definition.name));
     expect(
       validateOutput(selected.structuredContent),
       JSON.stringify(validateOutput.errors),
@@ -244,7 +253,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
       () => transport.close(),
     ]);
   }
-}, 60_000);
+});
 
 it("selects nested ASAR paths and distinguishes missing inventoried bytes from invalid paths", async () => {
   const root = await createTestTempDirectory("rea-js-selected-containers-");
@@ -315,7 +324,7 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
       () => transport.close(),
     ]);
   }
-}, 60_000);
+});
 
 it("accepts ASAR headers with long legal JSON whitespace through the public application tool", async () => {
   const root = await createTestTempDirectory("rea-js-asar-whitespace-mcp-");
@@ -358,7 +367,7 @@ it("accepts ASAR headers with long legal JSON whitespace through the public appl
       () => transport.close(),
     ]);
   }
-}, 60_000);
+});
 
 it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP", async () => {
   const archive = join(
@@ -384,8 +393,8 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
       throw new Error("Missing invalid ASAR response");
     expect(JSON.parse(message.text)).toMatchObject({
       error: {
-        code: "artifact_operation_failed",
-        details: { reason: "format" },
+        code: "unsupported_target",
+        details: { path: archive, failure_kind: "unsupported" },
       },
     });
     await client.ping();
@@ -395,4 +404,4 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
       () => transport.close(),
     ]);
   }
-}, 60_000);
+});

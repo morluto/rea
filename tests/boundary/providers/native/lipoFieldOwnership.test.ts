@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { ok } from "../../../../src/domain/result.js";
 import {
   CPU,
   fatImage,
@@ -17,15 +18,12 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/native/CommandRunner.js";
-import {
-  LipoFieldRetentionError,
-  parseLipoCapture,
-} from "../../../../src/native/parsers/lipo.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../../../src/artifacts/ArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/domain/native/nativeCommandOutput.js";
+import { LipoFieldRetentionError } from "../../../../src/domain/apple/lipo.js";
 
 it.each(["absent", "valid", "uninterpretable"] as const)(
   "preserves %s lipo fields through native observations and structural slice inventory",
@@ -75,6 +73,8 @@ it.each(["absent", "valid", "uninterpretable"] as const)(
       const inspected = await client.execute("inspect_macho", {});
       if (!inspected.ok) throw inspected.error;
       const macho = inspectMachoSchema.parse(inspected.value.result);
+      expect(macho.architectures).toEqual(list.architectures);
+      expect(macho.selected_architecture.container_file_offset).toBe(4096);
       const entries = [];
       for await (const entry of reader.entries()) entries.push(entry);
       expect(entries).toMatchObject([
@@ -87,9 +87,8 @@ it.each(["absent", "valid", "uninterpretable"] as const)(
           expect(list.limitations.some((note) => note.includes(line))).toBe(
             true,
           );
-          expect(macho.architectures.limitations).toEqual([]);
-          expect(macho.limitations.some((note) => note.includes(line))).toBe(
-            true,
+          expect(macho.limitations).toContainEqual(
+            expect.stringContaining(line),
           );
           expect(
             entries[0]?.limitations.some((note) => note.includes(line)),
@@ -104,9 +103,7 @@ it.each(["absent", "valid", "uninterpretable"] as const)(
         expect(entries[0]?.limitations).toEqual(
           mode === "valid"
             ? []
-            : [
-                "Slice range was derived from structural Mach-O facts because lipo omitted it.",
-              ],
+            : [expect.stringMatching(/structural Mach.O.*lipo.*omitted/iu)],
         );
       }
     } finally {
@@ -125,7 +122,7 @@ it("does not replace a parsed contradictory lipo range with structural fallback"
     path,
     {},
     new NativeFixtureRunner({
-      lipo: `architecture arm64\n cputype 16777228\n cpusubtype 0\n offset 8192\n size ${thin.length}\n align 2^12 (4096)\n`,
+      lipo: `architecture arm64\n cputype 16777228\n cpusubtype 0\n offset 32\n size ${thin.length}\n align 2^12 (4096)\n`,
     }),
   );
   try {
@@ -133,7 +130,7 @@ it("does not replace a parsed contradictory lipo range with structural fallback"
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "integrity",
-      message: expect.stringContaining("disagrees with the Mach-O FAT table"),
+      integrityCheck: "layout-consistency",
     });
   } finally {
     await reader.close();
@@ -154,35 +151,22 @@ it("refuses retained raw-field expansion as capacity rather than a malformed lip
   expect(Buffer.byteLength(stdout)).toBeLessThan(
     NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   );
-  const runner = new NativeFixtureRunner({ lipo: stdout });
+  const stderr = "lipo retained diagnostic: café\n";
+  const fixture = new NativeFixtureRunner({ lipo: stdout });
+  const runner = {
+    async run(tool: string, args: readonly string[]) {
+      const capture = await fixture.run(tool, args);
+      return capture.ok
+        ? ok({
+            ...capture.value,
+            stderr,
+            stderrBytes: Buffer.byteLength(stderr),
+          })
+        : capture;
+    },
+  };
   const captured = await runner.run("lipo", ["-detailed_info", path]);
   if (!captured.ok) throw captured.error;
-  const stderr = "retained raw lipo diagnostic\n";
-  const refused = parseLipoCapture(
-    {
-      ...captured.value,
-      stderr,
-      stderrBytes: Buffer.byteLength(stderr),
-      exitCode: 7,
-      signal: "SIGTERM",
-    },
-    "list_architectures",
-    path,
-  );
-  expect(refused.ok).toBe(false);
-  if (refused.ok) throw new Error("Expected lipo field retention refusal");
-  expect(refused.error).toMatchObject({
-    _tag: "AnalysisResourceConstraintError",
-    capturedOutput: {
-      stdout,
-      stderr,
-      stdout_bytes: Buffer.byteLength(stdout),
-      stderr_bytes: Buffer.byteLength(stderr),
-      exit_code: 7,
-      signal: "SIGTERM",
-      truncated: false,
-    },
-  });
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
     await nativeMachoTargetForFile(path),
   );
@@ -191,7 +175,19 @@ it("refuses retained raw-field expansion as capacity rather than a malformed lip
     const result = await client.execute("list_architectures", {});
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+        capturedOutput: {
+          stdout,
+          stdout_bytes: Buffer.byteLength(stdout),
+          stderr,
+          stderr_bytes: Buffer.byteLength(stderr),
+          exit_code: 0,
+          signal: null,
+          truncated: false,
+        },
+      },
     });
     const published: ArtifactEntry[] = [];
     const failure: unknown = await (async () => {

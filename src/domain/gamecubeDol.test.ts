@@ -184,7 +184,6 @@ describe("DOL header parsing", () => {
       0x140,
     );
     const result = parseDolHeader(bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
     expect(result.value.sections).toHaveLength(1);
   });
@@ -418,7 +417,6 @@ describe("DOL entry point and BSS (rules 7 and 8)", () => {
       0x140,
     );
     const result = parseDolHeader(bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
     expect(result.value.bss.size).toBe(0);
   });
@@ -492,7 +490,6 @@ describe("DOL entry point and BSS (rules 7 and 8)", () => {
       0x200,
     );
     const result = parseDolHeader(bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
     expect(result.value.bssOverlaps).toEqual([0, 1]);
   });
@@ -508,7 +505,6 @@ describe("DOL entry point and BSS (rules 7 and 8)", () => {
       0x180,
     );
     const result = parseDolHeader(bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
     expect(result.value.bssOverlaps).toEqual([]);
   });

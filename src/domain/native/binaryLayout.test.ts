@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import {
+  binaryLayoutPayloadSchema,
   binaryLayoutSchema,
+  safeParseProjectedBinaryLayout,
   safeParseOwnedBinaryLayout,
   type BinaryLayout,
 } from "./binaryLayout.js";
@@ -65,6 +67,53 @@ const report = () => ({
   limitations: [],
 });
 
+it("projects an admitted layout without copying its parsed arrays", () => {
+  const { artifact, diagnostics, ...source } = report();
+  const payload = binaryLayoutPayloadSchema.parse(source);
+  const projected = safeParseProjectedBinaryLayout(payload, {
+    artifact,
+    diagnostics,
+  });
+  if (!projected.success) throw projected.error;
+  expect(projected.data).toEqual(
+    binaryLayoutSchema.parse({ ...payload, artifact, diagnostics }),
+  );
+  expect(projected.data.sections).toBe(payload.sections);
+  expect(projected.data.segments).toBe(payload.segments);
+  expect(projected.data.symbols).toBe(payload.symbols);
+  expect(projected.data.relocations).toBe(payload.relocations);
+});
+
+it.each(["envelope", "invariants"] as const)(
+  "preserves full layout validation issue paths, messages and order for %s",
+  (failure) => {
+    const { artifact, diagnostics, ...source } = report();
+    const envelope =
+      failure === "envelope"
+        ? {
+            artifact: { ...artifact, bytes: -1 },
+            diagnostics: { ...diagnostics, truncated: "invalid" },
+          }
+        : { artifact, diagnostics };
+    if (failure === "invariants") {
+      source.entry_point.meaning = "absent";
+      source.sections[0]!.index = 2;
+      source.sections[0]!.header_location.offset = "0x80";
+    }
+    const payload = binaryLayoutPayloadSchema.parse(source);
+    const projected = safeParseProjectedBinaryLayout(payload, envelope);
+    const full = binaryLayoutSchema.safeParse({ ...payload, ...envelope });
+    if (projected.success || full.success)
+      throw new Error("Expected both paths to reject the same layout");
+    const compareIssues = (issues: typeof full.error.issues) =>
+      issues.map(({ code, path, message }) => ({ code, path, message }));
+    expect(compareIssues(projected.error.issues)).toEqual(
+      compareIssues(full.error.issues),
+    );
+    expect(full.error.issues.length).toBeGreaterThan(1);
+  },
+);
+
 it("reuses an exact validated immutable layout without a second retained copy", () => {
   const value = freezeJsonSnapshot(report());
   const parsed = safeParseOwnedBinaryLayout(value);
@@ -91,7 +140,7 @@ it.each(["mutable", "shallow-frozen"])(
   },
 );
 
-it("never treats sealing as format validity or caches a refused layout", () => {
+it("does not treat an invalid sealed layout as valid on repeated reads", () => {
   const value = report();
   value.sections[0]!.index = 10;
   freezeJsonSnapshot(value);
@@ -121,6 +170,21 @@ it("retains high linked values and NOBITS without inventing file backing", () =>
   expect(value.runtime_load_base).toBeNull();
 });
 
+const useNumericSectionTypes = (value: BinaryLayout, problem: string) => {
+  if (!problem.startsWith("numeric-")) return;
+  const [table, owner, strings] = [
+    value.sections[1],
+    value.sections[2],
+    value.sections[3],
+  ];
+  if (table === undefined || owner === undefined || strings === undefined)
+    throw new Error("section missing");
+  table.type = 2; // SHT_SYMTAB
+  owner.type = 4; // SHT_RELA
+  strings.type = 3; // SHT_STRTAB
+  if (problem === "numeric-invalid-string-link") table.link = 0;
+};
+
 it.each([
   [{ machine: "EM_AARCH64", bits: 64, byte_order: "little" }, true],
   [{ machine: "EM_AARCH64", bits: 64, byte_order: "big" }, false],
@@ -141,6 +205,7 @@ it.each([
 
 it.each([
   "file-backed-outside",
+  "false-no-file-backing",
   "header-outside",
   "wrong-index",
   "noncanonical-base64",
@@ -151,6 +216,7 @@ it.each([
   const section = value.sections[0];
   if (section === undefined) throw new Error("section missing");
   if (problem === "file-backed-outside") section.file_backing = "file";
+  if (problem === "false-no-file-backing") section.type = "SHT_PROGBITS";
   if (problem === "header-outside") section.header_location.offset = "0x80";
   if (problem === "wrong-index") section.index = 1;
   if (problem === "wrong-machine") value.architecture.machine = "EM_RISCV";
@@ -171,6 +237,8 @@ it.each([
     false,
   ],
   ["PT_NULL", "0x1", "file", null, false],
+  [0, "0x1", "none", null, true],
+  [0, "0x1", "file", null, false],
   [
     "PT_NULL",
     "0x1",
@@ -235,6 +303,7 @@ it.each([
 
 it.each([
   "valid",
+  "numeric-relr",
   "byte-length",
   "section-identity",
   "decoded-order",
@@ -242,10 +311,10 @@ it.each([
 ])(
   "retains original packed bytes and derived offset provenance: %s",
   (problem) => {
-    const value = report();
+    const value = binaryLayoutSchema.parse(report());
     const section = value.sections[0];
     if (section === undefined) throw new Error("section missing");
-    section.type = "SHT_RELR";
+    section.type = problem === "numeric-relr" ? 19 : "SHT_RELR";
     section.file_backing = "file";
     section.offset = "0x60";
     section.size = "0x8";
@@ -269,12 +338,14 @@ it.each([
         ...value,
         packed_relative_relocations: [table],
       }).success,
-    ).toBe(problem === "valid");
+    ).toBe(problem === "valid" || problem === "numeric-relr");
   },
 );
 
 it.each([
   "valid",
+  "numeric-types",
+  "numeric-invalid-string-link",
   "zero-symbol",
   "zero-without-table",
   "missing-table",
@@ -362,8 +433,8 @@ it.each([
   };
   const table = value.sections[1];
   const owner = value.sections[2];
-  if (table === undefined || owner === undefined)
-    throw new Error("table or relocation owner missing");
+  if (!table || !owner) throw new Error("table or relocation owner missing");
+  useNumericSectionTypes(value, problem);
   if (problem.startsWith("zero")) {
     relocation.symbol_index = 0;
     relocation.symbol_reference_meaning = "zero-symbol-value";
@@ -438,6 +509,7 @@ it.each([
   expect(binaryLayoutSchema.safeParse(value).success).toBe(
     [
       "valid",
+      "numeric-types",
       "zero-symbol",
       "zero-without-table",
       "valid-section-target",

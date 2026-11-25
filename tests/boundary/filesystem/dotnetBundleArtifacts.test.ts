@@ -3,11 +3,11 @@ import { access, open, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
-import { artifactFixedLimitFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import {
@@ -22,65 +22,342 @@ import {
   DOTNET_BUNDLE_SIGNATURE,
 } from "../../../src/artifacts/dotnet/DotnetBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
 
 it.each([
   {
-    name: ".NET bundle entry count",
-    maximum: 100_000,
-    unit: "entries",
-    kind: "count",
+    length: [0x80, 0x80, 0x80, 0x80, 0x08],
+    reason: "malformed",
+    message: "Invalid .NET bundle string length",
   },
   {
-    name: ".NET bundle decoded string",
-    maximum: 65_536,
-    unit: "UTF-8 bytes",
-    kind: "string",
-  },
-  {
-    name: ".NET bundle member stored or expanded size",
-    maximum: 536_870_912,
-    unit: "bytes",
-    kind: "member",
-  },
-  {
-    name: ".NET bundle exact integer range",
-    maximum: 9_007_199_254_740_991,
-    unit: "integer units",
-    kind: "integer",
+    // A valid length that runs past the file is a truncated manifest.
+    length: [0xff, 0xff, 0xff, 0xff, 0x07],
+    reason: "truncated",
+    message: "Truncated .NET bundle manifest",
   },
 ])(
-  "reports the effective fixed $name allowance",
-  async ({ name, maximum, unit, kind }) => {
-    const root = await createTestTempDirectory("rea-dotnet-fixed-allowance-");
+  "reports bundle ID length $length as a $reason manifest",
+  async ({ length, reason, message }) => {
+    const root = await createTestTempDirectory("rea-dotnet-invalid-string-");
     const path = join(root, "host.exe");
     const fixture = dotnetBundleFixture([
-      {
-        path: kind === "string" ? "a".repeat(maximum + 1) : "file",
-        bytes: Buffer.from("x"),
-        ...(kind === "member" || kind === "integer"
-          ? { declaredSize: maximum + 1 }
-          : {}),
-      },
+      { path: "member", bytes: Buffer.from("x") },
     ]);
-    if (kind === "count")
-      fixture.bytes.writeUInt32LE(maximum + 1, fixture.headerOffset + 8);
+    // The fixed manifest prefix contains two version fields and a file count.
+    fixture.bytes.set(length, fixture.headerOffset + 12);
     await writeFile(path, fixture.bytes);
     const handle = await open(path, "r");
     try {
-      const expected = artifactFixedLimitFailure(name, maximum, unit);
+      await expect(
+        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+      ).rejects.toMatchObject({ reason, message });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
+it("reports a truncated manifest before the metadata budget", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-truncated-field-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture(
+    [{ path: "member", bytes: Buffer.from("x") }],
+    1,
+    "owner-layout-id",
+  );
+  const rowStart = fixture.fields.entries[0]!.offset;
+  // The valid bundle ID leaves only three bytes of the first eight-byte field.
+  const bytes = fixture.bytes.subarray(0, rowStart + 3);
+  await writeFile(path, bytes);
+  const handle = await open(path, "r");
+  try {
+    await expect(
+      readDotnetBundle(handle, bytes.length, fixture.headerOffset, undefined, {
+        ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+        metadata_bytes: rowStart - fixture.headerOffset,
+      }),
+    ).rejects.toMatchObject({
+      reason: "truncated",
+      message: "Truncated .NET bundle manifest",
+    });
+  } finally {
+    await handle.close();
+  }
+});
+
+it.each(["bundle ID", "entry path"] as const)(
+  "checks the required layout after a long %s before reporting a string limit",
+  async (field) => {
+    const root = await createTestTempDirectory("rea-dotnet-string-tail-");
+    const path = join(root, "host.exe");
+    const bytes = Buffer.from("x");
+    const longText = "a".repeat(100);
+    const fixture =
+      field === "bundle ID"
+        ? dotnetBundleFixture([{ path: "one", bytes }], 6, longText)
+        : dotnetBundleFixture(
+            [
+              { path: longText, bytes },
+              { path: "two", bytes },
+            ],
+            6,
+            "id",
+          );
+    const end =
+      field === "bundle ID"
+        ? fixture.fields.configuration!.deps.offset
+        : fixture.fields.entries[1]!.offset;
+    for (const [content, reason] of [
+      [fixture.bytes, "limit"],
+      [fixture.bytes.subarray(0, end), "truncated"],
+    ] as const) {
+      await writeFile(path, content);
+      const handle = await open(path, "r");
+      try {
+        await expect(
+          readDotnetBundle(
+            handle,
+            content.length,
+            fixture.headerOffset,
+            undefined,
+            {
+              ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+              string_bytes: 4,
+            },
+          ),
+        ).rejects.toMatchObject({ reason });
+      } finally {
+        await handle.close();
+      }
+    }
+  },
+);
+
+it.each([
+  { record: "member", field: "offset" },
+  { record: "member", field: "size" },
+  { record: "member", field: "compressedSize" },
+  { record: "configuration", field: "offset" },
+  { record: "configuration", field: "size" },
+] as const)(
+  "rejects a .NET bundle with an impossible $record $field",
+  async ({ record, field }) => {
+    const root = await createTestTempDirectory("rea-dotnet-stored-extent-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture([
+      { path: "member", bytes: Buffer.from("x") },
+    ]);
+    const at =
+      record === "member"
+        ? fixture.fields.entries[0]![field]!
+        : fixture.fields.configuration!.deps[field];
+    fixture.bytes.writeBigInt64LE(2n ** 53n, at);
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
+      await expect(
+        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+      ).rejects.toMatchObject({ reason: "malformed" });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
+it.each([2n, 2n ** 63n])(
+  "reports unsupported .NET bundle flags %s at their full width",
+  async (flags) => {
+    const root = await createTestTempDirectory("rea-dotnet-flags-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture();
+    fixture.bytes.writeBigUInt64LE(flags, fixture.fields.configuration!.flags);
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
       ).rejects.toMatchObject({
-        reason: "limit",
-        boundary: "capacity",
-        message: expected.message,
-        userMessage: expected.message,
+        reason: "unavailable",
+        message: `Unsupported .NET bundle flags: ${flags}`,
       });
     } finally {
       await handle.close();
     }
   },
 );
+
+it.each(["close", "cancel"] as const)(
+  "does not complete a .NET bundle inventory after %s at the last entry",
+  async (interruption) => {
+    const root = await createTestTempDirectory("rea-dotnet-paused-");
+    const path = join(root, "app");
+    await writeFile(
+      path,
+      dotnetBundleFixture([{ path: "member", bytes: Buffer.from("x") }]).bytes,
+    );
+    const reader = new DotnetBundleArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
+it.each([
+  { field: "entry_count", maximum: 1, required: 2 },
+  { field: "string_bytes", maximum: 13, required: 14 },
+  { field: "member_bytes", maximum: 7, required: 8 },
+  { field: "expanded_bytes", maximum: 15, required: 16 },
+  { field: "path_parts", maximum: 1, required: 2 },
+  { field: "path_nodes", maximum: 2, required: 3 },
+  { field: "metadata_bytes", maximum: null, required: null },
+] as const)(
+  "recovers the same complete bundle after raising $field",
+  async ({ field, maximum, required }) => {
+    const root = await createTestTempDirectory("rea-dotnet-reader-admission-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture([
+      { path: "dir/first.txt", bytes: Buffer.from("aaaaaaaa") },
+      { path: "dir/second.txt", bytes: Buffer.from("bbbbbbbb") },
+    ]);
+    const needed = required ?? fixture.bytes.length - fixture.headerOffset;
+    const selected = maximum ?? needed - 1;
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
+      await expect(
+        readDotnetBundle(
+          handle,
+          fixture.bytes.length,
+          fixture.headerOffset,
+          undefined,
+          {
+            ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+            [field]: selected,
+          },
+        ),
+      ).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+        readerLimit: {
+          parameter: `artifact_limits.dotnet_bundle.${field}`,
+          effective_value: selected,
+          required_value: needed,
+          applies_at: "next_operation",
+          agent_editable: true,
+          update_mode: "parameter",
+          pending_restart: false,
+        },
+      });
+      const recovered = await readDotnetBundle(
+        handle,
+        fixture.bytes.length,
+        fixture.headerOffset,
+        undefined,
+        { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS, [field]: needed },
+      );
+      expect(
+        recovered.files.map((file) => ({ path: file.path, size: file.size })),
+      ).toEqual([
+        { path: "dir/first.txt", size: 8 },
+        { path: "dir/second.txt", size: 8 },
+      ]);
+      expect(sha(await readFile(path))).toBe(sha(fixture.bytes));
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
+it.each([
+  { field: "string_bytes", maximum: 4, compressed: false },
+  { field: "path_parts", maximum: 1, compressed: true },
+  { field: "path_nodes", maximum: 1, compressed: false },
+] as const)(
+  "reports an impossible stored member extent before the $field allowance",
+  async ({ field, maximum, compressed }) => {
+    const root = await createTestTempDirectory("rea-dotnet-invalid-extent-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture(
+      [{ path: "dir/member", bytes: Buffer.from("x"), compressed }],
+      6,
+      "id",
+    );
+    const limits = { ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS, [field]: maximum };
+    const read = async () => {
+      await writeFile(path, fixture.bytes);
+      const handle = await open(path, "r");
+      try {
+        return await readDotnetBundle(
+          handle,
+          fixture.bytes.length,
+          fixture.headerOffset,
+          undefined,
+          limits,
+        );
+      } finally {
+        await handle.close();
+      }
+    };
+    await expect(read()).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: { parameter: `artifact_limits.dotnet_bundle.${field}` },
+    });
+
+    const member = fixture.fields.entries[0]!;
+    if (compressed)
+      fixture.bytes.writeBigInt64LE(
+        BigInt(fixture.headerOffset - fixture.offsets[0]! + 1),
+        member.compressedSize!,
+      );
+    else
+      fixture.bytes.writeBigInt64LE(
+        BigInt(fixture.headerOffset + 1),
+        member.offset,
+      );
+    await expect(read()).rejects.toMatchObject({ reason: "malformed" });
+  },
+);
+
+it("retains the exact integer representation ceiling independently of reader budgets", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-integer-allowance-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture([
+    {
+      path: "file",
+      bytes: Buffer.from("x"),
+      declaredSize: 9_007_199_254_740_992,
+      compressed: true,
+    },
+  ]);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  try {
+    await expect(
+      readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      fixedAllowance: {
+        name: "The .NET bundle exact integer range",
+        kind: "parser",
+        limit: 9_007_199_254_740_991,
+        unit: "integer units",
+      },
+    });
+  } finally {
+    await handle.close();
+  }
+});
 
 it.each(["pyinstaller", "dotnet-bundle"] as const)(
   "keeps the %s outer container when a stored member is another executable container",
@@ -265,13 +542,63 @@ it.each([
         { path: "one", bytes: Buffer.from("first") },
         { path: "two", bytes: Buffer.from("second"), declaredOffset: 1025 },
       ]).bytes,
-    "format",
+    "malformed",
   ],
-  ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "format"],
+  ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "truncated"],
+  ...(["count", "config-offset", "member-size"] as const).map(
+    (field) =>
+      [
+        `negative ${field}`,
+        () => {
+          const fixture = dotnetBundleFixture(
+            undefined,
+            6,
+            "a longer bundle identity",
+          );
+          const member = fixture.fields.entries[0]!;
+          const config = fixture.fields.configuration!;
+          expect(fixture.bytes.readInt32LE(fixture.fields.entryCount)).toBe(1);
+          expect(fixture.bytes.readBigInt64LE(config.deps.offset)).toBe(0n);
+          expect(fixture.bytes.readBigInt64LE(member.size)).toBe(
+            BigInt(Buffer.byteLength("owned assembly bytes")),
+          );
+          if (field === "count")
+            fixture.bytes.writeInt32LE(-1, fixture.fields.entryCount);
+          else
+            fixture.bytes.writeBigInt64LE(
+              -1n,
+              field === "config-offset" ? config.deps.offset : member.size,
+            );
+          return fixture.bytes;
+        },
+        "malformed",
+      ] as const,
+  ),
   [
     "unknown version",
     () => dotnetBundleFixture(undefined, 7).bytes,
     "unavailable",
+  ],
+  [
+    "entry count with no room for its manifest rows",
+    () => {
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeInt32LE(0x7fff_ffff, fixture.fields.entryCount);
+      return fixture.bytes;
+    },
+    "malformed",
+  ],
+  [
+    "uncompressed member crossing the manifest above the member allowance",
+    () =>
+      dotnetBundleFixture([
+        {
+          path: "large",
+          bytes: Buffer.from("x"),
+          declaredSize: 600 * 1024 * 1024,
+        },
+      ]).bytes,
+    "malformed",
   ],
   [
     "expanded budget",
@@ -280,6 +607,7 @@ it.each([
         {
           path: "large",
           bytes: Buffer.from("x"),
+          compressed: true,
           declaredSize: 600 * 1024 * 1024,
         },
       ]).bytes,
@@ -309,7 +637,7 @@ it.each([
           declaredSize: 6,
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "corrupt deflate",
@@ -322,7 +650,7 @@ it.each([
           storedBytes: Buffer.from([255, 255, 255]),
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "trailing deflate bytes",
@@ -338,7 +666,7 @@ it.each([
           ]),
         },
       ]).bytes,
-    "format",
+    "malformed",
   ],
   [
     "prefix collision",
@@ -356,7 +684,7 @@ it.each([
       bytes[bytes.length - 1] = 255;
       return bytes;
     },
-    "format",
+    "malformed",
   ],
 ] as const)(
   "rejects %s without publishing output",
@@ -390,7 +718,16 @@ it("rejects replacement, forged entry metadata and cancellation without losing c
     const entry = entries[0]!;
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+    await expect(
+      reader.open({ ...entry, adapterKey: "foreign" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
     const controller = new AbortController();
     controller.abort();
     await expect(reader.open(entry, controller.signal)).rejects.toMatchObject({
@@ -513,17 +850,21 @@ it("finds a split marker and uses the first apphost marker, including offset zer
       (await readDotnetBundle(handle, padded.length, header)).files,
     ).toMatchObject([{ path: "App.dll", size: 20 }]);
     const controller = new AbortController();
+    const readFailure = new Error("injected read failure during cancellation");
     handle.read = (async () => {
       controller.abort();
-      throw new Error("injected read failure during cancellation");
+      throw readFailure;
     }) as typeof handle.read;
     await expect(
       findDotnetBundleHeader(handle, padded.length, controller.signal),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+    ).rejects.toBe(readFailure);
     const metadataController = new AbortController();
+    const manifestFailure = new Error(
+      "injected manifest read failure during cancellation",
+    );
     handle.read = (async () => {
       metadataController.abort();
-      throw new Error("injected manifest read failure during cancellation");
+      throw manifestFailure;
     }) as typeof handle.read;
     await expect(
       readDotnetBundle(
@@ -532,7 +873,22 @@ it("finds a split marker and uses the first apphost marker, including offset zer
         header,
         metadataController.signal,
       ),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+    ).rejects.toBe(manifestFailure);
+    const completedController = new AbortController();
+    const reason = { source: "caller" };
+    handle.read = (async (...args: Parameters<typeof handle.read>) => {
+      const result = await original(...args);
+      completedController.abort(reason);
+      return result;
+    }) as typeof handle.read;
+    await expect(
+      readDotnetBundle(
+        handle,
+        padded.length,
+        header,
+        completedController.signal,
+      ),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
   } finally {
     await handle.close();
   }
@@ -551,6 +907,46 @@ it("finds a split marker and uses the first apphost marker, including offset zer
 
 const sha = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+it("reads the next member offset when it straddles a manifest read window", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-numeric-window-");
+  const path = join(root, "host.exe");
+  // The second row starts four bytes before the first 64 KiB window ends.
+  const firstPath = "a".repeat(65_449);
+  const fixture = dotnetBundleFixture(
+    [
+      { path: firstPath, bytes: Buffer.from("x") },
+      { path: "second", bytes: Buffer.from("yz") },
+    ],
+    6,
+    "id",
+  );
+  const secondRow = fixture.fields.entries[1]!.offset;
+  expect(secondRow - fixture.headerOffset).toBe(64 * 1024 - 4);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  const read = vi.spyOn(handle, "read");
+  try {
+    const bundle = await readDotnetBundle(
+      handle,
+      fixture.bytes.length,
+      fixture.headerOffset,
+    );
+    expect(bundle.files).toMatchObject([
+      { path: firstPath, offset: fixture.offsets[0], size: 1 },
+      { path: "second", offset: fixture.offsets[1], size: 2 },
+    ]);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith(
+      expect.any(Buffer),
+      0,
+      fixture.bytes.length - secondRow,
+      secondRow,
+    );
+  } finally {
+    await handle.close();
+  }
+});
 
 it("preserves source I/O failures while reading a manifest string across the cache boundary", async () => {
   const root = await createTestTempDirectory("rea-dotnet-metadata-io-");
@@ -593,14 +989,15 @@ it.each([3, 4])(
     const fixture = dotnetBundleFixture([
       { path: "config.json", bytes: Buffer.from("{}"), fileType },
     ]);
-    // Three UInt32 fields and the fixture's BinaryWriter string precede the
-    // deps.json/runtimeconfig.json offset-size pairs, followed by UInt64 flags.
-    const configuration =
-      fixture.headerOffset + 12 + 1 + Buffer.byteLength("owned-fixture");
-    const selected = configuration + (fileType - 3) * 16;
-    fixture.bytes.writeBigUInt64LE(BigInt(fixture.offsets[0]!), selected);
-    fixture.bytes.writeBigUInt64LE(2n, selected + 8);
-    fixture.bytes.writeBigUInt64LE(1n, configuration + 32);
+    const configuration = fixture.fields.configuration!;
+    const selected =
+      fileType === 3 ? configuration.deps : configuration.runtimeConfig;
+    fixture.bytes.writeBigUInt64LE(
+      BigInt(fixture.offsets[0]!),
+      selected.offset,
+    );
+    fixture.bytes.writeBigUInt64LE(2n, selected.size);
+    fixture.bytes.writeBigUInt64LE(1n, configuration.flags);
     await writeFile(path, fixture.bytes);
     const handle = await open(path, "r+");
     try {
@@ -613,12 +1010,12 @@ it.each([3, 4])(
           )
         ).files,
       ).toMatchObject([{ path: "config.json", fileType, size: 2 }]);
-      fixture.bytes.writeBigUInt64LE(3n, selected + 8);
+      fixture.bytes.writeBigUInt64LE(3n, selected.size);
       await handle.write(fixture.bytes, 0, fixture.bytes.length, 0);
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
       ).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("configuration location disagrees"),
       });
     } finally {
@@ -675,9 +1072,8 @@ it.each(["elf", "mach-o"] as const)(
     const root = await createTestTempDirectory("rea-dotnet-native-");
     const path = join(root, "renamed.data");
     const fixture = dotnetBundleFixture();
-    Buffer.from(format === "elf" ? "7f454c46" : "cffaedfe", "hex").copy(
-      fixture.bytes,
-    );
+    if (format === "elf") writeMinimalElfHeader(fixture.bytes);
+    else Buffer.from("cffaedfe", "hex").copy(fixture.bytes);
     await writeFile(path, fixture.bytes);
     const inventory = await inventoryArtifact(path, {
       resourceScope: new ArtifactResourceScope(),
@@ -711,7 +1107,7 @@ it.each(["pe", "elf"] as const)(
     const path = join(root, "template.bin");
     const fixture = dotnetBundleFixture();
     fixture.bytes.writeBigUInt64LE(0n, 536);
-    if (format === "elf") Buffer.from("7f454c46", "hex").copy(fixture.bytes);
+    if (format === "elf") writeMinimalElfHeader(fixture.bytes);
     await writeFile(path, fixture.bytes);
     const inventory = await inventoryArtifact(path, {
       resourceScope: new ArtifactResourceScope(),
@@ -730,7 +1126,100 @@ it.each(["pe", "elf"] as const)(
         integrityPolicy: "fail",
         resourceScope: new ArtifactResourceScope(),
       }),
-    ).rejects.toMatchObject({ _tag: "AnalysisUnsupportedTargetError" });
+    ).rejects.toMatchObject({ _tag: "AnalysisTargetFailureError" });
     await expect(access(outputRoot)).rejects.toThrow();
   },
 );
+
+it.each(["pe", "elf"] as const)(
+  "keeps a %s host native when DOTNET_BUNDLE_SIGNATURE has an out-of-bounds offset while direct reader fails closed",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-dotnet-oob-offset-");
+    for (const [label, offset] of [
+      ["past-size-minus-12", (size: number) => BigInt(size - 11)],
+      ["u64-max", () => 0xffffffffffffffffn],
+    ] as const) {
+      const path = join(root, `${format}-${label}.bin`);
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeBigUInt64LE(offset(fixture.bytes.length), 536);
+      if (format === "elf") writeMinimalElfHeader(fixture.bytes);
+      await writeFile(path, fixture.bytes);
+
+      const handle = await open(path, "r");
+      try {
+        expect(
+          await findDotnetBundleHeader(handle, fixture.bytes.length),
+        ).toBeUndefined();
+      } finally {
+        await handle.close();
+      }
+
+      const inventory = await inventoryArtifact(path, {
+        resourceScope: new ArtifactResourceScope(),
+      });
+      expect(inventory.manifest.root_format).toBe(format);
+      expect(inventory.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+      expect(inventory.occurrences.map((entry) => entry.logical_path)).toEqual([
+        ".",
+      ]);
+
+      const reader = new DotnetBundleArtifactReader(path);
+      try {
+        await expect(
+          (async () => {
+            for await (const _entry of reader.entries()) {
+              /* consume */
+            }
+          })(),
+        ).rejects.toMatchObject({
+          reason: "unsupported",
+          message: "Selected file has no .NET bundle header",
+        });
+      } finally {
+        await reader.close();
+      }
+    }
+  },
+);
+
+it("preserves a physical .NET member read failure during cancellation", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-physical-failure-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture([
+    { path: "data", bytes: Buffer.from("content") },
+  ]);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  const controller = new AbortController();
+  const physical = Object.assign(new Error("descriptor failure"), {
+    code: "EIO",
+  });
+  let restore = () => {};
+  const reader = new DotnetBundleArtifactReader(path, {
+    handle,
+    initial: await handle.stat(),
+  });
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing member");
+    const stream = await reader.open(entry, controller.signal);
+    const spy = vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+      controller.abort("caller stopped");
+      throw physical;
+    });
+    restore = () => spy.mockRestore();
+    await expect(
+      (async () => {
+        for await (const _ of stream) {
+          /* consume */
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "io", cause: physical });
+  } finally {
+    restore();
+    await reader.close();
+    await handle.close();
+  }
+});

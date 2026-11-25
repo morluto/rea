@@ -10,13 +10,11 @@ import {
   paxRecord,
   tarChecksum,
 } from "../../tests/fixtures/androidBackup.js";
-import {
-  AndroidBackupArtifactReader,
-  ANDROID_BACKUP_MAX_BYTES,
-} from "./AndroidBackupArtifactReader.js";
+import { AndroidBackupArtifactReader } from "./AndroidBackupArtifactReader.js";
+import { DEFAULT_ANDROID_BACKUP_READER_LIMITS } from "../domain/artifactReaderLimits.js";
 import { artifactFormatMetadataSchema } from "../domain/artifactFormatMetadata.js";
 import { parseAndroidBackupHeader } from "../domain/androidBackup.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/index.js";
 
 const withReader = async (
   image: Buffer,
@@ -157,23 +155,27 @@ describe("Android backup refusal and ownership boundaries", () => {
     [
       "unsupported version",
       backupImage(backupTar([]), { version: 6 }),
-      "unavailable",
+      "unsupported",
     ],
     [
       "unknown encryption",
       backupImage(backupTar([]), { encryption: "other" }),
-      "unavailable",
+      "unsupported",
     ],
-    ["truncated header", Buffer.from("ANDROID BACKUP\n5\n0\nnone"), "format"],
+    [
+      "truncated header",
+      Buffer.from("ANDROID BACKUP\n5\n0\nnone"),
+      "truncated",
+    ],
     [
       "invalid compression",
       Buffer.from("ANDROID BACKUP\n5\n2\nnone\n"),
-      "format",
+      "malformed",
     ],
     [
       "truncated zlib",
       backupImage(backupTar([]), { compressed: true }).subarray(0, -1),
-      "format",
+      "truncated",
     ],
     [
       "trailing zlib bytes",
@@ -181,22 +183,22 @@ describe("Android backup refusal and ownership boundaries", () => {
         backupImage(backupTar([]), { compressed: true }),
         Buffer.from("extra"),
       ]),
-      "format",
+      "malformed",
     ],
     [
       "missing tar end",
       backupImage(backupTar([{ path: "data", data: "x" }]).subarray(0, -1024)),
-      "format",
+      "truncated",
     ],
     [
       "truncated member",
       backupImage(backupTar([{ path: "data", data: "x" }]).subarray(0, 513)),
-      "format",
+      "truncated",
     ],
     [
       "symlink",
       backupImage(backupTar([{ path: "link", type: "2" }])),
-      "unavailable",
+      "unsupported",
     ],
     ["traversal", backupImage(backupTar([{ path: "../outside" }])), "path"],
     ["absolute path", backupImage(backupTar([{ path: "/outside" }])), "path"],
@@ -213,7 +215,7 @@ describe("Android backup refusal and ownership boundaries", () => {
     [
       "malformed PAX",
       backupImage(backupTar([{ path: "Pax", type: "x", data: "99 path=x\n" }])),
-      "format",
+      "malformed",
     ],
   ])("refuses %s", async (_name, image, reason) => {
     await withReader(image as Buffer, async (reader) => {
@@ -227,16 +229,22 @@ describe("Android backup refusal and ownership boundaries", () => {
     const badSize = backupTar([{ path: "file" }]);
     badSize.write("77777777777\0", 124, "ascii");
     tarChecksum(badSize.subarray(0, 512));
-    for (const tar of [badChecksum, badSize])
+    for (const [tar, reason] of [
+      [badChecksum, "malformed"],
+      [badSize, "truncated"],
+    ] as const)
       await withReader(backupImage(tar), async (reader) =>
-        expect(list(reader)).rejects.toMatchObject({ reason: "format" }),
+        expect(list(reader)).rejects.toMatchObject({ reason }),
       );
   });
 
   it("refuses decompression expansion before retaining an oversized TAR", async () => {
-    const image = backupImage(Buffer.alloc(ANDROID_BACKUP_MAX_BYTES + 1), {
-      compressed: true,
-    });
+    const image = backupImage(
+      Buffer.alloc(DEFAULT_ANDROID_BACKUP_READER_LIMITS.expanded_bytes + 1),
+      {
+        compressed: true,
+      },
+    );
     await withReader(image, async (reader) =>
       expect(list(reader)).rejects.toMatchObject({ reason: "limit" }),
     );
@@ -286,7 +294,10 @@ describe("Android backup capacity and stream retirement", () => {
 
   it("refuses an oversized encoded payload before reading it", async () => {
     await withReader(backupImage(Buffer.alloc(0)), async (reader, path) => {
-      await truncate(path, 24 + ANDROID_BACKUP_MAX_BYTES + 1);
+      await truncate(
+        path,
+        24 + DEFAULT_ANDROID_BACKUP_READER_LIMITS.encoded_bytes + 1,
+      );
       await expect(list(reader)).rejects.toMatchObject({ reason: "limit" });
     });
   });

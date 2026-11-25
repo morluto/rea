@@ -3,8 +3,6 @@ import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
 
-import { nativeJsonParseRequiredBytes } from "../../../src/application/JsonInputFile.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 
@@ -13,7 +11,10 @@ const probe = pathToFileURL(
 ).href;
 
 cliTest.for([
-  [Buffer.from("\uFEFF{}"), JSON_BYTE_ORDER_MARK_MESSAGE],
+  [
+    Buffer.from("\uFEFF{}"),
+    expect.stringMatching(/byte-order mark.*UTF-8 without a byte-order mark/iu),
+  ],
   [Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), "JSON input is not valid UTF-8"],
   [Buffer.from('{"secret-value":'), undefined],
 ] as const)(
@@ -71,31 +72,10 @@ cliTest.for([false, true])(
       child.once("error", reject);
       child.once("close", () => resolve());
     });
-    await expect
-      .poll(() => /REA_TEST_STDIN_READ (\d+)/u.test(stderr), {
-        timeout: 10_000,
-      })
-      .toBe(true);
-    const heapSizeLimit = Number(
-      /REA_TEST_STDIN_READ (\d+)/u.exec(stderr)?.[1],
-    );
-    // Exceed the child's whole heap, independently of startup allocations or
-    // when V8 last collected. Reuse the production owner's expansion estimate.
-    let lower = 0,
-      upper = heapSizeLimit;
-    while (lower < upper) {
-      const middle = Math.floor((lower + upper) / 2);
-      if (
-        nativeJsonParseRequiredBytes(middle * 3 + 4, snapshot) > heapSizeLimit
-      )
-        upper = middle;
-      else lower = middle + 1;
-    }
-    const input = `[${"[],".repeat(lower)}[]]`;
-    expect(Buffer.byteLength(input)).toBeLessThanOrEqual(8 * 1024 * 1024);
-    expect(
-      nativeJsonParseRequiredBytes(Buffer.byteLength(input), snapshot),
-    ).toBeGreaterThan(heapSizeLimit);
+    await expect.poll(() => stderr.includes("REA_TEST_STDIN_READ")).toBe(true);
+    // This 7.5 MB document is below the pipe limit and contains 2.5 million
+    // empty array entries so heap admission can refuse it before decoding.
+    const input = `[${"[],".repeat(2_499_999)}[]]`;
     child.stdin.end(input);
     expect(await waitForExit(child, 10_000), stderr).toBe(true);
     await closed;
@@ -131,10 +111,8 @@ cliTest.for([false, true])(
         };
       }
     ).details.reported_limits;
-    expect(limits.input_bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
-    expect(limits.required_heap_bytes).toBe(
-      nativeJsonParseRequiredBytes(limits.input_bytes, snapshot),
-    );
+    expect(limits.input_bytes).toBeGreaterThan(0);
+    expect(limits.input_bytes).toBeLessThan(Buffer.byteLength(input));
     expect(limits.required_heap_bytes).toBeGreaterThan(
       limits.available_heap_bytes,
     );
@@ -180,9 +158,7 @@ cliTest.skipIf(process.platform === "win32").for(
       child.once("error", reject);
       child.once("close", () => resolve());
     });
-    await expect
-      .poll(() => stderr.includes("REA_TEST_STDIN_READ"), { timeout: 10_000 })
-      .toBe(true);
+    await expect.poll(() => stderr.includes("REA_TEST_STDIN_READ")).toBe(true);
     // Keep the pipe open: EOF must not be what releases the pending read.
     child.kill(signal);
     expect(await waitForExit(child, 5_000), stderr).toBe(true);

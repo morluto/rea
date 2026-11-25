@@ -1,5 +1,6 @@
 /*
- * Markdown output layout is adapted from Incur's Formatter.
+ * The TOON, JSON, YAML and JSON Lines encodings and the Markdown layout are
+ * adapted from Incur's Formatter.
  * Copyright (c) 2025-present weth, LLC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -20,11 +21,18 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
-import { Formatter } from "incur";
+import { createRequire } from "node:module";
+import { edgeSpan } from "../kernel/trimEdges.js";
 
+import { encode as encodeToon } from "@toon-format/toon";
+
+import type { CliOutputFormat } from "./cliOutput.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { isRecord } from "../kernel/isRecord.js";
+
+type Yaml = typeof import("yaml");
 
 export interface CliDelimitedOutputOptions {
   readonly fields: readonly string[];
@@ -94,10 +102,10 @@ export interface PreparedDelimitedOutput {
   readonly format: "csv" | "tsv";
 }
 
-/** Keep REA's Markdown layout compatible with Incur while owning table safety. */
+/** Render one CLI result document in the selected output format. */
 export const formatCliOutput = (
   value: unknown,
-  format: Formatter.Format | "csv" | "tsv",
+  format: CliOutputFormat,
   delimited?: CliDelimitedOutputOptions,
 ): string => {
   if (format === "csv" || format === "tsv") {
@@ -111,11 +119,58 @@ export const formatCliOutput = (
     );
     return prepared.ok
       ? [...formatDelimitedOutputParts(prepared.value)].join("")
-      : Formatter.format(projectAnalysisError(prepared.error), "json");
+      : formatDocument(projectAnalysisError(prepared.error), "json");
   }
   return format === "md"
     ? formatMarkdown(value)
-    : Formatter.format(value, format);
+    : formatDocument(value, format);
+};
+
+/** JSON with BigInt values written as decimal strings. */
+const stringifyJson = (value: unknown, indent?: number): string =>
+  JSON.stringify(
+    value,
+    (_key, child: unknown) =>
+      typeof child === "bigint" ? child.toString() : child,
+    indent,
+  );
+
+/** YAML loads on first use, so runs that never select it skip its startup. */
+let yaml: Yaml | undefined;
+const loadYaml = (): Yaml =>
+  (yaml ??= createRequire(import.meta.url)("yaml") as Yaml);
+
+/** Text that already holds a JSON object or array is re-indented, not quoted. */
+const formatJson = (value: unknown): string => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("["))
+      try {
+        return JSON.stringify(JSON.parse(value), null, 2);
+      } catch {
+        // Not JSON after all; encode it as a JSON string below.
+      }
+  }
+  return stringifyJson(value, 2);
+};
+
+const formatDocument = (
+  value: unknown,
+  format: "toon" | "json" | "yaml" | "jsonl",
+): string => {
+  if (value === undefined) return "";
+  switch (format) {
+    case "json":
+      return formatJson(value);
+    case "yaml":
+      return loadYaml().stringify(value);
+    case "jsonl":
+      return Array.isArray(value)
+        ? value.map((item) => stringifyJson(item)).join("\n")
+        : stringifyJson(value);
+    case "toon":
+      return isScalar(value) ? String(value) : encodeToon(value);
+  }
 };
 
 /** Validate a complete row page before the caller writes any output. */
@@ -227,18 +282,6 @@ export const delimitedOutputInputError = (
     { path, reason: "invalid_value", message },
   ]);
 
-/** Render a validated row page, preceded by a versioned metadata record. */
-export const formatDelimitedRows = (
-  rows: unknown,
-  format: "csv" | "tsv",
-  options: CliDelimitedOutputOptions,
-): Result<string, AnalysisInputError> => {
-  const prepared = prepareDelimitedOutput(rows, format, options);
-  return prepared.ok
-    ? ok([...formatDelimitedOutputParts(prepared.value)].join(""))
-    : prepared;
-};
-
 /** Stream a page after its rows and cells have been validated and snapshotted. */
 export function* formatDelimitedOutputParts({
   encodedHeaders,
@@ -280,9 +323,7 @@ const isPlainObjectArray = (
   Array.isArray(value) &&
   value.every(
     (row: unknown) =>
-      typeof row === "object" &&
-      row !== null &&
-      !Array.isArray(row) &&
+      isRecord(row) &&
       (Object.getPrototypeOf(row) === Object.prototype ||
         Object.getPrototypeOf(row) === null),
   );
@@ -296,9 +337,7 @@ const isFlatObject = (value: Record<string, unknown>): boolean =>
 const isObjectArray = (value: unknown): value is Record<string, unknown>[] =>
   Array.isArray(value) &&
   value.length > 0 &&
-  value.every(
-    (item) => typeof item === "object" && item !== null && !Array.isArray(item),
-  ) &&
+  value.every((item) => isRecord(item)) &&
   value.some((item) => Object.keys(item).length > 0);
 
 const isWordCharacter = (character: string | undefined): boolean =>
@@ -344,23 +383,41 @@ const escapeTableCell = (value: string): string =>
     .replace(/\r\n|\r|\n/g, "<br>");
 
 const encodeMarkdownWhitespace = (whitespace: string): string =>
-  whitespace.replace(/ /g, "&#32;").replace(/\t/g, "&#9;");
+  whitespace.replace(/\s/g, (character) => `&#${character.charCodeAt(0)};`);
+
+const isAsciiInlineSpace = (character: string): boolean =>
+  character === " " || character === "\t";
+
+const encodeMarkdownEdges = (
+  value: string,
+  predicate: (character: string) => boolean,
+): string => {
+  const { start, end } = edgeSpan(value, predicate);
+  return start === 0 && end === value.length
+    ? value
+    : encodeMarkdownWhitespace(value.slice(0, start)) +
+        value.slice(start, end) +
+        encodeMarkdownWhitespace(value.slice(end));
+};
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
-  escapeTableCell(value)
-    .replace(/^(\s*)([-+=])/, "$1\\$2")
-    .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
-    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
-    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
+  encodeMarkdownEdges(
+    escapeTableCell(value)
+      .replace(/^(\s*)([-+=])/, "$1\\$2")
+      .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2"),
+    isAsciiInlineSpace,
+  );
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
 
-/** Encode literal text for a Markdown table cell, including edge whitespace. */
-export const encodeMarkdownTableCell = (value: string): string =>
-  escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (whitespace) =>
-    encodeMarkdownWhitespace(whitespace),
+const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
+
+/** Encode edge spacing that Markdown can represent as character references. */
+const encodeMarkdownTableCell = (value: string): string =>
+  encodeMarkdownEdges(escapeTableCell(value), (character) =>
+    markdownEdgeWhitespace.test(character),
   );
 
 const renderTable = (
@@ -435,7 +492,7 @@ const formatMarkdown = (
   value: unknown,
   path: readonly string[] = [],
 ): string => {
-  if (value == null && path.length === 0) return "";
+  if (value === undefined) return "";
   if (isScalar(value)) {
     if (path.length === 0) return escapeMarkdownText(String(value));
     return `${markdownHeading(path)}${escapeMarkdownText(String(value))}`;
@@ -466,11 +523,7 @@ const formatMarkdown = (
       if (isScalar(child))
         return `${heading}${escapeMarkdownText(String(child))}`;
       if (isObjectArray(child)) return `${heading}${formatObjectTable(child)}`;
-      if (
-        typeof child === "object" &&
-        child !== null &&
-        !Array.isArray(child)
-      ) {
+      if (isRecord(child)) {
         const nested = child as Record<string, unknown>;
         return isFlatObject(nested)
           ? `${heading}${formatKeyValueTable(nested)}`

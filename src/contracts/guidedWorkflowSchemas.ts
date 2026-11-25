@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { presentObjectRoot } from "../domain/schemaAnnotations.js";
+
 /** Transport-independent request grammar; rendering never executes a workflow. */
 export const guidedWorkflowsInputSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("list") }),
@@ -28,9 +30,9 @@ const guidedWorkflowItemSchema = z.strictObject({
     }),
   ),
 });
-// Every alternative is an object; declare that root for older MCP codecs too.
-export const guidedWorkflowsOutputSchema = z
-  .discriminatedUnion("action", [
+// Every alternative is an object; the advertised root says so for older MCP codecs.
+export const guidedWorkflowsOutputSchema = presentObjectRoot(
+  z.discriminatedUnion("action", [
     z.strictObject({
       action: z.literal("list"),
       workflows: z.array(guidedWorkflowItemSchema),
@@ -40,6 +42,6 @@ export const guidedWorkflowsOutputSchema = z
       workflow_id: z.string(),
       rendered_prompt: z.string(),
     }),
-  ])
-  .meta({ type: "object" });
+  ]),
+);
 export type GuidedWorkflowsResult = z.infer<typeof guidedWorkflowsOutputSchema>;

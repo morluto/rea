@@ -2,7 +2,7 @@ import { isAbsolute, basename } from "node:path";
 import { z } from "zod";
 
 /** Recovery for a packed Program selected where REA requires a project. */
-export const GHIDRA_PACKED_PROGRAM_RECOVERY =
+const GHIDRA_PACKED_PROGRAM_RECOVERY =
   "A .gzf is a packed program, not a .gpr project. Import it into a new project with Ghidra analyzeHeadless <project-directory> <project-name> -import <file.gzf> -noanalysis; select its .gpr and, if needed, set REA_GHIDRA_PROGRAM_NAME to the imported program name.";
 
 /** A single expanded local project marker; archives must be restored first. */

@@ -1,3 +1,6 @@
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -16,13 +19,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
-if (fixture.subject === null)
-  throw new Error("Expected artifact-bound fixture");
-const subject = {
-  path: fixture.subject.local_path,
-  sha256: fixture.subject.digest.sha256,
-  format: fixture.subject.format,
-};
+const subject = fileSubjectTarget(fixture.subject);
 const selected = (
   operation: string,
   result: Evidence["normalized_result"],
@@ -38,7 +35,7 @@ const selected = (
   });
 
 const wrongMatchingPredicate = (matching: Evidence) =>
-  createEvidence(undefined, matching.provider, {
+  createEvidence(unknownTarget("not-observed"), matching.provider, {
     operation: matching.operation,
     parameters: matching.parameters,
     result: matching.normalized_result,
@@ -48,7 +45,33 @@ const wrongMatchingPredicate = (matching: Evidence) =>
     evidenceLinks: matching.evidence_links,
   });
 
-it.each(["full", "compact"] as const)(
+const expectRetainedMatchingInputs = (
+  tool: Awaited<ReturnType<Client["listTools"]>>["tools"][number] | undefined,
+  selected: { readonly kind: string; readonly evidence_id: string },
+  validation: ReturnType<typeof createMcpSchemaValidation>,
+): void => {
+  if (tool === undefined) throw new Error("Missing advertised matching schema");
+  expect(tool.description).toContain("list_procedures inventories");
+  expect(tool.description).toContain("Declared Evidence fields accept");
+  expect(tool.inputSchema.properties).toMatchObject({
+    left: { type: "object" },
+    right: { type: "object" },
+    left_observations: { type: "array" },
+    right_observations: { type: "array" },
+  });
+  const validate = validation.getValidator(tool.inputSchema);
+  expect(validate({ left: selected, right: selected }).valid).toBe(true);
+  expect(validate({ left: [], right: selected }).valid).toBe(false);
+  expect(validate({ left: selected, right: [] }).valid).toBe(false);
+  for (const field of ["left_observations", "right_observations"]) {
+    const input = { left: selected, right: selected };
+    expect(validate({ ...input, [field]: [selected] }).valid).toBe(true);
+    expect(validate({ ...input, [field]: selected }).valid).toBe(false);
+    expect(validate({ ...input, [field]: [42] }).valid).toBe(false);
+  }
+};
+
+it.each(["compact"] as const)(
   "validates native parent predicates across public sources (%s schema)",
   async (profile) => {
     const session = createTestBinarySession(() => {
@@ -60,8 +83,11 @@ it.each(["full", "compact"] as const)(
         environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     );
-    const client = new Client({ name: "native-view-identity", version: "1" });
     const validation = createMcpSchemaValidation();
+    const client = new Client(
+      { name: "native-view-identity", version: "1" },
+      { jsonSchemaValidator: validation },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const root = await createTestTempDirectory("rea-native-view-identity-");
     try {
@@ -70,25 +96,32 @@ it.each(["full", "compact"] as const)(
       const definitions = new Map(
         (await client.listTools()).tools.map((tool) => [tool.name, tool]),
       );
-      const viewTool = definitions.get("inspect_analysis_view");
-      if (viewTool?.outputSchema === undefined)
-        throw new Error("Missing advertised view schema");
-      expect(validation.assertions.validateSchema(viewTool.outputSchema)).toBe(
-        true,
-      );
       const call = (name: string, args: Record<string, unknown>) => {
         const toolDefinition = definitions.get(name);
         if (toolDefinition === undefined) throw new Error(`Missing ${name}`);
-        return client.callTool({ name, arguments: args }, { toolDefinition });
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+        );
       };
       const inventory = selected(
         "list_procedures",
         [{ address: "0x1000", value: "main" }],
         "rea.analysis",
       );
+      expect(session.recordEvidence(inventory).ok).toBe(true);
+      const retained = {
+        kind: "retained-evidence",
+        evidence_id: inventory.evidence_id,
+      };
+      expectRetainedMatchingInputs(
+        definitions.get("match_native_functions"),
+        retained,
+        validation,
+      );
       const matchingResult = await call("match_native_functions", {
-        left: inventory,
-        right: inventory,
+        left: retained,
+        right: retained,
         detail: "complete",
       });
       expect(
@@ -156,13 +189,6 @@ it.each(["full", "compact"] as const)(
         expect(goodReply.isError, JSON.stringify(goodReply.content)).not.toBe(
           true,
         );
-        expect(
-          validation.assertions.validate(
-            viewTool.outputSchema,
-            goodReply.structuredContent,
-          ),
-          JSON.stringify(validation.assertions.errors),
-        ).toBe(true);
         const goodView = parseEvidence(goodReply.structuredContent);
         expect(goodView.evidence_links).toContain(good.evidence_id);
         const raw = join(root, `${index}.json`),

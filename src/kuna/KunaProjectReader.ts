@@ -11,11 +11,15 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
+  AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -27,16 +31,19 @@ import {
   OwnedRegularFileOperationFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
-import type { KunaProject } from "./KunaProjectCache.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
+import type { KunaProject } from "./KunaCacheManifest.js";
 import {
+  decodeKunaProjectText,
   scanKunaAssembly,
   type KunaAssemblyIndex,
   type KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The exact producing range for one facet, including a failed C block. */
 export interface KunaProjectFileSpan {
@@ -48,14 +55,16 @@ export interface KunaProjectFileSpan {
 
 export interface KunaProjectText {
   readonly result: string | null;
+  readonly unavailableReason?: string;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly files?: readonly KunaProjectFileSpan[];
   readonly limitations: readonly string[];
 }
 
 /** Session scope that adopts a span descriptor before the read opens it. */
-export interface KunaSpanOwnership {
-  readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
-  readonly bindSpanCleanup?: (
+interface KunaSpanOwnership {
+  readonly retainFailedClose: (path: string, owner: OwnedFileHandle) => void;
+  readonly bindSpanCleanup: (
     owner: OwnedFileHandle,
     marker: ProviderCleanupError,
   ) => void;
@@ -63,14 +72,37 @@ export interface KunaSpanOwnership {
    * Check retained cleanup and open one descriptor. The session holds this
    * together with finishSpan so a failed close is retained before the next open.
    */
-  readonly admitSpan?: <T>(
+  readonly admitSpan: <T>(
     operation: string,
     signal: AbortSignal | undefined,
     open: () => Promise<T>,
   ) => Promise<Result<T, AnalysisError>>;
   /** Close one admitted descriptor before another span may open. */
-  readonly finishSpan?: <T>(finish: () => Promise<T>) => Promise<T>;
+  readonly finishSpan: <T>(finish: () => Promise<T>) => Promise<T>;
 }
+
+/** Project a refused text span without treating it as a provider-wide failure. */
+const invalidSpanText = (
+  cause: unknown,
+  operation: string,
+  path: string,
+  offset: number,
+  length: number,
+): AnalysisOutputError | undefined =>
+  cause instanceof KunaDocumentError && cause.code === "invalid_utf8"
+    ? new AnalysisOutputError(
+        operation,
+        "Kuna's cached project text is not valid UTF-8",
+        {
+          cause,
+          diagnostics: {
+            file: path,
+            byte_offset: offset,
+            byte_length: length,
+          },
+        },
+      )
+    : undefined;
 
 const readSpan = async (
   operation: string,
@@ -93,19 +125,25 @@ const readSpan = async (
           file: path,
           byte_offset: offset,
         },
+        fixedAllowanceOptions(
+          `Kuna's buffered function-text allowance of ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes`,
+          "bytes",
+          {
+            limit: KUNA_FUNCTION_TEXT_BYTES,
+            unit: "bytes",
+            narrowing:
+              "Read the complete export locally at details.reported_limits.file from details.reported_limits.byte_offset.",
+          },
+        ),
       ),
     );
   const callerAborted = (): AbortSignal | undefined =>
     signal?.aborted === true ? signal : undefined;
   const cancelled = callerAborted();
-  if (cancelled !== undefined)
-    return err(
-      new AnalysisCancelledError(operation, { cause: cancelled.reason }),
-    );
-  const opened =
-    ownership.admitSpan === undefined
-      ? ok(await open(path, "r"))
-      : await ownership.admitSpan(operation, signal, () => open(path, "r"));
+  if (cancelled !== undefined) return err(cancelledBy(operation, cancelled));
+  const opened = await ownership.admitSpan(operation, signal, () =>
+    open(path, "r"),
+  );
   if (!opened.ok) return opened;
   const owner = new OwnedFileHandle(opened.value);
   let read: Result<string, unknown>;
@@ -121,9 +159,7 @@ const readSpan = async (
         // Preserve a fully acquired span for owned finalization, which records
         // cancellation alongside its text if descriptor cleanup fails.
         if (bytesRead < length && signal?.aborted)
-          throw (spanCancellation = new AnalysisCancelledError(operation, {
-            cause: signal.reason,
-          }));
+          throw (spanCancellation = cancelledBy(operation, signal));
       },
     );
     if (buffer.length !== length)
@@ -131,7 +167,7 @@ const readSpan = async (
     if (!sameRegularFileState(expected, await owner.handle.stat()))
       throw new RegularFileChangedError(path);
     await assertKunaFileState(path, expected);
-    read = ok(buffer.toString("utf8"));
+    read = decodeKunaProjectText(buffer, offset);
   } catch (cause: unknown) {
     read = err(cause);
   }
@@ -143,12 +179,8 @@ const readSpan = async (
         // A failed read keeps its own diagnostic. A completed read records
         // cancellation when the caller aborts before the queued close settles.
         ...(read.ok && signal !== undefined ? { signal } : {}),
-        ...(ownership.retainFailedClose === undefined
-          ? {}
-          : {
-              retainFailedClose: (failed) =>
-                ownership.retainFailedClose?.(path, failed),
-            }),
+        retainFailedClose: (failed) =>
+          ownership.retainFailedClose(path, failed),
       },
       async () => {
         if (
@@ -162,10 +194,7 @@ const readSpan = async (
       },
     );
   try {
-    const value =
-      ownership.finishSpan === undefined
-        ? await finish()
-        : await ownership.finishSpan(finish);
+    const value = await ownership.finishSpan(finish);
     return ok(value);
   } catch (cause: unknown) {
     if (spanCancellation !== undefined && cause === spanCancellation)
@@ -174,9 +203,16 @@ const readSpan = async (
       if (cause.operationCause instanceof RegularFileChangedError)
         throw cause.operationCause;
       return err(
-        new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
-          cause: cause.operationCause,
-        }),
+        invalidSpanText(
+          cause.operationCause,
+          operation,
+          path,
+          offset,
+          length,
+        ) ??
+          new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+            cause: cause.operationCause,
+          }),
       );
     }
     if (cause instanceof RegularFileCleanupFailure)
@@ -198,9 +234,7 @@ const readSpan = async (
       (cause instanceof RegularFileOperationCancelled ||
         cause instanceof RegularFileCancelled)
     )
-      return err(
-        new AnalysisCancelledError(operation, { cause: aborted.reason }),
-      );
+      return err(cancelledBy(operation, aborted));
     throw cause;
   }
 };
@@ -240,10 +274,7 @@ const spanCloseFailure = (
   failure: RegularFileCleanupFailure<string>,
   ownership: KunaSpanOwnership,
 ): AnalysisError => {
-  const reason =
-    failure.cleanupCause instanceof Error
-      ? failure.cleanupCause.message
-      : String(failure.cleanupCause);
+  const reason = errorMessage(failure.cleanupCause);
   const completed = failure.outcome.kind === "completed";
   const marker = new ProviderCleanupError(
     KUNA_PROVIDER_ID,
@@ -258,33 +289,28 @@ const spanCloseFailure = (
     },
     { operation, cause: failure },
   );
-  ownership.bindSpanCleanup?.(failure.owner, marker);
+  ownership.bindSpanCleanup(failure.owner, marker);
   if (failure.completionCancellation !== undefined)
-    return analysisErrorWithCleanupFailure(
-      new AnalysisCancelledError(operation, {
-        cause: failure.completionCancellation.reason,
-      }),
+    return analysisErrorWithCleanupDependencies(
+      cancelledBy(
+        operation,
+        carriedReason(failure.completionCancellation.reason),
+      ),
       marker,
       operation,
-    ).bindCleanupDependencies([marker]);
+    );
   if (failure.outcome.kind !== "failed") return marker;
   const primaryCause = failure.outcome.cause;
   const primary =
     failure.operationFailure === undefined &&
     primaryCause instanceof AnalysisError
       ? primaryCause
-      : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+      : (invalidSpanText(primaryCause, operation, path, offset, length) ??
+        new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
           cause: primaryCause,
-          userMessage:
-            primaryCause instanceof Error
-              ? primaryCause.message
-              : String(primaryCause),
-        });
-  return analysisErrorWithCleanupFailure(
-    primary,
-    marker,
-    operation,
-  ).bindCleanupDependencies([marker]);
+          userMessage: errorMessage(primaryCause),
+        }));
+  return analysisErrorWithCleanupDependencies(primary, marker, operation);
 };
 
 /** One immutable export owns both its text ranges and its parsed label indexes. */
@@ -314,13 +340,16 @@ export class KunaProjectReader {
       this.project.functions.map((block) => [block.address, block]),
     );
     const block = this.#blocks.get(address);
-    if (block === undefined)
+    if (block === undefined) {
+      const reason =
+        "Kuna's project export contains no decompiled block for this inventory entry. Import slots may have no body; other omissions are not classified.";
       return ok({
         result: null,
-        limitations: [
-          "Kuna's export decompiles code entries only; this inventory entry, such as an import slot, has no body.",
-        ],
+        unavailableReason: reason,
+        pseudocodeAbsence: { kind: "not-in-export", reason },
+        limitations: [reason],
       });
+    }
     const files = [
       {
         facet: "pseudocode" as const,
@@ -329,12 +358,19 @@ export class KunaProjectReader {
         byteLength: block.cLength,
       },
     ];
-    if (block.error !== null)
+    if (block.error !== null) {
+      const reason = `Kuna could not decompile this function: ${block.error}`;
       return ok({
         result: null,
+        unavailableReason: reason,
+        pseudocodeAbsence: { kind: "provider-failure", reason },
         files,
-        limitations: [`Kuna could not decompile this function: ${block.error}`],
+        limitations: [
+          reason,
+          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh. It may use different analysis context and does not replace this observation.",
+        ],
       });
+    }
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.c.path),
@@ -436,10 +472,7 @@ export class KunaProjectReader {
       }),
     );
     const index = await waitForAbortable(this.#assembly, signal);
-    if (index === ABORTED)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+    if (index instanceof AbortedWait) return err(cancelledBy(operation, index));
     return index.ok
       ? index
       : err(

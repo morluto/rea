@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { expect, it, onTestFinished } from "vitest";
-import { firmwareFileSizeLimitReached } from "../../src/firmware/FirmwareFiles.js";
+import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
 import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
 import { firmwareFileSizeService } from "../fixtures/firmware/fileSizeProducer.js";
 import { assertFirmwareCleanup } from "../fixtures/firmware/provider.js";
@@ -44,13 +44,19 @@ it.skipIf(process.platform !== "linux")(
         resource: "file-size",
         reportedLimits: { file_size_bytes: budget },
         retryable: false,
-        // The inventory refusal, not the producer's SIGXFSZ recovery, owns this.
-        remediationAction: firmwareFileSizeLimitReached(
-          "extract_firmware",
-          budget,
-        ).remediationAction,
       },
     });
+    if (outcome.ok) throw new Error("Expected a file-size refusal");
+    if (!(outcome.error instanceof AnalysisResourceConstraintError))
+      throw outcome.error;
+    // Inventory identifies the inherited ceiling and its recovery independently
+    // of the producer's SIGXFSZ guidance.
+    const recovery = outcome.error.remediationAction;
+    expect(recovery).toContain(String(budget));
+    expect(recovery).toMatch(/inherited.*file-size limit.*RLIMIT_FSIZE/iu);
+    expect(recovery).toMatch(/raise the file-size limit.*ulimit -f/iu);
+    expect(recovery).toMatch(/analysis_timeout_ms does not raise it/iu);
+    expect(recovery).toMatch(/unchanged request fails/iu);
     await expect(access(fixture.output)).rejects.toMatchObject({
       code: "ENOENT",
     });

@@ -2,11 +2,12 @@ import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The read owner's byte-exact original and selected identity. */
 export interface SkillFileSnapshot {
@@ -48,7 +49,7 @@ export class SkillFilePreparationFailure extends Error {
     readonly cleanupCause: unknown,
   ) {
     super(
-      `Skill staging cleanup failed for ${publication.path}: ${primary instanceof Error ? primary.message : String(primary)}; cleanup: ${cleanupCause instanceof Error ? cleanupCause.message : String(cleanupCause)}`,
+      `Skill staging cleanup failed for ${publication.path}: ${errorMessage(primary)}; cleanup: ${errorMessage(cleanupCause)}`,
       {
         cause: new AggregateError([primary, cleanupCause]),
       },
@@ -189,12 +190,7 @@ export class SkillFilePublication {
       !sameRegularFileState(before, await this.owner.handle.stat())
     )
       throw new SkillDestinationChangedError(this.path);
-    await this.#assertNamed(before);
-    if (!(await fileHandleMatchesBytes(this.owner.handle, this.bytes)))
-      throw new SkillDestinationChangedError(this.path);
-    if (!sameRegularFileState(before, await this.owner.handle.stat()))
-      throw new SkillDestinationChangedError(this.path);
-    await this.#assertNamed(before);
+    await this.#assertReadback(before, this.bytes);
   }
 
   /** Restore through the owned descriptor; a changed name never grants write authority. */
@@ -229,14 +225,22 @@ export class SkillFilePublication {
     await this.owner.handle.truncate(original.bytes.length);
     await this.owner.handle.chmod(original.mode);
     await this.owner.handle.sync();
-    await this.#assertNamed(await this.owner.handle.stat());
-    if (!(await fileHandleMatchesBytes(this.owner.handle, original.bytes)))
-      throw new SkillDestinationChangedError(this.path);
+    await this.#assertReadback(await this.owner.handle.stat(), original.bytes);
     this.#restored = true;
   }
 
   close(): Promise<void> {
     return this.lease.release();
+  }
+
+  async #assertReadback(expected: Stats, bytes: Buffer): Promise<void> {
+    await this.#assertNamed(expected);
+    if (
+      !(await fileHandleMatchesBytes(this.owner.handle, bytes)) ||
+      !sameRegularFileState(expected, await this.owner.handle.stat())
+    )
+      throw new SkillDestinationChangedError(this.path);
+    await this.#assertNamed(expected);
   }
 
   async #assertNamed(expected: Stats): Promise<void> {

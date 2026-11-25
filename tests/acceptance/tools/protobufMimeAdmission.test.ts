@@ -30,7 +30,7 @@ cliTest(
       const path = join(root, `${index}.har`);
       const original = protobufHar(body, mime);
       await writeFile(path, original);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -109,7 +109,7 @@ cliTest(
     await writeFile(path, original);
     const call = await cli.sharedMcpCall!();
     for (const framing of ["auto", "raw"] as const) {
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -172,7 +172,7 @@ cliTest(
 );
 
 cliTest(
-  "sanitizes visible HAR gRPC transport while its authoritative MIME is excluded through MCP",
+  "sanitizes visible HAR transport credentials independently of MIME interpretation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-protobuf-har-transport-");
     const path = join(root, "capture.har");
@@ -180,46 +180,90 @@ cliTest(
       Buffer.from("authorization: Bearer fixture-only\r\n"),
       128,
     );
-    const original = protobufHar(
-      trailer,
-      hiddenMime,
-      [],
-      [{ name: "Content-Type", value: "application/grpc-web" }],
-    );
+    const transport = { name: "Content-Type", value: "application/grpc-web" };
+    const raw = { name: "Content-Type", value: "application/protobuf" };
+    const archive = JSON.parse(
+      protobufHar(trailer, hiddenMime, [trailer, trailer, body], [transport]),
+    ) as {
+      log: {
+        entries: {
+          response: {
+            content: { mimeType: string };
+            headers: { name: string; value: string }[];
+          };
+        }[];
+      };
+    };
+    for (const entry of archive.log.entries.slice(1))
+      entry.response.content.mimeType = raw.value;
+    archive.log.entries[2]!.response.headers.unshift(raw);
+    const original = JSON.stringify(archive);
     await writeFile(path, original);
     const call = await cli.sharedMcpCall!();
-    for (const framing of ["auto", "raw"] as const) {
+    for (const protobuf of [
+      { framing: "auto", body_pointers: ["/response/content/text"] },
+      { framing: "raw" },
+      { body_pointers: [] },
+    ]) {
+      const selected = protobuf.body_pointers?.length !== 0;
       const reply = await call("inspect_web_network_capture", {
         capture_path: path,
         format: "har",
-        record_ordinals: [0],
+        record_ordinals: [0, 1, 2, 3],
         sensitive_values: ["excluded-declaration"],
-        protobuf: { framing },
+        protobuf,
       });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const report = webNetworkCaptureSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
-      expect(report.protobuf_coverage?.status).toBe("partial");
-      expect(report.records[0]?.protobuf).toBeUndefined();
-      expect(report.records[0]?.reported).toMatchObject({
-        response: {
-          headers: [{ name: "Content-Type", value: "application/grpc-web" }],
-          content: { mimeType: null, text: null },
-        },
+      expect(report.protobuf_coverage).toEqual({
+        status: selected ? "partial" : "complete",
+        selected_records: 4,
+        inspected_records: 4,
       });
-      expect(report.records[0]?.binary_fields).toContainEqual(
+      expect(report.records.map((record) => record.ordinal)).toEqual([
+        0, 1, 2, 3,
+      ]);
+      for (const [ordinal, record] of report.records.slice(0, 3).entries()) {
+        expect(
+          record.protobuf,
+          `record ${ordinal} (${protobuf.framing ?? "unselected"})`,
+        ).toBeUndefined();
+        expect(record.reported).toMatchObject({
+          response: {
+            headers: archive.log.entries[ordinal]!.response.headers,
+            content: { mimeType: ordinal === 0 ? null : raw.value, text: null },
+          },
+        });
+        expect(record.binary_fields).toContainEqual(
+          expect.objectContaining({
+            pointer: "/response/content/text",
+            state: "redacted",
+            content_base64: null,
+            sha256: null,
+          }),
+        );
+        expect(record.redactions).toContainEqual({
+          pointer: "/response/content/text",
+          reason: "transport-credential",
+        });
+      }
+      if (selected)
+        expect(report.records[3]?.protobuf?.[0]).toMatchObject({
+          content_type: raw.value,
+          framing: "raw",
+          fields: [{ number: 1, value: "1" }],
+        });
+      else expect(report.records[3]?.protobuf).toBeUndefined();
+      expect(report.records[3]?.binary_fields).toContainEqual(
         expect.objectContaining({
           pointer: "/response/content/text",
-          state: "redacted",
-          content_base64: null,
-          sha256: null,
+          state: "retained",
+          content_base64: body.toString("base64"),
+          sha256: bodySha,
         }),
       );
-      expect(report.records[0]?.redactions).toContainEqual({
-        pointer: "/response/content/text",
-        reason: "transport-credential",
-      });
     }
     expect(await readFile(path, "utf8")).toBe(original);
   },
@@ -233,7 +277,7 @@ cliTest(
     const mime = 'application/protobuf;encoding="binary';
     const original = protobufHar(body, mime);
     await writeFile(path, original);
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: [
         "inspect-web-network-capture",
         path,

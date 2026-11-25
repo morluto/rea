@@ -2,6 +2,14 @@ import {
   probeBunStandaloneGraph,
   type BunStandaloneProbe,
 } from "./bun/BunModuleGraphLayout.js";
+import {
+  locateDenoStandalone,
+  type DenoStandaloneProbe,
+} from "./deno/DenoStandaloneLocation.js";
+import {
+  resolveArtifactReaderLimits,
+  type ArtifactReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 import type {
   StableRegularFileDescriptor,
   RegularFileState,
@@ -11,8 +19,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { findDotnetBundleHeader } from "./dotnet/DotnetBundle.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { locateGodotPck, type GodotPckLocation } from "./GodotPckLocation.js";
 import {
   locateNodeSea,
@@ -23,13 +30,23 @@ import {
   type PyInstallerCookie,
   type PyInstallerCookieObservation,
 } from "./pyinstaller/CArchiveLayout.js";
+import { pyInstallerReaderFailure } from "./pyinstaller/PyInstallerFailure.js";
 
-/** Completed observations only; omission means unexamined, and null is examined absence. */
+const NODE_SEA_ISOLATED_LIMIT_PARAMETERS = new Set([
+  "artifact_limits.node_sea.recognition_header_count",
+  "artifact_limits.node_sea.recognition_load_command_bytes",
+  "artifact_limits.node_sea.blob_bytes",
+]);
+
+/** Completed observations and explicit recognition limits; null alone is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
   readonly sourceState: RegularFileState;
+  readonly readerLimits?: ArtifactReaderLimits;
   readonly bunStandalone?: BunStandaloneProbe;
+  readonly denoStandalone?: DenoStandaloneProbe;
   readonly godotPck?: GodotPckLocation | null;
   readonly nodeSea?: NodeSeaLocation | null;
+  readonly nodeSeaRecognitionFailure?: ArtifactReaderFailure;
   readonly dotnetBundleHeaderOffset?: number | null;
   readonly pyInstaller?: PyInstallerCookieObservation;
 }
@@ -43,6 +60,7 @@ export class ArtifactEmbeddedFormatProbes {
     private readonly source: StableRegularFileDescriptor,
     private readonly signal?: AbortSignal,
     previous?: ArtifactEmbeddedFormatProbeFacts,
+    private readonly limits: ArtifactReaderLimits = resolveArtifactReaderLimits(),
   ) {
     abortIfNeeded(signal);
     if (
@@ -52,8 +70,24 @@ export class ArtifactEmbeddedFormatProbes {
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
-    this.#facts = previous ?? { sourceState: regularFileState(source.initial) };
+    const reusable =
+      previous !== undefined &&
+      JSON.stringify(previous.readerLimits) === JSON.stringify(limits);
+    if (previous !== undefined && !reusable) {
+      const {
+        bunStandalone: _bun,
+        nodeSea: _sea,
+        nodeSeaRecognitionFailure: _seaLimit,
+        ...facts
+      } = previous;
+      this.#facts = { ...facts, readerLimits: limits };
+    } else
+      this.#facts = previous ?? {
+        sourceState: regularFileState(source.initial),
+        readerLimits: limits,
+      };
   }
 
   async godotPck(prefix?: Uint8Array): Promise<GodotPckLocation | undefined> {
@@ -72,15 +106,35 @@ export class ArtifactEmbeddedFormatProbes {
 
   async nodeSea(): Promise<NodeSeaLocation | undefined> {
     abortIfNeeded(this.signal);
+    if (this.#facts.nodeSeaRecognitionFailure !== undefined) return undefined;
     if (this.#facts.nodeSea !== undefined)
       return this.#facts.nodeSea ?? undefined;
-    const location = await locateNodeSea(
-      this.source.handle,
-      this.source.initial.size,
-      this.signal,
-    );
-    this.#facts = { ...this.#facts, nodeSea: location ?? null };
-    return location;
+    try {
+      const location = await locateNodeSea(
+        this.source.handle,
+        this.source.initial.size,
+        this.signal,
+        this.limits.node_sea,
+      );
+      this.#facts = { ...this.#facts, nodeSea: location ?? null };
+      return location;
+    } catch (cause) {
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        cause.readerLimit !== undefined &&
+        NODE_SEA_ISOLATED_LIMIT_PARAMETERS.has(cause.readerLimit.parameter)
+      ) {
+        abortIfNeeded(this.signal);
+        this.recordNodeSeaRecognitionFailure(cause);
+        return undefined;
+      }
+      throw cause;
+    }
+  }
+
+  recordNodeSeaRecognitionFailure(failure: ArtifactReaderFailure): void {
+    const { nodeSea: _sea, ...facts } = this.#facts;
+    this.#facts = { ...facts, nodeSeaRecognitionFailure: failure };
   }
 
   async pyInstaller(): Promise<PyInstallerCookie | undefined> {
@@ -95,8 +149,7 @@ export class ArtifactEmbeddedFormatProbes {
       this.signal,
     );
     abortIfNeeded(this.signal);
-    if (!found.ok)
-      throw new ArtifactReaderFailure(found.error.reason, found.error.message);
+    if (!found.ok) throw pyInstallerReaderFailure(found.error);
     this.#facts = { ...this.#facts, pyInstaller: found.value };
     return found.value.state === "located" ? found.value.cookie : undefined;
   }
@@ -126,10 +179,48 @@ export class ArtifactEmbeddedFormatProbes {
       this.source.handle,
       this.source.initial.size,
       this.signal,
+      this.limits.bun,
     );
     abortIfNeeded(this.signal);
     this.#facts = { ...this.#facts, bunStandalone: observed };
     return observed;
+  }
+
+  async denoStandalone(): Promise<DenoStandaloneProbe> {
+    abortIfNeeded(this.signal);
+    if (this.#facts.denoStandalone !== undefined)
+      return this.#facts.denoStandalone;
+    const packaged = await this.pyInstaller();
+    const observed = await locateDenoStandalone(
+      this.source.handle,
+      this.source.initial.size,
+      this.signal,
+      packaged === undefined
+        ? undefined
+        : {
+            start: packaged.archiveStart,
+            end: packaged.archiveStart + packaged.packageLength,
+          },
+    );
+    abortIfNeeded(this.signal);
+    this.#facts = { ...this.#facts, denoStandalone: observed };
+    return observed;
+  }
+
+  recognitionLimitations(): string[] {
+    const { bunStandalone, nodeSeaRecognitionFailure } = this.#facts;
+    return [
+      ...(bunStandalone?.status === "limited"
+        ? [
+            `Bun graph recognition remains unknown: ${bunStandalone.failure.message}`,
+          ]
+        : []),
+      ...(nodeSeaRecognitionFailure === undefined
+        ? []
+        : [
+            `Node SEA recognition remains unknown: ${nodeSeaRecognitionFailure.message}`,
+          ]),
+    ];
   }
 
   completedFacts(): ArtifactEmbeddedFormatProbeFacts {

@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactOccurrence } from "../artifactGraph.js";
+import type {
+  ArtifactInventoryCoverage,
+  ArtifactOccurrence,
+} from "../artifactGraph.js";
 
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
 import { projectAppleInventory } from "./appleApplication.js";
@@ -31,6 +34,10 @@ const inventoryEvidence = (
   rootFormat: RootFormat,
   subjectName: string,
   entries: readonly FixtureEntry[],
+  source: { coverage: ArtifactInventoryCoverage; limitations: string[] } = {
+    coverage: { scope: "container-entries", status: "complete" },
+    limitations: [],
+  },
 ): Evidence => {
   const rootSha = sha(`${rootFormat}:${subjectName}`);
   const rootId = artifactId(rootSha);
@@ -161,8 +168,7 @@ const inventoryEvidence = (
         edges: [],
         provenance: [],
         integrity_contradictions: [],
-        coverage: { scope: "container-entries", status: "complete" },
-        limitations: [],
+        ...source,
       },
     },
   );
@@ -301,8 +307,8 @@ describe("macOS application roots and bundle roles", () => {
     );
     expect(result.application_roots).toEqual([]);
     expect(result.bundles).toEqual([]);
-    expect(result.limitations).toContain(
-      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/no application bundle.*inventory/iu),
     );
   });
 });
@@ -391,6 +397,48 @@ describe("Apple bundle directory identity", () => {
     });
   });
 });
+
+it.each([
+  [
+    "container-entries",
+    "complete",
+    "complete-within-inventory",
+    "hdiutil verify found no stored checksum in this disk image, so its integrity was not verified; the root SHA-256 identifies the inventoried bytes.",
+  ],
+  [
+    "container-entries",
+    "unknown",
+    "partial",
+    "DMG root hash is observed; child inventory requires a native macOS adapter.",
+  ],
+  [
+    "root",
+    "complete",
+    "partial",
+    "Inventory covers root bytes only; child container entries were not examined.",
+  ],
+] as const)(
+  "uses declared %s / %s DMG coverage even when only the root is present",
+  (scope, status, expected, sourceLimitation) => {
+    const result = project(
+      inventoryEvidence("dmg", "Fixture.dmg", [], {
+        coverage: { scope, status },
+        limitations: [sourceLimitation],
+      }),
+    );
+    expect(result).toMatchObject({
+      coverage: { status: expected, inventory_complete: true },
+      application_roots: [],
+      bundles: [],
+    });
+    expect(result.limitations).toContain(sourceLimitation);
+    expect(
+      result.limitations.includes(
+        "Source inventory coverage is partial; absence is unknown.",
+      ),
+    ).toBe(expected === "partial");
+  },
+);
 
 describe("Apple bundle layouts and containers", () => {
   it("follows versioned frameworks without resolving Versions/Current", () => {
@@ -486,17 +534,6 @@ describe("Apple bundle layouts and containers", () => {
     );
   });
 
-  it("reports a DMG without inventoried contents as partial", () => {
-    const result = project(inventoryEvidence("dmg", "Fixture.dmg", []));
-    expect(result.coverage).toEqual({
-      status: "partial",
-      inventory_complete: true,
-    });
-    expect(result.limitations).toContain(
-      "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
-    );
-  });
-
   it("keeps IPA applications shallow and iOS", () => {
     const result = project(
       inventoryEvidence("ipa", "Fixture.ipa", [
@@ -540,8 +577,9 @@ describe("Apple bundle layouts and containers", () => {
               "manifest",
               "root_format",
             ],
-            message:
-              "Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got asar)",
+            message: expect.stringMatching(
+              /requires.*IPA.*directory.*ZIP.*DMG.*inventory Evidence.*got.*asar/iu,
+            ),
           }),
         ],
       });
@@ -660,12 +698,17 @@ describe("Apple IPA components", () => {
 
 describe("macOS application scope", () => {
   it("attributes only components inside the application roots", () => {
+    const nested = "Fixture.app/Extras/Helper.app";
+    const sibling = "Fixture.app-copy/Other.app";
+    const script = "Fixture.app/Contents/Resources/app.js";
     const result = project(
       inventoryEvidence("zip", "Distribution.zip", [
         macho("Fixture.app/Contents/MacOS/Fixture"),
+        macho(`${nested}/Contents/MacOS/Helper`),
+        macho(`${sibling}/Contents/MacOS/Other`),
         macho("Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Core"),
         {
-          path: "Fixture.app/Contents/Resources/app.js",
+          path: script,
           format: "javascript-bundle",
         },
         macho("Extras/Plugin.framework/Versions/A/Plugin"),
@@ -676,22 +719,32 @@ describe("macOS application scope", () => {
     );
     const paths = (components: readonly { readonly path: string }[]) =>
       components.map(({ path }) => path);
+    expect(result.application_roots).toEqual(["Fixture.app", sibling]);
+    expect(result.bundles.find(({ path }) => path === nested)).toMatchObject({
+      parent_path: "Fixture.app",
+      role: "nested-application",
+    });
     expect(paths(result.components.frameworks)).toEqual([
       "Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Core",
     ]);
     expect(paths(result.components.native_libraries)).toEqual([]);
-    expect(paths(result.components.javascript)).toEqual([
-      "Fixture.app/Contents/Resources/app.js",
-    ]);
+    expect(paths(result.components.javascript)).toEqual([script]);
     expect(paths(result.components.bundle_metadata)).toEqual([]);
     expect(
-      result.bridge_candidates.every(
-        ({ source_path: source, native_path: target }) =>
-          [source, target].every((path) => path.startsWith("Fixture.app/")),
-      ),
-    ).toBe(true);
-    expect(result.limitations).toContain(
-      "4 inventoried entries outside every application root are not attributed to the application.",
+      result.bridge_candidates.map(({ source_path, native_path }) => [
+        source_path,
+        native_path,
+      ]),
+    ).toEqual([
+      [
+        script,
+        "Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Core",
+      ],
+      [script, "Fixture.app/Contents/MacOS/Fixture"],
+      [script, `${nested}/Contents/MacOS/Helper`],
+    ]);
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/4 inventoried entries outside.*not attributed/i),
     );
   });
 
@@ -896,7 +949,9 @@ describe("Apple path conventions", () => {
     expect(result.limitations).toEqual(
       expect.arrayContaining([
         "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
-        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        expect.stringMatching(
+          /bridge basis.*inferred.*native path.*every managed component/iu,
+        ),
       ]),
     );
   });

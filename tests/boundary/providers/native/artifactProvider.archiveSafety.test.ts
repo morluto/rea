@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
-import { ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION } from "../../../../src/artifacts/ArtifactPaths.js";
+import { ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION } from "../../../../src/resources/ArtifactPaths.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
@@ -76,7 +76,7 @@ describe("artifact archive safety", () => {
         ),
       ).toMatchObject({
         operation: "inventory_artifact",
-        subject: { format },
+        subject: { identity: { kind: "file", format } },
       });
     },
   );
@@ -115,8 +115,9 @@ it("extracts case-distinct names only when the destination can preserve them", a
   if (!caseSensitive) {
     if (extracted.ok) throw new Error("expected a destination case collision");
     expect(projectAnalysisError(extracted.error)).toMatchObject({
-      message:
-        "Destination filesystem cannot store both main.js and Main.js; inventory retains both logical names.",
+      message: expect.stringMatching(
+        /[Cc]annot store both main\.js and Main\.js.*inventory retains both/u,
+      ),
       details: { operation: "extract_artifact", reason: "path" },
     });
     await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });

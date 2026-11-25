@@ -28,4 +28,18 @@ describe("Ghidra target snapshot", () => {
       createGhidraTargetSnapshot(source, root, sha256, { platform: "win32" }),
     ).rejects.toThrow(/No native private runtime owns/u);
   });
+
+  it("preserves a dotfile named .com so ComLoader sees that extension", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-hidden-com-");
+    const source = join(root, ".com");
+    const bytes = Buffer.from("hidden com");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(source, bytes);
+    const snapshot = await createGhidraTargetSnapshot(source, root, sha256, {
+      platform: "linux",
+    });
+    expect(snapshot.path.endsWith(`target-${sha256.slice(0, 12)}.com`)).toBe(
+      true,
+    );
+  });
 });

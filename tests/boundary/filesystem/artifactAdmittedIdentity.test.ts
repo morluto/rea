@@ -65,9 +65,7 @@ it.skipIf(process.platform === "win32").each(["zip", "asar"])(
           ok: false,
           error: {
             reason: "integrity",
-            detail: expect.stringContaining(
-              "no longer resolves to its admitted source",
-            ),
+            integrityCheck: "admitted-identity",
           },
         });
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -121,13 +119,12 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.each([
-  { format: "zip", replacement: "valid" },
   { format: "apk", replacement: "valid" },
   { format: "asar", replacement: "valid" },
   { format: "zip", replacement: "malformed" },
   { format: "asar", replacement: "malformed" },
 ])(
-  "binds $format $replacement archive operations to the admitted source before output creation",
+  "rejects $format $replacement replacements without publishing extracted files",
   async ({ format, replacement }) => {
     const root = await createTestTempDirectory(
       "rea-archive-admitted-identity-",
@@ -154,12 +151,12 @@ it.each([
       if (!initial.ok) throw initial.error;
       if (replacement === "malformed") await writeFile(path, "not an archive");
       else await writeArchive("changed version two");
+      const output = join(root, "refused-extraction");
       for (const operation of [
         "inventory_artifact",
         "inspect_artifact",
         "extract_artifact",
       ] as const) {
-        const output = join(root, `refused-${operation}`);
         const result = await session.execute(
           operation,
           operation === "extract_artifact"
@@ -170,11 +167,11 @@ it.each([
           ok: false,
           error: {
             reason: "integrity",
-            detail: expect.stringContaining("changed after target admission"),
+            integrityCheck: "admitted-identity",
           },
         });
-        await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
       }
+      await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
       if (replacement === "valid") {
         const reopened = await session.open(path);
         if (!reopened.ok) throw reopened.error;
@@ -237,9 +234,7 @@ it.skipIf(process.platform === "win32")(
           ok: false,
           error: {
             reason: "integrity",
-            detail: expect.stringContaining(
-              "no longer resolves to its admitted source",
-            ),
+            integrityCheck: "admitted-identity",
           },
         });
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -349,7 +344,7 @@ it("checks embedded native packs before acceptance while preserving unsupported 
       ok: false,
       error: {
         reason: "integrity",
-        detail: expect.stringContaining("changed after target admission"),
+        integrityCheck: "admitted-identity",
       },
     });
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -358,7 +353,7 @@ it("checks embedded native packs before acceptance while preserving unsupported 
       await session.execute("extract_artifact", { output_root: output }),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisUnsupportedTargetError" },
+      error: { _tag: "AnalysisTargetFailureError" },
     });
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {

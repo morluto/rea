@@ -279,7 +279,7 @@ it("preserves a moved same-generation helper as unresolved through the final dea
 
   expect(result).toMatchObject({
     cleaned: false,
-    reason: "process ownership token mismatch for PID(s): 101",
+    reason: expect.stringMatching(/ownership token mismatch.*\b101\b/i),
   });
   expect(fixture.rows()).toMatchObject([
     { pid: 101, parentPid: 1, processGroupId: 777 },

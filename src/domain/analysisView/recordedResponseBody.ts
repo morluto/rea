@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { browserResponseStatusSchema } from "../browserObservation.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 /** One record's retained response text, as replay and state extraction both read it. */
 export interface RecordedResponseBody {
@@ -11,9 +13,15 @@ export interface RecordedResponseBody {
   readonly bodyCut?: true;
 }
 
+/** Source admission is separate from the body fields consumed by replay. */
+export interface RecordedResponseBodyRead extends RecordedResponseBody {
+  /** A declared body could not be associated with its retained HAR bytes. */
+  readonly sourceUnavailable?: true;
+}
+
 const responseDeclarationSchema = z.object({
   response: z.object({
-    status: z.unknown().optional(),
+    status: browserResponseStatusSchema.nullable().optional().catch(null),
     content: z.unknown().optional(),
   }),
 });
@@ -31,7 +39,7 @@ export const readRecordedResponseDeclaration = (reported: unknown) => {
   const { status, content } = parsed.data.response;
   const parsedContent = responseContentDeclarationSchema.safeParse(content);
   return {
-    status,
+    status: status ?? null,
     content: parsedContent.success
       ? parsedContent.data
       : content === null
@@ -45,8 +53,7 @@ export type RecordedResponseDeclaration = ReturnType<
 >;
 
 /** Strict, and keeping a leading byte-order mark, so callers see the recorded text unchanged. */
-const strictUtf8 = (): TextDecoder =>
-  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const strictUtf8 = (): TextDecoder => strictUtf8Decoder("preserve");
 
 /** Base64 characters that decode to just over `limitBytes`, so a cut prefix still fills it. */
 export const base64PrefixChars = (limitBytes: number): number =>
@@ -73,6 +80,19 @@ export const decodeRetainedBase64 = (
   }
 };
 
+/** Compare HAR's source spelling without decoding or copying another whole body. */
+const sameHarBase64 = (reported: string, retained: string): boolean => {
+  if (reported === retained) return true;
+  let at = 0;
+  for (let index = 0; index < reported.length; index++) {
+    const code = reported.charCodeAt(index);
+    // These are the four whitespace characters admitted by the HAR producer.
+    if (code === 9 || code === 10 || code === 13 || code === 32) continue;
+    if (code !== retained.charCodeAt(at++)) return false;
+  }
+  return at === retained.length;
+};
+
 /** Read producer-decoded text or supported HAR base64; unknown encoding declarations stay opaque. Base64 beyond `limitBytes` is decoded only that far. */
 export const readRecordedResponseBody = (
   record: WebNetworkCaptureRecord,
@@ -80,9 +100,31 @@ export const readRecordedResponseBody = (
   declaration: RecordedResponseDeclaration = readRecordedResponseDeclaration(
     record.reported,
   ),
-): RecordedResponseBody => {
+): RecordedResponseBodyRead => {
   const content = declaration?.content;
   if (content == null) return { bodyText: null };
+  const bodyCoordinates = [
+    "/response/content/text",
+    "/response/content/encoding",
+  ];
+  const within = (pointer: string, ancestor: string): boolean =>
+    pointer.startsWith(ancestor) &&
+    (pointer.length === ancestor.length || pointer[ancestor.length] === "/");
+  // Explicit value exclusions also govern imported retained facts. Keep their
+  // source text in complete Evidence, but never promote it into replay/state.
+  if (
+    record.redactions.some(
+      (redaction) =>
+        !("scope" in redaction) &&
+        bodyCoordinates.some((pointer) => within(pointer, redaction.pointer)),
+    ) ||
+    record.binary_fields.some(
+      (field) =>
+        field.state === "redacted" &&
+        bodyCoordinates.some((pointer) => within(pointer, field.pointer)),
+    )
+  )
+    return { bodyText: null };
   const { text, encoding } = content;
   if (typeof text !== "string") return { bodyText: null };
   if (encoding === undefined) {
@@ -99,8 +141,13 @@ export const readRecordedResponseBody = (
     (field) =>
       field.pointer === "/response/content/text" && field.state === "retained",
   );
-  if (binary === undefined || binary.content_base64 === null)
-    return { bodyText: null };
+  if (
+    binary === undefined ||
+    binary.representation !== "har-base64-content" ||
+    binary.content_base64 === null ||
+    !sameHarBase64(text, binary.content_base64)
+  )
+    return { bodyText: null, sourceUnavailable: true };
   return decodeRetainedBase64(binary.content_base64, limitBytes);
 };
 

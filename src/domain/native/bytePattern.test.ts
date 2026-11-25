@@ -10,29 +10,26 @@ const patternSchema = z
   .strictObject(bytePatternFields)
   .superRefine(validateBytePattern);
 
-it.each(["0x20", "overlay:0x10", "invalid"])(
-  "rejects a match outside reported searched coverage: %s",
-  (address) => {
-    const page = {
-      matches: [
-        { address, segment: ".text", file_offset: null, procedure: null },
-      ],
-      searched: {
-        blocks: [{ segment: ".text", start: "0x10", end: "0x1f", bytes: 16 }],
-        bytes: 16,
-        skipped_uninitialized: [],
-        skipped_not_loaded: [],
-      },
-      complete: true,
-      next_cursor: null,
-    };
-    expect(byteSearchResultSchema.safeParse(page).success).toBe(false);
-    page.matches[0]!.address = "0x10";
-    expect(byteSearchResultSchema.safeParse(page).success).toBe(true);
-    page.matches[0]!.segment = ".bss";
-    expect(byteSearchResultSchema.safeParse(page).success).toBe(false);
-  },
-);
+it.each([
+  ["outside the range", "0x20", ".text"],
+  ["in another address space", "overlay:0x10", ".text"],
+  ["without a coordinate", "invalid", ".text"],
+  ["in another segment", "0x10", ".bss"],
+])("rejects a match %s", (_label, address, segment) => {
+  const page = {
+    matches: [{ address, segment, file_offset: null, procedure: null }],
+    searched: {
+      blocks: [{ segment: ".text", start: "0x10", end: "0x1f", bytes: 16 }],
+      bytes: 16,
+      skipped_uninitialized: [],
+      skipped_not_loaded: [],
+      skipped_overlays: [],
+    },
+    complete: true,
+    next_cursor: null,
+  };
+  expect(byteSearchResultSchema.safeParse(page).success).toBe(false);
+});
 
 it.each(["", "overlay:"])(
   "accepts matches at both inclusive coverage boundaries in address space %s",
@@ -52,6 +49,7 @@ it.each(["", "overlay:"])(
           bytes: 16,
           skipped_uninitialized: [],
           skipped_not_loaded: [],
+          skipped_overlays: [],
         },
         complete: true,
         next_cursor: null,

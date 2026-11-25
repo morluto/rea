@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { literalSubstringPredicate } from "../domain/analysisSearch.js";
-import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
+import {
+  ghidraAsciiLiteralCandidate,
+  ghidraAsciiLiteralSubstring,
+} from "./GhidraLiteralSearch.js";
 
 describe("Ghidra ASCII literal candidates", () => {
   it.each([
@@ -58,4 +61,17 @@ describe("Ghidra ASCII literal candidates", () => {
       }
     }
   });
+
+  it.each([
+    ["https://example.com/café", "https://example.com/caf"],
+    ["αfooβbarbazγ", "barbaz"],
+    ["warfare/storage/ſK™", "warfare/storage/sk"],
+    ["日本語", null],
+    ["", null],
+  ])(
+    "derives longest ASCII-foldable substring for %j as %j",
+    (pattern, expected) => {
+      expect(ghidraAsciiLiteralSubstring(pattern!)).toBe(expected);
+    },
+  );
 });

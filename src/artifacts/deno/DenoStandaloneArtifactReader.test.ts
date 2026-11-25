@@ -1,0 +1,2039 @@
+import { createHash } from "node:crypto";
+import { buffer } from "node:stream/consumers";
+import type { FileHandle } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
+
+import {
+  elfNote,
+  elfNoteFixture,
+  withElf64DirectSectionCount,
+} from "../../native/elf/ElfNotes.fixture.js";
+import {
+  MAX_INSPECT_ELF_NOTE_ENTRIES,
+  MAX_INSPECT_ELF_NOTE_FILE_BYTES,
+} from "../../domain/native/elfNotes.js";
+import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
+import {
+  ArtifactPathRegistry,
+  ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+} from "../../resources/ArtifactPaths.js";
+import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
+import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
+import { locateDenoStandalone } from "./DenoStandaloneLocation.js";
+import {
+  buildDenoSection,
+  DENO_FIXTURE_SECTION_MAGIC,
+  defaultDenoMetadata,
+  denoElf,
+  denoIntelTrailer,
+  denoMachO,
+  denoPe,
+  denoUniversal,
+  machOWithSegment,
+} from "./DenoStandalone.fixture.js";
+
+import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
+
+it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
+  const original = denoElf();
+  // Add a valid empty section table without changing the existing PT_NOTE.
+  const bytes = Buffer.concat([original, Buffer.alloc(3 * 64)]);
+  bytes.writeBigUInt64LE(BigInt(original.length), 40);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(3, 60);
+  bytes.writeUInt16LE(0, 62);
+  const path = await writeCarrier("deno-with-sections", bytes);
+  const inventory = await scanCanonicalArtifactInventory(path, {
+    readerLimits: resolveArtifactReaderLimits({
+      bun: { recognition_table_bytes: 191 },
+    }),
+  });
+  expect(inventory.manifest).toMatchObject({
+    root_format: "deno-standalone",
+    root_sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect(inventory.limitations).toContainEqual(
+    expect.stringContaining("Bun graph recognition remains unknown:"),
+  );
+  expect(inventory.limitations).toContainEqual(
+    expect.stringContaining(
+      "artifact_limits.bun.recognition_table_bytes (191 bytes)",
+    ),
+  );
+  expect(inventory.occurrences[0]?.limitations).toContainEqual(
+    expect.stringContaining("Bun graph recognition remains unknown:"),
+  );
+});
+
+const secret = "super-secret-value";
+
+const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
+  const root = await createTestTempDirectory("rea-deno-reader-");
+  const path = join(root, name);
+  await writeFile(path, bytes);
+  return path;
+};
+
+const sectionFor = (
+  contents: Buffer,
+  vfs: unknown = [{ File: { n: "main.ts", o: [0, contents.length], u: true } }],
+): Buffer =>
+  buildDenoSection({
+    metadata: {
+      ...defaultDenoMetadata(),
+      env_vars_from_env_file: { REA_DENO_TOKEN: secret },
+      ca_data: [1, 2, 3, 4],
+    },
+    vfs,
+    vfsFileData: contents,
+    npmSnapshot: Buffer.from("npm-bytes"),
+  });
+
+const inventoryOf = (name: string, bytes: Buffer) =>
+  writeCarrier(name, bytes).then((path) =>
+    scanCanonicalArtifactInventory(path),
+  );
+
+it.each([
+  [
+    "mach-o",
+    (section: Buffer) => denoMachO(section),
+    "mach-o",
+    "mach-o-section",
+  ],
+  ["elf", (section: Buffer) => denoElf(section), "elf", "elf-note"],
+  ["pe", (section: Buffer) => denoPe([section]), "pe", "pe-resource"],
+  [
+    "intel-trailer",
+    (section: Buffer) => denoIntelTrailer(section),
+    "mach-o",
+    "mach-o-intel-trailer",
+  ],
+  [
+    "universal",
+    (section: Buffer) => denoUniversal([denoMachO(section)]),
+    "mach-o",
+    "mach-o-section",
+  ],
+] as const)(
+  "inventories a %s Deno compile carrier",
+  async (_name, carrier, formatCarrier, embedding) => {
+    const contents = Buffer.from("console.log('deno')\n");
+    const snapshot = await inventoryOf("app", carrier(sectionFor(contents)));
+    expect(snapshot.manifest.root_format).toBe("deno-standalone");
+    const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+    expect(root?.format_metadata).toMatchObject({
+      kind: "deno-standalone",
+      carrier: formatCarrier,
+      embedding,
+      entrypoint_key: "main.ts",
+      npm_snapshot_byte_length: "npm-bytes".length,
+      env_var_count: 1,
+      env_vars: [
+        {
+          name: "REA_DENO_TOKEN",
+          value: secret,
+          value_byte_length: secret.length,
+        },
+      ],
+      ca_data: [1, 2, 3, 4],
+      ca_data_byte_length: 4,
+      vfs_listing: "listed",
+    });
+    expect(snapshot.limitations).toContain(
+      artifactFormatDescriptor("deno-standalone")?.readerLimitation,
+    );
+    const member = snapshot.occurrences.find(
+      (row) => row.logical_path === "main.ts",
+    );
+    expect(member).toMatchObject({
+      artifact_format: "javascript-bundle",
+      format_metadata: {
+        kind: "deno-standalone-entry",
+        role: "vfs-file",
+        entry_point: true,
+        source_path: "main.ts",
+      },
+    });
+    expect(
+      snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+        ?.sha256,
+    ).toBe(createHash("sha256").update(contents).digest("hex"));
+  },
+);
+
+it("keeps child regions and both copies of a duplicated name", async () => {
+  const original = Buffer.from("source\n");
+  const transpiled = Buffer.from("transpiled\n");
+  const cjs = Buffer.from("cjs\n");
+  const map = Buffer.from("map\n");
+  const data = Buffer.concat([
+    original,
+    transpiled,
+    cjs,
+    map,
+    Buffer.from("b"),
+  ]);
+  const vfs = [
+    {
+      File: {
+        n: "main.ts",
+        o: [0, original.length],
+        m: [original.length, transpiled.length],
+        c: [original.length + transpiled.length, cjs.length],
+        s: [original.length + transpiled.length + cjs.length, map.length],
+        u: true,
+      },
+    },
+    {
+      File: {
+        n: "main.ts",
+        o: [data.length - 1, 1],
+      },
+    },
+  ];
+  const snapshot = await inventoryOf(
+    "children",
+    denoElf(sectionFor(data, vfs)),
+  );
+  const paths = snapshot.occurrences.map((row) => row.logical_path);
+  expect(paths).toEqual(
+    expect.arrayContaining([
+      "main.ts",
+      "main.ts.deno-transpiled",
+      "main.ts.deno-cjs-analysis",
+      "main.ts.deno-sourcemap",
+    ]),
+  );
+  expect(paths.filter((path) => path === "main.ts")).toHaveLength(2);
+  const region = snapshot.occurrences.find(
+    (row) => row.logical_path === "main.ts.deno-transpiled",
+  );
+  expect(region?.format_metadata).toMatchObject({ role: "vfs-transpiled" });
+  const file = snapshot.occurrences.find(
+    (row) =>
+      row.logical_path === "main.ts" &&
+      row.format_metadata?.kind === "deno-standalone-entry" &&
+      region?.format_metadata?.kind === "deno-standalone-entry" &&
+      row.format_metadata.index === region.format_metadata.index,
+  );
+  expect(file?.format_metadata).toMatchObject({ role: "vfs-file" });
+  expect(region?.parent_occurrence_id).not.toBe(file?.occurrence_id);
+});
+
+it("accepts identical duplicate sections and rejects differing ones", async () => {
+  const section = buildDenoSection();
+  const same = await inventoryOf("same", denoMachO([section, section]));
+  expect(same.manifest.root_format).toBe("deno-standalone");
+  const other = buildDenoSection({ vfsFileData: Buffer.from("other\n") });
+  await expect(
+    inventoryOf("different", denoMachO([section, other])),
+  ).rejects.toMatchObject({ reason: "malformed" });
+});
+
+it("leaves an ELF note that is not a Deno section unclassified as deno", async () => {
+  const bytes = elfNoteFixture({
+    notes: elfNote("GNU", 1, Buffer.from("build-id")),
+    ownership: "program",
+    type: 1,
+  });
+  const snapshot = await inventoryOf("plain.elf", bytes);
+  expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
+});
+
+it("fails closed when a named section is truncated or lacks the opening marker", async () => {
+  await expect(
+    inventoryOf(
+      "truncated",
+      denoMachO(Buffer.concat([DENO_FIXTURE_SECTION_MAGIC, Buffer.alloc(4)])),
+    ),
+  ).rejects.toMatchObject({ reason: "malformed" });
+  await expect(
+    inventoryOf("unmarked", denoMachO(Buffer.from("not-a-deno-section!!"))),
+  ).rejects.toMatchObject({ reason: "unavailable" });
+});
+
+it("does not follow a symlink and refuses to open it", async () => {
+  const contents = Buffer.from("target\n");
+  const path = await writeCarrier(
+    "links",
+    denoElf(
+      sectionFor(contents, [
+        { File: { n: "main.ts", o: [0, contents.length], u: true } },
+        { Symlink: { n: "alias", p: ["main.ts"] } },
+      ]),
+    ),
+  );
+  const reader = new DenoStandaloneArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const link = entries.find((entry) => entry.kind === "symlink");
+    expect(link).toMatchObject({
+      path: "alias",
+      formatMetadata: { symlink_dest_parts: ["main.ts"] },
+    });
+    await expect(reader.open(link!)).rejects.toMatchObject({
+      reason: "malformed",
+    });
+  } finally {
+    await reader.close();
+  }
+  await expect(
+    reader.entries()[Symbol.asyncIterator]().next(),
+  ).rejects.toMatchObject({ reason: "unavailable" });
+});
+
+it("reports the caller's cancellation before preparing the inventory", async () => {
+  const reason = Symbol("cancel inventory");
+  const path = await writeCarrier("cancel", denoElf());
+  const reader = new DenoStandaloneArtifactReader(path);
+  try {
+    await expect(
+      reader.entries(AbortSignal.abort(reason))[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  } finally {
+    await reader.close();
+  }
+});
+
+it.each(["missing", "invalid UTF-8"] as const)(
+  "keeps a resolved remote module beside a %s specifier",
+  async (specifier) => {
+    const url = "https://example.com/mod.ts";
+    const snapshot = await inventoryOf(
+      "partial-remote",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
+          specifiers: [
+            { text: url, id: 1 },
+            ...(specifier === "invalid UTF-8"
+              ? [{ bytes: Buffer.from([0xff]), id: 2 }]
+              : []),
+          ],
+          remoteModules: [
+            { specifierId: 1, data: "known" },
+            { specifierId: 2, data: "missing" },
+          ],
+        }),
+      ),
+    );
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "."),
+    ).toMatchObject({
+      format_metadata: {
+        specifier_listing: specifier === "missing" ? "listed" : "unsupported",
+        remote_module_listing: "unsupported",
+      },
+    });
+    expect(
+      snapshot.occurrences.find(
+        (row) => row.logical_path === "deno-remote/example.com/mod.ts",
+      ),
+    ).toMatchObject({
+      format_metadata: { index: 0, source_path: url, entry_point: true },
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+    ).toMatchObject({
+      format_metadata: { index: 1, source_path: null, entry_point: false },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("not available as a logical path"),
+      ]),
+    });
+  },
+);
+
+it("preserves remote specifiers and gives their regions portable paths", async () => {
+  const names = [
+    ["http://localhost:8000/mod.ts", "deno-remote/localhost%3A8000/mod.ts"],
+    ["http://[::1]:8000/mod.ts", "deno-remote/[%3A%3A1]%3A8000/mod.ts"],
+    ["https://example.com/a:b.ts", "deno-remote/example.com/a%3Ab.ts"],
+    [
+      "https://example.com/mod.ts?exports=*",
+      "deno-remote/example.com/mod.ts%3Fexports%3D%2A",
+    ],
+    ["file:///src/a%7Cb.ts", "src/a%7Cb.ts"],
+    ["file:///src/a%22b.ts", "src/a%22b.ts"],
+    ["file:///src/a%3Cb%3E.ts", "src/a%3Cb%3E.ts"],
+    ["file:///src/a%3Fb.ts", "src/a%3Fb.ts"],
+    ["jsr:@std/path", "jsr%3A@std/path"],
+  ] as const;
+  const snapshot = await inventoryOf(
+    "remote-portable-paths",
+    denoElf(
+      buildDenoSection({
+        vfs: [],
+        specifiers: names.map(([text], id) => ({ text, id })),
+        remoteModules: names.map((_, specifierId) => ({
+          specifierId,
+          data: "source",
+          transpiled: "js",
+        })),
+      }),
+    ),
+  );
+  const rows = new Map(
+    snapshot.occurrences.map((row) => [row.logical_path, row]),
+  );
+  expect(rows.size).toBe(1 + names.length * 2);
+  for (const [sourcePath, logicalPath] of names) {
+    expect(rows.get(logicalPath)).toMatchObject({
+      format_metadata: { role: "remote-module", source_path: sourcePath },
+    });
+    expect(rows.get(`${logicalPath}.deno-transpiled`)).toMatchObject({
+      format_metadata: { role: "remote-transpiled", source_path: sourcePath },
+    });
+  }
+});
+
+it("indexes spellings that share the same portable remote destination", async () => {
+  const aliases = [
+    [
+      "https://example.com/exact:case.ts",
+      "https://example.com/exact%3Acase.ts",
+      "deno-remote/example.com/exact%3Acase.ts",
+    ],
+    [
+      "https://example.com/a:b.ts",
+      "https://example.com/a%3ab.ts",
+      "deno-remote/example.com/a%3Ab.ts",
+    ],
+    [
+      "https://example.com/a?b",
+      "https://example.com/a%3fb",
+      "deno-remote/example.com/a%3Fb",
+    ],
+    ["x:a\\b", "x%3aa%5cb", "x%3Aa%5Cb"],
+  ] as const;
+  const specifiers = aliases.flatMap(([first, second]) => [first, second]);
+  const snapshot = await inventoryOf(
+    "remote-escape-aliases",
+    denoElf(
+      buildDenoSection({
+        vfs: [],
+        specifiers: specifiers.map((text, id) => ({ text, id })),
+        remoteModules: specifiers.map((data, specifierId) => ({
+          specifierId,
+          data,
+        })),
+      }),
+    ),
+  );
+  const rows = new Map(
+    snapshot.occurrences.map((row) => [row.logical_path, row]),
+  );
+  expect(rows.size).toBe(1 + specifiers.length);
+  for (const [index, [first, second, natural]] of aliases.entries()) {
+    expect(rows.get(natural)).toMatchObject({
+      format_metadata: { source_path: first },
+    });
+    expect(rows.get(`deno-remote/${String(index * 2 + 1)}`)).toMatchObject({
+      format_metadata: { source_path: second },
+    });
+  }
+  expect(snapshot.limitations).not.toContain(
+    ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+  );
+});
+
+it("reports unknown coverage when the virtual filesystem cannot be listed", async () => {
+  const snapshot = await inventoryOf(
+    "unlisted-vfs",
+    denoElf(
+      buildDenoSection({
+        vfs: { unexpected: true },
+        specifiers: [{ text: "https://example.com/mod.ts", id: 1 }],
+        remoteModules: [{ specifierId: 1, data: "remote" }],
+      }),
+    ),
+  );
+  expect(snapshot.manifest.root_format).toBe("deno-standalone");
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "."),
+  ).toMatchObject({ format_metadata: { vfs_listing: "unsupported" } });
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("virtual filesystem could not be listed"),
+    ]),
+  );
+});
+
+it("indexes a remote specifier whose component exceeds the filesystem name limit", async () => {
+  const query = `q=${"a".repeat(MAX_DENO_PATH_COMPONENT_BYTES)}`;
+  const specifier = `https://example.com/mod.ts?${query}`;
+  const snapshot = await inventoryOf(
+    "long-remote",
+    denoElf(
+      buildDenoSection({
+        specifiers: [
+          { text: "file:///main.ts", id: 0 },
+          { text: specifier, id: 1 },
+        ],
+        remoteModules: [{ specifierId: 1, data: Buffer.from("body") }],
+      }),
+    ),
+  );
+  expect(
+    snapshot.occurrences.find(
+      (row) =>
+        row.format_metadata !== null &&
+        typeof row.format_metadata === "object" &&
+        "role" in row.format_metadata &&
+        row.format_metadata.role === "remote-module",
+    ),
+  ).toMatchObject({
+    logical_path: "deno-remote/0",
+    format_metadata: { source_path: specifier },
+    limitations: expect.arrayContaining([
+      expect.stringContaining(`${String(MAX_DENO_PATH_COMPONENT_BYTES)}-byte`),
+    ]),
+  });
+});
+
+it("reserves space for each remote child suffix independently of the original name", async () => {
+  const cases = [
+    ["a", {}, ""],
+    ["b", { transpiled: "out" }, ".deno-transpiled"],
+    ["c", { sourceMap: "{}" }, ".deno-sourcemap"],
+    ["d", { cjs: "{}" }, ".deno-cjs-analysis"],
+  ] as const;
+  const names = cases.map(
+    ([character]) =>
+      `${character.repeat(MAX_DENO_PATH_COMPONENT_BYTES - 3)}.ts`,
+  );
+  const specifiers = names.map((leaf, id) => ({
+    id,
+    text: `https://example.com/${leaf}`,
+  }));
+  const snapshot = await inventoryOf(
+    "remote-child-limit",
+    denoElf(
+      buildDenoSection({
+        vfs: [],
+        specifiers,
+        remoteModules: cases.map(([, regions], specifierId) => ({
+          specifierId,
+          data: "body",
+          ...regions,
+        })),
+      }),
+    ),
+  );
+  const remotes = snapshot.occurrences.flatMap(
+    ({ logical_path, format_metadata }) =>
+      format_metadata?.kind === "deno-standalone-entry"
+        ? [[logical_path, format_metadata.source_path]]
+        : [],
+  );
+  const expected = cases.flatMap(([, , suffix], index) => {
+    const source = specifiers[index]!.text;
+    if (suffix === "")
+      return [[`deno-remote/example.com/${names[index]}`, source]];
+    const indexed = `deno-remote/${String(index)}`;
+    return [
+      [indexed, source],
+      [`${indexed}${suffix}`, source],
+    ];
+  });
+  expect(remotes.sort()).toEqual(expected.sort());
+});
+
+it("marks an entry point by its source path, not an indexed logical path", async () => {
+  const contents = Buffer.from("x");
+  const snapshot = await inventoryOf(
+    "indexed-entry",
+    denoElf(
+      buildDenoSection({
+        metadata: { ...defaultDenoMetadata(), entrypoint_key: "deno-vfs/0" },
+        vfs: [{ File: { n: "..", o: [0, 1] } }],
+        vfsFileData: contents,
+      }),
+    ),
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "deno-vfs/0"),
+  ).toMatchObject({ format_metadata: { entry_point: false } });
+});
+
+it("scans blocked remote namespaces once across all modules", async () => {
+  const count = 1_000;
+  const image = denoElf(
+    buildDenoSection({
+      specifiers: Array.from({ length: count }, (_, id) => ({
+        id,
+        text: `file:///deno-remote/module-${String(id)}.ts`,
+      })),
+      remoteModules: Array.from({ length: count }, (_, specifierId) => ({
+        specifierId,
+        data: Buffer.from("x"),
+      })),
+      vfs: Array.from({ length: count }, (_, index) => ({
+        File: {
+          n: index === 0 ? "deno-remote" : `deno-remote-${String(index)}`,
+          o: [0, 1],
+        },
+      })),
+      vfsFileData: Buffer.from("v"),
+    }),
+  );
+  const path = await writeCarrier("blocked-namespaces", image);
+  const reader = new DenoStandaloneArtifactReader(path);
+  const conflicts = vi.spyOn(ArtifactPathRegistry.prototype, "conflicts");
+  try {
+    const paths: string[] = [];
+    for await (const entry of reader.entries()) paths.push(entry.path);
+    expect(paths).toContain(`deno-remote-${String(count)}/0`);
+    expect(paths).toContain(
+      `deno-remote-${String(count)}/${String(count - 1)}`,
+    );
+    expect(paths).toHaveLength(count * 2);
+    expect(new Set(paths).size).toBe(paths.length);
+    expect(conflicts.mock.calls.length).toBeLessThan(count * 4);
+  } finally {
+    conflicts.mockRestore();
+    await reader.close();
+  }
+});
+
+const bytesHandle = (
+  image: Buffer,
+  onRead?: (length: number) => void,
+): FileHandle =>
+  ({
+    async read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) {
+      onRead?.(length);
+      const start = position;
+      const available =
+        start >= image.length ? 0 : Math.min(length, image.length - start);
+      if (available > 0) image.copy(buffer, offset, start, start + available);
+      if (available < length)
+        buffer.fill(0, offset + available, offset + length);
+      return { bytesRead: length, buffer };
+    },
+  }) as FileHandle;
+
+it("rejects unequal duplicate lengths without hashing payloads", async () => {
+  const image = denoMachO([Buffer.alloc(4096), Buffer.alloc(4095)]);
+  let payloadBytes = 0;
+  const probe = await locateDenoStandalone(
+    bytesHandle(image, (length) => {
+      if (length >= 4095) payloadBytes += length;
+    }),
+    image.length,
+  );
+  expect(probe).toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+  expect(payloadBytes).toBe(0);
+});
+
+it("stops hashing duplicate sections at the first mismatch", async () => {
+  const image = denoMachO([
+    Buffer.alloc(4096),
+    Buffer.alloc(4096, 1),
+    Buffer.alloc(4096),
+  ]);
+  let payloadBytes = 0;
+  const probe = await locateDenoStandalone(
+    bytesHandle(image, (length) => {
+      if (length === 4096) payloadBytes += length;
+    }),
+    image.length,
+  );
+  expect(probe).toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+  expect(payloadBytes).toBe(8192);
+});
+
+it("bounds aggregate hashing of overlapping duplicate sections by carrier size", async () => {
+  const count = 100;
+  const payloadLength = 4096;
+  const payloadAt = 32 + 72 + count * 80;
+  const image = Buffer.concat([
+    denoMachO(Array.from({ length: count }, () => Buffer.alloc(0))),
+    Buffer.alloc(payloadLength + count - 1),
+  ]);
+  image.writeBigUInt64LE(BigInt(image.length - payloadAt), 32 + 32);
+  image.writeBigUInt64LE(BigInt(image.length - payloadAt), 32 + 48);
+  for (let index = 0; index < count; index += 1) {
+    const sectionAt = 32 + 72 + index * 80;
+    image.writeBigUInt64LE(BigInt(payloadLength), sectionAt + 40);
+    image.writeUInt32LE(payloadAt + index, sectionAt + 48);
+  }
+  let payloadBytes = 0;
+  const probe = await locateDenoStandalone(
+    bytesHandle(image, (length) => {
+      if (length === payloadLength) payloadBytes += length;
+    }),
+    image.length,
+  );
+  expect(probe).toMatchObject({
+    status: "present",
+    failure: { reason: "limit" },
+  });
+  expect(payloadBytes).toBeGreaterThan(0);
+  expect(payloadBytes).toBeLessThanOrEqual(image.length);
+});
+
+it("leaves an x64 Mach-O with a libsui sentinel and no d3n0l4nd marker absent", async () => {
+  const image = denoMachO([], { architecture: "x64" });
+  const claimed = Buffer.alloc(8);
+  claimed.writeBigUInt64LE(8n);
+  const bytes = Buffer.concat([
+    image,
+    Buffer.from("runtime-padding-before-sentinel"),
+    Buffer.from("<~sui-data~>", "latin1"),
+    Buffer.from([0xef, 0xbe, 0xad, 0xde]),
+    claimed,
+    Buffer.from("notd3n0!"),
+    Buffer.from("tail"),
+  ]);
+  const probe = await locateDenoStandalone(bytesHandle(bytes), bytes.length);
+  expect(probe).toEqual({ status: "absent" });
+});
+
+it("accepts an Intel trailer that opens with d3n0l4nd before trailing bytes", async () => {
+  const section = buildDenoSection();
+  const bytes = Buffer.concat([
+    denoIntelTrailer(section),
+    Buffer.alloc(128, 0xab),
+  ]);
+  const probe = await locateDenoStandalone(bytesHandle(bytes), bytes.length);
+  expect(probe).toMatchObject({
+    status: "present",
+    location: {
+      carrier: "mach-o",
+      embedding: "mach-o-intel-trailer",
+      length: section.length,
+    },
+  });
+});
+
+it("fails closed on an Intel trailer truncated by its last byte", async () => {
+  const whole = denoIntelTrailer(buildDenoSection());
+  const bytes = whole.subarray(0, whole.length - 1);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+const ELF64_PHOFF = 32;
+const ELF64_SHOFF = 40;
+const ELF64_PHENTSIZE = 54;
+const ELF64_PHNUM = 56;
+const ELF64_SHENTSIZE = 58;
+const ELF64_SHNUM = 60;
+
+const gnuElf = (
+  ownership: "program" | "section" | "both",
+  notes = elfNote("GNU", 1, Buffer.from("build-id")),
+): Buffer => elfNoteFixture({ notes, ownership, type: 1 });
+
+const damagedNote = (): Buffer => {
+  const note = Buffer.alloc(16);
+  note.writeUInt32LE(100, 0);
+  return note;
+};
+
+const crowdedNotes = (): Buffer => {
+  const note = elfNote("GNU", 1, Buffer.from("x"));
+  return Buffer.concat(
+    Array.from({ length: MAX_INSPECT_ELF_NOTE_ENTRIES + 1 }, () => note),
+  );
+};
+
+const patched = (bytes: Buffer, write: (image: Buffer) => void): Buffer => {
+  const image = Buffer.from(bytes);
+  write(image);
+  return image;
+};
+
+/** A relocatable object can hold more section headers than a linked image. */
+const sectionHeavyElf = (sections: number): Buffer => {
+  const image = Buffer.alloc(64 + sections * 64);
+  gnuElf("program").copy(image, 0, 0, 64);
+  image.writeBigUInt64LE(0n, ELF64_PHOFF);
+  image.writeUInt16LE(0, ELF64_PHNUM);
+  image.writeBigUInt64LE(64n, ELF64_SHOFF);
+  image.writeUInt16LE(64, ELF64_SHENTSIZE);
+  image.writeUInt16LE(sections, ELF64_SHNUM);
+  return image;
+};
+
+it.each([
+  ["a note table that cannot be parsed", gnuElf("program", damagedNote())],
+  ["more notes than the note ceiling", gnuElf("program", crowdedNotes())],
+  [
+    "an unreadable program header table",
+    patched(gnuElf("program"), (image) => {
+      image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF);
+    }),
+  ],
+  [
+    "an unreadable section header table",
+    patched(gnuElf("section"), (image) => {
+      image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_SHOFF);
+    }),
+  ],
+  [
+    "extended program numbering",
+    patched(gnuElf("program"), (image) => {
+      image.writeUInt16LE(0xffff, ELF64_PHNUM);
+    }),
+  ],
+  [
+    "extended section numbering",
+    patched(gnuElf("section"), (image) => {
+      image.writeUInt16LE(0, ELF64_SHNUM);
+    }),
+  ],
+  [
+    "a non-canonical program header size",
+    patched(gnuElf("program"), (image) => {
+      image.writeUInt16LE(72, ELF64_PHENTSIZE);
+    }),
+  ],
+  ["5,000 section headers", sectionHeavyElf(5_000)],
+])("keeps native inventory for an ELF with %s", async (_label, bytes) => {
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+  const snapshot = await inventoryOf("native.elf", bytes);
+  expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
+});
+
+it("keeps native inventory for a compressed note section", async () => {
+  const bytes = gnuElf("section");
+  const shoff = Number(bytes.readBigUInt64LE(ELF64_SHOFF));
+  const note = shoff + 64;
+  expect(bytes.readUInt32LE(note + 4)).toBe(7);
+  bytes.writeBigUInt64LE(0x800n, note + 8);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
+const suiNote = (section = buildDenoSection()): Buffer => {
+  const nameLength = Buffer.alloc(2);
+  nameLength.writeUInt16LE("d3n0l4nd".length);
+  return elfNote(
+    "SUI",
+    0x53554901,
+    Buffer.concat([nameLength, Buffer.from("d3n0l4nd", "latin1"), section]),
+  );
+};
+
+const probeElf = async (image: Buffer) => {
+  const handle = await open(
+    await writeCarrier("note-ownership.elf", image),
+    "r",
+  );
+  try {
+    return await locateDenoStandalone(handle, image.length);
+  } finally {
+    await handle.close();
+  }
+};
+
+it.each([
+  [
+    "a damaged note follows a confirmed program note",
+    () => gnuElf("program", Buffer.concat([suiNote(), damagedNote()])),
+    true,
+  ],
+  [
+    "extended section numbering sits beside a confirmed program note",
+    () =>
+      patched(gnuElf("both", suiNote()), (image) =>
+        image.writeUInt16LE(0, ELF64_SHNUM),
+      ),
+    true,
+  ],
+  [
+    "a reserved direct section count sits beside a confirmed program note",
+    () => withElf64DirectSectionCount(denoElf(), 0xff00),
+    true,
+    /reserved direct section count/iu,
+  ],
+  [
+    "only a section under a reserved direct count holds the name",
+    () => withElf64DirectSectionCount(gnuElf("section", suiNote()), 0xff00),
+    false,
+  ],
+  [
+    "a confirmed section note sits beyond an unreadable program table",
+    () =>
+      patched(gnuElf("both", suiNote()), (image) =>
+        image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF),
+      ),
+    true,
+  ],
+] as const)(
+  "classifies ELF note ownership when %s",
+  async (_, image, confirmed, diagnostic?: RegExp) => {
+    const result = await probeElf(image());
+    if (confirmed)
+      expect(result).toMatchObject({
+        status: "present",
+        failure: {
+          reason: "malformed",
+          ...(diagnostic === undefined
+            ? {}
+            : { message: expect.stringMatching(diagnostic) }),
+        },
+      });
+    else expect(result).toEqual({ status: "absent" });
+  },
+);
+
+it("claims a SUI note only after its full Deno section name is present", async () => {
+  const noteFor = (name: string) => {
+    const length = Buffer.alloc(2);
+    length.writeUInt16LE("d3n0l4nd".length);
+    return gnuElf(
+      "program",
+      elfNote(
+        "SUI",
+        0x53554901,
+        Buffer.concat([length, Buffer.from(name, "latin1")]),
+      ),
+    );
+  };
+  await expect(probeElf(noteFor("d3"))).resolves.toEqual({ status: "absent" });
+  await expect(probeElf(noteFor("d3n0l4nd"))).resolves.toMatchObject({
+    status: "present",
+    location: { carrier: "elf", embedding: "elf-note", length: 0 },
+  });
+});
+
+it("locates a Deno ELF note in a file larger than 512 MiB without a full-file read", async () => {
+  const image = denoElf();
+  const probe = await locateDenoStandalone(
+    bytesHandle(image, (length) => {
+      if (length > 2 * 1024 * 1024)
+        throw new Error(`read of ${String(length)} bytes exceeds 2 MiB`);
+    }),
+    MAX_INSPECT_ELF_NOTE_FILE_BYTES + 4096,
+  );
+  expect(probe).toMatchObject({
+    status: "present",
+    location: { carrier: "elf", embedding: "elf-note" },
+  });
+});
+
+it("classifies repeated ELF note headers within the note ceiling's read budget", async () => {
+  const count = 4096;
+  const note = elfNote("GNU", 1, Buffer.from("x"));
+  const headerSize = 64;
+  const phent = 56;
+  const phoff = headerSize;
+  const noteOff = phoff + count * phent;
+  const bytes = Buffer.alloc(noteOff + note.length);
+  bytes.writeUInt32LE(0x464c457f, 0);
+  bytes[4] = 2;
+  bytes[5] = 1;
+  bytes[6] = 1;
+  bytes.writeUInt16LE(2, 16);
+  bytes.writeUInt16LE(62, 18);
+  bytes.writeUInt32LE(1, 20);
+  bytes.writeBigUInt64LE(BigInt(phoff), 32);
+  bytes.writeUInt16LE(headerSize, 52);
+  bytes.writeUInt16LE(phent, 54);
+  bytes.writeUInt16LE(count, 56);
+  bytes.writeUInt16LE(64, 58);
+  for (let index = 0; index < count; index += 1) {
+    const ph = phoff + index * phent;
+    bytes.writeUInt32LE(4, ph);
+    bytes.writeUInt32LE(4, ph + 4);
+    bytes.writeBigUInt64LE(BigInt(noteOff), ph + 8);
+    bytes.writeBigUInt64LE(BigInt(note.length), ph + 32);
+    bytes.writeBigUInt64LE(BigInt(note.length), ph + 40);
+    bytes.writeBigUInt64LE(4n, ph + 48);
+  }
+  note.copy(bytes, noteOff);
+  let reads = 0;
+  const probe = await locateDenoStandalone(
+    bytesHandle(bytes, () => {
+      reads += 1;
+    }),
+    bytes.length,
+  );
+  expect(probe).toEqual({ status: "absent" });
+  expect(reads).toBeLessThan(16);
+});
+
+const rejectedIntelSentinels = (count: number): Buffer => {
+  const sentinel = Buffer.concat([
+    Buffer.from("<~sui-data~>", "latin1"),
+    Buffer.from([0xef, 0xbe, 0xad, 0xde]),
+    Buffer.alloc(8),
+  ]);
+  return Buffer.concat(Array.from({ length: count }, () => sentinel));
+};
+
+it("rejects packed Intel sentinels without rereading a chunk per sentinel", async () => {
+  const packed = Buffer.concat([
+    denoMachO([], { architecture: "x64" }),
+    Buffer.alloc(32 * 1024),
+    rejectedIntelSentinels(48),
+  ]);
+  let readBytes = 0;
+  const probe = await locateDenoStandalone(
+    bytesHandle(packed, (length) => {
+      readBytes += length;
+    }),
+    packed.length,
+  );
+  expect(probe).toEqual({ status: "absent" });
+  expect(readBytes).toBeLessThan(128 * 1024);
+});
+
+it("leaves an x64 Mach-O absent when sentinels pass the allowance", async () => {
+  const packed = Buffer.concat([
+    denoMachO([], { architecture: "x64" }),
+    rejectedIntelSentinels(65),
+  ]);
+  let readBytes = 0;
+  const probe = await locateDenoStandalone(
+    bytesHandle(packed, (length) => {
+      readBytes += length;
+    }),
+    packed.length,
+  );
+  expect(probe).toEqual({ status: "absent" });
+  expect(readBytes).toBeLessThan(32 * 1024);
+});
+
+it("keeps searching the same window after a rejected Intel sentinel", async () => {
+  const section = buildDenoSection();
+  const bytes = Buffer.concat([
+    denoIntelTrailer(section),
+    rejectedIntelSentinels(3),
+  ]);
+  const probe = await locateDenoStandalone(bytesHandle(bytes), bytes.length);
+  expect(probe).toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      length: section.length,
+    },
+  });
+});
+
+const intelApp = (entrypoint: string, contents: Buffer): Buffer =>
+  buildDenoSection({
+    metadata: { ...defaultDenoMetadata(), entrypoint_key: entrypoint },
+    vfs: [{ File: { n: entrypoint, o: [0, contents.length], u: true } }],
+    vfsFileData: contents,
+  });
+
+/** An outer app whose asset is an Intel Deno executable, past one search chunk. */
+const nestedIntelApp = (): {
+  readonly outer: Buffer;
+  readonly asset: Buffer;
+} => {
+  const source = Buffer.from("console.log('outer')\n");
+  const asset = denoIntelTrailer(
+    intelApp("inner.ts", Buffer.from("console.log('inner')\n")),
+  );
+  const padding = Buffer.alloc(2 * 1024 * 1024);
+  const outer = buildDenoSection({
+    metadata: { ...defaultDenoMetadata(), entrypoint_key: "outer.ts" },
+    vfs: [
+      { File: { n: "outer.ts", o: [0, source.length], u: true } },
+      {
+        File: {
+          n: "padding.bin",
+          o: [source.length, padding.length],
+          u: false,
+        },
+      },
+      {
+        File: {
+          n: "inner-app",
+          o: [source.length + padding.length, asset.length],
+          u: false,
+        },
+      },
+    ],
+    vfsFileData: Buffer.concat([source, padding, asset]),
+  });
+  return { outer, asset };
+};
+
+it("reads the enclosing app of an Intel Deno executable embedded as an asset", async () => {
+  const { outer, asset } = nestedIntelApp();
+  const bytes = denoIntelTrailer(outer);
+  const snapshot = await inventoryOf("nested", bytes);
+  expect(snapshot.manifest.root_format).toBe("deno-standalone");
+  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
+  expect(root?.format_metadata).toMatchObject({
+    embedding: "mach-o-intel-trailer",
+    section_offset: bytes.length - outer.length,
+    section_length: outer.length,
+    entrypoint_key: "outer.ts",
+  });
+  const paths = snapshot.occurrences.map((row) => row.logical_path);
+  expect(paths).toEqual(expect.arrayContaining(["outer.ts", "inner-app"]));
+  expect(paths).not.toContain("inner.ts");
+  const member = snapshot.occurrences.find(
+    (row) => row.logical_path === "inner-app",
+  );
+  expect(
+    snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+      ?.sha256,
+  ).toBe(createHash("sha256").update(asset).digest("hex"));
+});
+
+it("keeps a native Intel host whose __DATA segment stores an Intel Deno executable", async () => {
+  const asset = denoIntelTrailer(
+    intelApp("inner.ts", Buffer.from("console.log('inner')\n")),
+  );
+  const bytes = machOWithSegment("__DATA", asset);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+  const snapshot = await inventoryOf("host", bytes);
+  expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
+});
+
+it("ignores embedded Intel sentinels in out-of-order overlapping segments and accepts a trailer at their end", async () => {
+  const section = buildDenoSection();
+  const trailer = denoIntelTrailer(section).subarray(-section.length - 24);
+  const segmentSize = 72;
+  const header = Buffer.alloc(32 + 3 * segmentSize);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(0x01000007, 4);
+  header.writeUInt32LE(2, 12);
+  header.writeUInt32LE(3, 16);
+  header.writeUInt32LE(3 * segmentSize, 20);
+  const start = header.length;
+  const middle = start + trailer.length;
+  const end = middle + trailer.length;
+  const segments = [
+    [middle, end],
+    [start, middle],
+    [start + 1, middle + 1],
+  ] as const;
+  for (const [index, [from, to]] of segments.entries()) {
+    const at = 32 + index * segmentSize;
+    header.writeUInt32LE(0x19, at);
+    header.writeUInt32LE(segmentSize, at + 4);
+    header.write("__DATA", at + 8, "ascii");
+    header.writeBigUInt64LE(BigInt(to - from), at + 32);
+    header.writeBigUInt64LE(BigInt(from), at + 40);
+    header.writeBigUInt64LE(BigInt(to - from), at + 48);
+  }
+  const native = Buffer.concat([header, trailer, trailer]);
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+  const application = Buffer.concat([native, trailer]);
+  await expect(
+    locateDenoStandalone(bytesHandle(application), application.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: { offset: end + 24, length: section.length },
+  });
+});
+
+it("reads an Intel trailer that __LINKEDIT extends over", async () => {
+  const section = buildDenoSection();
+  const trailer = denoIntelTrailer(section);
+  const bytes = machOWithSegment(
+    "__LINKEDIT",
+    trailer.subarray(trailer.length - section.length - 24),
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      offset: bytes.length - section.length,
+      length: section.length,
+    },
+  });
+});
+
+it("treats a nested Intel sentinel as asset data when its length overruns the app", async () => {
+  const inner = intelApp("inner.ts", Buffer.from("inner\n"));
+  const asset = denoIntelTrailer(inner);
+  asset.writeBigUInt64LE(
+    BigInt(inner.length + 64),
+    asset.length - inner.length - 8,
+  );
+  const outer = buildDenoSection({
+    vfs: [{ File: { n: "main.ts", o: [0, asset.length], u: false } }],
+    vfsFileData: asset,
+  });
+  const bytes = Buffer.concat([denoIntelTrailer(outer), Buffer.alloc(128)]);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: { length: outer.length },
+  });
+});
+
+it("reads a valid app whose earlier Intel asset overruns past a later one", async () => {
+  const damagedApp = intelApp("damaged.ts", Buffer.from("damaged\n"));
+  const damaged = denoIntelTrailer(damagedApp);
+  damaged.writeBigUInt64LE(
+    BigInt(damagedApp.length + 4 * 1024 * 1024),
+    damaged.length - damagedApp.length - 8,
+  );
+  const valid = denoIntelTrailer(intelApp("valid.ts", Buffer.from("valid\n")));
+  const outer = buildDenoSection({
+    vfs: [
+      { File: { n: "damaged-app", o: [0, damaged.length], u: false } },
+      {
+        File: {
+          n: "valid-app",
+          o: [damaged.length, valid.length],
+          u: false,
+        },
+      },
+    ],
+    vfsFileData: Buffer.concat([damaged, valid]),
+  });
+  const bytes = denoIntelTrailer(outer);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      offset: bytes.length - outer.length,
+      length: outer.length,
+    },
+  });
+});
+
+it("fails closed when the enclosing Intel trailer is truncated around a nested app", async () => {
+  const { outer } = nestedIntelApp();
+  const bytes = denoIntelTrailer(outer).subarray(0, -1);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+const intelTrailerRecord = (section: Buffer): Buffer => {
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64LE(BigInt(section.length));
+  return Buffer.concat([
+    Buffer.from("<~sui-data~>", "latin1"),
+    Buffer.from([0xef, 0xbe, 0xad, 0xde]),
+    length,
+    section,
+  ]);
+};
+
+// The search starts at EOF and walks in 1 MiB chunks.
+const intelTrailerChunkEdge = 2 * 1024 * 1024;
+const intelTrailerChunkSize = 1024 * 1024;
+
+it.each([
+  ["before the seam window", -25],
+  ["at the start of the seam window", -24],
+  ["with the length word split", -23],
+  ["with the sentinel ending at the chunk edge", -16],
+  ["with the sentinel split", -15],
+  ["with one sentinel byte in the older chunk", -1],
+  ["at the start of the newer chunk", 0],
+  ["inside the newer chunk", 1],
+])("recognizes the Intel trailer %s exactly once", async (_label, delta) => {
+  const image = denoMachO([], { architecture: "x64" });
+  const section = buildDenoSection();
+  const trailer = intelTrailerRecord(section);
+  const sentinelOffset = intelTrailerChunkEdge + delta;
+  const bytes = Buffer.alloc(intelTrailerChunkEdge + intelTrailerChunkSize);
+  image.copy(bytes);
+  trailer.copy(bytes, sentinelOffset);
+  // The valid trailer and 63 decoys use the entire candidate allowance.
+  const decoys = rejectedIntelSentinels(63);
+  decoys.copy(bytes, bytes.length - decoys.length);
+
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({
+    status: "present",
+    location: {
+      carrier: "mach-o",
+      embedding: "mach-o-intel-trailer",
+      offset: sentinelOffset + 24,
+      length: section.length,
+    },
+  });
+});
+
+it("counts the seam trailer before older candidates in the same chunk", async () => {
+  const image = denoMachO([], { architecture: "x64" });
+  const bytes = Buffer.alloc(intelTrailerChunkEdge + intelTrailerChunkSize);
+  image.copy(bytes);
+  const sentinelOffset = intelTrailerChunkEdge - 24;
+  const older = rejectedIntelSentinels(64);
+  older.copy(bytes, sentinelOffset - older.length);
+  intelTrailerRecord(buildDenoSection()).copy(bytes, sentinelOffset);
+
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "limit", boundary: "capacity" },
+  });
+});
+
+const sideBySideIntelTrailers = (second: Buffer): Buffer =>
+  Buffer.concat([
+    denoIntelTrailer(intelApp("main.ts", Buffer.from("first\n"))),
+    intelTrailerRecord(second),
+  ]);
+
+it("fails closed on side-by-side Intel trailers with different bytes", async () => {
+  const bytes = sideBySideIntelTrailers(
+    intelApp("main.ts", Buffer.from("other\n")),
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+it("accepts side-by-side Intel trailers with identical bytes", async () => {
+  const second = intelApp("main.ts", Buffer.from("first\n"));
+  const bytes = sideBySideIntelTrailers(second);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      embedding: "mach-o-intel-trailer",
+      length: second.length,
+    },
+  });
+});
+
+it("refuses a confirmed Intel trailer when the allowance ends the outer search", async () => {
+  const bytes = Buffer.concat([
+    denoMachO([], { architecture: "x64" }),
+    rejectedIntelSentinels(64),
+    intelTrailerRecord(buildDenoSection()),
+  ]);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "limit",
+      boundary: "capacity",
+    },
+  });
+});
+
+it("locates a PE resource past a distant DOS stub using positional reads", async () => {
+  const section = buildDenoSection();
+  const { bytes: image } = peResourceFixture(
+    true,
+    [{ type: 10, name: "D3N0L4ND", language: 0, payload: section }],
+    65536,
+    4,
+    0x20080,
+  );
+  const handle = bytesHandle(image, (length) => {
+    if (length > 512) throw new Error("Read exceeded the header record bounds");
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      carrier: "pe",
+      embedding: "pe-resource",
+      length: section.length,
+    },
+  });
+});
+
+it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => {
+  const section = buildDenoSection();
+  const image = denoPe([section]);
+  const fileSize = MAX_INSPECT_PE_FILE_BYTES + 4096;
+  const probe = await locateDenoStandalone(
+    bytesHandle(image, (length) => {
+      if (length > 2 * 1024 * 1024)
+        throw new Error(`read of ${String(length)} bytes exceeds 2 MiB`);
+    }),
+    fileSize,
+  );
+  expect(probe).toMatchObject({
+    status: "present",
+    location: {
+      carrier: "pe",
+      embedding: "pe-resource",
+      length: section.length,
+    },
+  });
+});
+
+it("keeps a PE resource read failure when the caller aborts with that same error", async () => {
+  const image = denoPe([buildDenoSection()]);
+  const controller = new AbortController();
+  const failure = Object.assign(new Error("PE resource read failed"), {
+    code: "EIO",
+  });
+  const handle = bytesHandle(image, (length) => {
+    if (length === 16) {
+      controller.abort(failure);
+      throw failure;
+    }
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length, controller.signal),
+  ).rejects.toBe(failure);
+});
+
+it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_RCDATA branch", async () => {
+  const fixture = peResourceFixture(
+    true,
+    [
+      { type: 10, name: "D3N0L4ND", language: 1, payload: buildDenoSection() },
+      { type: 11, name: "OTHER", language: 1, payload: Buffer.from("x") },
+    ],
+    1024 * 1024,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
+  ).resolves.toMatchObject({ status: "present", location: { carrier: "pe" } });
+  // Turn the second root type entry into a duplicate RT_RCDATA branch whose
+  // names directory lies outside the resource tree.
+  const duplicate = 0x400 + 16 + 8;
+  fixture.bytes.writeUInt32LE(10, duplicate);
+  fixture.bytes.writeUInt32LE(0xffff_fff0, duplicate + 4);
+  await expect(
+    locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+it("fails closed when a readable D3N0L4ND resource sits beside a non-directory RT_RCDATA branch", async () => {
+  const fixture = peResourceFixture(
+    true,
+    [
+      { type: 10, name: "D3N0L4ND", language: 1, payload: buildDenoSection() },
+      { type: 11, name: "OTHER", language: 1, payload: Buffer.from("x") },
+    ],
+    1024 * 1024,
+  );
+  // Turn the second root type entry into a duplicate RT_RCDATA branch whose
+  // target is marked as data rather than a names directory.
+  const duplicate = 0x400 + 16 + 8;
+  fixture.bytes.writeUInt32LE(10, duplicate);
+  fixture.bytes.writeUInt32LE(
+    fixture.bytes.readUInt32LE(duplicate + 4) & 0x7fff_ffff,
+    duplicate + 4,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
+  const fixture = peResourceFixture(true, [
+    { type: 10, name: "D3N0L4ND", language: 1, payload: Buffer.from("x") },
+  ]);
+  fixture.bytes.writeUInt32LE(0xffff_fff0, fixture.dataOffsets[0]!);
+  await expect(
+    locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+it("rejects a universal Deno image whose sibling slice cannot be read", async () => {
+  const armImage = denoMachO(sectionFor(Buffer.from("arm\n")));
+  // Pad the arm64 slice so the x64 slice starts on its 2^12 alignment.
+  const arm = Buffer.concat([
+    armImage,
+    Buffer.alloc(4096 - (armImage.length % 4096)),
+  ]);
+  const intel = denoIntelTrailer(sectionFor(Buffer.from("intel\n")));
+  const universal = (x64: Buffer): Buffer => {
+    const bytes = denoUniversal([arm, x64]);
+    bytes.writeUInt32BE(0x01000007, 8 + 20);
+    bytes.writeUInt32BE(3, 8 + 24);
+    return bytes;
+  };
+  const intact = universal(intel);
+  await expect(
+    locateDenoStandalone(bytesHandle(intact), intact.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("declared more than once"),
+    },
+  });
+  // Only the x64 sizeofcmds changes, so its load commands overrun the slice.
+  const overrun = Buffer.from(intel);
+  overrun.writeUInt32LE(overrun.length, 20);
+  const damaged = universal(overrun);
+  await expect(
+    locateDenoStandalone(bytesHandle(damaged), damaged.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("slice 1 cannot be read"),
+    },
+  });
+  // With no Deno section confirmed, the unreadable slice stays native.
+  const native = denoUniversal([denoMachO([]), overrun]);
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
+it("fails closed when the d3n0l4nd section is zero-fill", async () => {
+  // The 64-bit fixture's first section_64 record follows the Mach-O header
+  // (32 bytes) and the segment command header (72 bytes); flags sit at 64.
+  const flagsAt = 32 + 72 + 64;
+  for (const type of [0x1, 0xc, 0x12]) {
+    const image = denoMachO(buildDenoSection());
+    image.writeUInt32LE(type, flagsAt);
+    await expect(
+      locateDenoStandalone(bytesHandle(image), image.length),
+    ).resolves.toMatchObject({
+      status: "present",
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining("zero-fill"),
+      },
+    });
+  }
+});
+
+it("keeps a Deno helper inside a PyInstaller archive from claiming the outer image", async () => {
+  const archive = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 311,
+    members: [
+      {
+        name: "helper",
+        typeCode: "b",
+        payload: denoIntelTrailer(),
+        compress: false,
+      },
+    ],
+  });
+  const image = Buffer.concat([
+    denoMachO([], { architecture: "x64" }),
+    archive.subarray(64),
+  ]);
+  const result = await inventoryOf("outer", image);
+  expect(result.manifest.root_format).toBe("pyinstaller");
+});
+
+it("rejects a confirmed Deno section whose parent segment exceeds the image", async () => {
+  const image = denoMachO(buildDenoSection());
+  for (const field of [32 + 32, 32 + 48])
+    image.writeBigUInt64LE(image.readBigUInt64LE(field) + 1n, field);
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("segment"),
+    },
+  });
+});
+
+it("rejects a Deno section outside its segment virtual extent", async () => {
+  const image = denoMachO(buildDenoSection());
+  image.writeBigUInt64LE(1n, 32 + 72 + 32);
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("virtual extent"),
+    },
+  });
+});
+
+it("fails closed when the d3n0l4nd section exceeds its segment's file extent", async () => {
+  // The 64-bit fixture's segment command follows the Mach-O header (32
+  // bytes); its fileoff sits at 40 and its filesize at 48.
+  const fileOffsetAt = 32 + 40;
+  const fileSizeAt = 32 + 48;
+  const shrunk = denoMachO(buildDenoSection());
+  shrunk.writeBigUInt64LE(shrunk.readBigUInt64LE(fileSizeAt) - 1n, fileSizeAt);
+  const shifted = denoMachO(buildDenoSection());
+  shifted.writeBigUInt64LE(
+    shifted.readBigUInt64LE(fileOffsetAt) + 1n,
+    fileOffsetAt,
+  );
+  for (const image of [shrunk, shifted])
+    await expect(
+      locateDenoStandalone(bytesHandle(image), image.length),
+    ).resolves.toMatchObject({
+      status: "present",
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining("segment's file extent"),
+      },
+    });
+});
+
+it("leaves a damaged __SUI segment without a d3n0l4nd section to native inventory", async () => {
+  // The 64-bit fixture's first section name sits after the Mach-O header
+  // (32 bytes) and the segment command header (72 bytes).
+  const sectionNameAt = 32 + 72;
+  const named = (name: string): Buffer => {
+    const image = denoMachO(buildDenoSection());
+    image.fill(0, sectionNameAt, sectionNameAt + 16);
+    image.write(name, sectionNameAt, "latin1");
+    // ncmds declares a second command that the table does not hold.
+    image.writeUInt32LE(2, 16);
+    return image;
+  };
+  const other = named("notdeno");
+  await expect(
+    locateDenoStandalone(bytesHandle(other), other.length),
+  ).resolves.toEqual({ status: "absent" });
+  const snapshot = await inventoryOf("notdeno", other);
+  expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
+  // A confirmed d3n0l4nd section beside the same damage still fails closed.
+  const deno = named("d3n0l4nd");
+  await expect(
+    locateDenoStandalone(bytesHandle(deno), deno.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("load commands are truncated"),
+    },
+  });
+});
+
+it("rejects a universal Deno image whose sibling holds an unparseable segment command", async () => {
+  const armImage = denoMachO(sectionFor(Buffer.from("arm\n")));
+  // sizeofcmds and the segment's cmdsize both say 8, so the table frames
+  // but the LC_SEGMENT_64 command cannot be parsed.
+  armImage.writeUInt32LE(8, 20);
+  armImage.writeUInt32LE(8, 32 + 4);
+  const arm = Buffer.concat([
+    armImage,
+    Buffer.alloc(4096 - (armImage.length % 4096)),
+  ]);
+  const intel = denoIntelTrailer(sectionFor(Buffer.from("intel\n")));
+  const bytes = denoUniversal([arm, intel]);
+  bytes.writeUInt32BE(0x01000007, 8 + 20);
+  bytes.writeUInt32BE(3, 8 + 24);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("slice 0"),
+    },
+  });
+  // Without a confirmed Deno sibling the same slice stays native.
+  const native = denoUniversal([arm, denoMachO([], { architecture: "x64" })]);
+  native.writeUInt32BE(0x01000007, 8 + 20);
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
+it("fails closed on a confirmed SUI note whose descriptor size exceeds its table", async () => {
+  const oversized = (name: string): Buffer => {
+    const bytes = denoElf();
+    const owner = bytes.indexOf(Buffer.from("SUI\0", "latin1"));
+    // descsz is the second word of the 12-byte note header before the owner.
+    bytes.writeUInt32LE(0x7fff_fff0, owner - 8);
+    bytes.write(name, owner + 4 + 2, "latin1");
+    return bytes;
+  };
+  const deno = oversized("d3n0l4nd");
+  await expect(probeElf(deno)).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringMatching(/exceeds its table/iu),
+    },
+  });
+  // A SUI note naming another section keeps the damage native.
+  const other = oversized("notdeno!");
+  await expect(probeElf(other)).resolves.toEqual({ status: "absent" });
+});
+
+it("fails closed on a truncated __SUI section record that names d3n0l4nd", async () => {
+  const truncated = (name: string): Buffer => {
+    const image = denoMachO(buildDenoSection());
+    // cmdsize 104 keeps the segment header and both 16-byte section names,
+    // but not the rest of the one declared section record.
+    image.writeUInt32LE(104, 20);
+    image.writeUInt32LE(104, 32 + 4);
+    const sectionNameAt = 32 + 72;
+    image.fill(0, sectionNameAt, sectionNameAt + 16);
+    image.write(name, sectionNameAt, "latin1");
+    return image;
+  };
+  const deno = truncated("d3n0l4nd");
+  await expect(
+    locateDenoStandalone(bytesHandle(deno), deno.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("d3n0l4nd section is truncated"),
+    },
+  });
+  const other = truncated("notdeno");
+  await expect(
+    locateDenoStandalone(bytesHandle(other), other.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
+it("fails closed on nonzero bytes after the last note in a SUI note table", async () => {
+  const sui = suiNote();
+  const withTail = (notes: Buffer, tail: Buffer): Buffer =>
+    elfNoteFixture({
+      notes: Buffer.concat([notes, tail]),
+      ownership: "program",
+      type: 2,
+    });
+  // Eleven bytes are too few for another note header.
+  const dirty = withTail(sui, Buffer.alloc(11, 0xff));
+  await expect(probeElf(dirty)).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringMatching(/trailing non-zero bytes/iu),
+    },
+  });
+  const padded = withTail(sui, Buffer.alloc(11));
+  await expect(probeElf(padded)).resolves.toMatchObject({
+    status: "present",
+    location: { embedding: "elf-note" },
+  });
+  // Without a SUI note the same tail leaves the ELF to native inventory.
+  const native = withTail(
+    elfNote("GNU", 1, Buffer.from("build-id")),
+    Buffer.alloc(11, 0xff),
+  );
+  await expect(probeElf(native)).resolves.toEqual({ status: "absent" });
+});
+
+it("rejects a universal Deno image whose FAT row misstates a slice's CPU", async () => {
+  const armImage = denoMachO(sectionFor(Buffer.from("arm\n")));
+  const arm = Buffer.concat([
+    armImage,
+    Buffer.alloc(4096 - (armImage.length % 4096)),
+  ]);
+  const intel = denoIntelTrailer(sectionFor(Buffer.from("intel\n")));
+  // The x64 slice's FAT row keeps the fixture's arm64 CPU type, so only the
+  // slice's own header names x86_64.
+  const bytes = denoUniversal([arm, intel]);
+  bytes.writeUInt32BE(3, 8 + 24);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("disagrees with its Mach-O header"),
+    },
+  });
+});
+
+it("fails closed when the enclosing Intel trailer length is not a safe integer", async () => {
+  const { outer } = nestedIntelApp();
+  const bytes = denoIntelTrailer(outer);
+  // Only the outer length word changes; its d3n0l4nd marker stays readable.
+  bytes.writeBigUInt64LE(2n ** 53n, bytes.length - outer.length - 8);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "malformed",
+      message: expect.stringContaining("trailer is truncated"),
+    },
+  });
+});
+
+it.each([0n, 7n])(
+  "fails closed when the enclosing Intel trailer length is %s",
+  async (claimed) => {
+    const { outer } = nestedIntelApp();
+    const bytes = denoIntelTrailer(outer);
+    // Only the outer length word changes; its d3n0l4nd marker stays readable.
+    bytes.writeBigUInt64LE(claimed, bytes.length - outer.length - 8);
+    await expect(
+      locateDenoStandalone(bytesHandle(bytes), bytes.length),
+    ).resolves.toMatchObject({
+      status: "present",
+      failure: {
+        reason: "malformed",
+        message: expect.stringContaining("shorter than its marker"),
+      },
+    });
+  },
+);
+
+it("counts short ELF note tables against the note allowance", async () => {
+  // One PT_NOTE program header per distinct one-byte table.
+  const count = MAX_INSPECT_ELF_NOTE_ENTRIES + 1;
+  const phoff = 64;
+  const dataAt = phoff + count * 56;
+  const bytes = Buffer.alloc(dataAt + count);
+  bytes.writeUInt32LE(0x464c457f, 0);
+  bytes[4] = 2;
+  bytes[5] = 1;
+  bytes[6] = 1;
+  bytes.writeUInt16LE(2, 0x10);
+  bytes.writeUInt16LE(62, 0x12);
+  bytes.writeUInt32LE(1, 0x14);
+  bytes.writeBigUInt64LE(BigInt(phoff), 0x20);
+  bytes.writeUInt16LE(64, 0x34);
+  bytes.writeUInt16LE(56, 0x36);
+  bytes.writeUInt16LE(count, 0x38);
+  for (let index = 0; index < count; index += 1) {
+    const at = phoff + index * 56;
+    bytes.writeUInt32LE(4, at);
+    bytes.writeBigUInt64LE(BigInt(dataAt + index), at + 8);
+    bytes.writeBigUInt64LE(1n, at + 32);
+    bytes.writeBigUInt64LE(1n, at + 48);
+  }
+  let reads = 0;
+  await expect(
+    locateDenoStandalone(
+      bytesHandle(bytes, () => {
+        reads += 1;
+      }),
+      bytes.length,
+    ),
+  ).resolves.toEqual({ status: "absent" });
+  // The header reads are fixed; no table is read once the allowance is spent.
+  expect(reads).toBeLessThan(count);
+});
+
+it("does not promote a Deno helper stored in an unrelated SUI section", async () => {
+  const image = denoMachO(denoIntelTrailer(), { architecture: "x64" });
+  image.fill(0, 32 + 72, 32 + 72 + 16);
+  image.write("notdeno", 32 + 72, "latin1");
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
+it("rejects a confirmed Deno section when header and segment widths disagree", async () => {
+  const original = denoMachO(buildDenoSection());
+  const image = Buffer.concat([
+    original.subarray(0, 28),
+    original.subarray(32),
+  ]);
+  image.writeUInt32LE(0xfeedface, 0);
+  image.writeBigUInt64LE(image.readBigUInt64LE(28 + 40) - 4n, 28 + 40);
+  image.writeUInt32LE(image.readUInt32LE(28 + 72 + 48) - 4, 28 + 72 + 48);
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "malformed" },
+  });
+});
+
+async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const value of values) result.push(value);
+  return result;
+}
+
+it.each(["retry", "independent caller", "physical failure"] as const)(
+  "keeps Deno inventory available after failed preparation: %s",
+  async (scenario) => {
+    const path = await writeCarrier(
+      "retry",
+      denoElf(sectionFor(Buffer.from("source"))),
+    );
+    const reader = new DenoStandaloneArtifactReader(path);
+    const controller = new AbortController();
+    const reason = { stop: "first Deno inventory" };
+    const physicalFailure = Object.assign(
+      new Error("Deno preparation read failed"),
+      { code: "EIO" },
+    );
+    const observed = await open(path, "r");
+    const prototype = Object.getPrototypeOf(observed) as FileHandle;
+    const read = prototype.read;
+    const artifactRead = phaseGate();
+    let firstRead = true;
+    const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      ...args: Parameters<typeof read>
+    ) {
+      const result = await read.apply(this, args);
+      if (firstRead) {
+        firstRead = false;
+        await artifactRead.hold();
+        if (scenario === "physical failure") throw physicalFailure;
+      }
+      return result;
+    });
+    const pending: Promise<unknown>[] = [];
+    try {
+      const first = collect(reader.entries(controller.signal));
+      const failure = first.then(
+        () => {
+          throw new Error("Expected cancelled Deno preparation");
+        },
+        (cause: unknown) => cause,
+      );
+      pending.push(failure);
+      await artifactRead.reached(first, "Deno artifact read");
+      const concurrent =
+        scenario === "independent caller"
+          ? collect(reader.entries())
+          : undefined;
+      if (concurrent !== undefined) {
+        pending.push(concurrent);
+        void concurrent.catch(() => undefined);
+      }
+      controller.abort(reason);
+      artifactRead.release();
+      const rejected = await failure;
+      if (scenario === "physical failure")
+        expect(rejected).toMatchObject({ reason: "io" });
+      else {
+        expect(rejected).toMatchObject({ reason: "cancelled" });
+        expect((rejected as Error).cause).toBe(reason);
+      }
+      const entries = await (concurrent ?? collect(reader.entries()));
+      expect(entries.map((entry) => entry.path)).toEqual(["main.ts"]);
+      expect((await buffer(await reader.open(entries[0]!))).toString()).toBe(
+        "source",
+      );
+    } finally {
+      artifactRead.release();
+      await Promise.allSettled(pending);
+      spy.mockRestore();
+      await observed.close();
+      await reader.close();
+    }
+  },
+);
+
+it("does not publish Deno entries from cancelled partial preparation", async () => {
+  const contents = Buffer.from("abc");
+  const path = await writeCarrier(
+    "partial",
+    denoElf(
+      sectionFor(contents, [
+        { File: { n: "a.ts", o: [0, 1], u: true } },
+        { File: { n: "b.ts", o: [1, 1], u: true } },
+        { File: { n: "c.ts", o: [2, 1], u: true } },
+      ]),
+    ),
+  );
+  const reader = new DenoStandaloneArtifactReader(path);
+  const control = new DenoStandaloneArtifactReader(path);
+  const controller = new AbortController();
+  const reason = { stop: "partial Deno inventory" };
+  const expected = await collect(control.entries());
+  const reserve = ArtifactPathRegistry.prototype.reservePath;
+  const spy = vi
+    .spyOn(ArtifactPathRegistry.prototype, "reservePath")
+    .mockImplementation(function (
+      this: ArtifactPathRegistry,
+      ...args: Parameters<typeof reserve>
+    ) {
+      if (args[0] === "b.ts") controller.abort(reason);
+      return reserve.apply(this, args);
+    });
+  try {
+    await expect(
+      collect(reader.entries(controller.signal)),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    spy.mockRestore();
+    await expect(reader.open(expected[0]!)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    expect(
+      (await collect(reader.entries())).map((entry) => entry.path),
+    ).toEqual(["a.ts", "b.ts", "c.ts"]);
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
+it.each(["https://example.test/mod.ts", "\uFEFFhttps://example.test/mod.ts"])(
+  "preserves the length-prefixed remote specifier %j in inventory identity",
+  async (specifier) => {
+    const body = Buffer.from("inert remote bytes");
+    const snapshot = await inventoryOf(
+      "specifier-spelling",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: specifier },
+          specifiers: [{ text: specifier, id: 1 }],
+          remoteModules: [{ specifierId: 1, data: body }],
+        }),
+      ),
+    );
+    const member = snapshot.occurrences.find(
+      (row) =>
+        row.format_metadata?.kind === "deno-standalone-entry" &&
+        row.format_metadata.role === "remote-module",
+    );
+    expect(member).toMatchObject({
+      format_metadata: { source_path: specifier, entry_point: true },
+    });
+    expect(
+      snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+        ?.sha256,
+    ).toBe(createHash("sha256").update(body).digest("hex"));
+  },
+);

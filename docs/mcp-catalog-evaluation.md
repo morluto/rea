@@ -39,6 +39,12 @@ and a 192-task ceiling. Runs are sequential. Unsupported clients, resource stops
 failed startup, missing usage, and unverified cleanup remain failed measurements.
 They do not become zero-cost successes.
 
+Trials disable account apps and plugins explicitly. A fresh `CODEX_HOME` alone
+does not prevent account-connected tools from appearing in the client executor
+catalog. For a deliberate mixed-catalog investigation, run `agent-trial.py` with
+`--include-account-tools`; keep those results separate from REA-only trials.
+The settings receipt records the same feature policy written to Codex config.
+
 Each repetition compares no server, all REA tools, and a client-selected subset
 (`binary_session` by default), in the supported client-code host mode. Alternate
 repetitions reverse ordering. All variants receive the same developer instructions
@@ -57,10 +63,6 @@ invalidate that profile even when the model still emits the expected marker.
 Useful controls:
 
 ```sh
-# Compare full input guidance with the default compact input presentation.
-npm run eval:mcp-catalog -- --model gpt-6.1-sol \
-  --output "$HOME/.cache/rea-catalog-full" --input-profile full --repetitions 3
-
 # Choose exact tool names in the working host mode.
 npm run eval:mcp-catalog -- --model gpt-6.1-sol \
   --output "$HOME/.cache/rea-catalog-selected" --modes client-code \

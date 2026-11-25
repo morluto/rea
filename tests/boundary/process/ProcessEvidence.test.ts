@@ -1,10 +1,15 @@
 import { expect, it } from "vitest";
 
-import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
 import {
+  createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
+} from "../../../src/application/process/ProcessEvidence.js";
+import {
+  buildCaptureResult,
   createRunManifest,
   observeLaunchedExecutable,
   observeSelectedExecutable,
+  POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import {
   accountFullyObservedProcessCapture,
@@ -14,6 +19,7 @@ import { compareProcessCaptures } from "../../../src/domain/process/processCompa
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
+  processScenarioPlanSchema,
   processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
@@ -78,6 +84,7 @@ const captureEvidenceForEnvironmentSecret = async (value: string) => {
     new Date(0),
     new Date(1),
     executableIdentity,
+    { state: "withheld-by-caller" },
   );
   const base = emptyUnverifiedProcessCapture();
   const scenarioManifest = {
@@ -110,6 +117,25 @@ it("does not persist sensitive scripted input in process capture Evidence", () =
   expect(JSON.stringify(manifest)).not.toContain(secret);
   expect(JSON.stringify(evidence.parameters)).not.toContain(secret);
   expect(serialized).not.toContain(secret);
+});
+
+it("does not persist sensitive scripted input in planned Evidence", () => {
+  const secret = "top-secret-planned-input";
+  const scenario = processScenarioSchema.parse({
+    executable: "/bin/echo",
+    working_directory: "/tmp",
+    events: [{ type: "input", at_ms: 0, data: secret, sensitive: true }],
+  });
+  const evidence = createProcessScenarioPlanEvidence(scenario, "darwin");
+
+  expect(JSON.stringify(evidence)).not.toContain(secret);
+  const plan = processScenarioPlanSchema.parse(evidence.normalized_result);
+  expect(plan.scenario.events[0]).toMatchObject({
+    type: "input",
+    data: "",
+    sensitive: true,
+    input_bytes: Buffer.byteLength(secret),
+  });
 });
 
 it("does not treat captures with different redacted inputs as equivalent", () => {
@@ -148,4 +174,63 @@ it("preserves selected local environment and input values", async () => {
     status: "changed",
     terminal: "changed",
   });
+});
+
+it("projects the PTY session-leader SIGHUP limitation onto process capture Evidence", () => {
+  const scenario = processScenarioSchema.parse({
+    executable: "/bin/echo",
+    working_directory: "/tmp",
+  });
+  const base = emptyUnverifiedProcessCapture();
+  const executableSha256 = "0".repeat(64);
+  const scenarioProjection = processScenarioCommitment(
+    scenario,
+    executableSha256,
+  );
+  const comparisonContract = processComparisonContract(scenario);
+  const manifest = {
+    ...base.manifest,
+    platform: "darwin",
+    scenario: scenarioProjection,
+    comparison_contract: comparisonContract,
+    full_scenario_sha256: digestProcessCommitment(scenarioProjection),
+    comparison_contract_sha256: digestProcessCommitment(comparisonContract),
+    executable_sha256: executableSha256,
+    normalization_sha256: digestProcessCommitment(scenario.normalization),
+  };
+  const emptySnapshot = {
+    files: [],
+    truncated: false,
+    completeRoots: [],
+    coverage: base.truncation_details.filesystem_before,
+  };
+  const pending = buildCaptureResult({
+    frames: [],
+    exit: { exitCode: 0, reason: "exited" },
+    samples: [],
+    before: emptySnapshot,
+    after: emptySnapshot,
+    truncationDetails: base.truncation_details,
+    scenario,
+    rootPid: 1,
+    samplingPartial: false,
+    renderedFrames: [],
+    interactions: [],
+    checkpoints: base.filesystem_checkpoints,
+    settlement: {
+      state: base.settlement.state,
+      elapsed_ms: base.settlement.elapsed_ms,
+    },
+    manifest,
+    eventJournal: [],
+  });
+  const capture = parseProcessCapture({
+    ...pending,
+    settlement: base.settlement,
+    cleanup: base.cleanup,
+  });
+  const evidence = createProcessCaptureEvidence(scenario, capture);
+  expect(evidence.limitations).toContain(
+    POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+  );
 });

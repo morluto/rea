@@ -487,10 +487,8 @@ const listenerDataDescriptor = (listener) => {
   return descriptor.get === undefined ? undefined : null;
 };
 
-// A decorator that wraps once's hook wrapper and names it through `.listener`
-// already records through that wrapper. Registering the decorator as is keeps
-// native self-removal working: the once wrapper removes itself by identity, and
-// removeListener matches the decorator through its `.listener`.
+// Only a directly owned wrapper proves dispatch through the hook. A decorator's
+// .listener metadata can name one without calling it; preserve that uncertainty.
 const classifyHookListenerWrapper = (listener) => {
   const visited = new SetConstructor();
   let candidate = listener;
@@ -499,7 +497,8 @@ const classifyHookListenerWrapper = (listener) => {
     hops <= MAX_LISTENER_CHAIN_HOPS && typeof candidate === "function";
     hops += 1
   ) {
-    if (weakMapHas(hookListenerRemovalTargets, candidate)) return "owned";
+    if (weakMapHas(hookListenerRemovalTargets, candidate))
+      return candidate === listener ? "owned" : "unknown";
     if (setHas(visited, candidate)) return "unowned";
     setAdd(visited, candidate);
     const descriptor = listenerDataDescriptor(candidate);
@@ -1196,6 +1195,47 @@ const patchWebContents = (webContents, windowId) => {
   boundaries.patchWindowOpenHandler(webContents, contentsId);
 };
 
+// When another instance holds the app's single-instance lock, Electron has
+// already handed this launch's arguments to that instance, and the launched
+// process is no longer the capture target. Stop the application's calling path
+// and keep the process alive so the provider reads the refusal, fails the
+// capture, and terminates the process it owns.
+let singleInstanceLockRefused = false;
+// Resolves when the lock is refused so the provider can stop actions that
+// wait for a window the stopped path would have opened. The snapshot's
+// `single_instance_lock_refused` remains the fact the provider reports.
+let announceSingleInstanceLockRefusal = () => undefined;
+globalThis.__reaElectronSingleInstanceLockRefusal = new Promise((resolve) => {
+  announceSingleInstanceLockRefusal = () => resolve(true);
+});
+const singleInstanceLockRefusal = new Error(
+  "Another instance holds this application's single-instance lock",
+);
+const patchSingleInstanceLock = (app) => {
+  const request = app?.requestSingleInstanceLock;
+  if (typeof request !== "function") return;
+  app.requestSingleInstanceLock = function requestSingleInstanceLock() {
+    const held = applyFunction(request, this, arguments);
+    if (held !== false) return held;
+    if (!singleInstanceLockRefused) {
+      singleInstanceLockRefused = true;
+      recordRuntime("app-lifecycle", "requestSingleInstanceLock", "blocked", {
+        target: "app",
+        process_type: "main",
+        error: true,
+      });
+      // The stopped path surfaces as an uncaught exception; without a
+      // listener, Electron would show a modal error dialog or exit first.
+      applyFunction(nodeEventEmitterMethods.on ?? process.on, process, [
+        "uncaughtException",
+        () => undefined,
+      ]);
+      announceSingleInstanceLockRefusal();
+    }
+    throw singleInstanceLockRefusal;
+  };
+};
+
 const patchWindows = (app) => {
   if (app === null || app === undefined) return;
   app.on("browser-window-created", (_event, window) => {
@@ -1319,6 +1359,7 @@ try {
   boundaries.patchIpcRenderer(electron.ipcRenderer);
   boundaries.patchContextBridge(electron.contextBridge);
   patchWindows(electron.app);
+  patchSingleInstanceLock(electron.app);
   boundaries.patchUtilityProcess(electron.utilityProcess);
   boundaries.patchShell(electron.shell);
   boundaries.patchSessionManager(electron.session, electron.app);
@@ -1389,4 +1430,5 @@ globalThis.__reaElectronActiveSnapshot = () => ({
   observed_ipc: observedIpc,
   observed_runtime: observedRuntime,
   hook_error: globalThis.__reaElectronActiveHookError === true,
+  single_instance_lock_refused: singleInstanceLockRefused,
 });

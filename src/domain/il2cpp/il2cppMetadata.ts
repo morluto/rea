@@ -1,11 +1,57 @@
 import { z } from "zod";
+import { requirePresence } from "../schemaConstraints.js";
 import { digestSchema } from "../digests.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import type { MachoSliceArchitecture } from "../apple/machoTargetSelection.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { firstDeclaringTypeCycle } from "./il2cppDeclaringTypes.js";
+
+/** The public `binary_architecture` values, in the native reader's spelling. */
+const IL2CPP_BINARY_ARCHITECTURES = ["arm64", "amd64"] as const;
+
+/**
+ * Each public `binary_architecture` value as the shared Mach-O slice
+ * selector it means; `amd64` is the x86_64 family.
+ */
+export const IL2CPP_SLICE_SELECTORS = {
+  arm64: "arm64",
+  amd64: "x86_64",
+} as const satisfies Record<
+  (typeof IL2CPP_BINARY_ARCHITECTURES)[number],
+  MachoSliceArchitecture
+>;
+export type Il2cppBinaryArchitecture = keyof typeof IL2CPP_SLICE_SELECTORS;
+
+/**
+ * Estimated representation bytes admitted for an ELF binary's virtual pointer
+ * index when `max_native_index_bytes` is omitted. The index reserves a fixed
+ * logical charge per distinct relocated address, so this default admits
+ * 524,288 addresses. It is an REA admission policy, not a format limit.
+ */
+export const DEFAULT_IL2CPP_NATIVE_INDEX_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * The per-call control that bounded the ELF virtual pointer index, named by
+ * its contract field; each adapter names the option that sets it. The
+ * accounting is exact safe-integer arithmetic, so the control has no smaller
+ * maximum; host heap remains an independent constraint.
+ */
+export const il2cppNativeIndexLimit = (
+  effectiveBytes: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_native_index_bytes",
+  effective_value: effectiveBytes,
+  unit: "bytes",
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
+  applies_at: "next_call",
+});
 
 /** Unsigned little-endian signature observed at file offset zero. */
 export const IL2CPP_METADATA_MAGIC = 0xfab11baf;
@@ -89,34 +135,63 @@ const optionalIndex = z.number().int().min(-1);
 const indexWidth = z.union([z.literal(1), z.literal(2), z.literal(4)]);
 
 /** One explicit local file; detail selects delivery, never decoding coverage. */
-export const inspectIl2cppMetadataInputSchema = z.strictObject({
-  path: absoluteLocalPathStringSchema.describe(
-    "Absolute filesystem path to a Unity IL2CPP global-metadata.dat file",
-  ),
-  detail: z
-    .enum(["complete", "summary"])
-    .default("summary")
-    .describe(
-      "summary (default) retains complete Evidence and returns identity and collection counts; complete returns every image, type, method, member, parameter and string-literal row inline",
+export const inspectIl2cppMetadataInputSchema = requirePresence(
+  z.strictObject({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute filesystem path to a Unity IL2CPP global-metadata.dat file",
     ),
-  binary_path: absoluteLocalPathStringSchema
-    .optional()
-    .describe(
-      "Absolute path to the caller-selected matching 64-bit IL2CPP binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so); static reading, never executed",
-    ),
-  binary_architecture: z
-    .enum(["arm64", "amd64"])
-    .optional()
-    .describe(
-      "Slice to read from a universal Mach-O binary_path; required for universal binaries and rejected otherwise",
-    ),
-  generic_instances: z
-    .boolean()
-    .optional()
-    .describe(
-      "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
-    ),
-});
+    detail: z
+      .enum(["complete", "summary"])
+      .default("summary")
+      .describe(
+        "summary (default) retains complete Evidence and returns identity and collection counts; complete returns every image, type, method, member, parameter and string-literal row inline",
+      ),
+    binary_path: absoluteLocalPathStringSchema
+      .optional()
+      .describe(
+        "Absolute path to the caller-selected matching 64-bit IL2CPP binary (Mach-O GameAssembly.dylib, PE GameAssembly.dll or ELF libil2cpp.so); static reading, never executed",
+      ),
+    binary_architecture: z
+      .enum(IL2CPP_BINARY_ARCHITECTURES)
+      .optional()
+      .describe(
+        "Slice to read from a universal Mach-O binary_path; required for universal binaries and rejected otherwise",
+      ),
+    generic_instances: z
+      .boolean()
+      .optional()
+      .describe(
+        "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
+      ),
+    max_native_index_bytes: z
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional()
+      .describe(
+        `Estimated bytes admitted for an ELF binary_path's relocated-pointer index, charged per distinct relocated address; omitted means ${String(DEFAULT_IL2CPP_NATIVE_INDEX_BYTES)} (1 GiB). Raise it on the next call when linking stops at this allowance; no restart. Host memory and the binary file allowance stay independent. Needs binary_path`,
+      ),
+  }),
+  [
+    {
+      when: "binary_architecture",
+      requires: "binary_path",
+      message: "binary_architecture selects a slice of binary_path.",
+    },
+    {
+      when: "generic_instances",
+      equals: true,
+      requires: "binary_path",
+      message: "generic_instances links generic methods in binary_path.",
+    },
+    {
+      when: "max_native_index_bytes",
+      requires: "binary_path",
+      message:
+        "max_native_index_bytes bounds the pointer index of binary_path.",
+    },
+  ],
+);
 
 export type IL2cppMetadataSectionName = z.infer<
   typeof il2cppMetadataSectionSchema

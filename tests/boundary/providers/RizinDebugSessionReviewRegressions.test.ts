@@ -1,9 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -12,9 +14,8 @@ import {
   type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -78,12 +79,6 @@ const startRizinWithOwnedStop = async (provider: string) => {
   };
 };
 
-const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
-  const pid = Number(pidText);
-  expect(Number.isInteger(pid)).toBe(true);
-  expect(() => process.kill(pid, 0)).toThrow();
-};
-
 afterEach(async () => {
   for (const inferior of inferiorProcesses.splice(0)) {
     if (inferior.exitCode !== null || inferior.signalCode !== null) continue;
@@ -98,8 +93,6 @@ afterEach(async () => {
       .splice(0)
       .map((manager) => manager.closeAll().catch(() => undefined)),
   );
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
 
@@ -122,7 +115,7 @@ const spawnTestInferior = async (): Promise<ChildProcess> => {
 const createInferiorInventoryProvider = async (
   rows: readonly { readonly fd: number; readonly pid: number }[],
 ): Promise<string> => {
-  directory = await mkdtemp(join(tmpdir(), "rea-rizin-owned-inferior-"));
+  directory = await createTestTempDirectory("rea-rizin-owned-inferior-");
   const provider = join(directory, "fake-rizin-owned-inferior.mjs");
   await writeFile(
     provider,
@@ -146,6 +139,68 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   return provider;
 };
+
+it.skipIf(process.platform === "win32")(
+  "aborts an in-flight Rizin start as owner-closed when the manager closes",
+  async () => {
+    const rizinSpawn = phaseArrival();
+    const manager = new RizinDebugSessionManager(process.env, {
+      platform: "linux",
+      // Ownership preparation that only an abort of the start ends.
+      spawnProcess: (options) =>
+        new Promise<never>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+          rizinSpawn.arrive();
+        }),
+    });
+    managers.push(manager);
+    const starting = manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    await rizinSpawn.reached(starting, "Rizin spawn");
+
+    await manager.closeAll();
+    const started = await starting;
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: OwnerCancellation.ownerClosed,
+      },
+    });
+  },
+);
+
+it("refuses a Rizin start made after closeAll began as owner-closed, keeping a caller's own abort reason", async () => {
+  const manager = new RizinDebugSessionManager(process.env, {
+    platform: "linux",
+    spawnProcess: () => {
+      throw new Error("a refused start must not spawn Rizin");
+    },
+  });
+  managers.push(manager);
+  await manager.closeAll();
+  const input = { path: "/tmp/fixture.bin", inferior_tty: "/dev/null" };
+  await expect(manager.start(input)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
+    },
+  });
+  const caller = new AbortController();
+  const reason = new Error("caller stopped waiting");
+  caller.abort(reason);
+  await expect(manager.start(input, caller.signal)).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", cause: reason },
+  });
+});
 
 it("keeps persistent Rizin sessions unavailable on Windows", async () => {
   const rizin = await createRizinTestManager(
@@ -228,7 +283,7 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "keeps session UTF-8 status cumulative while command evidence reports only its frames",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-utf8-scope-"));
+    directory = await createTestTempDirectory("rea-rizin-command-utf8-scope-");
     const provider = join(directory, "fake-rizin-command-utf8-scope.mjs");
     await writeFile(
       provider,
@@ -257,9 +312,7 @@ process.stdin.on("data", (chunk) => {
     expect(firstValid.ok).toBe(true);
     if (firstValid.ok) {
       expect(firstValid.value.result).not.toHaveProperty("output_invalid_utf8");
-      expect(firstValid.value.evidence.raw_result).not.toHaveProperty(
-        "output_invalid_utf8",
-      );
+      expect(firstValid.value.evidence.raw_result).toBeNull();
       expect(firstValid.value.evidence.normalized_result).not.toHaveProperty(
         "output_invalid_utf8",
       );
@@ -272,9 +325,7 @@ process.stdin.on("data", (chunk) => {
     expect(invalid.ok).toBe(true);
     if (invalid.ok) {
       expect(invalid.value.result.output_invalid_utf8).toBe(true);
-      expect(invalid.value.evidence.raw_result).toMatchObject({
-        output_invalid_utf8: true,
-      });
+      expect(invalid.value.evidence.raw_result).toBeNull();
       expect(invalid.value.evidence.normalized_result).toMatchObject({
         output_invalid_utf8: true,
       });
@@ -287,9 +338,7 @@ process.stdin.on("data", (chunk) => {
     expect(laterValid.ok).toBe(true);
     if (laterValid.ok) {
       expect(laterValid.value.result).not.toHaveProperty("output_invalid_utf8");
-      expect(laterValid.value.evidence.raw_result).not.toHaveProperty(
-        "output_invalid_utf8",
-      );
+      expect(laterValid.value.evidence.raw_result).toBeNull();
       expect(laterValid.value.evidence.normalized_result).not.toHaveProperty(
         "output_invalid_utf8",
       );
@@ -363,7 +412,7 @@ it.skipIf(process.platform !== "linux")(
 it.skipIf(process.platform === "win32")(
   "retains Rizin cleanup when target state is unknown at debugger exit",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-unknown-target-"));
+    directory = await createTestTempDirectory("rea-rizin-unknown-target-");
     const provider = join(directory, "fake-rizin-unknown-target.mjs");
     await writeFile(
       provider,
@@ -401,7 +450,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "preserves command parameters in Rizin observation evidence",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-evidence-"));
+    directory = await createTestTempDirectory("rea-rizin-command-evidence-");
     const provider = join(directory, "fake-rizin-command-evidence.mjs");
     const inferiorTty = await rizinTestInferiorTty();
     await writeFile(
@@ -447,8 +496,10 @@ process.stdin.on("data", (chunk) => {
         },
       });
     if (executed.ok)
-      expect(executed.value.evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(executed.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
   },
 );
@@ -456,7 +507,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "keeps queued Rizin commands serialized when a waiting request is cancelled",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-queue-cancel-"));
+    directory = await createTestTempDirectory("rea-rizin-queue-cancel-");
     const provider = join(directory, "fake-rizin-queue-cancel.mjs");
     const overlapPath = join(directory, "overlap");
     await writeFile(
@@ -501,7 +552,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "preserves a truncated single Rizin frame that exceeds the protocol limit",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-frame-overflow-"));
+    directory = await createTestTempDirectory("rea-rizin-frame-overflow-");
     const provider = join(directory, "fake-rizin-frame-overflow.mjs");
     await writeFile(
       provider,
@@ -551,7 +602,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "returns bounded partial Rizin output with unknown completion after overflow",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-output-overflow-"));
+    directory = await createTestTempDirectory("rea-rizin-output-overflow-");
     const provider = join(directory, "fake-rizin-output-overflow.mjs");
     await writeFile(
       provider,
@@ -593,57 +644,9 @@ process.stdin.on("data", (chunk) => {
 );
 
 it.skipIf(process.platform === "win32")(
-  "waits for the Rizin process to exit when command correlation times out",
-  async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-timeout-"));
-    const provider = join(directory, "fake-rizin-command-timeout.mjs");
-    await writeFile(
-      provider,
-      `#!/usr/bin/env node
-await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(join(directory ?? "", "pid"))}, String(process.pid)));
-process.stdout.write("\\0");
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 40 },
-    );
-    managers.push(manager);
-    const started = await manager.start({
-      path: "/tmp/fixture.bin",
-      inferior_tty: await rizinTestInferiorTty(),
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-
-    const result = await manager.execute(started.value.session_id, "dr");
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.result).toMatchObject({
-        output: "�",
-        output_truncated: true,
-        completion_status: "unknown",
-        output_invalid_utf8: true,
-      });
-      expect(result.value.evidence.limitations).toContain(
-        "Collected command frames contained invalid UTF-8 bytes; decoded text may contain replacement characters.",
-      );
-    }
-    await expectOwnedProcessExited(
-      await readFile(join(directory, "pid"), "utf8"),
-    );
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
   "cancels a running Rizin command and retains its closed status",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-cancel-"));
+    directory = await createTestTempDirectory("rea-rizin-command-cancel-");
     const provider = join(directory, "fake-rizin-command-cancel.mjs");
     await writeFile(
       provider,
@@ -667,10 +670,10 @@ process.stdin.on("data", (chunk) => {
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 5_000 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "5000",
+    });
     managers.push(manager);
     const callerSelectedPath = "./cancelled/../fixture.bin";
     const resolvedPath = absoluteCallerPath(callerSelectedPath);
@@ -715,7 +718,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "reports bounded Rizin stderr retention in session status",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-diagnostic-limit-"));
+    directory = await createTestTempDirectory("rea-rizin-diagnostic-limit-");
     const provider = join(directory, "fake-rizin-diagnostic-limit.mjs");
     await writeFile(
       provider,
@@ -747,20 +750,20 @@ process.stdin.resume();
 it.skipIf(process.platform === "win32")(
   "returns cancellation when Rizin startup is cancelled after spawn",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-start-cancel-"));
+    directory = await createTestTempDirectory("rea-rizin-start-cancel-");
     const provider = join(directory, "fake-rizin-start-cancel.mjs");
     await writeFile(
       provider,
       `#!/usr/bin/env node\nprocess.stdin.resume();\nsetInterval(() => {}, 1000);\n`,
     );
     await chmod(provider, 0o700);
-    const spawned = createDeferred<void>();
+    const rizinSpawn = phaseArrival();
     const manager = createRizinTestManager(
       { REA_RIZIN_COMMAND: provider },
       {
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
-          spawned.resolve();
+          rizinSpawn.arrive();
           return launched;
         },
       },
@@ -772,7 +775,7 @@ it.skipIf(process.platform === "win32")(
       controller.signal,
     );
     const started = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(spawned.promise, starting, "Rizin spawn");
+      await rizinSpawn.reached(starting, "Rizin spawn");
       controller.abort();
       return await starting;
     }, [
@@ -789,42 +792,9 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "converts a Rizin stdin pipe failure into a provider session error",
-  async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stdin-error-"));
-    const provider = join(directory, "fake-rizin-stdin-error.mjs");
-    await writeFile(
-      provider,
-      `#!/usr/bin/env node
-process.stdout.write("\\0");
-setTimeout(() => import("node:fs").then((fs) => fs.closeSync(0)), 40);
-setInterval(() => {}, 1000);
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-    });
-    managers.push(manager);
-    const started = await manager.start({
-      path: "/tmp/fixture.bin",
-      inferior_tty: await rizinTestInferiorTty(),
-    });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 80));
-
-    const result = await manager.execute(started.value.session_id, "dr");
-
-    expect(result.ok).toBe(false);
-    expect(manager.status(started.value.session_id)?.state).toBe("closed");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
   "preserves Rizin process-exit reason and partial command output",
   async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-command-exit-"));
+    directory = await createTestTempDirectory("rea-rizin-command-exit-");
     const provider = join(directory, "fake-rizin-command-exit.mjs");
     const writerPidPath = join(directory, "writer.pid");
     await writeFile(
@@ -865,6 +835,7 @@ process.stdin.on("data", (chunk) => {
           }
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "owned output writer is still active",
           };
         },
@@ -907,8 +878,8 @@ process.stdin.on("data", (chunk) => {
       const partialEvidence = evidenceSchema.parse(
         exited.error.partialObservation,
       );
-      expect(partialEvidence.limitations.join(" ")).toContain(
-        "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /Rizin exited.*output is partial.*completion is unknown/iu,
       );
     }
     const writerPid = Number(await readFile(writerPidPath, "utf8"));

@@ -1,14 +1,19 @@
 import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
+import { nativeDispatchMetadataResultSchema } from "../../../../src/domain/native/objcSwiftMetadata.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
-import { objcRecordBudgetMacho } from "../../../fixtures/objcRecordBudgetMacho.js";
+import {
+  objcAdoptedProtocolCountMacho,
+  objcRecordBudgetMacho,
+} from "../../../fixtures/objcRecordBudgetMacho.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const sectionCases = [
@@ -66,7 +71,6 @@ it.each(sectionCases)(
     bytes.write(section, 104);
     bytes.writeBigUInt64LE(BigInt(size), 144);
     const { path, result } = await inspect(bytes);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed target refusal");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
@@ -82,7 +86,6 @@ it("keeps an unsupported big-endian CPU declaration distinct from provider failu
   bytes.writeUInt32BE(0x0100000c, 4);
   bytes.writeUInt32BE(2, 12);
   const { path, result } = await inspect(bytes);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected unsupported target refusal");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "unsupported_target",
@@ -93,7 +96,6 @@ it("keeps an unsupported big-endian CPU declaration distinct from provider failu
 
 it("continues decoding the well-formed eight-byte class-list control", async () => {
   const { result } = await inspect(objcRecordBudgetMacho("class"));
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     result: {
@@ -101,3 +103,38 @@ it("continues decoding the well-formed eight-byte class-list control", async () 
     },
   });
 });
+
+it.each([1n, 20001n])(
+  "retains class facts and source identity through provider delivery for protocol count %s",
+  async (count) => {
+    const bytes = objcAdoptedProtocolCountMacho(count);
+    const { result } = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    const report = nativeDispatchMetadataResultSchema.parse(
+      result.value.result,
+    );
+    expect(report.target_sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.input_admission?.retained_bytes).toBe(bytes.length);
+    expect(report.result.objc_classes).toMatchObject([
+      {
+        name: "FixtureClass",
+        methods: [{ selector: "classMethod", method_type: "instance" }],
+        protocols: count === 1n ? ["FixtureProtocol"] : [],
+        decode:
+          count === 1n
+            ? { status: "decoded", reason: null }
+            : { status: "partial", reason: "protocol_list_unreadable" },
+      },
+    ]);
+    expect(report.result.objc_dispatch_implementations).toMatchObject([
+      { class_name: "FixtureClass", selector: "classMethod" },
+    ]);
+    expect(
+      report.result.coverage.find(
+        ({ facet }) => facet === "objc_class_method_ivar_metadata",
+      )?.status,
+    ).toBe(count === 1n ? "complete" : "partial");
+  },
+);

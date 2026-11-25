@@ -1,3 +1,5 @@
+import { BinaryReader } from "../binaryContainer.js";
+
 /** Known CPython source-format identity, independent of decoder coverage. */
 export interface PythonBytecodeIdentity {
   readonly pythonVersion: string;
@@ -26,6 +28,8 @@ const PYTHON_BYTECODE_IDENTITIES: ReadonlyMap<number, PythonBytecodeIdentity> =
     ...identities(range(3500, 3531), "3.12"),
     ...identities(range(3550, 3571), "3.13"),
     ...identities([3627], "3.14"),
+    // Reported against Python 3.15, the default `python3` on current Homebrew.
+    ...identities([3666], "3.15"),
   ]);
 
 export const pythonBytecodeIdentity = (
@@ -61,11 +65,11 @@ export const observePythonBytecodePrefix = (
   const magic =
     prefix.byteLength < 2
       ? null
-      : new DataView(
-          prefix.buffer,
-          prefix.byteOffset,
-          prefix.byteLength,
-        ).getUint16(0, true);
+      : new BinaryReader(
+          Buffer.from(prefix.buffer, prefix.byteOffset, prefix.byteLength),
+          true,
+          "python-bytecode",
+        ).u16(0);
   if (prefix.byteLength < 4 || magic === null)
     return { state: "incomplete", prefix, magic, identity: null };
   if (prefix[2] !== 0x0d || prefix[3] !== 0x0a)

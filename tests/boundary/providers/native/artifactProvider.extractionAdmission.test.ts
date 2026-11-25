@@ -13,12 +13,15 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import * as rootHash from "../../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import * as rootHash from "../../../../src/resources/StableRootArtifact.js";
 import * as pckLocation from "../../../../src/artifacts/GodotPckLocation.js";
 import * as seaLocation from "../../../../src/artifacts/nodeSea/NodeSeaLocation.js";
 import * as pyInstallerLocation from "../../../../src/artifacts/pyinstaller/CArchiveLayout.js";
 import { nodeSeaElf } from "../../../../src/artifacts/nodeSea/NodeSea.fixture.js";
-import { cArchiveExecutable } from "../../../../src/artifacts/pyinstaller/CArchive.fixture.js";
+import {
+  CARCHIVE_COOKIE_MAGIC,
+  cArchiveExecutable,
+} from "../../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -47,7 +50,7 @@ it("refuses an unsupported source without hashing its bytes", async () => {
           await client.execute("extract_artifact", { output_root: output }),
         ).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+          error: { _tag: "AnalysisTargetFailureError", path: source },
         });
         expect(hash).not.toHaveBeenCalled();
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -366,8 +369,9 @@ it("refuses an incomplete PyInstaller detection tail without reporting unsupport
           ok: false,
           error: {
             _tag: "ArtifactOperationError",
-            reason: "format",
-            detail: "CArchive tail is truncated",
+            // The file shrank after its size was admitted: a changed file.
+            reason: "integrity",
+            integrityCheck: "read-coverage",
           },
         });
         expect(detect).toHaveBeenCalledTimes(1);
@@ -395,7 +399,7 @@ it("keeps incidental rejected cookie signatures unsupported during native extrac
       pythonVersion: 314,
       members: [],
     }).subarray(0, 64),
-    pyInstallerLocation.PYINSTALLER_COOKIE_MAGIC,
+    CARCHIVE_COOKIE_MAGIC,
     Buffer.alloc(88),
   ]);
   await writeFile(source, bytes);
@@ -416,7 +420,7 @@ it("keeps incidental rejected cookie signatures unsupported during native extrac
           await client.execute("extract_artifact", { output_root: output }),
         ).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+          error: { _tag: "AnalysisTargetFailureError", path: source },
         });
         expect(hash).not.toHaveBeenCalled();
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
