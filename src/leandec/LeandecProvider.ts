@@ -17,6 +17,7 @@ import {
   resolveRegexWorkerHeapRequest,
   type RegexWorkerHeapRequest,
 } from "../config/regexWorkerHeapRequest.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
@@ -46,7 +47,7 @@ export class LeandecProvider implements AnalysisProviderCandidate {
 
   constructor(
     environment: Readonly<Record<string, string | undefined>>,
-    private readonly platform: NodeJS.Platform = process.platform,
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     private readonly regexDeadline: RegexMatchingDeadline = resolveRegexMatchingDeadline(
       environment,
     ),

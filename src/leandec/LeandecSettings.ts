@@ -1,5 +1,7 @@
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 
@@ -43,7 +45,7 @@ const integer = (
   return /^[0-9]+$/u.test(raw) &&
     Number.isSafeInteger(value) &&
     value >= 1 &&
-    value <= 2147483647
+    value <= MAX_NODE_TIMER_DELAY_MS
     ? value
     : undefined;
 };
@@ -89,10 +91,14 @@ export const resolveLeandecSettings = (
   const candidates =
     requestedPython.includes("/") || isAbsolute(requestedPython)
       ? [resolve(dirname(server), requestedPython)]
-      : (environment.PATH ?? "/usr/local/bin:/usr/bin:/bin")
-          .split(delimiter)
-          .filter(Boolean)
-          .map((directory) => resolve(directory, requestedPython));
+      : Array.from(
+          posixPathCandidates(
+            requestedPython,
+            environment.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+            { relativeEntries: "resolve", workingDirectory: dirname(server) },
+          ),
+          (candidate) => candidate.path,
+        );
   const python = candidates.find((candidate) => {
     try {
       if (!statSync(candidate).isFile()) return false;
@@ -136,7 +142,7 @@ export const resolveLeandecSettings = (
       ok: false,
       code: "open_options_invalid",
       reason:
-        "LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and 2147483647; LEANDEC_AUTO_ANALYZE must be 0 or 1.",
+        `LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and ${String(MAX_NODE_TIMER_DELAY_MS)}; LEANDEC_AUTO_ANALYZE must be 0 or 1.`,
     };
   return {
     ok: true,

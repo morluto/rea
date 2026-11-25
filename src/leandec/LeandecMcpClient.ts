@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { Budget } from "../domain/budget.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   spawnOwnedProviderProcess,
@@ -78,6 +81,7 @@ export class LeandecMcpClient {
   readonly #options: LeandecMcpClientOptions;
   #nextId = 1;
   #buffer = "";
+  readonly #frameBudget = new Budget(MAX_FRAME_BYTES);
   #stderr = "";
   #exit:
     | { readonly code: number | null; readonly signal: string | null }
@@ -258,7 +262,7 @@ export class LeandecMcpClient {
   /** Stop the server, rejecting anything still in flight. */
   close(): Promise<void> {
     this.#closed = true;
-    this.#owner.abort();
+    this.#owner.abort(OwnerCancellation.ownerClosed);
     this.#failAll(
       new LeandecRpcError("exit", "Leandec MCP session closed", this.#stderr),
     );
@@ -362,28 +366,26 @@ export class LeandecMcpClient {
     } catch (cause: unknown) {
       this.#transportFailure(
         "rpc",
-        cause instanceof Error ? cause.message : String(cause),
+        errorMessage(cause),
       );
     }
   }
 
   #onStdout(chunk: string): void {
-    this.#buffer += chunk;
-    if (this.#buffer.length > MAX_FRAME_BYTES) {
+    if (this.#fatal !== undefined) return;
+    if (!this.#frameBudget.tryCharge(Buffer.byteLength(chunk))) {
       this.#buffer = "";
-      this.#failAll(
-        new LeandecRpcError(
-          "frame",
-          "Leandec MCP frame exceeded its limit",
-          this.#stderr,
-        ),
-      );
+      this.#frameBudget.restore(0);
+      this.#transportFailure("frame", "Leandec MCP frame exceeded its limit");
       return;
     }
+    this.#buffer += chunk;
     for (;;) {
       const index = this.#buffer.indexOf("\n");
       if (index < 0) return;
-      const line = this.#buffer.slice(0, index).trim();
+      const frame = this.#buffer.slice(0, index + 1);
+      this.#frameBudget.refund(Buffer.byteLength(frame));
+      const line = frame.trim();
       this.#buffer = this.#buffer.slice(index + 1);
       if (line.length === 0) continue;
       let message: JsonValue;

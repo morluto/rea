@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { Deadline } from "../domain/deadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
 import { createReadStream } from "node:fs";
 import { copyFile, link, lstat, mkdir, open } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -336,7 +339,7 @@ export class LeandecSessionClient implements AnalysisClient {
       this.#cleanupFailure ??= new ProviderCleanupError(
         "leandec",
         ["Leandec MCP process and owned input resources"],
-        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { reason: errorMessage(cause) },
         { cause },
       ).bindCleanupReleaseClaim(this);
       return err(this.#cleanupFailure);
@@ -1105,6 +1108,7 @@ export class LeandecSessionClient implements AnalysisClient {
   }
 
   async #importTarget(path: string, options: ExecutionOptions): Promise<void> {
+    const deadline = Deadline.after(this.#settings.importTimeoutMs);
     const job = record(
       await this.#call(
         "analyze",
@@ -1121,11 +1125,10 @@ export class LeandecSessionClient implements AnalysisClient {
       throw new ProviderAdapterError("leandec", "analyze", {
         userMessage: "Leandec did not return a background job identifier.",
       });
-    const deadline = Date.now() + this.#settings.importTimeoutMs;
     for (;;) {
       if (options.signal?.aborted === true)
         throw cancelledBy("analyze", options.signal);
-      if (Date.now() > deadline)
+      if (deadline.expired())
         throw new AnalysisTimeoutError(
           "analyze",
           this.#settings.importTimeoutMs,
@@ -1133,7 +1136,14 @@ export class LeandecSessionClient implements AnalysisClient {
             userMessage: `Leandec import of ${this.#target.path} is still running; poll it from Pi with the job tool.`,
           },
         );
-      const jobs = list(await this.#call("job", { id, lines: 6 }, options));
+      const jobs = list(
+        await this.#call(
+          "job",
+          { id, lines: 6 },
+          options,
+          Math.min(this.#settings.defaultTimeoutMs, deadline.remainingMs()),
+        ),
+      );
       const current = record(jobs[0]);
       if (current.running !== true) {
         const tail = text(current.log_tail) ?? "";
@@ -1150,10 +1160,10 @@ export class LeandecSessionClient implements AnalysisClient {
         total: null,
         message: `Leandec is importing ${this.#target.path}`,
       });
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 2000);
-        timer.unref();
-      });
+      await waitForAbortableDelay(
+        Math.min(2000, deadline.remainingMs()),
+        options.signal,
+      );
     }
   }
 
