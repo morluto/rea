@@ -366,7 +366,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed members are unsupported.",
+      "UnityFS inventory establishes packaged bytes and metadata; serialized objects, textures, meshes and runtime asset behavior were not decoded. LZMA-compressed blocks-info tables are unsupported.",
     createReader: (path, options) =>
       new UnityFsArtifactReader(path, sourceOf(options)),
   }),

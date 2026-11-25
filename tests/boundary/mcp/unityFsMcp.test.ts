@@ -9,13 +9,19 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
 
-it.each(["compact"] as const)(
-  "retains UnityFS facts and unsupported content through compiled MCP (%s)",
-  async (profile) => {
+it.each([
+  ["compact", 1],
+  ["compact", 3],
+] as const)(
+  "retains UnityFS facts and unsupported content through compiled MCP (%s, codec: %s)",
+  async (profile, blockCompression) => {
     const root = await createTestTempDirectory("rea-unity-mcp-");
     const path = join(root, "bundle");
     const payload = Buffer.from("serialized bytes");
-    await writeFile(path, buildUnityFs([{ path: "CAB", data: payload }]));
+    await writeFile(
+      path,
+      buildUnityFs([{ path: "CAB", data: payload }], { blockCompression }),
+    );
     const { call } = await connectLocalToolsMcp({
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
     });
@@ -83,8 +89,8 @@ it.each(["compact"] as const)(
       await call("close_binary", {});
       await writeFile(
         path,
-        buildUnityFs([{ path: "CAB-lzma", data: payload }], {
-          blockCompression: 1,
+        buildUnityFs([{ path: "CAB-unsupported", data: payload }], {
+          blockCompression: 4,
         }),
       );
       await call("open_binary", { path });
@@ -96,7 +102,7 @@ it.each(["compact"] as const)(
       expect(partial.coverage).toMatchObject({ status: "unknown" });
       expect(partial.occurrences).toContainEqual(
         expect.objectContaining({
-          logical_path: "CAB-lzma",
+          logical_path: "CAB-unsupported",
           hash_status: "unavailable",
           artifact_id: null,
         }),

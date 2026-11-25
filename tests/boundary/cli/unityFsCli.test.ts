@@ -97,15 +97,17 @@ cliTest.for([false, true])(
   },
 );
 
-cliTest(
-  "inspects and extracts UnityFS with virtual coordinates and retained unavailable members",
-  async ({ cli, onTestFinished }) => {
+cliTest.for([1, 3] as const)(
+  "inspects and extracts UnityFS with virtual coordinates and retained unavailable members (codec: %s)",
+  async (blockCompression, { cli, onTestFinished }) => {
     const root = await createTestTempDirectory("rea-unity-cli-");
     const path = join(root, "bundle");
     const payload = Buffer.from("serialized bytes");
     await writeFile(
       path,
-      buildUnityFs([{ path: "data..bin", data: payload, flags: 4 }]),
+      buildUnityFs([{ path: "data..bin", data: payload, flags: 4 }], {
+        blockCompression,
+      }),
     );
     const inspected = await cli.run({
       arguments: ["inspect-artifact", path, "--json"],
@@ -150,8 +152,8 @@ cliTest(
 
     await writeFile(
       path,
-      buildUnityFs([{ path: "CAB-lzma", data: payload }], {
-        blockCompression: 1,
+      buildUnityFs([{ path: "CAB-unsupported", data: payload }], {
+        blockCompression: 4,
       }),
     );
     const unavailable = await cli.run({
@@ -164,13 +166,13 @@ cliTest(
     expect(partial.coverage).toMatchObject({ status: "unknown" });
     expect(partial.occurrences).toContainEqual(
       expect.objectContaining({
-        logical_path: "CAB-lzma",
+        logical_path: "CAB-unsupported",
         hash_status: "unavailable",
         artifact_id: null,
       }),
     );
     expect(partial.limitations.join(" ")).toContain(
-      "compression 1 is unsupported",
+      "compression 4 is unsupported",
     );
   },
 );

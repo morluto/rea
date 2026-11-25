@@ -30,10 +30,11 @@ streams before releasing its descriptor.
 
 ## Compression, encryption and malformed input
 
-Data blocks compressed with none, LZ4 or LZ4HC are supported. LZMA-compressed
-blocks and blocks-info tables are reported as unsupported coverage or an
-`unavailable` member read; the directory and readable members are still
-retained ([#14176](https://github.com/morluto/rea/issues/14176)).
+Data blocks compressed with none, LZ4, LZ4HC or LZMA are supported. LZMA data
+blocks use the output length declared in the block table and a cancellable,
+bounded decoder. LZMA-compressed blocks-info tables remain unsupported; their
+header facts are retained with unknown directory coverage
+([#14176](https://github.com/morluto/rea/issues/14176)).
 
 Bundles declaring asset-bundle encryption keep their header facts but report
 unknown directory coverage; no decryption is attempted. The reused 0x200
@@ -55,7 +56,7 @@ These are resource policies, not format maxima.
 | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Encoded and decoded directory buffers           | 16 MiB each                                                                            |
 | Buffers, parsed rows, entries, path projections | 64 MiB shared admission, reserved before allocation                                    |
-| One LZ4 decode                                  | 64 MiB output plus its bounded encoded input; plain blocks stream without it           |
+| One compressed data block decode                | 64 MiB output plus bounded encoded input; LZMA dictionaries also limited to 64 MiB     |
 | Active member streams per reader                | 4                                                                                      |
 | Archive plaintext work                          | Larger of 256 MiB and 500 × declared bundle size                                       |
 | Member I/O operations                           | 4 × the larger of 1,024 and nonempty blocks + directory nodes + readable 64 KiB chunks |
@@ -85,9 +86,9 @@ containers.
 
 ## Verification scope
 
-Synthetic fixtures cover format 6–8 layouts, padding independent of header
+Existing synthetic fixtures cover format 6–8 layouts, padding independent of header
 alignment, directories, malformed tables, allocation admission, overlapping
-members, unsupported LZMA, cancellation inside decoding, paused iteration,
+members, unsupported directory compression, cancellation inside decoding, paused iteration,
 close during I/O, cleanup retry, empty blocks with unsupported codecs, cache
 freshness and independent output buffers. Compiled CLI and full/compact MCP
 tests cover inventory and extraction.

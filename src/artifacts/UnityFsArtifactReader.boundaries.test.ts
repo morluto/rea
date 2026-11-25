@@ -1,3 +1,4 @@
+import { Worker } from "node:worker_threads";
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import {
   artifactPreparationRecoveryCases,
@@ -135,7 +136,7 @@ describe("UnityFS declared container bounds", () => {
     // A one-byte unsupported block declares more than the 256 MiB work floor.
     // Its bytes need not be decoded to reject the declared virtual extent.
     bytes.writeUInt32BE(256 * 1024 * 1024 + 1, 64 + 20);
-    bytes.writeUInt16BE(1, 64 + 28);
+    bytes.writeUInt16BE(4, 64 + 28);
     const reader = new UnityFsArtifactReader(
       await fixture(Buffer.concat([bytes, Buffer.alloc(1024 * 1024)])),
     );
@@ -399,6 +400,59 @@ it.each([1, 2])(
 );
 
 describe("UnityFS stream ownership and immutable cache", () => {
+  it("joins LZMA worker cleanup before reader close completes", async () => {
+    const path = await fixture(
+      buildUnityFs([{ path: "x", data: "abc" }], {
+        blockCompression: 1,
+      }),
+    );
+    const reader = new UnityFsArtifactReader(path);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const nativeTerminate = Worker.prototype.terminate;
+    const termination = vi
+      .spyOn(Worker.prototype, "terminate")
+      .mockImplementation(async function (this: Worker) {
+        reached.resolve();
+        await release.promise;
+        return nativeTerminate.call(this);
+      });
+
+    let consumed: Promise<Buffer> | undefined;
+    try {
+      const [entry] = await collectEntries(reader);
+      const stream = await reader.open(entry!);
+      consumed = buffer(stream);
+      void consumed.catch(() => undefined);
+
+      await awaitAcknowledgement(
+        reached.promise,
+        consumed,
+        "LZMA worker cleanup",
+      );
+
+      let closed = false;
+      const closing = reader.close().then(() => {
+        closed = true;
+      });
+
+      await setImmediate();
+      expect(closed).toBe(false);
+
+      release.resolve();
+      await closing;
+      expect(stream.closed).toBe(true);
+    } finally {
+      release.resolve();
+      try {
+        await reader.close();
+        await consumed?.catch(() => undefined);
+      } finally {
+        termination.mockRestore();
+      }
+    }
+  });
+
   it("joins an outstanding positional read before close completes", async () => {
     const path = await fixture(buildUnityFs([{ path: "x", data: "bytes" }]));
     const admitted = await openRegularFile(path, { symlinks: "reject" });

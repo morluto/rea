@@ -23,7 +23,7 @@ import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMet
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {
-  decodeUnityFsLz4,
+  decodeUnityFsBlock,
   readUnityFsBlocksInfo,
   readUnityFsHeader,
   unityFsFormatFailure,
@@ -396,7 +396,8 @@ export class UnityFsArtifactReader implements ArtifactReader {
       this.#dataStart + block.compressedStart + block.compressedSize,
       signal,
     );
-    const bytes = await decodeUnityFsLz4(
+    const bytes = await decodeUnityFsBlock(
+      block.compression,
       encoded,
       block.uncompressedSize,
       signal,

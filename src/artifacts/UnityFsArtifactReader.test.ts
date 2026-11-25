@@ -11,6 +11,7 @@ import {
 
 import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { decodeUnityFsBlock } from "./UnityFsStructures.js";
 
 const withReader = async <T>(
   bytes: Buffer,
@@ -116,6 +117,9 @@ describe("UnityFS payloads and malformed declarations", () => {
       { blocksInfoCompression: 0, blockCompression: 0 },
     ],
     ["uncompressed blocks", { blockCompression: 0 }],
+    ["LZMA blocks", { blockCompression: 1 }],
+    ["LZMA format 6", { blockCompression: 1, formatVersion: 6 }],
+    ["LZMA format 7", { blockCompression: 1, formatVersion: 7 }],
     ["blocks-info at the end", { blocksInfoAtEnd: true }],
     ["aligned header without data padding", { flags: 0x43 }],
     ["format 6 without padding alignment", { formatVersion: 6, flags: 3 }],
@@ -137,6 +141,61 @@ describe("UnityFS payloads and malformed declarations", () => {
       );
       expect(contents).toEqual(members.map(({ data }) => data));
     });
+  });
+
+  it("reads independent LZMA fixture bytes across blocks", async () => {
+    // Produced by Python/liblzma in FORMAT_RAW, LZMA1, dict_size=4096,
+    // lc=3, lp=0, pb=2; the five property bytes are prepended explicitly.
+    const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
+    await withReader(
+      buildUnityFs([{ path: "payload", data: "abcabc" }], {
+        blockCompression: 1,
+        blockSize: 3,
+        encodeBlock: () => raw,
+      }),
+      async (reader) => {
+        const [entry] = await collectEntries(reader);
+        expect(await text(await reader.open(entry!))).toBe("abcabc");
+      },
+    );
+  });
+
+  it("rejects malformed LZMA properties and oversized dictionaries before decoding", async () => {
+    const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
+    const invalid = Buffer.from(raw);
+    invalid[0] = 255;
+    const oversized = Buffer.from(raw);
+    oversized.writeUInt32LE(128 * 1024 * 1024, 1);
+    await expect(decodeUnityFsBlock(1, invalid, 3)).rejects.toMatchObject({
+      reason: "malformed",
+    });
+    await expect(decodeUnityFsBlock(1, oversized, 3)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+    });
+    await expect(
+      decodeUnityFsBlock(1, raw, 64 * 1024 * 1024 + 1),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "memory",
+    });
+    await expect(
+      decodeUnityFsBlock(1, raw.subarray(0, 10), 3),
+    ).rejects.toMatchObject({
+      reason: "malformed",
+    });
+  });
+
+  it("joins the LZMA decoder on cancellation", async () => {
+    const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
+    const controller = new AbortController();
+    const result = decodeUnityFsBlock(1, raw, 3, controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ reason: "cancelled" });
+    // A subsequent independent decode must still work.
+    expect(
+      (await decodeUnityFsBlock(1, raw, 3)).equals(Buffer.from("abc")),
+    ).toBe(true);
   });
 
   it("reads a member spanning multiple compressed blocks", async () => {
@@ -239,9 +298,9 @@ describe("UnityFS unavailable and malformed directories", () => {
     );
   });
 
-  it("refuses an LZMA-compressed member block while retaining the directory", async () => {
+  it("refuses an unknown member codec while retaining the directory", async () => {
     await withReader(
-      buildUnityFs(members, { blockCompression: 1 }),
+      buildUnityFs(members, { blockCompression: 4 }),
       async (reader) => {
         const [entry] = await collectEntries(reader);
         if (entry === undefined) throw new Error("expected one entry");
