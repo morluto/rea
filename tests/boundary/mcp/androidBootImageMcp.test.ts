@@ -132,10 +132,8 @@ it("keeps Android parser refusal kinds and recovers through compiled MCP", async
         category: fixture.category,
         details: {
           operation: "inspect_artifact",
-          reason: fixture.kind,
-          ...("format" in fixture
-            ? { failure_kind: fixture.kind, format: fixture.format }
-            : {}),
+          failure_kind: fixture.kind,
+          format: "format" in fixture ? fixture.format : "android-boot-image",
         },
       });
       expect((await readFile(path)).equals(fixture.bytes)).toBe(true);

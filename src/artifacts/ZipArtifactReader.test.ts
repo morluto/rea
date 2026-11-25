@@ -228,12 +228,16 @@ describe("ZIP Zstandard method 93", () => {
       message: expect.stringContaining("Zstandard dictionary"),
       cause: { code: "ZSTD_error_dictionary_wrong" },
     });
-    expect(translateArtifactFailure("extract_artifact", failure)).toMatchObject(
-      {
-        reason: "unavailable",
-        detail: expect.stringContaining("Zstandard dictionary"),
-      },
-    );
+    expect(
+      translateArtifactFailure(
+        "extract_artifact",
+        "/selected/artifact",
+        failure,
+      ),
+    ).toMatchObject({
+      reason: "unavailable",
+      detail: expect.stringContaining("Zstandard dictionary"),
+    });
   });
 
   it.each([

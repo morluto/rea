@@ -394,7 +394,7 @@ it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP
     expect(JSON.parse(message.text)).toMatchObject({
       error: {
         code: "unsupported_target",
-        details: { reason: "unsupported" },
+        details: { path: archive, failure_kind: "unsupported" },
       },
     });
     await client.ping();

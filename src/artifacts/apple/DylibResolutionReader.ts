@@ -24,6 +24,7 @@ import {
   assertArtifactReadActive,
   targetDigestChangedFailure,
   DirectoryArtifactReader,
+  unsupportedArtifact,
 } from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
@@ -347,7 +348,9 @@ const requireMachoRoots = async (
         ? new AnalysisInputError(OPERATION, undefined, [
             { path: ["roots", index], reason: "invalid_value", message },
           ])
-        : new ArtifactReaderFailure(reason, message);
+        : reason === "unsupported"
+          ? unsupportedArtifact("macho", message)
+          : new ArtifactReaderFailure(reason, message);
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
       throw reject("path", `Root ${path} resolves outside the analyzed root`);

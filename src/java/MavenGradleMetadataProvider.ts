@@ -168,7 +168,7 @@ const mavenGradleMetadataFailure = (
         unclassified: (failure, origin) =>
           origin === "owned-or-classified" &&
           failure instanceof ArtifactReaderFailure
-            ? translateArtifactFailure(OPERATION, failure)
+            ? translateArtifactFailure(OPERATION, input.path, failure)
             : new ArtifactOperationError(
                 OPERATION,
                 "io",

@@ -56,13 +56,14 @@ export const selectedArtifactDirectory = async (
  */
 export const runInRetainedArtifactScope = async <T>(
   retained: RetainedResourceScope | undefined,
+  path: string,
   operation: () => Promise<Result<T, AnalysisError>>,
 ): Promise<Result<T, AnalysisError>> => {
   if (retained === undefined) return operation();
   try {
     return await retained.run(operation);
   } catch (cause: unknown) {
-    return err(translateArtifactFailure("inspect_artifact", cause));
+    return err(translateArtifactFailure("inspect_artifact", path, cause));
   }
 };
 
@@ -80,7 +81,7 @@ export const executeArtifactPathInspection = async (
   options: ExecutionOptions = {},
   retained?: RetainedResourceScope,
 ): Promise<Result<AnalysisExecution, AnalysisError>> =>
-  runInRetainedArtifactScope(retained, async () => {
+  runInRetainedArtifactScope(retained, path, async () => {
     const directory = await selectedArtifactDirectory(path);
     if (directory !== undefined)
       return dependencies.inspectArtifactDirectory(

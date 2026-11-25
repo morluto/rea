@@ -16,6 +16,7 @@ import {
   ArtifactResourceScope,
   abortIfNeeded,
   ArtifactFileSource,
+  unsupportedArtifact,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
@@ -472,8 +473,8 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     if (!found.ok) throw failure(found.error);
     const observed = found.value;
     if (observed.state === "absent")
-      throw new ArtifactReaderFailure(
-        "unsupported",
+      throw unsupportedArtifact(
+        "pyinstaller",
         "PyInstaller CArchive cookie was not found",
       );
     if (observed.state === "rejected-candidates")

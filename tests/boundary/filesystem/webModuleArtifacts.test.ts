@@ -122,9 +122,8 @@ describe("selected captured module artifact boundary", () => {
         code: "unsupported_target",
         details: {
           operation,
-          reason: "malformed",
+          path: expect.stringContaining(f.sourcePath),
           failure_kind: "malformed",
-          detail: expect.stringContaining(f.sourcePath),
         },
       });
     }

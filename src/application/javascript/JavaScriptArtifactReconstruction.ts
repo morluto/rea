@@ -20,6 +20,7 @@ import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  unsupportedArtifact,
 } from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
@@ -132,8 +133,8 @@ export const reconstructJavaScriptArtifact = async (
       selectedPath,
     );
     if (snapshot.manifest.root_format !== format)
-      throw new ArtifactReaderFailure(
-        "unsupported",
+      throw unsupportedArtifact(
+        format,
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
     const reader = createReader(

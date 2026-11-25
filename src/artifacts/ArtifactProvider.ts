@@ -149,7 +149,9 @@ export class ArtifactProvider implements AnalysisProvider {
         options,
       );
     } catch (cause: unknown) {
-      inspected = err(translateArtifactFailure("inspect_artifact", cause));
+      inspected = err(
+        translateArtifactFailure("inspect_artifact", path, cause),
+      );
     }
     // A completed inspection still fails when its readers could not be
     // released. The caller's lifetime keeps this scope, so a later close of
@@ -286,7 +288,11 @@ class BundleResourceArtifactClient implements AnalysisClient {
       );
     } catch (cause: unknown) {
       return err(
-        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+        translateArtifactFailure(
+          operation as ArtifactAnalysisOperation,
+          this.root.callerPath,
+          cause,
+        ),
       );
     }
   }
@@ -474,7 +480,13 @@ class ArtifactClient implements AnalysisClient {
       );
     } catch (cause: unknown) {
       return err(
-        translateArtifactFailure(operation as ArtifactAnalysisOperation, cause),
+        translateArtifactFailure(
+          operation as ArtifactAnalysisOperation,
+          // The caller's spelling, not the resolved file the reader opened.
+          this.target.callerInputPath ??
+            artifactTargetSelectedPath(this.target),
+          cause,
+        ),
       );
     }
   }

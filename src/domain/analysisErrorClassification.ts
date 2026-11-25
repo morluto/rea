@@ -118,12 +118,7 @@ const kindClassification = (
 
 const ARTIFACT_OPERATION_CLASSIFICATIONS = {
   cancelled: classified("cancelled", "cancelled"),
-  // Reasons that name a target failure kind take that kind's projection, so
-  // an inventory refusal and a selected-file refusal of the same bytes report
-  // the same code. `limit` reports `partial`: the result was cut short.
-  malformed: kindClassification("malformed"),
-  truncated: kindClassification("truncated"),
-  unsupported: kindClassification("unsupported"),
+  // `limit` reports `partial`: the result was cut short.
   integrity: classified("artifact_operation_failed", "integrity_mismatch"),
   limit: classified("partial", "partial"),
   path: classified("artifact_operation_failed", "execution_failure"),

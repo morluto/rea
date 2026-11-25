@@ -763,9 +763,6 @@ const artifactStateErrorDetails = (
       ...(error.integrityCheck === undefined
         ? {}
         : { integrity_check: error.integrityCheck }),
-      ...(error.parseFailure === undefined
-        ? {}
-        : targetFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),

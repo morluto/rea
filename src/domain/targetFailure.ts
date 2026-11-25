@@ -101,8 +101,13 @@ export type TargetFailureOf<Kind extends TargetFailureKind> = Extract<
   { readonly kind: Kind }
 >;
 
-/** Bytes that break, or end inside, a structure of the format being read. */
-export type MalformedTargetFailure = TargetFailureOf<"malformed" | "truncated">;
+/**
+ * A format owner's refusal of the bytes it read: they break or end inside a
+ * structure of the format, or use a form outside the owner's coverage.
+ */
+export type FormatTargetFailure = TargetFailureOf<
+  "malformed" | "truncated" | "unsupported"
+>;
 
 /**
  * When repeating the request can help, after gRPC's status semantics:

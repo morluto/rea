@@ -104,8 +104,9 @@ cliTest(
     expect(await inspect()).toMatchObject({
       code: "unsupported_target",
       retryable: false,
+      retry: "none",
       details: {
-        reason: "truncated",
+        path: source,
         failure_kind: "truncated",
         format: "bun-standalone",
       },
