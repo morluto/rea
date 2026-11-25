@@ -131,7 +131,10 @@ const wrapped = new WeakSet();
  * tools, are sent as written.
  */
 export const completeEvidenceClient = (client) => {
-  if (wrapped.has(client)) return client;
+  // A client without callTool, such as a cleanup test's connection double,
+  // has no tool call to request complete Evidence for.
+  if (wrapped.has(client) || typeof client.callTool !== "function")
+    return client;
   wrapped.add(client);
   const callTool = client.callTool.bind(client);
   client.callTool = async (params, ...rest) => {
