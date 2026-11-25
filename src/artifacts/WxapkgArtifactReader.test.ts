@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { text } from "node:stream/consumers";
+import { buffer, text } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
@@ -109,10 +109,9 @@ describe("WxapkgArtifactReader", () => {
       buildWxapkg([{ path: "big.bin", data }]),
       async (reader) => {
         const [entry] = await list(reader);
-        const chunks: Buffer[] = [];
-        for await (const chunk of await reader.open(entry!))
-          chunks.push(chunk as Buffer);
-        expect(Buffer.concat(chunks).equals(data)).toBe(true);
+        expect((await buffer(await reader.open(entry!))).equals(data)).toBe(
+          true,
+        );
       },
     );
   });
