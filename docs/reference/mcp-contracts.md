@@ -188,6 +188,24 @@ Supported keys are `pseudocode`, `assembly`, `comments`, `callers`, `callees`,
 `references`, `strings_names`, and `cfg`. Availability describes whether that
 facet was observed, not whether its collection contains any entries.
 
+Ghidra dossiers carry `normalized_result.decompiler_completeness`, the
+decompiler's own warnings as it reported them. `status` is `warnings`,
+`no-warnings-reported` or `unavailable`; `no-warnings-reported` does not prove
+complete control-flow recovery. `warnings` holds each warning's text and
+`diagnostic` the decompiler's error message, if any. Each `Removing unreachable
+block` warning becomes a `dropped_blocks` entry with Ghidra's raw
+`address_space` and `reported_offset`, the resolved `start` (or `null`), the
+`warning_index` of its warning and `end: null`, because Ghidra does not report
+where a removed region ends. A dropped block may also carry a separately
+derived `listing_block`: the listing basic block that contains the reported
+start (`relation: "contains-reported-start"`), with its exclusive `end` and
+instructions. It can begin before the reported start and is not necessarily the
+whole removed region. Warnings come from typed decompiler comment tokens, so
+analysts' comments stay in `pseudocode` but never count as warnings. Native
+views page them with the `decompiler_completeness`, `decompiler_warnings` and
+`decompiler_dropped_blocks` facets, and a `pseudocode` view adds an unknown when
+blocks were dropped.
+
 `compare_functions` keeps a dimension `unknown` with null counts when either
 side declares a required facet unavailable. An empty legacy facet without a
 coverage declaration is also unknown. A producer that actually observed an

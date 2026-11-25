@@ -1536,7 +1536,10 @@ before any comment or name is changed.
   instruction/call facts, value dependencies and process/project cleanup.
 - `npm run verify:ghidra:aarch64-jump-table`: optimized ELF and byte/halfword
   relative tables, plus ARM64 Mach-O on an ARM64 macOS host. The `and #0xff`
-  byte-offset fixture is expected to stay unrecovered on Ghidra 12.2.
+  byte-offset fixture is expected to stay unrecovered on Ghidra 12.2. It also checks that blocks the decompiler
+  removes as unreachable appear in `decompiler_completeness.dropped_blocks` with
+  their containing listing block, including a removed region that spans two
+  listing blocks.
 - `npm run verify:apple-dispatch`: source-built Objective-C protocols, classes,
   properties and categories, and Swift conformances and vtables. Each is linked
   with legacy `LC_DYLD_INFO` and with chained fixups (and as arm64e on Apple

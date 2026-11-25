@@ -5,6 +5,7 @@ import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
 import { unavailableNativeFactSchema } from "../domain/native/nativeFactAvailability.js";
 import { z } from "zod";
+import { decompilerCompletenessSchema } from "../domain/native/decompilerCompleteness.js";
 import {
   ghidraNativeApiBoundary,
   ghidraNativeValueFlow,
@@ -276,11 +277,39 @@ const ghidraFunctionDossier = functionDossierSchema
     ),
     native_api: ghidraNativeApiBoundary,
     native_value_flow: ghidraNativeValueFlow,
+    decompiler_completeness: decompilerCompletenessSchema,
     limitation_codes: z.array(functionDossierLimitationCodeSchema),
   })
   .strict()
   .superRefine((value, context) => {
     const codes = new Set(value.limitation_codes);
+    const completeness = value.decompiler_completeness;
+    const completenessAddresses = completeness.dropped_blocks.flatMap(
+      ({ start, listing_block }) => [
+        ...(start === null ? [] : [start]),
+        ...(listing_block === undefined
+          ? []
+          : [listing_block.start, listing_block.end]),
+      ],
+    );
+    if (
+      completeness.provenance !== "ghidra-decompiler-warning-observations" ||
+      completeness.dropped_blocks.some(
+        ({ reported_offset, listing_block }) =>
+          reported_offset === null ||
+          (listing_block !== undefined &&
+            listing_block.provenance !== "ghidra-listing-basic-block"),
+      ) ||
+      completenessAddresses.some(
+        (address) => !nativeAddressObservationSchema.safeParse(address).success,
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["decompiler_completeness"],
+        message:
+          "Ghidra decompiler observations require Ghidra provenance, reported offsets and canonical addresses",
+      });
     if (
       value.limitations.length === 0 ||
       !codes.has("unresolved_computed_or_indirect_flows") ||

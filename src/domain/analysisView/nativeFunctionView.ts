@@ -62,7 +62,11 @@ const nativeRows = (
   dossier: FunctionDossier,
   facet: Exclude<
     NativeFacetAnalysisView["facet"],
-    "procedure" | "pseudocode" | "native_api" | "value_flow_summary"
+    | "procedure"
+    | "pseudocode"
+    | "native_api"
+    | "decompiler_completeness"
+    | "value_flow_summary"
   >,
 ): readonly unknown[] | undefined => {
   const sourceFlow = dossier.native_value_flow;
@@ -80,6 +84,11 @@ const nativeRows = (
     referenced_names: dossier.referenced_names,
     swift_string_literals: dossier.swift_string_literals,
     swift_string_literal_omissions: dossier.swift_string_literal_omissions,
+    // Absent when the provider did not record decompiler observations.
+    decompiler_warnings: dossier.decompiler_completeness?.warnings.map(
+      (text, warning_index) => ({ warning_index, text }),
+    ),
+    decompiler_dropped_blocks: dossier.decompiler_completeness?.dropped_blocks,
     value_flow_operations: flow?.operations,
     value_flow_def_use: flow?.def_use,
     value_flow_effects: flow?.effects,
@@ -262,11 +271,29 @@ export const projectNativeFunctionView = (
   if (
     view.facet === "procedure" ||
     view.facet === "native_api" ||
+    view.facet === "decompiler_completeness" ||
     view.facet === "value_flow_summary"
   ) {
     if (view.offset !== 0)
       return invalidAnalysisView("Singleton native facets require offset 0.");
     if (view.facet === "procedure") return ok(singleton(dossier.procedure));
+    if (view.facet === "decompiler_completeness") {
+      const completeness = dossier.decompiler_completeness;
+      return ok(
+        singleton(
+          completeness === undefined
+            ? { available: false, reason: "not recorded" }
+            : {
+                status: completeness.status,
+                provenance: completeness.provenance,
+                warning_count: completeness.warning_count,
+                dropped_block_count: completeness.dropped_blocks.length,
+                diagnostic: completeness.diagnostic,
+                disassembly_available: completeness.disassembly_available,
+              },
+        ),
+      );
+    }
     if (view.facet === "native_api")
       return ok(
         singleton(
@@ -296,6 +323,12 @@ export const projectNativeFunctionView = (
   }
   if (view.facet === "pseudocode") {
     const page = analysisTextPage(dossier.pseudocode, view.offset, view.limit);
+    const dropped = dossier.decompiler_completeness?.dropped_blocks.length ?? 0;
+    if (dropped > 0)
+      common.unknowns = uniqueSorted([
+        ...common.unknowns,
+        `pseudocode omits ${String(dropped)} block(s) the decompiler removed as unreachable; see decompiler_dropped_blocks`,
+      ]);
     return page.ok
       ? ok({ kind: "native" as const, view, ...page.value, ...common })
       : page;

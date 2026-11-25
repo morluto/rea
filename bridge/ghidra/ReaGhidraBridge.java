@@ -64,7 +64,10 @@ import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
+import ghidra.app.decompiler.ClangBreak;
+import ghidra.app.decompiler.ClangCommentToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.ClangToken;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.app.util.opinion.ElfLoader;
@@ -1996,6 +1999,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             result.add("swift_string_literal_omissions", swiftLiterals.omissions());
         }
         result.add("basic_blocks", blocks);
+        DecompilerCompleteness completeness = decompilerCompleteness(
+            function, decompilation, decompiledText(decompilation)
+        );
+        result.add("decompiler_completeness", completeness.observation());
         result.add(
             "native_api",
             decompilerFailure == null
@@ -2057,6 +2064,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (decompilation != null && decompilation.getErrorMessage() != null &&
             !decompilation.getErrorMessage().isBlank()) {
             limitations.add("Ghidra decompiler diagnostic: " + decompilation.getErrorMessage());
+        }
+        for (String limitation : completeness.limitations()) {
+            limitations.add(limitation);
         }
         if (decompilerFailure != null) {
             limitations.add(
@@ -3594,6 +3604,235 @@ public final class ReaGhidraBridge extends HeadlessScript {
         conflict.addProperty("instruction_address", canonicalAddress(instruction.getAddress()));
         conflict.addProperty("instruction", renderInstruction(instruction));
         return conflict;
+    }
+
+    /** One complete C comment the decompiler rendered, with its typed source address. */
+    private record DecompilerCommentRun(Address source, String text) {}
+
+    /**
+     * Join comment tokens into complete C comments. A run keeps its source only
+     * when every fragment carries the same single memory address; anything else
+     * between fragments other than line breaks or whitespace ends the run.
+     */
+    private List<DecompilerCommentRun> decompilerCommentRuns(List<ClangNode> tokens) throws Exception {
+        List<DecompilerCommentRun> runs = new ArrayList<>();
+        Address source = null;
+        StringBuilder text = new StringBuilder();
+        for (ClangNode node : tokens) {
+            monitor.checkCancelled();
+            if (!(node instanceof ClangCommentToken comment)) {
+                if (node instanceof ClangBreak ||
+                    (node instanceof ClangToken token && token.getText() != null && token.getText().isBlank()))
+                    continue;
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            String fragment = comment.getText();
+            if (fragment == null) {
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            if (fragment.startsWith("/*")) {
+                source = comment.getMinAddress();
+                text.setLength(0);
+                fragment = fragment.substring(2);
+            }
+            if (source == null || !source.isMemoryAddress() ||
+                !source.equals(comment.getMinAddress()) || !source.equals(comment.getMaxAddress())) {
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            boolean complete = fragment.endsWith("*/");
+            if (complete) fragment = fragment.substring(0, fragment.length() - 2);
+            if (!fragment.isBlank()) {
+                if (text.length() > 0) text.append(' ');
+                text.append(fragment.strip());
+            }
+            if (complete) {
+                runs.add(new DecompilerCommentRun(source, text.toString()));
+                source = null;
+                text.setLength(0);
+            }
+        }
+        return runs;
+    }
+
+    /**
+     * Whitespace-normalized text of every caller-authored comment the current
+     * decompiler options render, keyed by its listing address. Each entry is one
+     * occurrence, so an identical decompiler warning is still counted.
+     */
+    private Map<Address, List<String>> callerAuthoredCommentTexts(Function function) throws Exception {
+        DecompileOptions options = decompiler.getOptions();
+        Listing listing = currentProgram.getListing();
+        Map<Address, List<String>> authored = new HashMap<>();
+        AddressIterator addresses = listing.getCommentAddressIterator(
+            functionObservationScope(function), true
+        );
+        while (addresses.hasNext()) {
+            monitor.checkCancelled();
+            Address address = addresses.next();
+            for (CommentType type : CommentType.values()) {
+                boolean displayed = switch (type) {
+                    case PRE -> options.isPRECommentIncluded();
+                    case POST -> options.isPOSTCommentIncluded();
+                    case EOL -> options.isEOLCommentIncluded();
+                    case PLATE -> address.equals(function.getEntryPoint())
+                        ? options.isHeadCommentIncluded()
+                        : options.isPLATECommentIncluded();
+                    default -> false;
+                };
+                if (!displayed) continue;
+                String comment = listing.getComment(type, address);
+                if (comment == null) continue;
+                authored.computeIfAbsent(address, ignored -> new ArrayList<>())
+                    .add(comment.replaceAll("\\s+", " ").strip());
+            }
+        }
+        return authored;
+    }
+
+    // Funcdata::removeUnreachableBlocks names the removed block's first address
+    // as "<space>,<AddrSpace::printRaw offset>": a word offset, optionally "+cut".
+    private static final Pattern DECOMPILER_REMOVED_BLOCK = Pattern.compile(
+        "Removing unreachable block \\(([^,()\\s]+),\\s*(0x[0-9A-Fa-f]+(?:\\+[0-9]+)?)\\)"
+    );
+
+    private record DecompilerCompleteness(JsonObject observation, List<String> limitations) {}
+
+    /**
+     * Decompiler warnings for this function, taken from typed comment tokens so
+     * that analysts' own comments stay in the pseudocode yet never count as
+     * warnings. Each removal warning becomes a dropped block with Ghidra's raw
+     * coordinate; its end stays unknown. A listing_block is a separate, derived
+     * fact: the Ghidra listing basic block that contains the reported start.
+     */
+    private DecompilerCompleteness decompilerCompleteness(
+        Function function,
+        DecompileResults decompilation,
+        String pseudocode
+    ) throws Exception {
+        JsonObject result = new JsonObject();
+        result.addProperty("provenance", "ghidra-decompiler-warning-observations");
+        result.addProperty("disassembly_available", !function.getBody().isEmpty());
+        JsonArray warnings = new JsonArray();
+        JsonArray dropped = new JsonArray();
+        List<String> limitations = new ArrayList<>();
+        if (decompilation == null || pseudocode == null || decompilation.getCCodeMarkup() == null) {
+            result.addProperty("status", "unavailable");
+            result.addProperty("warning_count", 0);
+            result.add("warnings", warnings);
+            result.add("diagnostic", JsonNull.INSTANCE);
+            result.add("dropped_blocks", dropped);
+            return new DecompilerCompleteness(result, limitations);
+        }
+        List<ClangNode> tokens = new ArrayList<>();
+        decompilation.getCCodeMarkup().flatten(tokens);
+        Map<Address, List<String>> authored = callerAuthoredCommentTexts(function);
+        BasicBlockModel model = null;
+        int listingBlocks = 0;
+        for (DecompilerCommentRun run : decompilerCommentRuns(tokens)) {
+            String text = run.text().replaceAll("\\s+", " ").strip();
+            if (!text.startsWith("WARNING:")) continue;
+            // Discount one caller-authored occurrence of this exact text at the same source.
+            List<String> callerTexts = authored.get(run.source());
+            if (callerTexts != null && callerTexts.remove(text)) continue;
+            String warning = text.substring("WARNING:".length()).strip();
+            if (warning.isEmpty()) warning = text;
+            int index = warnings.size();
+            warnings.add(warning);
+            java.util.regex.Matcher removed = DECOMPILER_REMOVED_BLOCK.matcher(warning);
+            while (removed.find()) {
+                monitor.checkCancelled();
+                String space = removed.group(1);
+                String reported = removed.group(2);
+                Address start = decompilerWarningAddress(space, reported);
+                JsonObject block = new JsonObject();
+                block.add("start", start == null ? JsonNull.INSTANCE : GSON.toJsonTree(canonicalAddress(start)));
+                block.add("end", JsonNull.INSTANCE);
+                block.addProperty("address_space", space);
+                block.addProperty("reported_offset", reported);
+                block.addProperty("reason", "unreachable");
+                block.addProperty("warning_index", index);
+                if (start != null && function.getBody().contains(start)) {
+                    if (model == null) model = new BasicBlockModel(currentProgram, false);
+                    CodeBlock listing = model.getFirstCodeBlockContaining(start, monitor);
+                    if (listing != null) {
+                        block.add("listing_block", listingBlock(listing));
+                        listingBlocks += 1;
+                    }
+                }
+                dropped.add(block);
+            }
+        }
+        String diagnostic = decompilation.getErrorMessage();
+        if (diagnostic != null && diagnostic.isBlank()) diagnostic = null;
+        result.addProperty(
+            "status",
+            warnings.size() == 0 && diagnostic == null ? "no-warnings-reported" : "warnings"
+        );
+        result.addProperty("warning_count", warnings.size());
+        result.add("warnings", warnings);
+        result.add("diagnostic", diagnostic == null ? JsonNull.INSTANCE : GSON.toJsonTree(diagnostic));
+        result.add("dropped_blocks", dropped);
+        if (warnings.size() > 0) {
+            limitations.add(
+                "Ghidra's decompiler reported " + warnings.size() +
+                " warning(s) for this function; decompiler_completeness.warnings lists them, and the pseudocode may not represent every instruction."
+            );
+        }
+        if (dropped.size() > 0) {
+            limitations.add(
+                "Ghidra's decompiler removed " + dropped.size() +
+                " block(s) it judged unreachable, so the pseudocode omits their code. " +
+                "decompiler_completeness.dropped_blocks records each reported start; Ghidra does not report where a removed region ends, so end is null."
+            );
+        }
+        if (listingBlocks > 0) {
+            limitations.add(
+                "A dropped block's listing_block is derived from the Ghidra listing: the basic block that contains the reported start. " +
+                "It need not begin at that start and is not necessarily the whole removed region."
+            );
+        }
+        return new DecompilerCompleteness(result, limitations);
+    }
+
+    private JsonObject listingBlock(CodeBlock block) throws Exception {
+        JsonObject result = new JsonObject();
+        result.addProperty("provenance", "ghidra-listing-basic-block");
+        result.addProperty("relation", "contains-reported-start");
+        result.addProperty("start", canonicalAddress(block.getFirstStartAddress()));
+        result.addProperty("end", exclusiveAddress(block.getMaxAddress()));
+        // The block lies inside the function, whose full assembly the dossier
+        // already carries, so this subset needs no separate bound.
+        List<Instruction> instructions = new ArrayList<>();
+        InstructionIterator iterator = currentProgram.getListing().getInstructions(block, true);
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            instructions.add(iterator.next());
+        }
+        result.add("assembly", GSON.toJsonTree(renderAssemblyLines(instructions)).getAsJsonArray());
+        return result;
+    }
+
+    /** Resolve "<space>,0x<words>[+cut]" through the address factory, scaling by the space's unit size. */
+    private Address decompilerWarningAddress(String spaceName, String reported) {
+        AddressSpace space = currentProgram.getAddressFactory().getAddressSpace(spaceName);
+        if (space == null || !space.isMemorySpace()) return null;
+        try {
+            int plus = reported.indexOf('+');
+            String words = (plus < 0 ? reported : reported.substring(0, plus)).substring(2);
+            BigInteger offset = new BigInteger(words, 16)
+                .multiply(BigInteger.valueOf(space.getAddressableUnitSize()))
+                .add(plus < 0 ? BigInteger.ZERO : new BigInteger(reported.substring(plus + 1)));
+            if (offset.bitLength() > 64) return null;
+            return space.getAddress(offset.longValue());
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {

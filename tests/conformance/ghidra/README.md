@@ -3,6 +3,23 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+`ReaDecompilerWarningProvenanceProbe.java` adds caller-authored entry plate and
+body comments to `decompiler-removed-block.S` in a real analysis database. A
+comment spelling a removal warning, for a valid in-body address or an unknown
+space, must not be recorded as a decompiler warning and must stay in
+`comments`; a plate repeating a real warning must leave exactly the one real
+dropped block. Run `npm run build:cached`, then
+`node scripts/verify-real-ghidra-warning-provenance.mjs` on Linux or macOS
+(`REA_CLANG` selects the AArch64-capable clang). REA's tools cannot set
+comments, so this lane drives the production bridge in-process.
+The same lane then runs `ReaDecompilerRemovedBlockCoordinateProbe.java`, which
+feeds one typed header removal warning per case through the production
+`decompilerCompleteness` observation on synthetic address spaces a source-built
+object cannot reach: an overlay, an ordinary space with a colliding offset,
+unknown and register spaces, a start outside the function, and AVR's
+word-addressed code space (word `0x0804` is byte `0x1008`). Address resolution
+and listing lookup are real Ghidra; the warning token is synthetic.
+
 For the one-shot function bundle handoff, run `npm run build:cached` and then
 `node scripts/verify-real-ghidra-function-bundle.mjs` with `GHIDRA_INSTALL_DIR`
 and `JAVA_HOME` set. The verifier compiles its own target, creates a project

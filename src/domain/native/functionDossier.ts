@@ -18,6 +18,7 @@ import {
 } from "./swiftStringLiteral.js";
 import { nativeApiBoundarySchema } from "./nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "./nativeValueFlow.js";
+import { decompilerCompletenessSchema } from "./decompilerCompleteness.js";
 
 /** Provider-neutral complete raw-instruction list for one analyzed function. */
 export const functionInstructionWindowSchema = z
@@ -117,6 +118,7 @@ export const functionDossierSchema = requirePresence(
       ),
       native_api: nativeApiBoundarySchema.nullable(),
       native_value_flow: nativeValueFlowSchema.nullable(),
+      decompiler_completeness: decompilerCompletenessSchema.exactOptional(),
       facet_availability: functionFacetAvailabilitySchema.exactOptional(),
       limitation_codes: z
         .array(functionDossierLimitationCodeSchema)
