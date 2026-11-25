@@ -10,10 +10,9 @@ import {
   androidJniViewItemsSchema,
   androidJniViewRequestSchema,
 } from "../android/androidJniQuery.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -21,8 +20,9 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-  analysisViewInputError,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
+  invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -72,15 +72,8 @@ export const projectAndroidJniView = (
     parent.operation !== "inspect_android_jni_bindings" ||
     (view.kind !== "summary" && view.kind !== "android-jni")
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "JNI Evidence supports summary or android-jni collection pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "JNI Evidence supports summary or android-jni collection pages.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof androidJniViewRequestSchema>
@@ -105,17 +98,12 @@ export const projectAndroidJniView = (
     ),
   };
   const overBudget = (value: object): boolean =>
-    jsonValueByteLength(value as unknown as JsonValue, 1024 * 1024 - 128) >
-    1024 * 1024 - 128;
+    jsonValueByteLength(value as unknown as JsonValue, PAGE_BYTES - 128) >
+    PAGE_BYTES - 128;
   const budgetError = () =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "JNI view exceeds its 1 MiB serialized allowance.",
-        { parent_evidence_id: parent.evidenceId, limit_bytes: 1024 * 1024 },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "JNI view exceeds its 1 MiB serialized allowance.",
     );
   if (view.kind === "summary") {
     const bindings = report.bindings.slice(0, 64);

@@ -73,6 +73,7 @@ export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
   coverage: {
     status: "unknown",
     reason: `Upstream callgraph was unavailable (${reason}); callee edges remain unknown.`,
+    limited_directions: ["callees"],
     diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
   },
 });

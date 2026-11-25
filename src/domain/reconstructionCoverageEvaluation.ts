@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import { reconstructionUnknownHeads } from "./reconstructionUnknowns.js";
 import type { ReconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import type {
@@ -454,9 +455,7 @@ export const evaluateReconstructionPackageProofs = (
     ReconstructionCoverageData["package_proofs"][number][]
   >();
   for (const proof of context.coverage.package_proofs) {
-    const bucket = proofsByKind.get(proof.kind);
-    if (bucket === undefined) proofsByKind.set(proof.kind, [proof]);
-    else bucket.push(proof);
+    appendToMapList(proofsByKind, proof.kind, proof);
   }
   for (const kind of context.boundary.required_package_proof_kinds) {
     const proofs = proofsByKind.get(kind) ?? [];

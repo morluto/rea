@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   access,
   mkdir,
@@ -15,7 +14,12 @@ import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./verifier-file-sha256.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./complete-evidence.mjs";
 
 const exec = promisify(execFile);
 
@@ -32,9 +36,7 @@ export async function verifyGhidraSocketBoundary({
       reason: "The Ghidra Unix-socket lane is not used on this host.",
     };
   const limit = process.platform === "darwin" ? 102 : 106;
-  const before = createHash("sha256")
-    .update(await readFile(target.path))
-    .digest("hex");
+  const before = await sha256File(target.path);
   const root = await realpath(await mkdtemp("/tmp/rea-gsock-"));
   const suffixBytes = Buffer.byteLength("/rea-ghidra-XXXXXX/bridge.sock");
   let cleanupIncomplete = false;
@@ -62,10 +64,12 @@ export async function verifyGhidraSocketBoundary({
       assert.equal(Buffer.byteLength(parent) + suffixBytes, proposedBytes);
       if (unicode) assert.ok(Buffer.byteLength(parent) > parent.length);
       const sessionEnv = { ...env, TMPDIR: parent };
-      const client = new Client({
-        name: "rea-ghidra-socket-boundary",
-        version: "1",
-      });
+      const client = completeEvidenceClient(
+        new Client({
+          name: "rea-ghidra-socket-boundary",
+          version: "1",
+        }),
+      );
       const transport = new StdioClientTransport({
         command: process.execPath,
         args: [entrypoint, "mcp"],
@@ -162,12 +166,14 @@ export async function verifyGhidraSocketBoundary({
           process.execPath,
           [
             entrypoint,
-            "function",
-            target.path,
-            procedure,
-            "--provider",
-            "ghidra",
-            "--json",
+            ...(await completeEvidenceCliArguments([
+              "function",
+              target.path,
+              procedure,
+              "--provider",
+              "ghidra",
+              "--json",
+            ])),
           ],
           { env: sessionEnv, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
         );
@@ -181,12 +187,7 @@ export async function verifyGhidraSocketBoundary({
         );
       }
     }
-    assert.equal(
-      createHash("sha256")
-        .update(await readFile(target.path))
-        .digest("hex"),
-      before,
-    );
+    assert.equal(await sha256File(target.path), before);
     return {
       status: "verified",
       samples,

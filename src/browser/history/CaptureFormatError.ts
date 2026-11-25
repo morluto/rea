@@ -154,7 +154,7 @@ export class CaptureFormatError extends ParseFailureError<
 
   /** The reason a decoder child reports for this failure on the reply wire. */
   get replyReason():
-    | "format"
+    | "malformed"
     | "unsupported"
     | "decoder"
     | "input-limit"
@@ -163,7 +163,7 @@ export class CaptureFormatError extends ParseFailureError<
     if (this.ceiling !== undefined) return "fixed-limit";
     const { limit } = this;
     if (limit === undefined)
-      return this.failure.kind === "unsupported" ? "unsupported" : "format";
+      return this.failure.kind === "unsupported" ? "unsupported" : "malformed";
     return CAPTURE_LIMITS[limit.name].reply ?? "decoder";
   }
 }

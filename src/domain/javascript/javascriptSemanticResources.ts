@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { knownCoverage } from "../coverageAccumulator.js";
 import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.js";
 
 import {
@@ -565,32 +566,32 @@ const collectReleases = (
       ...(linked.some((value) => value.builtinAuthority === "candidate")
         ? { builtinAuthority: "candidate" as const }
         : {}),
-      resolution:
+      resolution: knownCoverage(
         !opaqueReceiver &&
-        !streamConstructorMayHaveChanged &&
-        release !== undefined &&
-        !releaseMethodMayHaveChanged(
-          binding,
-          method,
-          member,
-          context.state,
-          possibleAcquisitions,
-          { fresh, release, isolatedNativeCloses },
-        ) &&
-        !release.delegates?.some((dependency) =>
-          releaseMethodMayHaveChanged(
+          !streamConstructorMayHaveChanged &&
+          release !== undefined &&
+          !releaseMethodMayHaveChanged(
             binding,
-            dependency,
-            node,
+            method,
+            member,
             context.state,
             possibleAcquisitions,
-            { fresh, release: members?.[dependency] },
-          ),
-        ) &&
-        (binding.kind !== "parameter" || receiver.hasDefiniteInitializer) &&
-        holdsOnlyAcquisitions(binding, linked, context.state)
-          ? "complete"
-          : "partial",
+            { fresh, release, isolatedNativeCloses },
+          ) &&
+          !release.delegates?.some((dependency) =>
+            releaseMethodMayHaveChanged(
+              binding,
+              dependency,
+              node,
+              context.state,
+              possibleAcquisitions,
+              { fresh, release: members?.[dependency] },
+            ),
+          ) &&
+          (binding.kind !== "parameter" || receiver.hasDefiniteInitializer) &&
+          holdsOnlyAcquisitions(binding, linked, context.state),
+        "resource release resolution partial",
+      ),
     });
   });
   return output;

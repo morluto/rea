@@ -26,7 +26,7 @@ export const assertArtifactSelectedSource = async (
       {
         userMessage:
           "The selected artifact path no longer names the opened file. Reopen the selected artifact, then retry.",
-        integrityCheck: "container-identity",
+        integrityCheck: "admitted-identity",
         ...(cause === undefined ? {} : { cause }),
       },
     );

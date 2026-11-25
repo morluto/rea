@@ -1,12 +1,15 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Own one SDK client with an explicit receive budget for a large complete result. */
 export const withLargeResultMcp = async (
   { entrypoint, environment, maxBufferSize },
   useClient,
 ) => {
-  const client = new Client({ name: "large-result-verifier", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "large-result-verifier", version: "1" }),
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],

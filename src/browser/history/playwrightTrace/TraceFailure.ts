@@ -1,19 +1,19 @@
 import { AnalysisError } from "../../../domain/analysisErrorBase.js";
 import {
+  AnalysisTargetFailureError,
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
   fixedCeilingConstraint,
 } from "../../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   stableArtifactInputFailure,
   readerIntegrityFailure,
+  artifactOperationReason,
 } from "../../../resources/index.js";
 import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 
@@ -22,10 +22,7 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(operation, cause);
     if (cause.reason === "integrity")
       return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
@@ -48,11 +45,20 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
             cause.fixedAllowance,
             { cause },
           );
-    if (cause.reason === "format" || cause.reason === "path")
+    // The archive owner established malformed or truncated bytes: a target
+    // refusal. Only a path-kind refusal is the caller's selection.
+    if (cause.parseFailure !== undefined)
+      return new AnalysisTargetFailureError(
+        operation,
+        path,
+        cause.parseFailure,
+        { cause },
+      );
+    if (cause.reason === "path")
       return stableArtifactInputFailure(cause, operation);
     return new ArtifactOperationError(
       operation,
-      cause.reason,
+      artifactOperationReason(cause),
       undefined,
       cause.message,
       { cause },

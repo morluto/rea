@@ -32,11 +32,9 @@ import { inspectUnicornProvider } from "./unicorn/UnicornDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
-import type { ConfigurationError } from "./domain/configurationErrors.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import {
-  AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
   ArtifactResourceScope,
 } from "./resources/index.js";
@@ -366,17 +364,8 @@ const withProbeResourceScope = <T>(
 ): Promise<T> =>
   parent.run(async () => {
     const child = new ArtifactResourceScope();
-    const scope: RetainedResourceScope = {
-      retain: (owner, resource) =>
-        child.retain({
-          kind: "lease",
-          resource,
-          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-        }),
-      run: (work) => child.run(work),
-    };
     try {
-      return await operation(scope);
+      return await operation(child.forCloseOwners());
     } finally {
       if (child.hasPending) parent.retain(child, label);
       else await child.close();

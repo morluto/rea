@@ -1,5 +1,6 @@
 import type { Element, Node } from "@xmldom/xmldom";
 
+import { hasSqliteHeader } from "../sqliteFormat.js";
 import { isExactJsonNumber } from "../exactJsonNumber.js";
 import { jsonValueExceedsDepth, type JsonValue } from "../jsonValue.js";
 import { hostRangeErrorKind } from "../parseFailure.js";
@@ -38,7 +39,6 @@ export type DesktopStateFormat =
   | "zip"
   | "binary";
 
-const SQLITE_HEADER = "SQLite format 3\0";
 /** Files beside a SQLite database that hold or undo its committed changes. */
 export const SQLITE_SIDECARS = [
   { suffix: "-wal", label: "write-ahead log" },
@@ -306,8 +306,8 @@ export const detectStateFormat = (
   bytes: Uint8Array,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): DesktopStateFormat => {
+  if (hasSqliteHeader(bytes)) return "sqlite";
   const header = LATIN1_DECODER.decode(bytes.subarray(0, 16));
-  if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
   if (
     hasZipLocalHeader(bytes) ||

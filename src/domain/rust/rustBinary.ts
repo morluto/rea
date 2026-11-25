@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
 import {
   RUST_PRODUCER_DEFAULTS,
@@ -282,9 +283,7 @@ const checkPackages = (
       );
       continue;
     }
-    const grouped = edgesByPackage.get(edge.from_index);
-    if (grouped === undefined) edgesByPackage.set(edge.from_index, [edge]);
-    else grouped.push(edge);
+    appendToMapList(edgesByPackage, edge.from_index, edge);
   }
   for (const [packageIndex, pkg] of metadata.packages.entries()) {
     if (pkg.root) roots.push(packageIndex);

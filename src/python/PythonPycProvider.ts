@@ -1,7 +1,7 @@
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "./PythonPycProviderIdentity.js";
 import {
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
@@ -15,7 +15,6 @@ import {
   type InspectPythonPycInput,
   type PythonPycLimits,
 } from "../domain/python/pythonPyc.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
 import {
   PYTHON_PYC_FORMAT,
@@ -26,7 +25,6 @@ import {
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 
@@ -86,14 +84,6 @@ const failureFor = (
               ...parserLimitRecovery(input, ["max_file_bytes"]),
             },
           ),
-        unclassified: (failure) =>
-          new ProviderAdapterError(PYTHON_PYC_PROVIDER_IDENTITY.id, OPERATION, {
-            cause: failure,
-            diagnostics: {
-              path: input.path,
-              reason: errorMessage(failure),
-            },
-          }),
       }),
     ),
     input.path,
@@ -108,16 +98,12 @@ export class PythonPycProvider implements PythonPycPort {
   readonly identity = PYTHON_PYC_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PYTHON_PYC_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PYTHON_PYC_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPythonPycInput, options?: ExecutionOptions) {
