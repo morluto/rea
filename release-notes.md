@@ -1351,6 +1351,7 @@
 * **mitmproxy:** consolidate transport evidence checks ([#12935](https://github.com/morluto/rea/issues/12935)) ([f61c38c](https://github.com/morluto/rea/commit/f61c38c8208f33c2b0a7fd906b89d505cfd5a917))
 * **model:** consolidate historical layout and retained views ([#12878](https://github.com/morluto/rea/issues/12878)) ([6dde865](https://github.com/morluto/rea/commit/6dde865ccf11625aaafd4c1daed22b0e01aa8495))
 * **native-ui:** consolidate deadline and interruption coverage ([#12850](https://github.com/morluto/rea/issues/12850)) ([a63690a](https://github.com/morluto/rea/commit/a63690ad3bd5fad2321a0a897f4ebb0020a27870))
+* **native:** accept either dyld_info exit in the file-type refusal ([d131cd2](https://github.com/morluto/rea/commit/d131cd25f5c71bc1ddce8cf6237390920c5600e1))
 * **native:** accept plutil nesting diagnostics on stdout ([9d9be40](https://github.com/morluto/rea/commit/9d9be40313972e7eefc5680f9df6b0722a45e56e))
 * **native:** consolidate keyed archive scalar journeys ([#12799](https://github.com/morluto/rea/issues/12799)) ([7f41107](https://github.com/morluto/rea/commit/7f411078a3ddd85d570bc1ed5050ecb372be7a38))
 * **native:** consolidate signature cancellation coverage ([8f762f9](https://github.com/morluto/rea/commit/8f762f9bc84032efe06141fa0ad667e4e35560ed))
