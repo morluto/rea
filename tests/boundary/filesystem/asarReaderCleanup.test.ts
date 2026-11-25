@@ -216,9 +216,12 @@ describe("ASAR preparation cleanup", () => {
       const entry = await packedMember(reader);
       const openedBeforeRead = opened.length;
       const controller = new AbortController();
+      const reason = { entry: entry.path };
       const opening = reader.open(entry, controller.signal);
-      controller.abort();
-      await expect(opening).rejects.toMatchObject({ reason: "cancelled" });
+      controller.abort(reason);
+      const failure: unknown = await opening.catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({ reason: "cancelled" });
+      expect(failure instanceof Error && failure.cause).toBe(reason);
       expect((await buffer(await reader.open(entry))).toString("utf8")).toBe(
         "",
       );
