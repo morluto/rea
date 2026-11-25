@@ -719,6 +719,9 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
       { name: "empty-k", type: 10, shape: [64n, 0n], offset: 32n, bytes: 0 },
       { name: "quant", type: 2, shape: [32n], offset: 32n, bytes: 18 },
       { name: "fp8", type: 43, shape: [3n], offset: 64n, bytes: 3 },
+      { name: "arm-4x4", type: 31, shape: [32n, 4n], offset: 96n, bytes: 72 },
+      { name: "arm-4x8", type: 32, shape: [32n], offset: 192n, bytes: 18 },
+      { name: "arm-8x8", type: 33, shape: [32n], offset: 224n, bytes: 18 },
     ],
   });
   const { provider, path } = await providerAt(fixture.bytes);
@@ -729,8 +732,11 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
     { type: "Q2_K", byte_length: 0, storage_validation: "consistent" },
     { type: "Q4_0", byte_length: 18, storage_validation: "consistent" },
     { type: "F8_E4M3", byte_length: 3, storage_validation: "consistent" },
+    { type: "Q4_0_4_4", byte_length: 72, storage_validation: "consistent" },
+    { type: "Q4_0_4_8", byte_length: 18, storage_validation: "consistent" },
+    { type: "Q4_0_8_8", byte_length: 18, storage_validation: "consistent" },
   ]);
-  expect(result.value.totals.tensor_bytes).toBe(33);
+  expect(result.value.totals.tensor_bytes).toBe(141);
   expect(result.value.coverage).toMatchObject({
     tensor_ranges: "complete",
     storage_sizes: "complete",
