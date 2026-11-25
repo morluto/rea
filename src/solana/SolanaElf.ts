@@ -1,3 +1,5 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { firstKeyed, keyedBy } from "../domain/keyedCollection.js";
 /** Expected ELF carrier failure, independent of the analysis engine. */
 export class SolanaElfFailure extends Error {}
 
@@ -66,6 +68,10 @@ export const solanaElfMachineName = (machine: number): string => {
 };
 
 const SECTION_TYPE_DYNSYM = 11;
+const ELF64_PROGRAM_HEADER_SIZE = 56;
+const ELF64_SECTION_HEADER_SIZE = 64;
+const ELF64_SYMBOL_SIZE = 24;
+const ELF64_REL_SIZE = 16;
 const SECTION_TYPE_NOBITS = 8;
 const SECTION_TYPE_REL = 4;
 const SECTION_TYPE_RELA = 9;
@@ -77,11 +83,15 @@ interface ElfReader {
 }
 
 const elfReader = (bytes: Uint8Array, little: boolean): ElfReader => {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    little,
+    "elf",
+  );
   return {
-    u16: (offset) => view.getUint16(offset, little),
-    u32: (offset) => view.getUint32(offset, little),
-    u64: (offset) => Number(view.getBigUint64(offset, little)),
+    u16: (offset) => reader.u16(offset),
+    u32: (offset) => reader.u32(offset),
+    u64: (offset) => Number(reader.word(offset, 64)),
   };
 };
 
@@ -101,6 +111,55 @@ const readString = (
   );
 };
 
+/**
+ * Admit one header table before any per-entry allocation: the entry size must
+ * hold the fields we read and the whole declared table must lie inside the
+ * captured bytes, so a tiny file cannot expand into an unbounded loop.
+ */
+const assertTableExtent = (
+  bytes: Uint8Array,
+  label: string,
+  tableOffset: number,
+  entrySize: number,
+  count: number,
+  minimumEntrySize: number,
+): void => {
+  if (count === 0) return;
+  if (entrySize < minimumEntrySize)
+    throw new SolanaElfFailure(
+      `${label} entry size ${String(entrySize)} is smaller than ${String(minimumEntrySize)} bytes.`,
+    );
+  if (
+    !Number.isSafeInteger(tableOffset) ||
+    !Number.isSafeInteger(count) ||
+    tableOffset > bytes.length ||
+    count > Math.floor((bytes.length - tableOffset) / entrySize)
+  )
+    throw new SolanaElfFailure(
+      `${label} (${String(count)} entries of ${String(entrySize)} bytes at ${String(tableOffset)}) extends past the captured file.`,
+    );
+};
+
+/** Bounded entry count for a section-described table that must lie inside the file. */
+const sectionEntryCount = (
+  bytes: Uint8Array,
+  section: SolanaElfSection,
+  label: string,
+  minimumEntrySize: number,
+): number => {
+  if (section.entrySize < minimumEntrySize) return 0;
+  const count = Math.floor(section.size / section.entrySize);
+  assertTableExtent(
+    bytes,
+    label,
+    section.offset,
+    section.entrySize,
+    count,
+    minimumEntrySize,
+  );
+  return count;
+};
+
 const readProgramHeaders = (
   bytes: Uint8Array,
   reader: ElfReader,
@@ -108,11 +167,17 @@ const readProgramHeaders = (
   entrySize: number,
   count: number,
 ): SolanaElfProgramHeader[] => {
+  assertTableExtent(
+    bytes,
+    "Program header table",
+    tableOffset,
+    entrySize,
+    count,
+    ELF64_PROGRAM_HEADER_SIZE,
+  );
   const headers: SolanaElfProgramHeader[] = [];
   for (let index = 0; index < count; index += 1) {
     const offset = tableOffset + index * entrySize;
-    if (offset + 56 > bytes.length)
-      throw new SolanaElfFailure("Program header table is truncated.");
     headers.push({
       type: reader.u32(offset),
       flags: reader.u32(offset + 4),
@@ -134,8 +199,12 @@ const readSectionHeader = (
   entrySize: number,
   index: number,
 ): RawSection => {
+  if (entrySize < ELF64_SECTION_HEADER_SIZE)
+    throw new SolanaElfFailure(
+      `Section header entry size ${String(entrySize)} is smaller than ${String(ELF64_SECTION_HEADER_SIZE)} bytes.`,
+    );
   const offset = tableOffset + index * entrySize;
-  if (offset + 64 > bytes.length)
+  if (offset + ELF64_SECTION_HEADER_SIZE > bytes.length)
     throw new SolanaElfFailure("Section header table is truncated.");
   return {
     nameOffset: reader.u32(offset),
@@ -158,6 +227,14 @@ const readSections = (
   count: number,
   nameIndex: number,
 ): SolanaElfSection[] => {
+  assertTableExtent(
+    bytes,
+    "Section header table",
+    tableOffset,
+    entrySize,
+    count,
+    ELF64_SECTION_HEADER_SIZE,
+  );
   const raw: RawSection[] = [];
   for (let index = 0; index < count; index += 1)
     raw.push(readSectionHeader(bytes, reader, tableOffset, entrySize, index));
@@ -189,14 +266,17 @@ const readDynamicSymbols = (
 ): SolanaElfSymbol[] => {
   const symbols: SolanaElfSymbol[] = [];
   for (const section of sections) {
-    if (section.type !== SECTION_TYPE_DYNSYM || section.entrySize === 0)
-      continue;
+    if (section.type !== SECTION_TYPE_DYNSYM) continue;
     const strings = sections[section.link];
     if (strings === undefined) continue;
-    const count = Math.floor(section.size / section.entrySize);
+    const count = sectionEntryCount(
+      bytes,
+      section,
+      "Dynamic symbol table",
+      ELF64_SYMBOL_SIZE,
+    );
     for (let index = 0; index < count; index += 1) {
       const offset = section.offset + index * section.entrySize;
-      if (offset + 24 > bytes.length) break;
       symbols.push({
         name: readString(
           bytes,
@@ -228,16 +308,16 @@ const readRelocations = (
 ): SolanaElfRelocation[] => {
   const relocations: SolanaElfRelocation[] = [];
   for (const section of sections) {
-    if (
-      (section.type !== SECTION_TYPE_REL &&
-        section.type !== SECTION_TYPE_RELA) ||
-      section.entrySize < 16
-    )
+    if (section.type !== SECTION_TYPE_REL && section.type !== SECTION_TYPE_RELA)
       continue;
-    const count = Math.floor(section.size / section.entrySize);
+    const count = sectionEntryCount(
+      bytes,
+      section,
+      "Relocation table",
+      ELF64_REL_SIZE,
+    );
     for (let index = 0; index < count; index += 1) {
       const offset = section.offset + index * section.entrySize;
-      if (offset + 16 > bytes.length) break;
       // r_info packs the symbol index in its high word and the type in its
       // low word; which file word is which follows the ELF byte order.
       const first = reader.u32(offset + 8);
@@ -315,7 +395,8 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
     programHeaderEntrySize,
     programHeaderCount,
   );
-  // Extended numbering stores the real section count in section header zero.
+  // Extended numbering stores the real section count in section header zero;
+  // readSections admits that expanded count against the file before looping.
   if (sectionHeaderCount === 0 && sectionHeaderOffset !== 0)
     sectionHeaderCount = readSectionHeader(
       bytes,
@@ -357,7 +438,15 @@ export const parseSolanaElf = (bytes: Uint8Array): SolanaElfImage => {
 export const solanaTextSection = (
   image: SolanaElfImage,
 ): SolanaElfSection | undefined =>
-  image.sections.find((section) => section.name === ".text") ??
-  image.sections.find(
-    (section) => section.type === 1 && (section.flags & 0x4) !== 0,
+  firstKeyed(
+    keyedBy(image.sections, (section) => section.name),
+    ".text",
+    "the loader maps the first section named .text as program code",
+  ) ??
+  firstKeyed(
+    keyedBy(image.sections, (section) =>
+      section.type === 1 && (section.flags & 0x4) !== 0 ? "code" : null,
+    ),
+    "code",
+    "without a .text section, the first executable PROGBITS section is code",
   );

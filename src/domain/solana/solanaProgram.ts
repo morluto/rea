@@ -130,6 +130,7 @@ export const solanaProgramAnalysisSchema = z
       call_sites: z.int().nonnegative(),
       exit_sites: z.int().nonnegative(),
       lddw_constants: z.int().nonnegative(),
+      // detail-level: whether a code section was found to sweep, not a coverage verdict.
       coverage: z.enum(["complete", "no-text-section"]),
     }),
     handlers: z.array(
@@ -287,35 +288,49 @@ const solanaProgramBatchItemSchema = z
  * Items are isolated — one bad item yields an error entry, never a failed
  * batch.
  */
-export const analyzeSolanaProgramsInputSchema = z.strictObject({
-  items: z
-    .array(solanaProgramBatchItemSchema)
-    .min(1)
-    .max(64)
-    .describe("Programs to analyze; local ELF paths and program ids may mix"),
-  out_dir: absoluteLocalPathStringSchema.describe(
-    "Directory receiving one subdirectory per item plus index.json",
-  ),
-  concurrency: z
-    .int()
-    .min(1)
-    .max(8)
-    .optional()
-    .describe("Maximum items analyzed at once (default 4, cap 8)"),
-  handoff: z
-    .boolean()
-    .optional()
-    .describe(
-      "Write the deep-decompiler handoff artifact into every item directory",
+export const analyzeSolanaProgramsInputSchema = z
+  .strictObject({
+    items: z
+      .array(solanaProgramBatchItemSchema)
+      .max(64)
+      .optional()
+      .describe("Programs to analyze; local ELF paths and program ids may mix"),
+    dir: absoluteLocalPathStringSchema
+      .optional()
+      .describe(
+        "Absolute path to a local directory whose .so files (sorted by name) join the batch after items",
+      ),
+    out_dir: absoluteLocalPathStringSchema.describe(
+      "Directory receiving one subdirectory per item plus index.json",
     ),
-  instruction_names: z
-    .array(z.string().min(1).max(64))
-    .max(512)
-    .optional()
-    .describe(
-      "Caller-supplied Anchor instruction names confirmed against handler discriminators for every item",
-    ),
-});
+    concurrency: z
+      .int()
+      .min(1)
+      .max(8)
+      .optional()
+      .describe("Maximum items analyzed at once (default 4, cap 8)"),
+    handoff: z
+      .boolean()
+      .optional()
+      .describe(
+        "Write the deep-decompiler handoff artifact into every item directory",
+      ),
+    instruction_names: z
+      .array(z.string().min(1).max(64))
+      .max(512)
+      .optional()
+      .describe(
+        "Caller-supplied Anchor instruction names confirmed against handler discriminators for every item",
+      ),
+  })
+  .superRefine((value, context) => {
+    if ((value.items?.length ?? 0) === 0 && value.dir === undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: "Select at least one item or a dir of .so captures.",
+      });
+  });
 
 export type AnalyzeSolanaProgramsInput = z.infer<
   typeof analyzeSolanaProgramsInputSchema
@@ -349,3 +364,11 @@ export const solanaProgramBatchSchema = z.strictObject({
 });
 
 export type SolanaProgramBatch = z.infer<typeof solanaProgramBatchSchema>;
+
+/**
+ * Credential-free provenance for a selected RPC endpoint: scheme and host
+ * only. API keys commonly ride in userinfo, the path, or the query, so none
+ * of those are retained; the full URL is used only for transport.
+ */
+export const solanaRpcEndpointProvenance = (url: string): string =>
+  URL.parse(url)?.origin ?? "[unparseable endpoint]";

@@ -1,22 +1,34 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { Readable } from "node:stream";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { SolanaProgramPort } from "../application/solana/SolanaProgramPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { SolanaProgramPort } from "../ports/solana/SolanaProgramPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  AnalysisTargetFailureError,
+  cancelledBy,
+  isAborted,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalyzeSolanaProgramInput,
   SolanaProgramAnalysis,
 } from "../domain/solana/solanaProgram.js";
+import {
+  SafeOutputTree,
+  SafeOutputTreeCreationFailure,
+  outputDirectoryAdmissionRefusal,
+} from "../resources/index.js";
 import {
   parseSolanaElf,
   solanaElfMachineName,
@@ -24,10 +36,12 @@ import {
   SolanaElfFailure,
   ELF_MACHINE_BPF,
   type SolanaElfImage,
+  type SolanaElfSection,
 } from "./SolanaElf.js";
 import {
   disassembleSbpf,
   isUnknownSbpfInstruction,
+  sbpfCodeBoundaryIssues,
 } from "./SbpfDisassembler.js";
 import { anchorDiscriminator, scanSolanaDispatch } from "./SolanaDispatch.js";
 import {
@@ -41,21 +55,55 @@ import {
 import {
   DEFAULT_SOLANA_RPC_URL,
   fetchSolanaProgramElf,
-  SolanaRpcFailure,
+  SolanaRpcResponseTooLarge,
 } from "./SolanaRpc.js";
+import { SOLANA_PROGRAM_PROVIDER_IDENTITY } from "./SolanaProviderIdentity.js";
 
-/** Bundled analyzer identity; on-chain facts are separate observed values. */
-export const SOLANA_PROGRAM_PROVIDER_IDENTITY = {
-  id: "solana-sbpf",
-  name: "REA Solana sBPF program analyzer",
-  version: "1",
-} as const;
+export { SOLANA_PROGRAM_PROVIDER_IDENTITY };
+
+/** Name of the fixed byte allowance on one program's ELF intake. */
+const ELF_INTAKE_LIMIT = "solana-elf-intake-bytes";
+
+/** Refuse an ELF (local, fetched, or an RPC response) above the fixed intake allowance. */
+const intakeLimitRefusal = (detail: string, maximum: number) =>
+  parseLimitConstraint(
+    OPERATION,
+    "memory",
+    decodeLimit("elf", detail, { name: ELF_INTAKE_LIMIT, maximum }),
+    {
+      legacyMaximumKey: "maximum_bytes",
+      ...fixedAllowanceOptions("The Solana program intake allowance", "input", {
+        limit: maximum,
+        unit: "bytes",
+      }),
+    },
+  );
 
 const OPERATION = "analyze_solana_program";
 /** Solana program accounts are bounded well below this fixed intake allowance. */
 const MAX_ELF_BYTES = 64 * 1024 * 1024;
 const MAX_RELEVANT_STRINGS = 64;
 const RELEVANT_STRING = /sol_|invoke|syscall|cpi/i;
+/** Analysis file names reserved inside out_dir; the handoff ELF copy lives under handoff/elf/. */
+export const SOLANA_ANALYSIS_FILE = "solana-analysis.json";
+const DISASSEMBLY_FILE = "disassembly.txt";
+const HANDOFF_ELF_DIRECTORY = "handoff/elf";
+
+/** The relative path RPC intake materializes the fetched ELF at inside out_dir. */
+export const solanaFetchedElfName = (programId: string): string =>
+  `${programId}.so`;
+
+const adapterError = (cause: unknown): ProviderAdapterError =>
+  new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
+    cause,
+  });
+
+/** Classify a recognized abort at the I/O owner, keeping the caller's reason. */
+const abortedOr = (
+  signal: AbortSignal | undefined,
+  failure: () => AnalysisError,
+): AnalysisError =>
+  isAborted(signal) ? cancelledBy(OPERATION, signal) : failure();
 
 const BASE_LIMITATIONS: readonly string[] = [
   "Handler candidates come from the dispatch idioms the analyzer can verify — lddw-constant register compares, split 32-bit half compares, and read-only jump tables. Register-indirect transfers matching none of these are counted as unresolved computed jumps, never guessed.",
@@ -77,9 +125,11 @@ const readLocalElf = async (
   signal: AbortSignal | undefined,
 ): Promise<Result<AcquiredProgram, AnalysisError>> => {
   let info: Awaited<ReturnType<typeof stat>>;
+  if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
   try {
     info = await stat(path);
   } catch (cause) {
+    if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
     const code = (cause as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM")
       return err(
@@ -100,11 +150,7 @@ const readLocalElf = async (
           },
         ]),
       );
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
+    return err(adapterError(cause));
   }
   if (!info.isFile())
     return err(
@@ -118,11 +164,9 @@ const readLocalElf = async (
     );
   if (info.size > MAX_ELF_BYTES)
     return err(
-      new AnalysisResourceConstraintError(
-        OPERATION,
-        "memory",
+      intakeLimitRefusal(
         `Selected ELF ${path} is ${String(info.size)} bytes, above the ${String(MAX_ELF_BYTES)}-byte intake allowance.`,
-        { maximum_bytes: MAX_ELF_BYTES },
+        MAX_ELF_BYTES,
       ),
     );
   try {
@@ -136,14 +180,15 @@ const readLocalElf = async (
       slot: null,
     });
   } catch (cause) {
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
+    return err(abortedOr(signal, () => adapterError(cause)));
   }
 };
 
+/**
+ * Fetch a program's executable bytes read-only, in memory. The fetched ELF
+ * is materialized under out_dir only by the same safe output tree that
+ * receives the analysis, after analysis succeeds.
+ */
 const fetchProgramElf = async (
   input: AnalyzeSolanaProgramInput,
   rpcUrl: string,
@@ -151,51 +196,29 @@ const fetchProgramElf = async (
 ): Promise<Result<AcquiredProgram, AnalysisError>> => {
   const programId = input.program_id as string;
   const outDir = input.out_dir as string;
+  if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
   let fetched: Awaited<ReturnType<typeof fetchSolanaProgramElf>>;
   try {
-    fetched = await fetchSolanaProgramElf(
-      programId,
-      rpcUrl,
-      signal === undefined ? {} : { signal },
-    );
+    fetched = await fetchSolanaProgramElf(programId, rpcUrl, {
+      maxProgramBytes: MAX_ELF_BYTES,
+      ...(signal === undefined ? {} : { signal }),
+    });
   } catch (cause) {
-    if (cause instanceof SolanaRpcFailure)
-      return err(
-        new ProviderAdapterError(
-          SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
-          OPERATION,
-          { cause },
-        ),
-      );
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
+    if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
+    if (cause instanceof SolanaRpcResponseTooLarge)
+      return err(intakeLimitRefusal(cause.message, cause.maximumBytes));
+    return err(adapterError(cause));
   }
   if (fetched.elfBytes.length > MAX_ELF_BYTES)
     return err(
-      new AnalysisResourceConstraintError(
-        OPERATION,
-        "memory",
+      intakeLimitRefusal(
         `Fetched program ${programId} is ${String(fetched.elfBytes.length)} bytes, above the ${String(MAX_ELF_BYTES)}-byte intake allowance.`,
-        { maximum_bytes: MAX_ELF_BYTES },
+        MAX_ELF_BYTES,
       ),
     );
-  const path = join(outDir, `${programId}.so`);
-  try {
-    await mkdir(outDir, { recursive: true });
-    await writeFile(path, fetched.elfBytes, { signal });
-  } catch (cause) {
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
-  }
   return ok({
     bytes: fetched.elfBytes,
-    path,
+    path: join(outDir, solanaFetchedElfName(programId)),
     source: "solana-rpc",
     programId,
     programDataAccount: fetched.programDataAccount,
@@ -244,6 +267,45 @@ interface AnalyzedProgram {
   readonly callResolutions: readonly SolanaCallResolution[];
 }
 
+/**
+ * The declared code section must lie wholly inside the captured bytes and
+ * end on an instruction boundary; otherwise the scan could not be complete,
+ * so the target is refused instead of reported with complete coverage.
+ */
+const codeExtentFailure = (
+  acquired: AcquiredProgram,
+  textSection: SolanaElfSection,
+): AnalysisError | undefined => {
+  const malformed = (detail: string): AnalysisError =>
+    new AnalysisTargetFailureError(OPERATION, acquired.path, {
+      kind: "malformed",
+      format: "elf",
+      detail,
+      offset: textSection.offset,
+      field: textSection.name || "code section",
+    });
+  if (
+    !Number.isSafeInteger(textSection.offset + textSection.size) ||
+    textSection.offset + textSection.size > acquired.bytes.length
+  )
+    return malformed(
+      `Code section ${textSection.name || "(unnamed)"} declares ${String(textSection.size)} bytes at offset ${String(textSection.offset)}, past the ${String(acquired.bytes.length)}-byte capture.`,
+    );
+  const issues = sbpfCodeBoundaryIssues(
+    acquired.bytes.subarray(
+      textSection.offset,
+      textSection.offset + textSection.size,
+    ),
+  );
+  if (issues.trailingBytes !== 0)
+    return malformed(
+      `Code section size ${String(textSection.size)} is not a whole number of 8-byte sBPF instructions (${String(issues.trailingBytes)} trailing bytes).`,
+    );
+  if (issues.truncatedLddw)
+    return malformed("Code section ends inside a two-word lddw instruction.");
+  return undefined;
+};
+
 const analyzeAcquired = (
   acquired: AcquiredProgram,
   instructionNames: readonly string[],
@@ -252,33 +314,47 @@ const analyzeAcquired = (
   try {
     image = parseSolanaElf(acquired.bytes);
   } catch (cause) {
-    if (cause instanceof SolanaElfFailure)
+    if (
+      cause instanceof SolanaElfFailure ||
+      cause instanceof BinaryFormatFailure
+    )
       return err(
-        new AnalysisUnsupportedTargetError(
+        new AnalysisTargetFailureError(
           OPERATION,
           acquired.path,
-          cause.message,
-          {
-            cause,
-          },
+          { kind: "malformed", format: "elf", detail: cause.message },
+          { cause },
         ),
       );
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
+    return err(adapterError(cause));
   }
   if (image.machine !== ELF_MACHINE_BPF)
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         OPERATION,
         acquired.path,
+        "elf",
         `ELF machine ${String(image.machine)} is not sBPF (EM_BPF 263); this analyzer covers Solana programs only.`,
+      ),
+    );
+  // The bundled decoder reads little-endian words only; refuse before
+  // disassembly rather than report wrong offsets, constants and targets.
+  if (image.byteOrder !== "little")
+    return err(
+      unsupportedTarget(
+        OPERATION,
+        acquired.path,
+        "elf",
+        "Big-endian sBPF ELF is not supported; the bundled decoder reads little-endian (Solana) instruction words only.",
+        { undecodedContent: true, field: "e_ident[EI_DATA]" },
       ),
     );
 
   const textSection = solanaTextSection(image);
+  if (textSection !== undefined) {
+    const extentFailure = codeExtentFailure(acquired, textSection);
+    if (extentFailure !== undefined) return err(extentFailure);
+  }
   const instructions =
     textSection === undefined
       ? []
@@ -323,7 +399,7 @@ const analyzeAcquired = (
   const report: SolanaProgramAnalysis = {
     artifact: {
       path: acquired.path,
-      sha256: createHash("sha256").update(acquired.bytes).digest("hex"),
+      sha256: sha256Hex(acquired.bytes),
       bytes: acquired.bytes.length,
       source: acquired.source,
       program_id: acquired.programId,
@@ -422,84 +498,131 @@ const analyzeAcquired = (
   return ok({ report, callResolutions });
 };
 
-/** Write the human-facing artifacts next to the machine Evidence when out_dir was selected. */
+interface PlannedOutputFile {
+  readonly relativePath: string;
+  readonly bytes: Uint8Array;
+}
+
+/** Every file the analysis writes under out_dir, with reserved distinct names. */
+const plannedOutputs = (
+  input: AnalyzeSolanaProgramInput & { readonly out_dir: string },
+  acquired: AcquiredProgram,
+  report: SolanaProgramAnalysis,
+  callResolutions: readonly SolanaCallResolution[],
+): PlannedOutputFile[] => {
+  const files: PlannedOutputFile[] = [];
+  const text = (value: string): Uint8Array => Buffer.from(value, "utf8");
+  if (acquired.source === "solana-rpc" && acquired.programId !== null)
+    files.push({
+      relativePath: solanaFetchedElfName(acquired.programId),
+      bytes: acquired.bytes,
+    });
+  files.push({
+    relativePath: SOLANA_ANALYSIS_FILE,
+    bytes: text(`${JSON.stringify(report, null, 2)}\n`),
+  });
+  if (report.disassembly.coverage === "complete") {
+    const image = parseSolanaElf(acquired.bytes);
+    const textSection = solanaTextSection(image);
+    if (textSection !== undefined) {
+      const resolvedByAddress = new Map(
+        callResolutions
+          .filter((resolution) => resolution.resolvedName !== null)
+          .map((resolution) => [resolution.address, resolution]),
+      );
+      const lines = disassembleSbpf(
+        acquired.bytes.subarray(
+          textSection.offset,
+          textSection.offset + textSection.size,
+        ),
+        textSection.address,
+        textSection.offset,
+      ).map((instruction) => {
+        const line = `${instruction.address.toString(16).padStart(8, "0")}  ${instruction.text}`;
+        const resolution = resolvedByAddress.get(instruction.address);
+        return resolution === undefined
+          ? line
+          : `${line}  ; ${resolution.resolvedName as string}`;
+      });
+      files.push({
+        relativePath: DISASSEMBLY_FILE,
+        bytes: text(`${lines.join("\n")}\n`),
+      });
+    }
+  }
+  if (input.handoff === true) {
+    const elfFileName = `${HANDOFF_ELF_DIRECTORY}/${basename(acquired.path)}`;
+    const handoff = buildSolanaHandoff(
+      report,
+      join(input.out_dir, SOLANA_ANALYSIS_FILE),
+    );
+    files.push(
+      { relativePath: elfFileName, bytes: acquired.bytes },
+      {
+        relativePath: "handoff/handoff.json",
+        bytes: text(`${JSON.stringify(handoff, null, 2)}\n`),
+      },
+      {
+        relativePath: "handoff/HANDOFF.md",
+        bytes: text(renderSolanaHandoffBrief(report, handoff, elfFileName)),
+      },
+    );
+  }
+  return files;
+};
+
+/**
+ * Publish the analysis through the shared SafeOutputTree owner: out_dir must
+ * be absent or an empty directory, every file is created exclusively and
+ * digest-verified, and an incomplete tree is rolled back. A selected
+ * directory that already holds the capture (or anything else) is refused,
+ * so a successful analysis can never overwrite its own input.
+ */
 const writeArtifacts = async (
   input: AnalyzeSolanaProgramInput,
   acquired: AcquiredProgram,
   report: SolanaProgramAnalysis,
   callResolutions: readonly SolanaCallResolution[],
+  signal: AbortSignal | undefined,
 ): Promise<AnalysisError | undefined> => {
   if (input.out_dir === undefined) return undefined;
+  const outDir = input.out_dir;
+  const files = plannedOutputs(
+    { ...input, out_dir: outDir },
+    acquired,
+    report,
+    callResolutions,
+  );
+  let tree: SafeOutputTree | undefined;
   try {
-    await mkdir(input.out_dir, { recursive: true });
-    await writeFile(
-      join(input.out_dir, "solana-analysis.json"),
-      `${JSON.stringify(report, null, 2)}\n`,
-    );
-    if (report.disassembly.coverage === "complete") {
-      const image = parseSolanaElf(acquired.bytes);
-      const textSection = solanaTextSection(image);
-      if (textSection !== undefined) {
-        const resolvedByAddress = new Map(
-          callResolutions
-            .filter((resolution) => resolution.resolvedName !== null)
-            .map((resolution) => [resolution.address, resolution]),
-        );
-        const lines = disassembleSbpf(
-          acquired.bytes.subarray(
-            textSection.offset,
-            textSection.offset + textSection.size,
-          ),
-          textSection.address,
-          textSection.offset,
-        ).map((instruction) => {
-          const line = `${instruction.address.toString(16).padStart(8, "0")}  ${instruction.text}`;
-          const resolution = resolvedByAddress.get(instruction.address);
-          return resolution === undefined
-            ? line
-            : `${line}  ; ${resolution.resolvedName as string}`;
-        });
-        await writeFile(
-          join(input.out_dir, "disassembly.txt"),
-          `${lines.join("\n")}\n`,
-        );
-      }
+    tree = await SafeOutputTree.create(outDir, undefined, {
+      acceptExistingEmpty: true,
+      createParents: true,
+    });
+    for (const file of files) {
+      const expected = sha256Hex(file.bytes);
+      const written = await tree.write(
+        file.relativePath,
+        Readable.from([file.bytes]),
+        { sha256: expected, bytes: file.bytes.length },
+        signal,
+      );
+      if (written.sha256 !== expected) throw new Error("digest mismatch");
     }
-    if (input.handoff === true) {
-      const handoffDir = join(input.out_dir, "handoff");
-      await mkdir(handoffDir, { recursive: true });
-      const elfFileName = basename(acquired.path);
-      const elfCopy = new Uint8Array(acquired.bytes);
-      if (
-        createHash("sha256").update(elfCopy).digest("hex") !==
-        report.artifact.sha256
-      )
-        return new ProviderAdapterError(
-          SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
-          OPERATION,
-          {},
-        );
-      await writeFile(join(handoffDir, elfFileName), elfCopy);
-      const handoff = buildSolanaHandoff(
-        report,
-        join(input.out_dir, "solana-analysis.json"),
-      );
-      await writeFile(
-        join(handoffDir, "handoff.json"),
-        `${JSON.stringify(handoff, null, 2)}\n`,
-      );
-      await writeFile(
-        join(handoffDir, "HANDOFF.md"),
-        renderSolanaHandoffBrief(report, handoff, elfFileName),
-      );
-    }
+    await tree.commit(signal);
     return undefined;
   } catch (cause) {
-    return new ProviderAdapterError(
-      SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
+    if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
+    if (tree !== undefined && !tree.published)
+      await tree.rollback().catch(() => undefined);
+    if (isAborted(signal)) return cancelledBy(OPERATION, signal);
+    const refusal = outputDirectoryAdmissionRefusal(
       OPERATION,
-      { cause },
+      "out_dir",
+      cause,
     );
+    if (refusal instanceof AnalysisError) return refusal;
+    return adapterError(cause);
   }
 };
 
@@ -537,6 +660,7 @@ export class SolanaProgramProvider implements SolanaProgramPort {
       acquired.value,
       analyzed.value.report,
       analyzed.value.callResolutions,
+      signal,
     );
     if (writeFailure !== undefined) return err(writeFailure);
     return ok(analyzed.value.report);

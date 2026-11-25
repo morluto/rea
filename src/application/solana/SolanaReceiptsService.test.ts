@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -251,4 +251,101 @@ it("rejects ambiguous or missing input before reading anything", async () => {
     evidence_path: "/tmp/rea-solana-receipts-absent/evidence.json",
   });
   expect(missing.ok).toBe(false);
+});
+
+const batchOf = async (
+  root: string,
+  items: readonly { path: string }[],
+): Promise<string> => {
+  const batchOut = join(root, "batch");
+  const batch = new SolanaProgramBatchService(
+    new SolanaProgramService(new SolanaProgramProvider()),
+  );
+  const result = await batch.inspectBatch({
+    items,
+    out_dir: batchOut,
+    instruction_names: ["create_config"],
+  });
+  expect(result.ok).toBe(true);
+  return batchOut;
+};
+
+const sha256Of = (bytes: Uint8Array): string =>
+  createHash("sha256").update(bytes).digest("hex");
+
+it("derives receipt paths from out_dir, never from paths stored in the index", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const alphaPath = join(root, "alpha.so");
+  await writeFile(alphaPath, CREATE_CONFIG_ELF);
+  const batchOut = await batchOf(root, [{ path: alphaPath }]);
+  const indexPath = join(batchOut, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    analysis_path?: string | null;
+  }[];
+  const elsewhere = await mkdtemp(join(tmpdir(), "rea-solana-elsewhere-"));
+  for (const entry of index)
+    if ("analysis_path" in entry)
+      entry.analysis_path = join(elsewhere, "solana-analysis.json");
+  await writeFile(indexPath, JSON.stringify(index));
+  const evidencePath = join(root, "evidence.json");
+  await writeFile(
+    evidencePath,
+    JSON.stringify({
+      program: { elf_sha256: sha256Of(CREATE_CONFIG_ELF) },
+      handlers: [],
+    }),
+  );
+  const result = await receiptsService().buildReceipts({
+    out_dir: batchOut,
+    evidence_path: evidencePath,
+  });
+  expect(result.ok).toBe(true);
+  expect(await readdir(elsewhere)).toEqual([]);
+  await readFile(join(batchOut, "alpha", "receipts.json"), "utf8");
+});
+
+it("rejects duplicate evidence documents for one artifact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const alphaPath = join(root, "alpha.so");
+  await writeFile(alphaPath, CREATE_CONFIG_ELF);
+  const batchOut = await batchOf(root, [{ path: alphaPath }]);
+  const document = {
+    program: { elf_sha256: sha256Of(CREATE_CONFIG_ELF) },
+    handlers: [],
+  };
+  const evidencePath = join(root, "evidence.json");
+  await writeFile(evidencePath, JSON.stringify([document, document]));
+  const result = await receiptsService().buildReceipts({
+    out_dir: batchOut,
+    evidence_path: evidencePath,
+  });
+  expect(result.ok).toBe(false);
+});
+
+it("reports failed batch items as skipped with their recorded error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-receipts-"));
+  const alphaPath = join(root, "alpha.so");
+  await writeFile(alphaPath, CREATE_CONFIG_ELF);
+  const batchOut = await batchOf(root, [
+    { path: alphaPath },
+    { path: join(root, "missing.so") },
+  ]);
+  const evidencePath = join(root, "evidence.json");
+  await writeFile(
+    evidencePath,
+    JSON.stringify({
+      program: { elf_sha256: sha256Of(CREATE_CONFIG_ELF) },
+      handlers: [],
+    }),
+  );
+  const result = await receiptsService().buildReceipts({
+    out_dir: batchOut,
+    evidence_path: evidencePath,
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const built = parseEvidence(result.value)
+    .normalized_result as SolanaReceiptsResult;
+  expect(built.skipped_items.map((item) => item.name)).toEqual(["missing"]);
+  expect(built.skipped_items[0]?.reason).toMatch(/Batch analysis failed/);
 });

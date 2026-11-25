@@ -31,6 +31,16 @@ export const solanaReceiptEvidenceHandlerSchema = z
       .describe(
         "Anchor instruction name; matched through its derived discriminator",
       ),
+    /**
+     * Table-dispatch slot (the analysis row's table_address and
+     * table_index); table rows carry no discriminator, so this is their key.
+     */
+    table: z
+      .strictObject({ address: count, index: count })
+      .optional()
+      .describe(
+        "Table-dispatch candidate this entry covers: the analysis row's table_address and table_index",
+      ),
     verdict: z
       .enum(["recovered", "failed", "not-a-handler"])
       .describe("The differential outcome as recorded by the evidence source"),
@@ -64,12 +74,21 @@ export const solanaReceiptEvidenceHandlerSchema = z
     notes: z.string().optional().describe("Free-form as-recorded notes"),
   })
   .superRefine((value, context) => {
-    if (value.discriminator === undefined && value.name === undefined)
+    const byAnchor =
+      value.discriminator !== undefined || value.name !== undefined;
+    if (!byAnchor && value.table === undefined)
       context.addIssue({
         code: "custom",
         path: ["discriminator"],
         message:
-          "Identify the handler by discriminator or by instruction name.",
+          "Identify the handler by discriminator, by instruction name, or by table slot.",
+      });
+    if (byAnchor && value.table !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["table"],
+        message:
+          "A table slot identifies a table-dispatch row, which has no discriminator; use one identity.",
       });
     if (
       value.fixtures !== undefined &&
@@ -98,9 +117,6 @@ export const solanaReceiptEvidenceFileSchema = z.union([
 ]);
 
 export type SolanaReceiptEvidence = z.infer<typeof solanaReceiptEvidenceSchema>;
-export type SolanaReceiptEvidenceHandler = z.infer<
-  typeof solanaReceiptEvidenceHandlerSchema
->;
 
 /**
  * Select the analysis to receipt: one solana-analysis.json, or an out_dir
@@ -140,6 +156,9 @@ const receiptSchema = z.strictObject({
   /** Anchor discriminator; null for table-dispatch rows, keyed by label. */
   discriminator: discriminatorSchema.nullable(),
   label: z.string().nullable(),
+  /** Table-dispatch slot key; null for discriminator rows. */
+  table_address: count.nullable(),
+  table_index: count.nullable(),
   /**
    * Instruction name only when confirmed: by the analysis (a caller name
    * whose Anchor discriminator matched) or by the matched evidence entry.
@@ -157,6 +176,8 @@ const receiptSchema = z.strictObject({
 
 const orphanSchema = z.strictObject({
   discriminator: discriminatorSchema.nullable(),
+  table_address: count.nullable(),
+  table_index: count.nullable(),
   name: z.string().nullable(),
   verdict: z.enum(["recovered", "failed", "not-a-handler"]),
   reason: z.string(),
@@ -205,7 +226,10 @@ export const solanaReceiptsResultSchema = z.strictObject({
   }),
   /** Evidence documents whose artifact no analyzed program carries. */
   orphan_programs: z.array(digestSchema),
-  /** Batch items skipped because their analysis could not be read. */
+  /**
+   * Batch items without receipts: items whose analysis failed in the batch
+   * run (with that recorded error) and items whose analysis could not be read.
+   */
   skipped_items: z.array(
     z.strictObject({ name: z.string(), reason: z.string() }),
   ),

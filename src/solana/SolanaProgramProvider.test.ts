@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisTargetFailureError,
+} from "../domain/analysisErrorCore.js";
 import { SolanaProgramProvider } from "./SolanaProgramProvider.js";
 import type { SolanaHandoff } from "./SolanaHandoff.js";
 
@@ -93,7 +98,7 @@ it("writes a pinned handoff artifact with IDL-confirmed handler names", async ()
   expect(report.handlers[0]?.name).toBe("create_config");
 
   const handoffDir = join(outDir, "handoff");
-  const copied = await readFile(join(handoffDir, "program.so"));
+  const copied = await readFile(join(handoffDir, "elf", "program.so"));
   expect(createHash("sha256").update(copied).digest("hex")).toBe(
     report.artifact.sha256,
   );
@@ -127,4 +132,120 @@ it("leaves handler names null when no instruction names are supplied", async () 
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(result.value.handlers[0]?.name).toBeNull();
+});
+
+it("refuses an out_dir that already holds the capture and leaves it intact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-out-"));
+  const elf = buildElf();
+  // A capture named like an output file must never be overwritten.
+  const elfPath = join(root, "solana-analysis.json");
+  await writeFile(elfPath, elf);
+  const result = await new SolanaProgramProvider().analyze({
+    path: elfPath,
+    out_dir: root,
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  expect(Buffer.compare(await readFile(elfPath), Buffer.from(elf))).toBe(0);
+  expect(await readdir(root)).toEqual(["solana-analysis.json"]);
+});
+
+it("keeps a capture named handoff.json distinct from the handoff metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-out-"));
+  const elf = buildElf();
+  const captureDir = join(root, "captures");
+  await mkdir(captureDir);
+  const elfPath = join(captureDir, "handoff.json");
+  await writeFile(elfPath, elf);
+  const outDir = join(root, "out");
+  const result = await new SolanaProgramProvider().analyze({
+    path: elfPath,
+    out_dir: outDir,
+    handoff: true,
+  });
+  expect(result.ok).toBe(true);
+  const copy = await readFile(join(outDir, "handoff", "elf", "handoff.json"));
+  expect(Buffer.compare(copy, Buffer.from(elf))).toBe(0);
+  const metadata = JSON.parse(
+    await readFile(join(outDir, "handoff", "handoff.json"), "utf8"),
+  ) as SolanaHandoff;
+  expect(metadata.elf_sha256).toBe(
+    createHash("sha256").update(elf).digest("hex"),
+  );
+});
+
+it("refuses a big-endian sBPF ELF instead of decoding it as little-endian", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-be-"));
+  const elf = buildElf();
+  elf[5] = 2;
+  const view = new DataView(elf.buffer);
+  // Re-encode the header fields the parser reads in big-endian order.
+  view.setUint16(16, 3, false);
+  view.setUint16(18, 263, false);
+  view.setBigUint64(32, 0n, false);
+  view.setBigUint64(40, 0n, false);
+  view.setUint16(54, 56, false);
+  view.setUint16(56, 0, false);
+  view.setUint16(58, 64, false);
+  view.setUint16(60, 0, false);
+  const elfPath = join(root, "be.so");
+  await writeFile(elfPath, elf);
+  const result = await new SolanaProgramProvider().analyze({ path: elfPath });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+  expect((result.error as AnalysisTargetFailureError).failure.kind).toBe(
+    "unsupported",
+  );
+});
+
+it("refuses a code section that extends past the capture", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-trunc-"));
+  const elf = buildElf();
+  const view = new DataView(elf.buffer);
+  const sectionHeaderOffset = Number(view.getBigUint64(40, true));
+  // Declare a .text size that runs past the end of the capture.
+  view.setBigUint64(sectionHeaderOffset + 64 + 32, BigInt(elf.length), true);
+  const elfPath = join(root, "truncated.so");
+  await writeFile(elfPath, elf);
+  const result = await new SolanaProgramProvider().analyze({ path: elfPath });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect((result.error as AnalysisTargetFailureError).failure.kind).toBe(
+    "malformed",
+  );
+});
+
+it("refuses a code section that ends inside an instruction", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-partial-"));
+  const elf = buildElf();
+  const view = new DataView(elf.buffer);
+  const sectionHeaderOffset = Number(view.getBigUint64(40, true));
+  view.setBigUint64(sectionHeaderOffset + 64 + 32, 5n * 8n - 3n, true);
+  const elfPath = join(root, "partial.so");
+  await writeFile(elfPath, elf);
+  const result = await new SolanaProgramProvider().analyze({ path: elfPath });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect((result.error as AnalysisTargetFailureError).failure.kind).toBe(
+    "malformed",
+  );
+});
+
+it("reports cancellation with the caller's reason instead of a provider failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-abort-"));
+  const elfPath = join(root, "program.so");
+  await writeFile(elfPath, buildElf());
+  const controller = new AbortController();
+  const reason = new Error("caller stopped");
+  controller.abort(reason);
+  const result = await new SolanaProgramProvider().analyze(
+    { path: elfPath },
+    { signal: controller.signal },
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
 });

@@ -76,7 +76,7 @@ export const renderSolanaHandoffBrief = (
     "",
     "## Pinned identity",
     "",
-    `- ELF copy in this directory: \`${elfFileName}\` — verify its SHA-256 before use.`,
+    `- ELF copy (relative to out_dir): \`${elfFileName}\` — verify its SHA-256 before use.`,
     `- SHA-256: \`${report.artifact.sha256}\``,
     `- Bytes: ${String(report.artifact.bytes)} (trailing bytes beyond ELF extents: ${String(report.elf.trailing_bytes)})`,
     report.artifact.program_id === null

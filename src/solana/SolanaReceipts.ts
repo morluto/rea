@@ -23,6 +23,22 @@ const candidateLabel = (
   handler.label ??
   `target ${String(handler.branch_target)}`;
 
+const tableKey = (address: number, index: number): string =>
+  `table:${String(address)}:${String(index)}`;
+
+/**
+ * The join key for one candidate: its discriminator, or for table-dispatch
+ * rows (which have none) the table address and slot index.
+ */
+const candidateKey = (
+  handler: SolanaProgramAnalysis["handlers"][number],
+): string | null => {
+  if (handler.discriminator !== null) return handler.discriminator;
+  if (handler.table_address !== null && handler.table_index !== null)
+    return tableKey(handler.table_address, handler.table_index);
+  return null;
+};
+
 /**
  * Join one analysis with its SHA-256-matched differential evidence into
  * per-handler receipts. A candidate with no evidence entry stays a `lead`.
@@ -47,12 +63,11 @@ export const buildProgramReceipts = (
       `Evidence is bound to artifact ${evidence.program.elf_sha256}, but the analysis covers ${analysis.artifact.sha256}; refusing to emit receipts across artifacts.`,
     );
 
-  const byDiscriminator = new Map(
-    analysis.handlers.flatMap((handler) =>
-      handler.discriminator === null
-        ? []
-        : [[handler.discriminator, handler] as const],
-    ),
+  const byKey = new Map(
+    analysis.handlers.flatMap((handler) => {
+      const key = candidateKey(handler);
+      return key === null ? [] : [[key, handler] as const];
+    }),
   );
   const claimed = new Map<string, SolanaReceiptEvidence["handlers"][number]>();
   const orphans: SolanaProgramReceipts["summary"]["orphans"] = [];
@@ -67,35 +82,44 @@ export const buildProgramReceipts = (
       throw new SolanaReceiptsFailure(
         `Evidence entry for "${entry.name as string}" carries discriminator ${entry.discriminator}, but the name derives ${derived}; the entry is inconsistent and cannot be attached.`,
       );
-    const discriminator = entry.discriminator ?? (derived as string);
-    if (!byDiscriminator.has(discriminator)) {
+    const discriminator =
+      entry.table === undefined ? (entry.discriminator ?? derived) : null;
+    const key =
+      entry.table === undefined
+        ? (discriminator as string)
+        : tableKey(entry.table.address, entry.table.index);
+    if (!byKey.has(key)) {
       orphans.push({
         discriminator,
+        table_address: entry.table?.address ?? null,
+        table_index: entry.table?.index ?? null,
         name: entry.name ?? null,
         verdict: entry.verdict,
         reason:
-          "No handler candidate in the analysis carries this discriminator.",
+          entry.table === undefined
+            ? "No handler candidate in the analysis carries this discriminator."
+            : "No table-dispatch candidate in the analysis occupies this table slot.",
       });
       continue;
     }
-    if (claimed.has(discriminator))
+    if (claimed.has(key))
       throw new SolanaReceiptsFailure(
-        `Two evidence entries claim handler ${discriminator}; ambiguous evidence cannot back a receipt.`,
+        `Two evidence entries claim handler ${key}; ambiguous evidence cannot back a receipt.`,
       );
-    claimed.set(discriminator, entry);
+    claimed.set(key, entry);
   }
 
   const issues: string[] = [];
   const receipts: SolanaProgramReceipts["receipts"] = analysis.handlers.map(
     (handler) => {
-      const entry =
-        handler.discriminator === null
-          ? undefined
-          : claimed.get(handler.discriminator);
+      const key = candidateKey(handler);
+      const entry = key === null ? undefined : claimed.get(key);
       if (entry === undefined)
         return {
           discriminator: handler.discriminator,
           label: handler.label,
+          table_address: handler.table_address,
+          table_index: handler.table_index,
           name: handler.name,
           method: handler.method,
           branch_target: handler.branch_target,
@@ -112,7 +136,7 @@ export const buildProgramReceipts = (
         entry.name !== handler.name
       )
         issues.push(
-          `Evidence names handler ${handler.discriminator as string} "${entry.name}", but the analysis confirms "${handler.name}"; the receipt keeps the analysis name.`,
+          `Evidence names handler ${id} "${entry.name}", but the analysis confirms "${handler.name}"; the receipt keeps the analysis name.`,
         );
       let verdict: SolanaProgramReceipts["receipts"][number]["verdict"];
       if (entry.verdict === "recovered") {
@@ -143,6 +167,8 @@ export const buildProgramReceipts = (
       return {
         discriminator: handler.discriminator,
         label: handler.label,
+        table_address: handler.table_address,
+        table_index: handler.table_index,
         name: handler.name ?? entry.name ?? null,
         method: handler.method,
         branch_target: handler.branch_target,

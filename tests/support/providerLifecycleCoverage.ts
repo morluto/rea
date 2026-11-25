@@ -1959,6 +1959,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "solana-sbpf": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/solanaProgramMcp.test.ts",
+        "records Solana program evidence through MCP without a binary target and refuses a non-empty out_dir",
+      ),
+    ),
+    covered(
+      test(
+        "src/solana/SolanaProgramProvider.test.ts",
+        "reports cancellation with the caller's reason instead of a provider failure",
+      ),
+    ),
+  ),
   sqlite: {
     ownership: "process",
     stages: {

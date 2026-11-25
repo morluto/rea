@@ -1,18 +1,25 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { SolanaReceiptsPort } from "../application/solana/SolanaReceiptsPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { SolanaReceiptsPort } from "../ports/solana/SolanaReceiptsPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { solanaProgramAnalysisSchema } from "../domain/solana/solanaProgram.js";
+import {
+  solanaProgramAnalysisSchema,
+  solanaProgramBatchSchema,
+} from "../domain/solana/solanaProgram.js";
 import {
   solanaReceiptEvidenceFileSchema,
   type SolanaProgramReceipts,
@@ -20,15 +27,38 @@ import {
   type SolanaReceiptsInput,
   type SolanaReceiptsResult,
 } from "../domain/solana/solanaReceipts.js";
-import { SOLANA_PROGRAM_PROVIDER_IDENTITY } from "./SolanaProgramProvider.js";
+import { SOLANA_PROGRAM_PROVIDER_IDENTITY } from "./SolanaProviderIdentity.js";
 import {
   buildProgramReceipts,
   SolanaReceiptsFailure,
 } from "./SolanaReceipts.js";
 
 const OPERATION = "solana_receipts";
+/** The single-program analysis file name inside an analysis out_dir. */
+const SOLANA_ANALYSIS_FILE = "solana-analysis.json";
 /** Receipt inputs are REA-written JSON or a hand-built evidence file; both are small. */
 const MAX_JSON_BYTES = 64 * 1024 * 1024;
+
+const adapterError = (cause: unknown): ProviderAdapterError =>
+  new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
+    cause,
+  });
+
+/** Classify a recognized abort at the I/O owner, keeping the caller's reason. */
+const abortedOr = (
+  signal: AbortSignal | undefined,
+  failure: () => AnalysisError,
+): AnalysisError =>
+  isAborted(signal) ? cancelledBy(OPERATION, signal) : failure();
+
+/** One batch item directory name: a single path segment, never `.` or `..`. */
+const isSafeItemName = (name: string): boolean =>
+  name.length > 0 &&
+  name !== "." &&
+  name !== ".." &&
+  !name.includes("/") &&
+  !name.includes("\\") &&
+  !name.includes("\0");
 
 const inputIssue = (path: string, message: string): AnalysisInputError =>
   new AnalysisInputError(OPERATION, undefined, [
@@ -42,9 +72,11 @@ const readJsonFile = async (
   signal: AbortSignal | undefined,
 ): Promise<Result<unknown, AnalysisError>> => {
   let info: Awaited<ReturnType<typeof stat>>;
+  if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
   try {
     info = await stat(path);
   } catch (cause) {
+    if (isAborted(signal)) return err(cancelledBy(OPERATION, signal));
     const code = (cause as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM")
       return err(
@@ -62,11 +94,7 @@ const readJsonFile = async (
           `Selected file cannot be resolved: ${path} (${code}).`,
         ),
       );
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
+    return err(adapterError(cause));
   }
   if (!info.isFile())
     return err(
@@ -74,22 +102,29 @@ const readJsonFile = async (
     );
   if (info.size > MAX_JSON_BYTES)
     return err(
-      new AnalysisResourceConstraintError(
+      parseLimitConstraint(
         OPERATION,
         "memory",
-        `Selected file ${path} is ${String(info.size)} bytes, above the ${String(MAX_JSON_BYTES)}-byte intake allowance.`,
-        { maximum_bytes: MAX_JSON_BYTES },
+        decodeLimit(
+          "json",
+          `Selected file ${path} is ${String(info.size)} bytes, above the ${String(MAX_JSON_BYTES)}-byte intake allowance.`,
+          { name: "solana-receipts-json-bytes", maximum: MAX_JSON_BYTES },
+        ),
+        {
+          legacyMaximumKey: "maximum_bytes",
+          ...fixedAllowanceOptions(
+            "The Solana receipts JSON intake allowance",
+            "input",
+            { limit: MAX_JSON_BYTES, unit: "bytes" },
+          ),
+        },
       ),
     );
   let text: string;
   try {
     text = await readFile(path, { encoding: "utf8", signal });
   } catch (cause) {
-    return err(
-      new ProviderAdapterError(SOLANA_PROGRAM_PROVIDER_IDENTITY.id, OPERATION, {
-        cause,
-      }),
-    );
+    return err(abortedOr(signal, () => adapterError(cause)));
   }
   try {
     return ok(JSON.parse(text) as unknown);
@@ -151,10 +186,24 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
     )
       ? evidenceParsed.data
       : [evidenceParsed.data];
+    // One document per artifact: a second document for the same SHA-256
+    // could contradict the first, and silently using only one would hide it.
+    const documentShas = new Set<string>();
+    for (const document of documents) {
+      if (documentShas.has(document.program.elf_sha256))
+        return err(
+          inputIssue(
+            "evidence_path",
+            `Evidence holds more than one document for artifact ${document.program.elf_sha256}; merge them into one document so every claim is checked together.`,
+          ),
+        );
+      documentShas.add(document.program.elf_sha256);
+    }
 
     let mode: "single" | "batch";
     let targets: ReceiptTarget[];
     let batchRoot: string | undefined;
+    const skipped: SolanaReceiptsResult["skipped_items"] = [];
     if (input.analysis_path !== undefined) {
       mode = "single";
       targets = [
@@ -166,7 +215,7 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
       ];
     } else {
       const outDir = input.out_dir as string;
-      const singleAnalysis = join(outDir, "solana-analysis.json");
+      const singleAnalysis = join(outDir, SOLANA_ANALYSIS_FILE);
       if (await fileExists(singleAnalysis)) {
         mode = "single";
         targets = [
@@ -189,42 +238,56 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
         batchRoot = outDir;
         const indexRead = await readJsonFile(indexPath, "out_dir", signal);
         if (!indexRead.ok) return indexRead;
-        if (!Array.isArray(indexRead.value))
+        // Parse the index with its owning schema. Item locations derive from
+        // the selected root and the validated item name, never from stored
+        // absolute paths, so writes stay inside out_dir and a moved batch
+        // still resolves.
+        const indexParsed = solanaProgramBatchSchema.shape.entries.safeParse(
+          indexRead.value,
+        );
+        if (!indexParsed.success)
           return err(
             inputIssue(
               "out_dir",
-              `Batch index is not a JSON array: ${indexPath}.`,
+              `Batch index does not match the batch index schema: ${indexPath}.`,
             ),
           );
         targets = [];
-        for (const entry of indexRead.value) {
-          if (typeof entry !== "object" || entry === null) continue;
-          const record = entry as Record<string, unknown>;
-          if (
-            typeof record["name"] === "string" &&
-            typeof record["analysis_path"] === "string"
-          )
-            targets.push({
-              name: record["name"],
-              analysisPath: record["analysis_path"],
-              receiptsPath: join(
-                dirname(record["analysis_path"]),
-                "receipts.json",
+        const names = new Set<string>();
+        for (const entry of indexParsed.data) {
+          if (!isSafeItemName(entry.name) || names.has(entry.name))
+            return err(
+              inputIssue(
+                "out_dir",
+                `Batch index names an unsafe or repeated item directory "${entry.name}": ${indexPath}.`,
               ),
+            );
+          names.add(entry.name);
+          if (entry.status === "error") {
+            skipped.push({
+              name: entry.name,
+              reason: `Batch analysis failed: ${entry.error ?? "no recorded reason"}.`,
             });
+            continue;
+          }
+          const itemDir = join(outDir, entry.name);
+          targets.push({
+            name: entry.name,
+            analysisPath: join(itemDir, SOLANA_ANALYSIS_FILE),
+            receiptsPath: join(itemDir, "receipts.json"),
+          });
         }
         if (targets.length === 0)
           return err(
             inputIssue(
               "out_dir",
-              `Batch index names no analyzed items: ${indexPath}.`,
+              `Batch index names no analyzed items${skipped.length === 0 ? "" : ` (${skipped.map((item) => `${item.name}: ${item.reason}`).join("; ")})`}: ${indexPath}.`,
             ),
           );
       }
     }
 
     const programs: SolanaProgramReceipts[] = [];
-    const skipped: SolanaReceiptsResult["skipped_items"] = [];
     const usedShas = new Set<string>();
     let singleReceiptBytes: string | undefined;
     for (const target of targets) {
@@ -297,13 +360,7 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
         await mkdir(dirname(target.receiptsPath), { recursive: true });
         await writeFile(target.receiptsPath, bytes, { signal });
       } catch (cause) {
-        return err(
-          new ProviderAdapterError(
-            SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
-            OPERATION,
-            { cause },
-          ),
-        );
+        return err(abortedOr(signal, () => adapterError(cause)));
       }
       if (mode === "single") singleReceiptBytes = bytes;
       programs.push(program);
@@ -350,9 +407,7 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
       return ok({
         mode,
         receipts_path: only.program.receipts_path,
-        receipts_sha256: createHash("sha256")
-          .update(singleReceiptBytes as string)
-          .digest("hex"),
+        receipts_sha256: sha256Hex(singleReceiptBytes as string),
         programs,
         totals,
         orphan_programs: orphanPrograms,
@@ -374,20 +429,12 @@ export class SolanaReceiptsProvider implements SolanaReceiptsPort {
     try {
       await writeFile(rootPath, rootBytes, { signal });
     } catch (cause) {
-      return err(
-        new ProviderAdapterError(
-          SOLANA_PROGRAM_PROVIDER_IDENTITY.id,
-          OPERATION,
-          {
-            cause,
-          },
-        ),
-      );
+      return err(abortedOr(signal, () => adapterError(cause)));
     }
     return ok({
       mode,
       receipts_path: rootPath,
-      receipts_sha256: createHash("sha256").update(rootBytes).digest("hex"),
+      receipts_sha256: sha256Hex(rootBytes),
       programs,
       totals,
       orphan_programs: orphanPrograms,

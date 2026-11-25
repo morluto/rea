@@ -157,3 +157,31 @@ it("rejects non-ELF and 32-bit carriers instead of guessing", () => {
   expect(() => parseSolanaElf(elf32)).toThrow(SolanaElfFailure);
   expect(() => parseSolanaElf(new Uint8Array(16))).toThrow(SolanaElfFailure);
 });
+
+it("rejects header tables that extend past the capture before reading entries", () => {
+  const oversized = buildElf(0);
+  new DataView(oversized.buffer).setUint16(60, 0xffff, true);
+  expect(() => parseSolanaElf(oversized)).toThrow(/extends past/);
+
+  const zeroEntrySize = buildElf(0);
+  new DataView(zeroEntrySize.buffer).setUint16(58, 0, true);
+  expect(() => parseSolanaElf(zeroEntrySize)).toThrow(/entry size 0/);
+
+  const programHeaders = buildElf(0);
+  const view = new DataView(programHeaders.buffer);
+  view.setBigUint64(32, 64n, true);
+  view.setUint16(56, 0xffff, true);
+  expect(() => parseSolanaElf(programHeaders)).toThrow(/extends past/);
+});
+
+it("rejects a symbol table whose declared size runs past the capture", () => {
+  const elf = buildElf(0);
+  const view = new DataView(elf.buffer);
+  const sectionHeaderOffset = Number(view.getBigUint64(40, true));
+  for (let index = 0; index < 7; index += 1) {
+    const base = sectionHeaderOffset + index * 64;
+    if (view.getUint32(base + 4, true) === 11)
+      view.setBigUint64(base + 32, 1n << 40n, true);
+  }
+  expect(() => parseSolanaElf(elf)).toThrow(SolanaElfFailure);
+});

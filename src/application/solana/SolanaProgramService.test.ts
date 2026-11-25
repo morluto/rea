@@ -102,7 +102,7 @@ it("binds a validated report into artifact Evidence", async () => {
   if (!result.ok) return;
   const evidence = parseEvidence(result.value);
   expect(evidence.operation).toBe("analyze_solana_program");
-  expect(evidence.subject?.digest.sha256).toBe("b".repeat(64));
+  expect(evidence.subject?.identity).toMatchObject({ sha256: "b".repeat(64) });
   expect(evidence.confidence).toBe("inferred");
   const normalized = evidence.normalized_result as SolanaProgramAnalysis;
   expect(normalized.handlers[0]?.discriminator).toBe("c9cff3724b6f2fbd");
@@ -142,4 +142,38 @@ it("rejects ambiguous source selection before invoking the analyzer", async () =
   });
   expect(missingOutDir.ok).toBe(false);
   expect(calls).toBe(0);
+});
+
+const PROGRAM_ID = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
+const rpcReport: SolanaProgramAnalysis = {
+  ...report,
+  artifact: {
+    ...report.artifact,
+    path: `/artifacts/out/${PROGRAM_ID}.so`,
+    source: "solana-rpc",
+    program_id: PROGRAM_ID,
+  },
+};
+
+it("accepts an RPC artifact when out_dir carries a trailing separator", async () => {
+  const result = await serviceWith(rpcReport).inspect({
+    program_id: PROGRAM_ID,
+    out_dir: "/artifacts/out/",
+  });
+  expect(result.ok).toBe(true);
+});
+
+it("records a credential-free RPC endpoint in Evidence", async () => {
+  const result = await serviceWith(rpcReport).inspect({
+    program_id: PROGRAM_ID,
+    out_dir: "/artifacts/out",
+    rpc_url: "https://user:pass@rpc.example.com/v2/token?api-key=secret",
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const serialized = JSON.stringify(result.value);
+  expect(serialized).not.toMatch(/secret|token|user:pass/);
+  expect(parseEvidence(result.value).parameters).toMatchObject({
+    rpc_endpoint: "https://rpc.example.com",
+  });
 });

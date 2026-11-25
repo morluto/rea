@@ -343,4 +343,35 @@ describe("buildProgramReceipts integrity", () => {
       ),
     ).toThrow(SolanaReceiptsFailure);
   });
+
+  it("receipts a table-dispatch row by its table slot", () => {
+    const doc = buildProgramReceipts(
+      analysis,
+      evidenceWith([
+        {
+          table: { address: 4096, index: 2 },
+          verdict: "recovered",
+          fixtures: { total: 3, passed: 3 },
+          vm: "litesvm",
+          evidence_refs: ["repro/table-2/"],
+        },
+        {
+          table: { address: 4096, index: 9 },
+          verdict: "failed",
+          vm: "litesvm",
+          evidence_refs: ["repro/table-9/"],
+        },
+      ]),
+      "/a.json",
+      "/r.json",
+    );
+    const tableReceipt = doc.receipts.find(
+      (receipt) => receipt.table_address === 4096,
+    );
+    expect(tableReceipt?.verdict).toBe("recovered");
+    expect(tableReceipt?.table_index).toBe(2);
+    expect(doc.summary.recovered).toBe(1);
+    expect(doc.summary.orphans).toHaveLength(1);
+    expect(doc.summary.orphans[0]?.table_index).toBe(9);
+  });
 });

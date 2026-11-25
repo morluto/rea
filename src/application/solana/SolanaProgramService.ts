@@ -1,11 +1,14 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { SolanaProgramPort } from "./SolanaProgramPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { SolanaProgramPort } from "../../ports/solana/SolanaProgramPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { join } from "node:path";
+
 import {
   analyzeSolanaProgramInputSchema,
   solanaProgramAnalysisSchema,
+  solanaRpcEndpointProvenance,
 } from "../../domain/solana/solanaProgram.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -49,7 +52,10 @@ export class SolanaProgramService {
         : value.artifact.source === "solana-rpc" &&
           value.artifact.program_id === input.value.program_id &&
           input.value.out_dir !== undefined &&
-          value.artifact.path.startsWith(`${input.value.out_dir}/`);
+          // Same platform path owner as the provider, so trailing
+          // separators and Windows backslashes compare equal.
+          value.artifact.path ===
+            join(input.value.out_dir, `${input.value.program_id}.so`);
     if (!identityAgrees) return err(outputError());
     return completeProviderEvidence(
       createEvidence(
@@ -68,9 +74,15 @@ export class SolanaProgramService {
             ...(input.value.program_id === undefined
               ? {}
               : { program_id: input.value.program_id }),
+            // The full URL is transport-only: endpoints often embed API
+            // keys in userinfo, path or query, so Evidence keeps the origin.
             ...(input.value.rpc_url === undefined
               ? {}
-              : { rpc_url: input.value.rpc_url }),
+              : {
+                  rpc_endpoint: solanaRpcEndpointProvenance(
+                    input.value.rpc_url,
+                  ),
+                }),
             ...(input.value.out_dir === undefined
               ? {}
               : { out_dir: input.value.out_dir }),

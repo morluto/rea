@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 /**
  * Minimal sBPF instruction decoder built on the fixed 8-byte instruction
  * word: opcode, register pair (dst low nibble, src high nibble), signed
@@ -107,12 +108,15 @@ const formatInstruction = (base: Omit<SbpfInstruction, "text">): string => {
   const op = (opcode >> 4) & 0x0f;
   const operand = srcIsRegister ? `r${String(src)}` : String(imm);
   if (opcode === 0x18)
-    return `r${String(dst)} = 0x${imm64.toString(16).padStart(16, "0")} ll`;
+    return base.slots === 2
+      ? `r${String(dst)} = 0x${imm64.toString(16).padStart(16, "0")} ll`
+      : `truncated lddw (missing second word)`;
   if (klass === 0x04 || klass === 0x07) {
     const bits = klass === 0x07 ? 64 : 32;
     if (op === 8) return `r${String(dst)} = -r${String(dst)}`;
     if (op === 13)
-      return `r${String(dst)} = ${srcIsRegister ? "be" : "le"}${String(16 << src)}(r${String(dst)})`;
+      // The immediate carries the conversion width (16, 32 or 64 bits).
+      return `r${String(dst)} = ${srcIsRegister ? "be" : "le"}${String(imm)}(r${String(dst)})`;
     const name = ALU_NAMES[op];
     if (name === undefined)
       return `unknown alu${String(bits)} op ${String(op)}`;
@@ -160,6 +164,30 @@ const formatInstruction = (base: Omit<SbpfInstruction, "text">): string => {
   return `unknown opcode ${hex(opcode, 2)}`;
 };
 
+/**
+ * Instruction-boundary facts for one code range: bytes left over after the
+ * last whole 8-byte word, and whether the final word opens an `lddw` whose
+ * second word is missing. Either means the range is not complete sBPF code.
+ */
+export const sbpfCodeBoundaryIssues = (
+  text: Uint8Array,
+): { readonly trailingBytes: number; readonly truncatedLddw: boolean } => {
+  const trailingBytes = text.length % 8;
+  const totalSlots = Math.floor(text.length / 8);
+  let slot = 0;
+  let truncatedLddw = false;
+  while (slot < totalSlots) {
+    if (text[slot * 8] === 0x18) {
+      if (slot + 1 >= totalSlots) {
+        truncatedLddw = true;
+        break;
+      }
+      slot += 2;
+    } else slot += 1;
+  }
+  return { trailingBytes, truncatedLddw };
+};
+
 /** True when the decoder cannot name the instruction's operation. */
 export const isUnknownSbpfInstruction = (
   instruction: SbpfInstruction,
@@ -177,7 +205,11 @@ export const disassembleSbpf = (
   baseFileOffset: number,
 ): readonly SbpfInstruction[] => {
   const instructions: SbpfInstruction[] = [];
-  const view = new DataView(text.buffer, text.byteOffset, text.byteLength);
+  const reader = new BinaryReader(
+    Buffer.from(text.buffer, text.byteOffset, text.byteLength),
+    true,
+    "solana-sbpf",
+  );
   let slot = 0;
   const totalSlots = Math.floor(text.length / 8);
   while (slot < totalSlots) {
@@ -186,12 +218,12 @@ export const disassembleSbpf = (
     const registers = text[byteIndex + 1] ?? 0;
     const dst = registers & 0x0f;
     const src = (registers >> 4) & 0x0f;
-    const offset = view.getInt16(byteIndex + 2, true);
-    const imm = view.getInt32(byteIndex + 4, true);
+    const offset = reader.i16(byteIndex + 2);
+    const imm = reader.i32(byteIndex + 4);
     let imm64 = BigInt(imm >>> 0);
     let slots: 1 | 2 = 1;
     if (opcode === 0x18 && slot + 1 < totalSlots) {
-      const high = view.getUint32(byteIndex + 12, true);
+      const high = reader.u32(byteIndex + 12);
       imm64 = (BigInt(high) << 32n) | BigInt(imm >>> 0);
       slots = 2;
     }
@@ -206,7 +238,10 @@ export const disassembleSbpf = (
       imm,
       imm64,
       slots,
-      mnemonic: sbpfMnemonic(opcode),
+      // A final one-word lddw lacks its high immediate; never report it
+      // as a complete constant load.
+      mnemonic:
+        opcode === 0x18 && slots === 1 ? "unknown" : sbpfMnemonic(opcode),
     };
     instructions.push({ ...base, text: formatInstruction(base) });
     slot += slots;

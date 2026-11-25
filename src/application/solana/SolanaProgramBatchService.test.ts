@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 
 import { SolanaProgramBatchService } from "./SolanaProgramBatchService.js";
 import { SolanaProgramService } from "./SolanaProgramService.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type { SolanaProgramBatch } from "../../domain/solana/solanaProgram.js";
 import { SolanaProgramProvider } from "../../solana/SolanaProgramProvider.js";
@@ -169,4 +170,81 @@ it("rejects malformed batch input before analyzing anything", async () => {
     concurrency: 9,
   });
   expect(tooParallel.ok).toBe(false);
+});
+
+const batchService = (): SolanaProgramBatchService =>
+  new SolanaProgramBatchService(
+    new SolanaProgramService(new SolanaProgramProvider()),
+  );
+
+it("keeps capture names that look like paths or reserved files inside out_dir", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-names-"));
+  const elf = buildElf();
+  const captures = join(root, "captures");
+  await mkdir(captures);
+  const dotted = join(captures, "...so");
+  const reserved = join(captures, "index.json.so");
+  await writeFile(dotted, elf);
+  await writeFile(reserved, elf);
+  const outDir = join(root, "out");
+  const result = await batchService().inspectBatch({
+    items: [{ path: dotted }, { path: reserved }],
+    out_dir: outDir,
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const summary = parseEvidence(result.value)
+    .normalized_result as SolanaProgramBatch;
+  for (const entry of summary.entries) {
+    expect(entry.name).not.toMatch(/^[.-]|[/\\]/);
+    expect(["index.json", "receipts.json"]).not.toContain(entry.name);
+  }
+  expect(await readdir(root)).toEqual(["captures", "out"]);
+  const index = JSON.parse(
+    await readFile(join(outDir, "index.json"), "utf8"),
+  ) as SolanaProgramBatch["entries"];
+  expect(index).toEqual(summary.entries);
+});
+
+it("expands a capture directory and reports an unreadable one as input", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-dir-"));
+  const captures = join(root, "captures");
+  await mkdir(captures);
+  await writeFile(join(captures, "alpha.so"), buildElf());
+  await writeFile(join(captures, "notes.txt"), "not a program");
+  const expanded = await batchService().inspectBatch({
+    dir: captures,
+    out_dir: join(root, "out"),
+  });
+  expect(expanded.ok).toBe(true);
+  if (!expanded.ok) return;
+  const summary = parseEvidence(expanded.value)
+    .normalized_result as SolanaProgramBatch;
+  expect(summary.entries.map((entry) => entry.name)).toEqual(["alpha"]);
+
+  const missing = await batchService().inspectBatch({
+    dir: join(root, "absent"),
+    out_dir: join(root, "out-missing"),
+  });
+  expect(missing.ok).toBe(false);
+  if (missing.ok) return;
+  expect(missing.error).toBeInstanceOf(AnalysisInputError);
+  expect(missing.error.message).not.toMatch(/internal/i);
+});
+
+it("refuses a non-empty batch root instead of overwriting earlier output", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-solana-batch-root-"));
+  const elfPath = join(root, "alpha.so");
+  await writeFile(elfPath, buildElf());
+  const outDir = join(root, "out");
+  await mkdir(outDir);
+  await writeFile(join(outDir, "index.json"), "[]");
+  const result = await batchService().inspectBatch({
+    items: [{ path: elfPath }],
+    out_dir: outDir,
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  expect(await readFile(join(outDir, "index.json"), "utf8")).toBe("[]");
 });

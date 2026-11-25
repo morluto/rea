@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { BinaryReader } from "../domain/binaryContainer.js";
+
 import type { SbpfInstruction } from "./SbpfDisassembler.js";
 import { solanaTextSection, type SolanaElfImage } from "./SolanaElf.js";
 
@@ -27,6 +29,11 @@ export interface SolanaHandlerCandidate {
   /** Every comparison guarding the candidate (two for split compares). */
   readonly comparisonAddresses: readonly number[];
   readonly branch: "jeq" | "jne" | null;
+  /**
+   * Handler entry the guard selects: the taken target for `jeq`, the
+   * fallthrough for `jne` (whose taken edge is the mismatch path), or the
+   * table slot's target.
+   */
   readonly branchTarget: number;
   readonly valueRegister: number | null;
   readonly constantRegister: number | null;
@@ -78,15 +85,19 @@ export const anchorDiscriminator = (name: string): string =>
 
 /** Render a 64-bit constant as Anchor discriminator bytes (little-endian hex). */
 export const discriminatorHex = (imm64: bigint): string => {
-  const bytes = new Uint8Array(8);
-  new DataView(bytes.buffer).setBigUint64(0, imm64, true);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
+  const bytes = Buffer.alloc(8);
+  bytes.writeBigUInt64LE(BigInt.asUintN(64, imm64));
+  return bytes.toString("hex");
 };
 
 const branchTargetOf = (instruction: SbpfInstruction): number =>
   instruction.address + 8 * (1 + instruction.offset);
+
+/** Transfers after which a value loaded earlier no longer reaches the next instruction. */
+const endsStraightLineBlock = (instruction: SbpfInstruction): boolean =>
+  instruction.mnemonic === "call" ||
+  instruction.mnemonic === "exit" ||
+  instruction.mnemonic === "ja";
 
 /**
  * Recover candidates from the idiom Anchor/rustc emits for instruction
@@ -110,6 +121,10 @@ const scanLddwCompare = (
     ) {
       const candidate = instructions[ahead];
       if (candidate === undefined) break;
+      // Share the register-lifetime rules of the other scans: a call
+      // clobbers r0–r5, and an unconditional transfer or exit leaves the
+      // straight-line block, so the constant cannot reach a later compare.
+      if (endsStraightLineBlock(candidate)) break;
       if (writesRegister(candidate, load.dst)) break;
       const isComparison =
         (candidate.mnemonic === "jeq" || candidate.mnemonic === "jne") &&
@@ -128,7 +143,12 @@ const scanLddwCompare = (
           comparisonAddress: candidate.address,
           comparisonAddresses: [candidate.address],
           branch: candidate.mnemonic === "jne" ? "jne" : "jeq",
-          branchTarget: branchTargetOf(candidate),
+          // `jne` bails on mismatch, so the handler is the fallthrough;
+          // `jeq` branches into the handler. Same rule as split compares.
+          branchTarget:
+            candidate.mnemonic === "jne"
+              ? candidate.address + 8
+              : branchTargetOf(candidate),
           valueRegister: candidate.dst,
           constantRegister: load.dst,
           tableAddress: null,
@@ -321,17 +341,21 @@ const scanTableDispatch = (
             (section.name.startsWith(".rodata") ||
               section.name === ".data.rel.ro"),
         );
-  const view =
+  const reader =
     image === undefined
       ? undefined
-      : new DataView(
-          image.bytes.buffer,
-          image.bytes.byteOffset,
-          image.bytes.byteLength,
+      : new BinaryReader(
+          Buffer.from(
+            image.bytes.buffer,
+            image.bytes.byteOffset,
+            image.bytes.byteLength,
+          ),
+          true,
+          "elf",
         );
 
   const readTable = (base: number): readonly number[] | undefined => {
-    if (view === undefined || text === undefined || image === undefined)
+    if (reader === undefined || text === undefined || image === undefined)
       return undefined;
     const section = rodataSections.find(
       (candidate) =>
@@ -344,7 +368,7 @@ const scanTableDispatch = (
       const fileOffset = section.offset + (address - section.address);
       if (fileOffset + 8 > section.offset + section.size) break;
       if (fileOffset + 8 > image.bytes.length) break;
-      const value = Number(view.getBigUint64(fileOffset, true));
+      const value = Number(reader.word(fileOffset, 64));
       if (
         value < text.address ||
         value >= text.address + text.size ||

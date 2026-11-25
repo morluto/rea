@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { SolanaElfImage, SolanaElfSymbol } from "./SolanaElf.js";
 import { R_BPF_64_32 } from "./SolanaElf.js";
 import type { SbpfInstruction } from "./SbpfDisassembler.js";
@@ -37,9 +38,13 @@ export const murmur3_32 = (key: Uint8Array, seed = 0): number => {
   const c2 = 0x1b873593;
   let hash = seed >>> 0;
   const blockCount = Math.floor(key.length / 4);
-  const view = new DataView(key.buffer, key.byteOffset, key.byteLength);
+  const reader = new BinaryReader(
+    Buffer.from(key.buffer, key.byteOffset, key.byteLength),
+    true,
+    "murmur3-key",
+  );
   for (let block = 0; block < blockCount; block += 1) {
-    let k = view.getUint32(block * 4, true);
+    let k = reader.u32(block * 4);
     k = Math.imul(k, c1);
     k = rotateLeft32(k, 15);
     k = Math.imul(k, c2);

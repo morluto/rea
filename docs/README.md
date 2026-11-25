@@ -144,6 +144,10 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 
 - [Offline EVM bytecode](guides/evm/evm-bytecode.md)
 
+## Solana programs
+
+- [Solana sBPF program analysis](guides/solana/solana-program-analysis.md)
+
 ## Databases and recorded packets
 
 - [SQLite database snapshots](guides/data/sqlite-databases.md)

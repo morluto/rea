@@ -118,3 +118,63 @@ const splitWords = (bytes: Uint8Array): readonly Uint8Array[] => [
   bytes.subarray(0, 8),
   bytes.subarray(8, 16),
 ];
+
+it("resolves a jne dispatch to the fallthrough handler, not the skip target", () => {
+  const instructions = disassembleSbpf(
+    join(
+      word(0x79, 3, 2, 0, 0),
+      ...splitWords(CREATE_CONFIG_LDDW),
+      word(0x5d, 3, 4, 5, 0),
+      word(0x95, 0, 0, 0, 0),
+    ),
+    0x1000,
+    0x200,
+  );
+  const [candidate] = scanSolanaDispatch(instructions).candidates;
+  expect(candidate?.branch).toBe("jne");
+  // Equality falls through to the word after the jne at 0x1000 + 8 * 3.
+  expect(candidate?.branchTarget).toBe(0x1000 + 8 * 4);
+});
+
+it("does not pair a dispatch constant with a compare after a call, exit or jump", () => {
+  for (const separator of [
+    word(0x85, 0, 0, 0, 1234),
+    word(0x95, 0, 0, 0, 0),
+    word(0x05, 0, 0, 0, 0),
+  ]) {
+    const instructions = disassembleSbpf(
+      join(
+        ...splitWords(CREATE_CONFIG_LDDW),
+        separator,
+        word(0x1d, 3, 4, 5, 0),
+      ),
+      0,
+      0,
+    );
+    expect(scanSolanaDispatch(instructions).candidates).toHaveLength(0);
+  }
+});
+
+it("renders byte-swap conversions with their immediate width", () => {
+  const instructions = disassembleSbpf(
+    join(
+      word(0xd4, 1, 0, 0, 16),
+      word(0xd4, 1, 0, 0, 32),
+      word(0xdc, 1, 0, 0, 64),
+    ),
+    0,
+    0,
+  );
+  expect(instructions.map((entry) => entry.text)).toEqual([
+    "r1 = le16(r1)",
+    "r1 = le32(r1)",
+    "r1 = be64(r1)",
+  ]);
+});
+
+it("marks an lddw missing its second word as unknown instead of reading past the code", () => {
+  const instructions = disassembleSbpf(CREATE_CONFIG_LDDW.subarray(0, 8), 0, 0);
+  expect(instructions).toHaveLength(1);
+  const [only] = instructions;
+  expect(only !== undefined && isUnknownSbpfInstruction(only)).toBe(true);
+});
