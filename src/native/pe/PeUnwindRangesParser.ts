@@ -551,6 +551,7 @@ export const parsePeUnwindRangesFromHandle = async (
   await resolveChains(table, signal);
   const { primary, chained, unknown, withIssues, total, entries } =
     countAndPage(table, input);
+  const trailingBytes = directory.size % ENTRY_BYTES;
   const end = input.offset + entries.length;
   return {
     artifact,
@@ -566,13 +567,13 @@ export const parsePeUnwindRangesFromHandle = async (
       section: sectionNameAt(image, directory.address),
     },
     coverage: {
-      status: unknown === 0 ? "complete" : "partial",
+      status: unknown === 0 && trailingBytes === 0 ? "complete" : "partial",
       total_entries: count,
       primary_entries: primary,
       chained_entries: chained,
       unknown_entries: unknown,
       entries_with_issues: withIssues,
-      trailing_bytes: directory.size % ENTRY_BYTES,
+      trailing_bytes: trailingBytes,
     },
     page: {
       kind: input.kind,
@@ -583,6 +584,10 @@ export const parsePeUnwindRangesFromHandle = async (
       next_offset: end < total ? end : null,
     },
     entries,
-    limitations: [PE_UNWIND_LIMITATIONS.codes, PE_UNWIND_LIMITATIONS.leaf],
+    limitations: [
+      PE_UNWIND_LIMITATIONS.codes,
+      PE_UNWIND_LIMITATIONS.leaf,
+      ...(trailingBytes === 0 ? [] : [PE_UNWIND_LIMITATIONS.trailing]),
+    ],
   };
 };
