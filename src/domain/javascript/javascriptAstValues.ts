@@ -302,11 +302,10 @@ const UNKNOWN_STATIC_OBJECT_MEMBER: StaticObjectMember = { kind: "unknown" };
 
 /** Object-literal prototype setters are never ordinary own-property writes. */
 export const isObjectPrototypeSetter = (
-  property: t.ObjectProperty | t.ObjectMethod,
-  key: string | null = semanticStaticPropertyKey(
-    property.key,
-    property.computed,
-  ),
+  property: t.ObjectExpression["properties"][number],
+  key: string | null = t.isSpreadElement(property)
+    ? null
+    : semanticStaticPropertyKey(property.key, property.computed),
 ): boolean =>
   t.isObjectProperty(property) &&
   !property.computed &&

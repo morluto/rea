@@ -53,6 +53,12 @@ export const nativeEvidenceEffects = toolEffects({
   mutatesSession: true,
   launchesProcess: true,
 });
+/** Records Evidence and may launch pinned helpers or write temporary files (e.g. DMG mount). */
+export const artifactInspectionEffects = toolEffects({
+  mutatesSession: true,
+  launchesProcess: true,
+  writesFilesystem: true,
+});
 /** Records Evidence and reaches the network through a browser. */
 export const browserEvidenceEffects = toolEffects({
   mutatesSession: true,

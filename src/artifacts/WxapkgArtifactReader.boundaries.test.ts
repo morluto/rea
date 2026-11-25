@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
@@ -22,11 +23,6 @@ const fixture = async (bytes: Buffer): Promise<string> => {
   await writeFile(path, bytes);
   return path;
 };
-const entries = async (reader: WxapkgArtifactReader) => {
-  const result = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
-};
 
 it("retries Wxapkg preparation cancelled during file reading", async () => {
   const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
@@ -50,7 +46,9 @@ it("retries Wxapkg preparation cancelled during file reading", async () => {
       })(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     read.mockRestore();
-    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+    expect((await collectEntries(reader)).map((entry) => entry.path)).toEqual([
+      "a",
+    ]);
   } finally {
     read.mockRestore();
     await reader.close();
@@ -62,7 +60,7 @@ it("does not publish Wxapkg entries when final source verification fails", async
   const path = await fixture(buildWxapkg([{ path: "a", data: "x" }]));
   const control = new WxapkgArtifactReader(path);
   const reader = new WxapkgArtifactReader(path);
-  const expected = (await entries(control))[0]!;
+  const expected = (await collectEntries(control))[0]!;
   const nativeRead = ArtifactFileSource.prototype.read;
   const physical = Object.assign(
     new Error("final source verification failed"),
@@ -77,12 +75,14 @@ it("does not publish Wxapkg entries when final source verification fails", async
       return nativeRead.apply(this, args);
     });
   try {
-    await expect(entries(reader)).rejects.toBe(physical);
+    await expect(collectEntries(reader)).rejects.toBe(physical);
     await expect(reader.open(expected)).rejects.toMatchObject({
       reason: "integrity",
     });
     read.mockRestore();
-    expect((await entries(reader)).map((entry) => entry.path)).toEqual(["a"]);
+    expect((await collectEntries(reader)).map((entry) => entry.path)).toEqual([
+      "a",
+    ]);
   } finally {
     read.mockRestore();
     await reader.close();
@@ -101,7 +101,7 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
     const reader = new WxapkgArtifactReader(path, admitted);
     const reads = vi.spyOn(admitted.handle, "read");
     try {
-      await expect(entries(reader)).rejects.toMatchObject({
+      await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
         fixedAllowance: {
@@ -142,7 +142,7 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
     }
     const reader = new WxapkgArtifactReader(await fixture(file));
     try {
-      await expect(entries(reader)).rejects.toMatchObject({
+      await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
         fixedAllowance: {
@@ -166,7 +166,7 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await fixture(buildWxapkg(members, { aliasOffsets: true })),
     );
     try {
-      await expect(entries(reader)).rejects.toMatchObject({
+      await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         message: expect.stringContaining("wxapkg members declare"),
       });
@@ -190,7 +190,7 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
     bytes.writeUInt32BE(1, 18 + 4 + 50 + 4);
     const reader = new WxapkgArtifactReader(await fixture(bytes));
     try {
-      await expect(entries(reader)).rejects.toMatchObject({
+      await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "format",
         message: expect.stringContaining("truncated"),
       });
@@ -205,7 +205,7 @@ describe("wxapkg pending read cancellation", () => {
     const reader = new WxapkgArtifactReader(
       await fixture(buildWxapkg([{ path: "x", data: "bytes" }])),
     );
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const reached = createDeferred<void>();
     const release = createDeferred<void>();
     const failure = new Error("final source verification failed");
@@ -250,7 +250,7 @@ describe("wxapkg pending read cancellation", () => {
     const controller = new AbortController();
     const reason = new Error("caller cancelled");
     const nativeRead = admitted.handle.read.bind(admitted.handle);
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
       ...args: unknown[]
     ) => {
@@ -286,7 +286,7 @@ describe("wxapkg pending read cancellation", () => {
     const release = createDeferred<void>();
     const failure = new Error("member read failed");
     const controller = new AbortController();
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const reads = vi
       .spyOn(admitted.handle, "read")
       .mockImplementation((async () => {
@@ -316,7 +316,7 @@ describe("wxapkg stream ownership", () => {
     const reader = new WxapkgArtifactReader(
       await fixture(buildWxapkg([{ path: "x", data: "bytes" }])),
     );
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const stream = await reader.open(entry!);
     const failure = new Error("descriptor close denied");
     const close = vi
@@ -343,7 +343,7 @@ describe("wxapkg stream ownership", () => {
     const reached = createDeferred<void>(),
       release = createDeferred<void>();
     const nativeRead = admitted.handle.read.bind(admitted.handle);
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
       ...args: unknown[]
     ) => {
@@ -384,7 +384,7 @@ describe("wxapkg stream ownership", () => {
     const controller = new AbortController();
     const reason = new Error("cancel during member read");
     const nativeRead = admitted.handle.read.bind(admitted.handle);
-    const [entry] = await entries(reader);
+    const [entry] = await collectEntries(reader);
     const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
       ...args: unknown[]
     ) => {
@@ -412,7 +412,7 @@ describe("wxapkg stream capacity and freshness", () => {
       await fixture(buildWxapkg([{ path: "x", data: "bytes" }])),
     );
     try {
-      const [entry] = await entries(reader);
+      const [entry] = await collectEntries(reader);
       const streams = await Promise.all(
         Array.from({ length: 4 }, () => reader.open(entry!)),
       );
@@ -439,7 +439,7 @@ describe("wxapkg stream capacity and freshness", () => {
       await fixture(buildWxapkg([member])),
     );
     try {
-      const [entry] = await entries(reader);
+      const [entry] = await collectEntries(reader);
       await expect(
         (async () => {
           for (let index = 0; index < 5000; index++)
@@ -465,7 +465,7 @@ describe("wxapkg stream capacity and freshness", () => {
     const path = await fixture(bytes);
     const reader = new WxapkgArtifactReader(path);
     try {
-      const [entry] = await entries(reader);
+      const [entry] = await collectEntries(reader);
       expect(await text(await reader.open(entry!))).toBe("before");
       await writeFile(path, Buffer.concat([bytes, Buffer.from([0])]));
       await expect(reader.open(entry!)).rejects.toMatchObject({

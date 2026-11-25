@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import { evidenceSubjectTarget } from "../evidence.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   ffsTypeNameSchema,
   guidSchema,
@@ -11,7 +11,7 @@ import {
   type UefiInspectResult,
   type UefiSectionRecord,
 } from "../uefi/uefiFirmwareAnalysis.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
 import {
   boundedViewMessages,
@@ -335,15 +335,8 @@ export const projectUefiFirmwareView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "uefi-firmware")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "UEFI firmware Evidence supports summary and uefi-firmware views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "UEFI firmware Evidence supports summary and uefi-firmware views.",
     );
   assertOwnedView<SummaryAnalysisView | UefiFirmwareView>(
     view,

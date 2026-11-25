@@ -303,6 +303,10 @@ import {
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
 } from "./summarySchemas/webBundleSummarySchemas.js";
+import {
+  webPagePageViewResultSchema,
+  webPageSummaryViewResultSchema,
+} from "./summarySchemas/webPageSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -383,6 +387,8 @@ export {
   wasmArtifactSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
+  webPagePageViewResultSchema,
+  webPageSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -679,6 +685,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   nativeContextViewResultSchema,
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
+  webPagePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -790,6 +797,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    webPageSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({

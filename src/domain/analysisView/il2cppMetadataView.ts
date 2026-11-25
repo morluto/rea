@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
@@ -506,15 +509,8 @@ export const projectIl2cppMetadataView = (
     SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
   >(admitted, "summary", "il2cpp-metadata");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "IL2CPP metadata Evidence supports summary and selected sections, images, types, methods, member, parameter, string literal, method address, type reference, generic method instance and generic method issue pages.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "IL2CPP metadata Evidence supports summary and selected sections, images, types, methods, member, parameter, string literal, method address, type reference, generic method instance and generic method issue pages.",
     );
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;

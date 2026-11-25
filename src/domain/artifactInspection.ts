@@ -6,6 +6,7 @@ import {
   immutableJsonSnapshotMember,
 } from "./immutableJson.js";
 import {
+  artifactCrc32PairSchema,
   artifactDfuCrc32PairSchema,
   artifactIntegrityPairOf,
   artifactSha256PairSchema,
@@ -25,7 +26,12 @@ import {
   type StandaloneArtifactFormat,
 } from "./artifactFormatRecognition.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
-import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
+import {
+  evidenceSchema,
+  immutableEvidence,
+  isImmutableEvidence,
+  type Evidence,
+} from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -67,6 +73,7 @@ const inspectionContradictionSchema = z.union([
   inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),
 ]);
 
 const nextProbeSchema = z.strictObject({
@@ -89,6 +96,13 @@ const unexploredBranchSchema = z.strictObject({
 });
 
 /** Provider-neutral inspection result with its atomic source Evidence. */
+const inspectionSubstepFields = {
+  substep_id: prefixedDigestSchema("ais"),
+  operation: z.literal("inventory_artifact"),
+  status: z.literal("completed"),
+  evidence_id: evidenceIdSchema,
+} as const;
+
 export const artifactInspectionResultSchema = z.strictObject({
   inspection_id: prefixedDigestSchema("ai"),
   subject: z.strictObject({
@@ -100,10 +114,7 @@ export const artifactInspectionResultSchema = z.strictObject({
   substeps: z
     .array(
       z.strictObject({
-        substep_id: prefixedDigestSchema("ais"),
-        operation: z.literal("inventory_artifact"),
-        status: z.literal("completed"),
-        evidence_id: evidenceIdSchema,
+        ...inspectionSubstepFields,
         evidence: evidenceSchema.safeExtend({
           operation: z.literal("inventory_artifact"),
           normalized_result: artifactInventoryResultSchema,
@@ -231,14 +242,41 @@ export const createArtifactInspection = (
       "Inspection derives bounded static hypotheses and next probes; it does not execute the artifact or claim format-specific semantics.",
     ]),
   };
-  return artifactInspectionResultSchema.parse({
+  return constructedInspectionSchema.parse({
     ...semantic,
     inspection_id: `ai_${digestCanonicalValue(semantic, "Artifact inspection")}`,
   });
 };
 
+/**
+ * The result as constructed here: each substep holds the sealed inventory
+ * Evidence authenticated above. Checking it by seal keeps that snapshot
+ * instead of parsing and copying the complete inventory again, so a session
+ * that records it as a source borrows it too.
+ */
+const constructedInspectionSchema = artifactInspectionResultSchema.safeExtend({
+  substeps: z
+    .array(
+      z.strictObject({
+        ...inspectionSubstepFields,
+        evidence: z.custom<
+          z.infer<
+            typeof artifactInspectionResultSchema
+          >["substeps"][number]["evidence"]
+        >(
+          (value) =>
+            isImmutableEvidence(value as Evidence) &&
+            (value as Evidence).operation === "inventory_artifact",
+          "Expected the sealed inventory_artifact Evidence",
+        ),
+      }),
+    )
+    .min(1),
+});
+
 const parseInventoryEvidence = (input: unknown): Evidence => {
-  const evidence = parseEvidence(input);
+  // Authenticate once and seal, borrowing an already sealed snapshot.
+  const evidence = immutableEvidence(input);
   if (evidence.operation !== "inventory_artifact")
     throw new TypeError(
       "Artifact inspection substep requires inventory_artifact Evidence",
@@ -476,10 +514,11 @@ const fitProbes = (
       entryPoint: image.load,
       fileBytes: row.declared_size,
     });
-    if (!admitted.ok) continue;
+    // A selected entry never leaves admission waiting on a vector-table read.
+    if (!admitted.ok || "admit" in admitted.value) continue;
     rawProbe = {
       operation: "open_binary",
-      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
+      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.load.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
       authority: "native-analysis-provider",
     };
     break;

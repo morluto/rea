@@ -5,6 +5,7 @@ import { createDwarfUnitsService } from "../../../src/composition/binaryDiagnost
 import { elfImage } from "../../../src/native/dwarf/DwarfUnits.fixture.js";
 import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("DWARF compile-unit stable filesystem boundary", () => {
   it("reports non-file and malformed selections as caller input errors", async () => {
@@ -19,26 +20,11 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createDwarfUnitsService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_dwarf_units",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_dwarf_units", {
+        root,
+        alias,
+        path,
+      });
       // Malformed bytes are a target refusal, not a request-field error.
       const malformedResult = await service.inspect({ path: malformed });
       if (malformedResult.ok) throw new Error("Expected a malformed target");

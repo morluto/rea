@@ -1,3 +1,4 @@
+import { err, type Result } from "../result.js";
 import {
   AnalysisInputError,
   type AnalysisInputIssue,
@@ -17,3 +18,13 @@ export const analysisViewInputError = (
   issues: readonly AnalysisInputIssue[],
 ): AnalysisInputError =>
   new AnalysisInputError(INSPECT_ANALYSIS_VIEW_OPERATION, undefined, issues);
+
+/** A constraint on the selected view as a whole. */
+export const invalidAnalysisView = (
+  message: string,
+): Result<never, AnalysisInputError> =>
+  err(
+    analysisViewInputError([
+      { path: ["view"], reason: "invalid_value", message },
+    ]),
+  );

@@ -4,6 +4,7 @@ import type { ElfDebugLink } from "./native/elfDebugLink.js";
 import type { ElfDependencies } from "./native/elfDependencies.js";
 import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { PeUnwindRanges } from "./native/peUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
 import type { V8CodeCache } from "./v8/v8CodeCache.js";
@@ -87,6 +88,9 @@ export interface AnalysisCapturedOutput {
   readonly stderr_bytes?: number;
   readonly exit_code?: number | null;
   readonly signal?: string | null;
+  /** Set when the runner reported invalid UTF-8, decoded as replacement characters. */
+  readonly stdout_invalid_utf8?: true;
+  readonly stderr_invalid_utf8?: true;
 }
 
 /** Cleanup uncertainty attached to the original typed analysis failure. */
@@ -705,6 +709,7 @@ export type AnalysisPartialObservation =
   | ElfDependencies
   | ElfNotes
   | ElfUnwindRanges
+  | PeUnwindRanges
   | KernelBuildConfig
   | KernelModule
   | V8CodeCache

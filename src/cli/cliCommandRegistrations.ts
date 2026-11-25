@@ -201,6 +201,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.analysis.runProviderAnalysis,
+        context.environment,
       ),
   ),
   managed: withAnalysis(
