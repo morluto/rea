@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
   aliasTargetSchema,
   byteRangeSchema,
@@ -31,7 +31,7 @@ export const WASM_COMPONENT_GRAMMAR = {
 
 /** One explicitly selected local file; no binary session is required. */
 export const inspectWasmComponentInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute selected local WebAssembly component path",
   ),
 });

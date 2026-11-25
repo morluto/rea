@@ -329,6 +329,7 @@ const relativeInspectionPaths = [
   ["inspect_python_pyc", "sample.pyc"],
   ["inspect_rust_binary", "sample"],
   ["inspect_v8_code_cache", "module.jsc"],
+  ["inspect_wasm_component", "component.wasm"],
 ] as const;
 
 it("rejects relative paths through in-memory MCP handlers", async () => {

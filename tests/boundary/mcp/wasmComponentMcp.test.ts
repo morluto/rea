@@ -221,7 +221,17 @@ componentMcpTest(
       arguments: { path: "relative.wasm" },
     });
     expect(parseMcpToolError(relative)).toMatchObject({
-      error: { code: "invalid_request" },
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              message: "must be an absolute local filesystem path",
+            },
+          ],
+        },
+      },
     });
   },
 );
