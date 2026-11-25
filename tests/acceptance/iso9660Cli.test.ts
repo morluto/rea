@@ -105,10 +105,14 @@ cliTest(
     expect(result.exitCode, result.stdout + result.stderr).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
+      retryable: false,
+      retry: "none",
       details: {
         operation: "inspect_artifact",
+        path,
         failure_kind: "malformed",
-        reason: expect.stringContaining("revisits the extent"),
+        format: "iso9660",
+        field: "extent_location",
       },
     });
   },
