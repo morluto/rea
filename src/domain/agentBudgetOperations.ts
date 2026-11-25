@@ -29,6 +29,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "inspect_managed_members",
   "inspect_native_exports",
   "inspect_native_load_image",
+  "inspect_nuget_nupkg",
   "inspect_pcap_capture",
   "inspect_python_pyc",
   "inspect_rust_binary",
@@ -49,4 +50,5 @@ export const AGENT_BUDGET_OPERATIONS = [
   "search_strings",
   "trace_feature",
   "trace_web_source_location",
+  "xrefs",
 ] as const;
