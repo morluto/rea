@@ -115,6 +115,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## HarmonyOS packages
 
 - [Static HarmonyOS package inventory](guides/harmony/harmony-analysis.md)
+- [HarmonyOS Ark bytecode analysis](guides/harmony/harmony-abc-analysis.md)
 
 <a id="additional-guides"></a>
 

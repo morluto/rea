@@ -3,7 +3,10 @@ import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.j
 import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
-import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
+import {
+  createUefiAnalysisService,
+  createHarmonyAbcAnalysisService,
+} from "../application/ProviderOperationServices.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
@@ -62,7 +65,9 @@ import type {
   CommandProviderLaunchFailures,
 } from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
+import type { HarmonyAbcAnalysisPort } from "../ports/harmony/HarmonyAbcAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "./firmware.js";
+import { createHarmonyAbcAnalysisProvider } from "./harmonyAbc.js";
 import { firmwareHostSupported } from "../firmware/FirmwareCommand.js";
 import { createAndroidAnalysisProvider } from "./android.js";
 import { createPcapAnalysisProvider } from "./pcap.js";
@@ -156,6 +161,7 @@ export interface CapabilityServiceOptions {
   readonly recordedCrash?: RecordedCrashService;
   readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
+  readonly harmonyAbc?: HarmonyAbcAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
   readonly webSourceLocation?: WebSourceLocationService;
@@ -490,6 +496,27 @@ const modules = {
           options.firmwareAnalysis !== undefined ||
           (firmwareHostSupported(platform) &&
             isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
+      },
+    }),
+  ),
+  harmonyAbc: service(
+    ({ environment, options, platform }) =>
+      createHarmonyAbcAnalysisService(
+        options.harmonyAbc ??
+          createHarmonyAbcAnalysisProvider(environment, undefined, platform),
+      ),
+    ({ environment, options, platform }) => ({
+      hostUnsupported: {
+        harmonyAbc: outsideHost(
+          options.harmonyAbc,
+          platform === "linux" || platform === "darwin",
+        ),
+      },
+      optionalFeatures: {
+        harmonyAbcEnabled:
+          options.harmonyAbc !== undefined ||
+          ((platform === "linux" || platform === "darwin") &&
+            isAbsolute(environment.REA_XPANDA_ROOT ?? "")),
       },
     }),
   ),

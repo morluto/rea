@@ -453,6 +453,11 @@ export const documentationSections = [
         source: "guides/harmony/harmony-analysis.md",
         route: "/harmony-analysis",
       },
+      {
+        text: "HarmonyOS Ark bytecode analysis",
+        source: "guides/harmony/harmony-abc-analysis.md",
+        route: "/harmony-abc-analysis",
+      },
     ],
   },
   {

@@ -75,6 +75,11 @@ export const TOOL_FAMILY_DEFINITIONS = [
     contracts: TOOL_CONTRACT_GROUPS.FIRMWARE_TOOL_CONTRACTS,
   },
   {
+    id: "harmony",
+    surface: "harmony-provider",
+    contracts: TOOL_CONTRACT_GROUPS.HARMONY_ABC_TOOL_CONTRACTS,
+  },
+  {
     id: "uefi",
     surface: "firmware-provider",
     contracts: TOOL_CONTRACT_GROUPS.UEFI_TOOL_CONTRACTS,

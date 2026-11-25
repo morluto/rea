@@ -40,6 +40,7 @@ import * as sqliteModule from "./cli/sqliteCommands.js";
 import * as artifactModule from "./cli/artifactCommands.js";
 import * as managedModule from "./cli/managedCommands.js";
 import * as firmwareModule from "./cli/firmwareCommands.js";
+import * as harmonyModule from "./cli/harmonyAbcCommands.js";
 import * as uefiModule from "./cli/uefiCommands.js";
 import * as androidModule from "./cli/androidCommands.js";
 import * as pcapModule from "./cli/pcapCommands.js";
@@ -102,6 +103,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   artifact: artifactModule,
   managed: managedModule,
   firmware: firmwareModule,
+  harmony: harmonyModule,
   uefi: uefiModule,
   android: androidModule,
   pcap: pcapModule,

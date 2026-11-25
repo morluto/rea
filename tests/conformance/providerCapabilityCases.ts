@@ -89,6 +89,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   ghidra: { cases: ["tests/boundary/mcp/ghidraInventoryMcp.test.ts"] },
   goBinary: { cases: ["tests/acceptance/goBinaryCli.test.ts"] },
   gpuCodeObjects: { cases: ["tests/acceptance/gpuCodeObjectsCli.test.ts"] },
+  harmonyAbc: { cases: ["tests/boundary/mcp/harmonyAbcMcp.test.ts"] },
   harmonyApplicationGraph: {
     cases: ["tests/boundary/mcp/mobileApplicationGraphMcp.test.ts"],
   },

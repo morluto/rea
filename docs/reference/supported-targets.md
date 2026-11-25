@@ -41,6 +41,7 @@ The table lists what REA returns for each target and which tools or host it requ
 | JEB projects            | Engine-backed project units, artifact digests and type/method pseudo-code                         | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](../providers/jeb-analysis.md)                                                |
 | Android resources       | Decoded manifest, string tables, locales and version facts                                        | Caller-supplied Apktool launcher; [resource guide](../guides/android/apktool-resource-analysis.md)                                                               |
 | Flutter apps            | Dart snapshot hash, per-ABI library digests and engine build provenance                           | None (static APK parsing); [Flutter guide](../guides/android/flutter-analysis.md)                                                                                |
+| HarmonyOS Ark bytecode  | `.abc` headers, class inventory, decompiled JavaScript, disassembly and string search             | Caller-supplied xpanda checkout on Linux/macOS; [HarmonyOS Ark bytecode](../guides/harmony/harmony-abc-analysis.md)                                              |
 | Firmware                | Regions, extraction results and native-analysis handoffs                                          | Bundled UEFI/NVAR; external Binwalk/Unblob on Linux; [firmware guide](../guides/firmware/firmware-analysis.md)                                                   |
 | Recorded packets        | Selected fields, repeated values, filters and decode-as rules                                     | Linux: TShark 4.x + prlimit; [capture guide](../guides/data/packet-captures.md)                                                                                  |
 | Packet summaries        | Endpoints, DNS, TLS SNI, protocol distribution and HTTP requests                                  | Caller-supplied tshark and capinfos on Linux (prlimit) or Windows; [pcap guide](../guides/data/pcap-analysis.md)                                                 |
@@ -64,7 +65,8 @@ or update either provider.
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](../getting-started/installation.md#hopper), the
 [IDA guide](../providers/ida-provider.md) (including an optional native MCP bridge), the
-[Kuna decompiler guide](../kuna-provider.md), and
+[Kuna decompiler guide](../kuna-provider.md),
+[HarmonyOS Ark bytecode](../guides/harmony/harmony-abc-analysis.md), and
 [experimental Windows Ghidra support](../providers/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](../providers/ghidra-dos.md).
 For large binaries, raise the provider's startup deadline with

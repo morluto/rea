@@ -71,6 +71,7 @@ import {
   UNBLOB_PROVIDER_IDENTITY,
 } from "../firmware/FirmwareProviderIdentities.js";
 import { FLUTTER_PROVIDER_IDENTITY } from "../flutter/FlutterProviderIdentity.js";
+import { XPANDA_PROVIDER_IDENTITY } from "../harmony/XpandaRelease.js";
 import { FRIDA_PROVIDER_IDENTITY } from "../frida/FridaProviderIdentity.js";
 import { GDB_PROVIDER_IDENTITY } from "../gdb/GdbProviderIdentity.js";
 import {
@@ -316,6 +317,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(BINWALK_PROVIDER_IDENTITY, ["inspect_firmware_regions"]),
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
+    ],
+  },
+  harmonyAbc: {
+    providers: [
+      providerBinding(XPANDA_PROVIDER_IDENTITY, {
+        group: "HARMONY_ABC_TOOL_CONTRACTS",
+      }),
     ],
   },
   uefiAnalysis: {

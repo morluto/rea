@@ -219,6 +219,7 @@ export const createServer = (
     artifactResources,
     reverseEngineering,
     uefiAnalysis,
+    harmonyAbc,
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
@@ -458,6 +459,8 @@ export const createServer = (
         registerServices({ managedWorkflows: session });
     },
     firmware: () => registerServices({ firmwareAnalysis }),
+    harmony: () =>
+      registerServices({ harmonyAbcAnalysis: harmonyAbc }),
     uefi: () => registerServices({ uefiAnalysis }),
     android: () =>
       registerServices({

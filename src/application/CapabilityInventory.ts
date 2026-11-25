@@ -100,6 +100,8 @@ export type AvailabilityPolicy = {
   readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
+  /** Caller-supplied xpanda checkout configured for HarmonyOS Ark bytecode. */
+  readonly harmonyAbcEnabled?: boolean;
   readonly androidAnalysisAvailability?: ProviderAvailability;
   readonly adbAnalysisAvailability?: ProviderAvailability;
   readonly apktoolAnalysisAvailability?: ProviderAvailability;
@@ -733,6 +735,11 @@ const HOST_FEATURES: Readonly<
   firmwareExtraction: {
     enabled: (policy) => policy.firmwareExtractionEnabled,
     remediation: firmwareRemediation("extract_firmware"),
+  },
+  harmonyAbc: {
+    enabled: (policy) => policy.harmonyAbcEnabled,
+    remediation:
+      "Set REA_XPANDA_ROOT to the absolute path of a caller-supplied xpanda checkout with its dependencies installed (verified with 2.1.0) on Linux or macOS. REA does not install or update xpanda.",
   },
 };
 

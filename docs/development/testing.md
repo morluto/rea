@@ -1540,6 +1540,7 @@ ran and which coverage was unavailable.
 - <a id="adb-device-acquisition"></a>[ADB device acquisition](../testing-lanes.md#adb-device-acquisition)
 - <a id="optional-nativeaot-ghidra-analysis"></a>[Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis)
 - <a id="ida-mcp-adapter"></a>[IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter)
+- <a id="xpanda-lane"></a>[xpanda lane](../testing-lanes.md#xpanda-lane)
 - <a id="kuna-lane"></a>[Kuna lane](../testing-lanes.md#kuna-lane)
 - <a id="dos-ghidra-analysis"></a>[DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis)
 - <a id="apple-interface-builder-archives"></a>[Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives)

@@ -8,6 +8,7 @@ export const HOST_RESTRICTED_FEATURES = [
   "recordedCrash",
   "firmwareInspection",
   "firmwareExtraction",
+  "harmonyAbc",
   "javascriptRecovery",
   "persistentDebugger",
 ] as const;

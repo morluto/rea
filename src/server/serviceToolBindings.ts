@@ -4,6 +4,7 @@ import type {
   FlutterBuildAnalysisService,
   JebAnalysisService,
   PcapAnalysisService,
+  HarmonyAbcService,
 } from "../application/ProviderOperationServices.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -242,6 +243,15 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  harmonyAbcAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_harmony_abc",
+      "list_harmony_abc_classes",
+      "decompile_harmony_abc_class",
+      "decompile_harmony_abc",
+      "disassemble_harmony_abc_method",
+      "search_harmony_abc_strings",
+    ])) satisfies Bind<HarmonyAbcService>,
   uefiAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_uefi_nvram"]),
     inspect_uefi_firmware: {

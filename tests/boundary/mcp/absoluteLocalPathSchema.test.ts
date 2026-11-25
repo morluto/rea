@@ -98,6 +98,71 @@ const standaloneAnalysisCases = (
     issuePath: ["path"],
   }));
 
+const harmonyAbcPathCases = (
+  absolute: string,
+  relative: string,
+): readonly PathInputCase[] =>
+  [
+    {
+      name: "inspect_harmony_abc",
+      field: "path",
+      valid: { path: absolute },
+      invalid: { path: relative },
+    },
+    {
+      name: "list_harmony_abc_classes",
+      field: "path",
+      valid: { path: absolute, offset: 0, limit: 50 },
+      invalid: { path: relative, offset: 0, limit: 50 },
+    },
+    {
+      name: "decompile_harmony_abc_class",
+      field: "path",
+      valid: { path: absolute, class_name: "_GLOBAL", simplify: true },
+      invalid: { path: relative, class_name: "_GLOBAL", simplify: true },
+    },
+    {
+      name: "decompile_harmony_abc",
+      field: "path",
+      valid: { path: absolute, output_directory: absolute, simplify: true },
+      invalid: { path: relative, output_directory: absolute, simplify: true },
+    },
+    {
+      name: "decompile_harmony_abc",
+      field: "output_directory",
+      valid: { path: absolute, output_directory: absolute, simplify: true },
+      invalid: { path: absolute, output_directory: relative, simplify: true },
+    },
+    {
+      name: "disassemble_harmony_abc_method",
+      field: "path",
+      valid: { path: absolute, class_name: "_GLOBAL", max_instructions: 1500 },
+      invalid: {
+        path: relative,
+        class_name: "_GLOBAL",
+        max_instructions: 1500,
+      },
+    },
+    {
+      name: "search_harmony_abc_strings",
+      field: "path",
+      valid: {
+        path: absolute,
+        pattern: "md5",
+        regex: false,
+        offset: 0,
+        limit: 100,
+      },
+      invalid: {
+        path: relative,
+        pattern: "md5",
+        regex: false,
+        offset: 0,
+        limit: 100,
+      },
+    },
+  ].map(({ field, ...entry }) => ({ ...entry, field, issuePath: [field] }));
+
 const inputCases = (
   absolute: string,
   relative: string,
@@ -227,6 +292,7 @@ const inputCases = (
       },
     ),
     ...standaloneAnalysisCases(absolute, relative),
+    ...harmonyAbcPathCases(absolute, relative),
     ...["executable_path", "application_path", "application_root"].map(
       (field) =>
         pathCase(

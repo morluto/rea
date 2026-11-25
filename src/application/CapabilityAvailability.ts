@@ -22,6 +22,7 @@ export type OptionalAvailabilityFeatures = Pick<
   | "recordedCrashEnabled"
   | "firmwareInspectionEnabled"
   | "firmwareExtractionEnabled"
+  | "harmonyAbcEnabled"
 >;
 
 export interface CapabilityAvailabilityFacts {

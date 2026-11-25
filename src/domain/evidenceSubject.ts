@@ -31,6 +31,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "javascript-bundle",
   "entitlements",
   "pyinstaller",
+  "abc",
   "node-sea",
   "dotnet-bundle",
   "bun-standalone",

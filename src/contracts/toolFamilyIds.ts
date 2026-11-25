@@ -12,6 +12,7 @@ export const TOOL_FAMILY_IDS = [
   "artifact",
   "managed",
   "firmware",
+  "harmony",
   "uefi",
   "android",
   "pcap",
