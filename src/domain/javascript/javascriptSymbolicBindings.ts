@@ -550,20 +550,29 @@ export class JavaScriptSymbolicBindings {
           replacement === undefined
             ? undefined
             : this.evaluate(replacement.value, value.environment);
+        const reconnect =
+          object?.kind === "namespace" && object.bindingId === value.bindingId;
         if (
           object !== undefined &&
-          !(
-            object.kind === "namespace" && object.bindingId === value.bindingId
-          ) &&
+          !reconnect &&
           (this.unknownMembers(object) > 0 ||
             this.members(object).includes(key))
         )
           return symbolicUnknown("export getter skipped by an owned key");
+        // A local alias such as `const out = exports` keeps its writes under
+        // its own binding, but `out.handle = ...` also owns the getter's key.
+        // Before a replacement, such a write reached the earlier object.
+        if (
+          this.#exportAliasOwnsKey(
+            value.bindingId,
+            key,
+            replacement === undefined || reconnect
+              ? undefined
+              : replacement.site,
+          )
+        )
+          return symbolicUnknown("export getter skipped by an owned key");
       }
-      // A local alias such as `const out = exports` keeps its writes under
-      // its own binding, but `out.handle = ...` also owns the getter's key.
-      if (write?.getter && this.#exportAliasOwnsKey(value.bindingId, key))
-        return symbolicUnknown("export getter skipped by an owned key");
       // A getter keeps the key's first definition: an earlier write makes
       // the helper skip the key, and a later one fails against the accessor.
       if (
@@ -2388,9 +2397,14 @@ export class JavaScriptSymbolicBindings {
 
   /**
    * Whether a local alias of a factory's exports parameter writes `key`, or
-   * an unknown key, on the namespace object.
+   * an unknown key, on the namespace object. A keyed write placed before
+   * `after`, a whole-object replacement, reached the replaced object.
    */
-  #exportAliasOwnsKey(namespaceId: string, key: string): boolean {
+  #exportAliasOwnsKey(
+    namespaceId: string,
+    key: string,
+    after?: t.Node,
+  ): boolean {
     for (const [bindingId, alias] of this.#exportAliases) {
       if (alias !== namespaceId || this.#moduleBindings.has(bindingId))
         continue;
@@ -2401,7 +2415,11 @@ export class JavaScriptSymbolicBindings {
         if (this.#mutated.has(member)) return true;
         if (
           this.#bindingWrites(member).some(
-            (write) => write.path.length > 0 && write.path[0] === key,
+            (write) =>
+              write.path.length > 0 &&
+              write.path[0] === key &&
+              (after === undefined ||
+                (write.site.start ?? -1) >= (after.start ?? -1)),
           )
         )
           return true;

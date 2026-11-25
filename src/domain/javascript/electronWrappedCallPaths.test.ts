@@ -2402,6 +2402,12 @@ describe("Webpack harmony export getters", () => {
       },
     ],
     [
+      "a replacement after an old exports alias wrote the key",
+      {
+        exports: `const out = __webpack_exports__;\nout.handle = () => {};\n__unused_module.exports = { other: () => {} };\n__webpack_exports__ = __unused_module.exports;\n${DEFINE_HANDLE}`,
+      },
+    ],
+    [
       "module.exports reconnected to the exports object",
       {
         exports: `__unused_module.exports = {};\n__unused_module.exports = __webpack_exports__;\n${DEFINE_HANDLE}`,
@@ -2494,6 +2500,18 @@ describe("Webpack harmony export getters", () => {
       "an exports alias that already owns the key",
       {
         exports: `const out = __webpack_exports__;\nout.handle = () => {};\n${DEFINE_HANDLE}`,
+      },
+    ],
+    [
+      "an alias of the replacement that already owns the key",
+      {
+        exports: `__unused_module.exports = { other: () => {} };\n__webpack_exports__ = __unused_module.exports;\nconst out = __webpack_exports__;\nout.handle = () => {};\n${DEFINE_HANDLE}`,
+      },
+    ],
+    [
+      "an old exports alias that wrote the key before a reconnect",
+      {
+        exports: `const out = __webpack_exports__;\nout.handle = () => {};\n__unused_module.exports = {};\n__unused_module.exports = __webpack_exports__;\n${DEFINE_HANDLE}`,
       },
     ],
     [
