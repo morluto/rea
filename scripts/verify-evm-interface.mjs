@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
@@ -15,7 +13,12 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const manifest = JSON.parse(
@@ -54,11 +57,11 @@ const source = await readFile(
 );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const execute = promisify(execFile);
+const run = createVerifierRun();
+const commands = await createVerifierCommands();
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const run = createVerifierRun();
 const root = await VerifierFixture.open({ prefix: "rea-evm-verifier-" });
 const client = new Client({ name: "evm-interface-verifier", version: "1" });
 const transport = new StdioClientTransport({
@@ -68,6 +71,8 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 const failures = [];
+/** @type {Awaited<ReturnType<typeof completeVerifierRun>> | undefined} */
+let verifier;
 let cases = 0;
 try {
   await client.connect(transport);
@@ -84,7 +89,7 @@ try {
     if (mode === "cli") {
       let stdout;
       try {
-        ({ stdout } = await execute(
+        ({ stdout } = await commands.exec(
           scope.command,
           [
             ...scope.prefix,
@@ -101,9 +106,8 @@ try {
           },
         ));
       } catch (cause) {
-        if (typeof cause.code !== "number" || typeof cause.stdout !== "string")
-          throw cause;
-        stdout = cause.stdout;
+        if (cause?.name !== "VerifierCommandExitError") throw cause;
+        stdout = cause.snapshot.stdout.text;
       }
       value = JSON.parse(stdout);
     } else {
@@ -473,7 +477,7 @@ try {
     ["plain.hex", "hex"],
     ["via-ir.raw", "raw"],
   ]) {
-    await execute(
+    await commands.exec(
       strace,
       [
         "-ff",
@@ -538,26 +542,19 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  // The root is removed only after the client and transport confirm.
+  root.releaseAfter(() => commands.close());
   root.releaseAfter(() => client.close());
   root.releaseAfter(() => transport.close());
+  root.releaseAfter(async () => {
+    verifier = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(verifier.process_lineage);
+  });
   try {
     await root.release();
   } catch (cause) {
     failures.push(cause);
   }
 }
-const verifier = await completeVerifierRun(run);
-if (
-  verifier.process_lineage.status !== "verified" ||
-  verifier.process_lineage.descendants.length !== 0
-)
-  failures.push(
-    new Error(
-      "Verifier process lineage was not fully released: " +
-        JSON.stringify(verifier),
-    ),
-  );
 console.log(
   JSON.stringify(
     {
