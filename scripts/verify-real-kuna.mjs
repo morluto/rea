@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 import {
@@ -340,9 +341,7 @@ const openServer = async (provider, kunaSettings = {}) => {
 
 /** Verify a forced inventory timeout can be retried without changing jobs. */
 const verifyProjectTimeoutRecovery = async (path, address) => {
-  const before = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const before = await sha256File(path);
   const settings = {
     REA_KUNA_JOBS: "2",
     REA_KUNA_TIMEOUT_MS: "60000",
@@ -381,9 +380,7 @@ const verifyProjectTimeoutRecovery = async (path, address) => {
     await retry.close(retryFailure);
   }
   assert.equal(
-    createHash("sha256")
-      .update(await readFile(path))
-      .digest("hex"),
+    await sha256File(path),
     before,
     "Kuna timeout recovery changed the target",
   );
@@ -409,9 +406,7 @@ const verifyKuna = async (
     minimumTraceReferences = {},
   } = {},
 ) => {
-  const sha256 = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const sha256 = await sha256File(path);
   const cold = await openServer({ path, id: "kuna" });
   const answers = [];
   let coldFailure;

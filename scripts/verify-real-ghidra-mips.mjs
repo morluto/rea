@@ -13,6 +13,7 @@ import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
@@ -28,7 +29,7 @@ import {
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { requireVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
   buildPspFixture,
@@ -69,19 +70,7 @@ if (!["linux", "darwin"].includes(process.platform))
   throw new Error(
     "MIPS verification requires a supported Linux/macOS Ghidra host",
   );
-if (process.env.GHIDRA_INSTALL_DIR === undefined)
-  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-if (installation.status !== "available")
-  throw new Error(
-    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
-  );
+const installation = await requireVerifierGhidraInstallation(process.env);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -155,12 +144,12 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     };
     await walk(join(projectDir, "ExistingMips.rep"));
     return Promise.all(
-      paths.sort().map(async (path) => [
-        relative(projectDir, path),
-        createHash("sha256")
-          .update(await readFile(path))
-          .digest("hex"),
-      ]),
+      paths
+        .sort()
+        .map(async (path) => [
+          relative(projectDir, path),
+          await sha256File(path),
+        ]),
     );
   };
   const before = await digestTree();
@@ -219,12 +208,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     before,
     "REA changed the source project",
   );
-  assert.equal(
-    createHash("sha256")
-      .update(await readFile(fixture.path))
-      .digest("hex"),
-    fixture.sha256,
-  );
+  assert.equal(await sha256File(fixture.path), fixture.sha256);
   return {
     byte_order: byteOrder,
     project_unchanged: true,
@@ -797,9 +781,7 @@ try {
       assert.equal(cliDossier.procedure.address, dossier.procedure.address);
       assert.ok(cliDossier.pseudocode.trim().length > 0);
       assert.equal(
-        createHash("sha256")
-          .update(await readFile(fixture.path))
-          .digest("hex"),
+        await sha256File(fixture.path),
         fixture.sha256,
         "Analysis modified the source executable",
       );

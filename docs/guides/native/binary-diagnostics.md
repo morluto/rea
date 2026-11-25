@@ -396,14 +396,37 @@ blocks at most 1.0 form `low` runs. Other blocks interrupt runs. Entropy does no
 prove encryption, and this measure cannot distinguish encrypted from compressed
 data. Small blocks can underestimate entropy; the result is a triage clue.
 
-MCP `detail: "summary"` retains complete Evidence in the session and returns
-file entropy, block/run counts, thresholds, the selected window, and the ten
-longest runs (ties ordered by file offset). Use its `parent_evidence_id` to
-retrieve complete Evidence, or request its summary with `inspect_analysis_view`.
-The CLI returns complete Evidence through the same service. Summary detail
-requires a session capable of retaining Evidence.
+With `detail` omitted, complete Evidence is returned when it fits the
+[agent result budget](../../reference/limits-and-recovery.md#agent-result-budget);
+a larger result returns the summary instead. `detail: "summary"` always
+returns the summary (the CLI also needs `--evidence_output PATH` to keep the
+complete record), and `detail: "complete"` always returns every block inline.
+The summary reports file entropy, thresholds, the selected window, block and run counts,
+the first 64 runs in offset order with exact file offsets, and the ten longest
+runs (ties ordered by file offset).
 
-Reads use one block-sized buffer and a 256-entry histogram. Complete output
+`inspect_analysis_view` pages the retained series by index, without rereading
+the file:
+
+```json
+{
+  "source": { "kind": "retained-evidence", "evidence_id": "ev_…" },
+  "view": {
+    "kind": "byte-entropy",
+    "collection": "blocks",
+    "offset": 2048,
+    "limit": 256
+  }
+}
+```
+
+`collection` is `blocks` or `runs`; `limit` defaults to 256. Continue with
+`coverage.next_offset`. Blocks are contiguous from the window start, so the
+block at file offset `x` has index `(x - window.offset) / block_size`; run
+boundaries are always block boundaries. On the CLI, add `--evidence_output
+PATH` to keep the complete record and page it with an `evidence-file` source.
+
+Reads use one block-sized buffer and a 256-entry histogram. Complete Evidence
 can become very large because it includes one row per selected block, and
 summary delivery still retains that full list. Use a shorter length or a
 larger block size to reduce it. Full Evidence and its serialization require
