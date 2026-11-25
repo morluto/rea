@@ -792,6 +792,7 @@
 * **inspector:** compose provider close failures through the shared owner ([a5f3689](https://github.com/morluto/rea/commit/a5f36891793f2a901326f7443d177ff9e277065d)), refs [#11859](https://github.com/morluto/rea/issues/11859)
 * **inspector:** own the Node discovery path rule in one module ([#10680](https://github.com/morluto/rea/issues/10680)) ([559956c](https://github.com/morluto/rea/commit/559956cf6b5db2677aa4f8b4f34ee67b8038f4d8))
 * **investigation:** build comparison unknowns in their owning function ([#14335](https://github.com/morluto/rea/issues/14335)) ([c2c4298](https://github.com/morluto/rea/commit/c2c4298f3ca4a2a02028cc1d11cfc9316491e14f))
+* **javascript:** share unresolved bundler node construction ([#14441](https://github.com/morluto/rea/issues/14441)) ([17a1d03](https://github.com/morluto/rea/commit/17a1d033fe458c0e8884c773d7a784bea3186cc5))
 * **kuna:** extract KunaCacheManifest from KunaProjectCache ([#13770](https://github.com/morluto/rea/issues/13770)) ([66d819f](https://github.com/morluto/rea/commit/66d819f36958850f8e443e0b4c8465252d81732f))
 * **kuna:** extract KunaInventoryIndex from KunaSessionClient ([#13821](https://github.com/morluto/rea/issues/13821)) ([a022067](https://github.com/morluto/rea/commit/a02206755e8733f0bda5918707c60100bd0beeaa))
 * **kuna:** extract KunaSessionEvidence from KunaSessionClient ([#13879](https://github.com/morluto/rea/issues/13879)) ([12c50f1](https://github.com/morluto/rea/commit/12c50f1309b7ab75a5c70075a7c5078ac888e5af))
