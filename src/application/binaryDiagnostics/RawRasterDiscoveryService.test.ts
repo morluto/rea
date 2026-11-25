@@ -244,7 +244,7 @@ it("retains omitted controls separately from resolved analysis defaults", async 
   }
 });
 
-it("reports deterministic acquisition ceilings without retryable capacity advice", async () => {
+it("distinguishes the adjustable whole-file budget from the selected-range ceiling", async () => {
   const root = await createTestTempDirectory("rea-raster-ceilings-");
   const path = join(root, "bytes");
   await writeFile(path, Buffer.alloc(0));
@@ -262,11 +262,30 @@ it("reports deterministic acquisition ceilings without retryable capacity advice
           _tag: "AnalysisResourceConstraintError",
           retryable: false,
         });
-        if (result.error instanceof AnalysisResourceConstraintError)
+        if (!(result.error instanceof AnalysisResourceConstraintError))
+          throw result.error;
+        if (expectedLimit === 128 * 1024 * 1024) {
+          expect(result.error.reportedLimits).toEqual({
+            max_file_bytes: expectedLimit,
+            required: size,
+          });
+          expect(result.error.remediationAction).toContain("max_file_bytes");
+          const raised = await service.inspect({
+            path,
+            length: 512,
+            max_file_bytes: size,
+          });
+          if (!raised.ok) throw raised.error;
+          expect(raised.value.normalized_result).toMatchObject({
+            artifact: { bytes: size },
+            resolved_controls: { length: 512, max_file_bytes: size },
+          });
+        } else {
           expect(result.error.recovery.fixedAllowance).toMatchObject({
             limit: expectedLimit,
             unit: "bytes",
           });
+        }
       }
     }
   } finally {

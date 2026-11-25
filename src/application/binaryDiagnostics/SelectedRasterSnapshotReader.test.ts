@@ -161,19 +161,69 @@ it.each([false, true])(
   },
 );
 
+/** Inject at the pathname check after the descriptor has been fully read and rechecked. */
+function finalPathCheck(
+  path: string,
+  length: number,
+  action: () => void | Promise<void>,
+) {
+  let readToEnd = false;
+  let descriptorRechecked = false;
+  let reached = false;
+  return {
+    reached: () => reached,
+    files: {
+      stat: (async (...args: Parameters<typeof stat>) => {
+        if (args[0] === path && descriptorRechecked && !reached) {
+          reached = true;
+          await action();
+        }
+        return stat(...args);
+      }) as typeof stat,
+      open: async (...args: Parameters<typeof open>) => {
+        const file = await open(...args);
+        const read = file.read.bind(file);
+        const descriptorStat = file.stat.bind(file);
+        Object.defineProperties(file, {
+          read: {
+            value: async (
+              buffer: Buffer,
+              offset: number,
+              size: number,
+              position: number,
+            ) => {
+              const result = await read(buffer, offset, size, position);
+              if (
+                result.bytesRead > 0 &&
+                position + result.bytesRead === length
+              )
+                readToEnd = true;
+              return result;
+            },
+          },
+          stat: {
+            value: async (...options: Parameters<typeof file.stat>) => {
+              const result = await descriptorStat(...options);
+              if (readToEnd) descriptorRechecked = true;
+              return result;
+            },
+          },
+        });
+        return file;
+      },
+    },
+  };
+}
+
 it("does not publish a hash before final identity validation", async () => {
   const root = await createTestTempDirectory("rea-identity-changed-");
   const path = join(root, "source");
   await writeFile(path, Buffer.from([1, 2, 3]));
-  let stats = 0,
-    consumed = false;
-  const reader = new SelectedRasterSnapshotReader({
-    open,
-    stat: (async (...args: Parameters<typeof stat>) => {
-      if (++stats === 2) await writeFile(path, Buffer.from([4, 5, 6, 7]));
-      return stat(...args);
-    }) as typeof stat,
-  });
+  let consumed = false;
+  const boundary = finalPathCheck(path, 3, () =>
+    writeFile(path, Buffer.from([4, 5, 6, 7])),
+  );
+  const reader = new SelectedRasterSnapshotReader(boundary.files);
   try {
     const result = await reader.read(
       { path, offset: 0 },
@@ -182,6 +232,7 @@ it("does not publish a hash before final identity validation", async () => {
         consumed = true;
       },
     );
+    expect(boundary.reached()).toBe(true);
     if (result.ok) throw Error("Expected changed source failure");
     expect(result.error._tag).toBe("AnalysisArtifactChangedError");
     expect(result.error.partialObservation).toBeUndefined();
@@ -241,31 +292,35 @@ it.each(["reading", "verified"] as const)(
       bytes = Buffer.from([1, 2, 3]);
     await writeFile(path, bytes);
     const controller = new AbortController();
-    let stats = 0,
-      consumed = false;
-    const reader = new SelectedRasterSnapshotReader({
-      stat: (async (...args: Parameters<typeof stat>) => {
-        const value = await stat(...args);
-        if (++stats === 2 && phase === "verified") controller.abort();
-        return value;
-      }) as typeof stat,
-      open: async (...args: Parameters<typeof open>) => {
-        const file = await open(...args),
-          read = file.read.bind(file);
-        Object.defineProperty(file, "read", {
-          value: async (
-            buffer: Buffer,
-            offset: number,
-            length: number,
-            position: number,
-          ) => {
-            if (phase === "reading") controller.abort();
-            return read(buffer, offset, Math.min(1, length), position);
+    let consumed = false;
+    let readingReached = false;
+    const boundary = finalPathCheck(path, bytes.length, () =>
+      controller.abort(),
+    );
+    const reader = new SelectedRasterSnapshotReader(
+      phase === "verified"
+        ? boundary.files
+        : {
+            stat,
+            open: async (...args: Parameters<typeof open>) => {
+              const file = await open(...args),
+                read = file.read.bind(file);
+              Object.defineProperty(file, "read", {
+                value: async (
+                  buffer: Buffer,
+                  offset: number,
+                  length: number,
+                  position: number,
+                ) => {
+                  readingReached = true;
+                  controller.abort();
+                  return read(buffer, offset, Math.min(1, length), position);
+                },
+              });
+              return file;
+            },
           },
-        });
-        return file;
-      },
-    });
+    );
     try {
       const result = await reader.read(
         { path, offset: 0 },
@@ -274,6 +329,9 @@ it.each(["reading", "verified"] as const)(
           consumed = true;
         },
         { signal: controller.signal },
+      );
+      expect(phase === "reading" ? readingReached : boundary.reached()).toBe(
+        true,
       );
       if (result.ok) throw Error("Expected cancellation");
       expect(result.error._tag).toBe("AnalysisCancelledError");

@@ -21,6 +21,9 @@ describe("REA's CLI command table", () => {
         flags: {
           format: "--target-format",
           architecture: "--architecture",
+          architecture_variant: "--architecture-variant",
+          base_address: "--base-address",
+          vector_table_address: "--vector-table-address",
           entry_point: "--entry-point",
           provider_id: "--provider",
           snapshot_path: "--snapshot",
@@ -134,6 +137,7 @@ it("records raster operations with their public option bindings", () => {
         offset_step: "--offset-step",
         min_score: "--min-score",
         max_hypotheses: "--max-hypotheses",
+        max_file_bytes: "--max-file-bytes",
         max_candidates: "--max-candidates",
       },
     },
@@ -147,6 +151,7 @@ it("records raster operations with their public option bindings", () => {
       segments: "--segments",
       min_consistency: "--min-consistency",
       resource_offset: "--resource-offset",
+      max_file_bytes: "--max-file-bytes",
       max_previews: "--max-previews",
     },
   });

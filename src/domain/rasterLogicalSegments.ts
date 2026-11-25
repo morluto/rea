@@ -11,6 +11,61 @@ export interface RasterLogicalSegment {
   fileOffset: number;
   length: number;
 }
+function lowerRasterBound<T>(
+  segments: readonly T[],
+  offset: number,
+  endsBefore: (value: T, offset: number) => boolean,
+): number {
+  let firstSegment = 0,
+    hi = segments.length;
+  while (firstSegment < hi) {
+    const mid = Math.floor((firstSegment + hi) / 2);
+    if (endsBefore(segments[mid]!, offset)) firstSegment = mid + 1;
+    else hi = mid;
+  }
+  return firstSegment;
+}
+
+/** Project uncapped references from the admitted segment and coverage indexes. */
+export function referenceRasterLogicalSegments(
+  segments: readonly RasterLogicalSegment[],
+  offset: number,
+  length: number,
+  coverage: readonly { offset: number; length: number }[],
+  logicalBase: number,
+) {
+  const firstSegment = lowerRasterBound(
+    segments,
+    offset,
+    (segment, at) => segment.logicalOffset + segment.length <= at,
+  );
+  if (length === 0) return { firstSegment, segmentCount: 0, complete: true };
+  const relative = offset - logicalBase;
+  const span =
+    coverage[
+      lowerRasterBound(
+        coverage,
+        relative,
+        (range, at) => range.offset + range.length <= at,
+      )
+    ];
+  if (!span || span.offset > relative) {
+    return { firstSegment, segmentCount: 0, complete: false };
+  }
+  const end = offset + length;
+  const coveredEnd = Math.min(end, logicalBase + span.offset + span.length);
+  const afterLast = lowerRasterBound(
+    segments,
+    coveredEnd,
+    (segment, at) => segment.logicalOffset < at,
+  );
+  return {
+    firstSegment,
+    segmentCount: afterLast - firstSegment,
+    complete: coveredEnd === end,
+  };
+}
+
 /** Walk a range in the sorted, non-overlapping segment table admitted by materialization.
  * Publication callers may bound visits; full export retains table indices without allocations.
  */
@@ -25,15 +80,11 @@ export function walkRasterLogicalSegments(
     length: number,
   ) => void,
 ) {
-  let firstSegment = 0,
-    hi = segments.length;
-  while (firstSegment < hi) {
-    const mid = Math.floor((firstSegment + hi) / 2),
-      segment = segments[mid]!;
-    if (segment.logicalOffset + segment.length <= offset)
-      firstSegment = mid + 1;
-    else hi = mid;
-  }
+  const firstSegment = lowerRasterBound(
+    segments,
+    offset,
+    (segment, at) => segment.logicalOffset + segment.length <= at,
+  );
   const end = offset + length;
   let cursor = offset,
     segmentCount = 0;

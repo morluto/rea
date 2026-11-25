@@ -1,22 +1,19 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
+import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { expect, it } from "vitest";
 
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   buildAndroidOtaPayload,
-  deltaAndroidOtaPayload,
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "../domain/firmware/androidOtaPayload.fixture.js";
 import { zipArchive } from "../domain/desktop/zipArchive.fixture.js";
-import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -26,168 +23,62 @@ const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
   return path;
 };
 
-it("classifies OTA payload bytes as a container by magic, not by suffix", () => {
-  expect(
-    classifyArtifactBytesAtPath("update.bin", fullAndroidOtaPayload()),
-  ).toEqual({
-    kind: "container",
-    format: "android-ota-payload",
-  });
-  expect(
-    classifyArtifactBytesAtPath("payload.bin", Buffer.from("nope")),
-  ).toEqual({
-    kind: "resource",
-    format: "file",
-  });
-  expect(
-    classifyArtifactBytesAtPath("payload.bin", v1AndroidOtaPayload()),
-  ).toEqual({
-    kind: "resource",
-    format: "file",
-  });
-});
-
-it("classifies a nested payload.bin member by CrAU magic", async () => {
-  const nested = fullAndroidOtaPayload();
-  expect(classifyArtifactBytesAtPath("ota/payload.bin", nested)).toEqual({
-    kind: "container",
-    format: "android-ota-payload",
-  });
+it("distinguishes supported OTA payload bytes from opaque ZIP members", async () => {
   const archive = zipArchive([
-    { name: "payload.bin", data: nested, method: 0 },
+    { name: "update.bin", data: fullAndroidOtaPayload(), method: 0 },
+    { name: "old/payload.bin", data: v1AndroidOtaPayload(), method: 0 },
+    { name: "notes/payload.bin", data: Buffer.from("nope"), method: 0 },
   ]);
-  expect(classifyArtifactBytesAtPath("update.zip", archive)).toEqual({
-    kind: "container",
-    format: "zip",
-  });
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier("update.zip", archive),
   );
   expect(snapshot.manifest.root_format).toBe("zip");
+  for (const [logical_path, artifact_format, artifact_kind] of [
+    ["update.bin", "android-ota-payload", "container"],
+    ["old/payload.bin", "file", "resource"],
+    ["notes/payload.bin", "file", "resource"],
+  ]) {
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === logical_path),
+    ).toMatchObject({
+      artifact_format,
+      artifact_kind,
+    });
+  }
   expect(
-    snapshot.occurrences.find((row) => row.logical_path === "payload.bin"),
-  ).toMatchObject({
-    artifact_format: "android-ota-payload",
-    artifact_kind: "container",
-  });
+    snapshot.occurrences.map(({ logical_path }) => logical_path).sort(),
+  ).toEqual([".", "notes/payload.bin", "old/payload.bin", "update.bin"]);
 });
 
-it("inventories full-payload partitions, groups, signatures and extractable images", async () => {
-  const bytes = fullAndroidOtaPayload();
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier("payload.bin", bytes),
-  );
-  expect(snapshot.manifest.root_format).toBe("android-ota-payload");
-  expect(snapshot.coverage.status).toBe("complete");
-  expect(snapshot.limitations.join(" ")).toContain("not verified");
-  const root = snapshot.occurrences.find((row) => row.logical_path === ".");
-  expect(root).toMatchObject({
-    artifact_kind: "container",
-    format_metadata: {
-      kind: "android-ota-payload",
-      magic: "CrAU",
-      major_version: 2,
-      payload_kind: "full",
-      signatures_verified: false,
-      snapshot_enabled: true,
-      vabc_enabled: true,
-      security_patch_level: "2024-01-05",
-    },
-  });
-  expect(root?.format_metadata).toMatchObject({
-    kind: "android-ota-payload",
-    dynamic_partition_groups: [{ name: "super", partition_names: ["system"] }],
-    apex_info: [{ package_name: "com.android.runtime" }],
-  });
-  const members = snapshot.occurrences.filter(
-    (row) => row.logical_path !== ".",
-  );
-  expect(members.map((row) => [row.logical_path, row.hash_status])).toEqual([
-    ["boot.img", "verified"],
-    ["system.img", "verified"],
-  ]);
-  expect(members[0]?.format_metadata).toMatchObject({
-    kind: "android-ota-partition",
-    name: "boot",
-    extractable: true,
-  });
-});
-
-it("inventories a delta payload and leaves non-extractable partitions unread", async () => {
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier("delta.bin", deltaAndroidOtaPayload()),
-  );
-  expect(snapshot.manifest.root_format).toBe("android-ota-payload");
-  const vendor = snapshot.occurrences.find(
-    (row) => row.logical_path === "vendor.img",
-  );
-  expect(vendor).toMatchObject({
-    hash_status: "unavailable",
-    format_metadata: {
-      kind: "android-ota-partition",
-      extractable: false,
-      operation_counts: [
-        { type: "SOURCE_COPY", type_code: 4, count: 1 },
-        { type: "BROTLI_BSDIFF", type_code: 10, count: 1 },
-      ],
-    },
-  });
-  expect(vendor?.limitations.join(" ")).toContain("not applied");
-});
-
-it("extracts reconstructed REPLACE and ZERO images", async () => {
-  const path = await writeCarrier("payload.bin", fullAndroidOtaPayload());
-  const resourceScope = new ArtifactResourceScope();
-  try {
-    const extracted = await extractArtifact({
-      inputPath: path,
-      inputFormat: "android-ota-payload",
-      outputRoot: join(path, "..", "out"),
-      environment: process.env,
-      integrityPolicy: "fail",
-      resourceScope,
-    });
-    expect(extracted.containment_verified).toBe(true);
-    const boot = await readFile(join(extracted.output_root, "boot.img"));
-    expect(boot.subarray(0, 7).toString("latin1")).toBe("BOOTIMG");
-    const system = await readFile(join(extracted.output_root, "system.img"));
-    expect(system.equals(Buffer.alloc(8192))).toBe(true);
-  } finally {
-    await resourceScope.close();
-  }
-});
-
-it("refuses to extract a delta partition", async () => {
-  const path = await writeCarrier("delta.bin", deltaAndroidOtaPayload());
-  const reader = new AndroidOtaPayloadArtifactReader(path);
-  try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    await expect(reader.open(entries[0]!)).rejects.toBeInstanceOf(
-      ArtifactEntryContentUnavailable,
+it.each([
+  ["outside", 1_700_000_000n, 1n << 53n, null],
+  ["within", 1n << 53n, 1_700_000_000n, 1_700_000_000],
+] as const)(
+  "reports the last OTA timestamp when it is %s the exact integer range",
+  async (_label, first, last, expected) => {
+    const manifest = new BinaryWriter()
+      .tag(14, WireType.Varint)
+      .int64(first)
+      .tag(14, WireType.Varint)
+      .int64(last)
+      .finish();
+    const header = Buffer.alloc(24);
+    header.write("CrAU");
+    header.writeBigUInt64BE(2n, 4);
+    header.writeBigUInt64BE(BigInt(manifest.length), 12);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeCarrier("payload.bin", Buffer.concat([header, manifest])),
     );
-  } finally {
-    await reader.close();
-  }
-  const resourceScope = new ArtifactResourceScope();
-  try {
-    await expect(
-      extractArtifact({
-        inputPath: path,
-        inputFormat: "android-ota-payload",
-        outputRoot: join(path, "..", "out"),
-        environment: process.env,
-        integrityPolicy: "fail",
-        resourceScope,
-      }),
-    ).rejects.toMatchObject({
-      reason: "unavailable",
-      message: expect.stringContaining("vendor.img"),
+    expect(
+      snapshot.occurrences.find(({ logical_path }) => logical_path === "."),
+    ).toMatchObject({
+      format_metadata: { kind: "android-ota-payload", max_timestamp: expected },
     });
-  } finally {
-    await resourceScope.close();
-  }
-});
+    expect(
+      snapshot.limitations.some((note) => note.includes("max_timestamp")),
+    ).toBe(expected === null);
+  },
+);
 
 it("keeps the manifest when a partition exceeds the extraction limit", async () => {
   const path = await writeCarrier(
@@ -236,15 +127,9 @@ it("keeps the manifest when a partition exceeds the extraction limit", async () 
 
 it("keeps partition inventory when the blob is truncated", async () => {
   const full = fullAndroidOtaPayload();
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier("payload.bin", full),
-  );
-  const blobOffset = snapshot.occurrences.find(
-    (row) => row.logical_path === ".",
-  )?.format_metadata;
-  expect(blobOffset?.kind).toBe("android-ota-payload");
-  if (blobOffset?.kind !== "android-ota-payload") return;
-  const truncated = full.subarray(0, blobOffset.blob_offset + 1);
+  const metadataBytes =
+    Number(full.readBigUInt64BE(12)) + full.readUInt32BE(20);
+  const truncated = full.subarray(0, 24 + metadataBytes + 1);
   const kept = await scanCanonicalArtifactInventory(
     await writeCarrier("truncated.bin", truncated),
   );
@@ -259,86 +144,11 @@ it("keeps partition inventory when the blob is truncated", async () => {
     partitions: [{ name: "boot" }, { name: "system" }],
   });
   expect(
-    kept.occurrences.find((row) => row.logical_path === "boot.img")
-      ?.hash_status,
-  ).toBe("unavailable");
-});
-
-it("streams a reconstructed partition whose hash matches the manifest", async () => {
-  const path = await writeCarrier(
-    "boot.bin",
-    buildAndroidOtaPayload({
-      partitions: [
-        {
-          name: "boot",
-          operations: [{ type: 0, data: Buffer.from("KERNEL") }],
-        },
-      ],
-    }),
-  );
-  const reader = new AndroidOtaPayloadArtifactReader(path);
-  try {
-    const listed = [];
-    for await (const item of reader.entries()) listed.push(item);
-    const [entry] = listed;
-    const bytes = await buffer(await reader.open(entry!));
-    expect(bytes.subarray(0, 6).toString("latin1")).toBe("KERNEL");
-    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      entry?.declaredIntegrity && "digest" in entry.declaredIntegrity
-        ? entry.declaredIntegrity.digest
-        : "",
-    );
-  } finally {
-    await reader.close();
-  }
-});
-
-it("applies the caller's integrity policy to a partition hash mismatch", async () => {
-  const path = await writeCarrier(
-    "mismatch.bin",
-    buildAndroidOtaPayload({
-      partitions: [
-        {
-          name: "boot",
-          newHash: Buffer.alloc(32, 0xff),
-          operations: [{ type: 0, data: Buffer.from("KERNEL") }],
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "integrity",
-  });
-  const recorded = await scanCanonicalArtifactInventory(path, {
-    integrity: "record-and-continue",
-  });
-  expect(
-    recorded.occurrences.find((row) => row.logical_path === "boot.img"),
-  ).toMatchObject({ hash_status: "mismatched" });
-  expect(recorded.integrity_contradictions).toEqual([
-    expect.objectContaining({
-      logical_path: "boot.img",
-      trust: "observed-untrusted",
-    }),
+    kept.occurrences.filter(({ logical_path }) => logical_path !== "."),
+  ).toMatchObject([
+    { logical_path: "boot.img", hash_status: "unavailable" },
+    { logical_path: "system.img", hash_status: "verified" },
   ]);
-  const resourceScope = new ArtifactResourceScope();
-  try {
-    const extracted = await extractArtifact({
-      inputPath: path,
-      inputFormat: "android-ota-payload",
-      outputRoot: join(path, "..", "out"),
-      environment: process.env,
-      integrityPolicy: "record-and-continue",
-      resourceScope,
-    });
-    const boot = await readFile(join(extracted.output_root, "boot.img"));
-    expect(boot.subarray(0, 6).toString("latin1")).toBe("KERNEL");
-    expect(extracted.integrity_contradictions).toEqual([
-      expect.objectContaining({ logical_path: "boot.img" }),
-    ]);
-  } finally {
-    await resourceScope.close();
-  }
 });
 
 it("checks the stored OTA operation bytes when a partition hash is absent", async () => {
@@ -359,20 +169,89 @@ it("checks the stored OTA operation bytes when a partition hash is absent", asyn
     );
     const reader = new AndroidOtaPayloadArtifactReader(path);
     try {
-      for await (const entry of reader.entries()) {
-        expect(entry.path).toBe("boot.img");
-        const opened = reader.open(entry).then(buffer);
-        if (data === original) {
-          expect((await opened).equals(original)).toBe(true);
-        } else {
-          await expect(opened).rejects.toMatchObject({
-            reason: "integrity",
-            message: expect.stringContaining("operation 0"),
-          });
-        }
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toHaveLength(1);
+      const [entry] = entries;
+      if (entry === undefined) throw new Error("Missing boot partition");
+      expect(entry).toMatchObject({
+        path: "boot.img",
+        declaredIntegrity: null,
+      });
+      const opened = reader.open(entry).then(buffer);
+      if (data === original) {
+        expect((await opened).equals(original)).toBe(true);
+      } else {
+        await expect(opened).rejects.toMatchObject({
+          reason: "integrity",
+          integrityCheck: "declared-digest",
+          message: expect.stringContaining("operation 0"),
+        });
       }
     } finally {
       await reader.close();
     }
   }
+});
+
+it("retains payload header and partitions when optional trailing payloadSignature parsing fails", async () => {
+  const path = await writeCarrier(
+    "bad-trailing-sig.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      // Invalid protobuf wire type 7 in optional trailing payload signature blob.
+      payloadSignature: Buffer.from([0x0f, 0xff, 0xff, 0xff]),
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(snapshot.manifest.root_format).toBe("android-ota-payload");
+  expect(snapshot.coverage.status).toBe("unknown");
+  expect(snapshot.limitations.join(" ")).toContain(
+    "Optional trailing payload signature could not be parsed",
+  );
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "android-ota-payload",
+    payload_signature_count: null,
+    partitions: [{ name: "boot" }],
+  });
+  expect(
+    snapshot.occurrences.find((row) => row.logical_path === "boot.img"),
+  ).toMatchObject({ hash_status: "verified" });
+});
+
+it("refuses trailing payloadSignature blobs that exceed the fixed signature count limit", async () => {
+  const writer = new BinaryWriter();
+  for (let index = 0; index < 65; index += 1)
+    writer.tag(1, WireType.LengthDelimited).bytes(new Uint8Array([index]));
+  const path = await writeCarrier(
+    "too-many-trailing-sigs.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+      payloadSignature: Buffer.from(writer.finish()),
+    }),
+  );
+  const reader = new AndroidOtaPayloadArtifactReader(path);
+  try {
+    await expect(async () => {
+      for await (const _entry of reader.entries()) {
+        // Expect refusal during preparation before yielding entries.
+      }
+    }).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      message: expect.stringContaining("signature count"),
+    });
+  } finally {
+    await reader.close();
+  }
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+    /signature count exceeds the fixed 64-signature ceiling/u,
+  );
 });

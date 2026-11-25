@@ -92,5 +92,4 @@ and are skipped on Windows. A green Windows job does not claim those checks ran.
 
 The synthetic demo uses red/green/blue/white pixels only. Neither script is a
 registered REA product command or supported public API. File-workflow verification
-is distinct from pure decoder checks; see the
-[verification scope](../../specs/artifacts/raw-raster-preview/plan.md#verification-scope).
+covers selected byte reads and PNG output; pure decoder checks cover pixel interpretation.

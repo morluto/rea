@@ -123,7 +123,9 @@ hypotheses. Explicit `selections` use reported descriptor offsets and, when need
 bpp/offset-unit choices. Export reruns analysis and exports all retained resources,
 not just the current inspection page. Incomplete discovery remains incomplete.
 
-Hard bounds: 128 MiB input hashing, 16 MiB selected/logical bytes, 4,096 outcomes,
+The default whole-file SHA-256 read budget is 128 MiB. Set `max_file_bytes`
+(`--max-file-bytes` in the CLI) to raise it for a larger file. This does not
+raise the 16 MiB selected/logical byte ceiling. Output is bounded to 4,096 outcomes,
 8,194 files and 256 MiB total output including metadata. Full PNG rendering is
 limited to 4,194,304 pixels and 64 MiB transient rendering budget; RAW-only export
 can avoid rendering limits. Generic and family work budgets are separate. These

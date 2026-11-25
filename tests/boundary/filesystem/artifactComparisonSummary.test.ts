@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { artifactInventorySubject } from "../../../src/domain/artifactInventoryEvidence.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -21,11 +22,7 @@ const observe = async (
   };
   const partial = omit.nodes === true || omit.occurrences === true;
   return createEvidence(
-    {
-      path,
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
+    artifactInventorySubject(path, inventory),
     { id: "rea-artifact-graph", name: "REA artifact graph", version: "1" },
     {
       operation: "inventory_artifact",

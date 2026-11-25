@@ -1,11 +1,16 @@
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  DEFAULT_RASTER_FILE_BYTES,
+  rasterFileBytesSchema,
+} from "./rasterFileReadBudget.js";
 const nonnegative = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const dimensions = z.array(z.number().int().min(8).max(4096)).min(1).max(32);
 const format = z.enum(["gray8", "rgb888", "rgba8888"]);
 /** Explicit search grid and resource budgets, never a claim of exhaustive image detection. */
 export const inspectRawRasterCandidatesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema,
+  max_file_bytes: rasterFileBytesSchema.default(DEFAULT_RASTER_FILE_BYTES),
   offset: nonnegative.default(0),
   length: z
     .number()
@@ -35,6 +40,7 @@ export const inspectRawRasterCandidatesInputSchema = z.strictObject({
 /** Public admission preserves omission; resolution happens only in the service. */
 export const inspectRawRasterCandidatesRequestSchema =
   inspectRawRasterCandidatesInputSchema.extend({
+    max_file_bytes: rasterFileBytesSchema.optional(),
     offset: inspectRawRasterCandidatesInputSchema.shape.offset
       .removeDefault()
       .optional(),
@@ -67,6 +73,7 @@ export const rawRasterDiscoverySchema = z.strictObject({
   resolved_controls: inspectRawRasterCandidatesRequestSchema
     .required({
       offset: true,
+      max_file_bytes: true,
       widths: true,
       heights: true,
       formats: true,

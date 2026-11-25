@@ -223,14 +223,6 @@ const storedValueProjection = (
       ];
 };
 
-const joinAmbientProjection = (
-  left: AmbientProjection,
-  right: AmbientProjection,
-): AmbientProjection =>
-  left === undefined || right === undefined || left.length !== right.length
-    ? undefined
-    : left.map((key, index) => (key === right[index] ? key : null));
-
 type CapturedSelections = readonly SemanticCapturedSelection[] | undefined;
 
 const sameCaptures = (
@@ -262,20 +254,122 @@ interface AmbientResolution {
   readonly possibleArrayReceiver?: true;
 }
 
+type WidenedStoreGroup = ReadonlySet<SemanticIterationSource>;
+
+const hasWidenedStore = (
+  groups: ReadonlySet<WidenedStoreGroup>,
+  source: SemanticIterationSource,
+): boolean => {
+  for (const group of groups) if (group.has(source)) return true;
+  return false;
+};
+
+interface AmbientStoredReferences {
+  readonly finite: Map<SemanticIterationSource, AmbientPath>;
+  readonly widened: Set<WidenedStoreGroup>;
+}
+
+type AmbientCallResult =
+  | { readonly kind: "prototype"; readonly target: t.Node }
+  | { readonly kind: "array-iterator"; readonly receiver?: t.Node };
+
+const ambientResultCallee = (
+  node: t.Node,
+  escapedContents: boolean,
+): t.Node | undefined =>
+  t.isCallExpression(node) ||
+  t.isOptionalCallExpression(node) ||
+  t.isNewExpression(node)
+    ? node.callee
+    : t.isTaggedTemplateExpression(node)
+      ? node.tag
+      : escapedContents && (t.isFunction(node) || t.isClass(node))
+        ? node
+        : undefined;
+
 interface AmbientReferenceFacts {
-  readonly stores: WeakMap<
-    t.Node,
-    Map<SemanticIterationSource, AmbientProjection>
-  >;
-  readonly callResult: (
-    node: t.CallExpression | t.OptionalCallExpression,
-  ) =>
-    | { readonly kind: "prototype"; readonly target: t.Node }
-    | { readonly kind: "array-iterator"; readonly receiver?: t.Node }
-    | undefined;
+  readonly stores: WeakMap<t.Node, AmbientStoredReferences>;
+  readonly callResult: (node: t.CallExpression | t.OptionalCallExpression) => {
+    readonly result: AmbientCallResult | undefined;
+    readonly settled: boolean;
+  };
   readonly freshObject: (node: t.Node) => boolean;
   readonly arrayIteratorReceiver: (node: t.Node) => boolean;
 }
+
+interface WidenedSummarySlot {
+  readonly word: number;
+  readonly bit: number;
+}
+
+/** Index covered roots in the direction queried by the live walk. */
+class WidenedSummaryCoverage {
+  readonly #roots = new WeakMap<t.Node, Map<number, number>>();
+  #nextSlot = 0;
+
+  register(roots: Iterable<t.Node>): WidenedSummarySlot {
+    const index = this.#nextSlot++;
+    const word = Math.floor(index / 32);
+    const bit = 1 << (index % 32);
+    for (const root of roots) {
+      let memberships = this.#roots.get(root);
+      if (memberships === undefined) {
+        memberships = new Map();
+        this.#roots.set(root, memberships);
+      }
+      memberships.set(word, (memberships.get(word) ?? 0) | bit);
+    }
+    return { word, bit };
+  }
+
+  covered(root: t.Node, active: ReadonlyMap<number, number>): boolean {
+    if (active.size === 0) return false;
+    const memberships = this.#roots.get(root);
+    if (memberships === undefined) return false;
+    for (const [word, bits] of memberships)
+      if ((bits & (active.get(word) ?? 0)) !== 0) return true;
+    return false;
+  }
+}
+
+interface WidenedStoreEffects {
+  readonly frontier: ReadonlySet<t.Node>;
+  readonly slot: WidenedSummarySlot;
+  readonly paths: ReadonlyMap<string, AmbientPath>;
+  readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
+  readonly projectedSpread: boolean;
+}
+
+type Pending = {
+  node: t.Node;
+  suffix: AmbientProjection;
+  readsAtSelf: true | undefined;
+  capturedSelections?: CapturedSelections;
+};
+
+interface QueuedInitializers {
+  readonly items: readonly Pending[];
+  readonly capturedSelections: CapturedSelections;
+  remaining: number;
+}
+
+type QueuedInitializersByBinding = Map<
+  JavaScriptSemanticBindingState,
+  Map<string | undefined, QueuedInitializers>
+>;
+
+type ReceiverWalk =
+  | {
+      readonly kind: "finite";
+      readonly visit: (node: t.Node, path: AmbientPath) => void;
+      readonly widen: (node: t.Node, capture: t.Node | undefined) => void;
+    }
+  | {
+      readonly kind: "widened";
+      readonly visit: (node: t.Node) => void;
+      readonly expanded: WeakMap<t.Node, AmbientPath | null>;
+      readonly initializers: QueuedInitializersByBinding;
+    };
 
 /**
  * Follow local object identities without equating shallow copies with their
@@ -295,16 +389,37 @@ export const createAmbientPathResolver = (
     ReturnType<typeof electronMemberPath>
   >();
   const returnedReferences = createSemanticReturnedReferences(state);
+  // Group values are read at their own sites. Once reference stores settle,
+  // their any-depth effects are independent of the outer capture and suffix.
+  const coverage = new WidenedSummaryCoverage();
+  const widenedEffects = new WeakMap<WidenedStoreGroup, WidenedStoreEffects>();
+  const widenedEscapes = new WeakMap<WidenedStoreGroup, WidenedStoreEffects>();
   const resolve = (
     node: t.Node,
     capture?: t.Node,
     escapedContents = false,
     projection: AmbientProjection = [],
-    receiver?: (node: t.Node, path: AmbientProjection) => void,
-    observes?: "array-receiver" | "ambient-effects" | "spread-effects",
+    receiver?: ReceiverWalk,
+    observes?:
+      | "array-receiver"
+      | "ambient-effects"
+      | "spread-effects"
+      | "ownership",
+    summary?: {
+      readonly values: WidenedStoreGroup;
+      retain: (effects: WidenedStoreEffects) => void;
+    },
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
+    const summaryWalk =
+      summary === undefined
+        ? undefined
+        : {
+            frontier: new Set<t.Node>(),
+            roots: new Map<t.Node, AmbientPath | null>(),
+          };
+    const frontier = summaryWalk?.frontier;
     const result = new Map<string, AmbientPath>();
     const callerPaths = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
@@ -312,31 +427,29 @@ export const createAmbientPathResolver = (
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
     // Reads reached through an initializer occur at their own position.
-    type Pending = {
-      node: t.Node;
-      suffix: AmbientProjection;
-      readsAtSelf: true | undefined;
-      capturedSelections?: CapturedSelections;
-    };
-    // A binding read queues its selected initializers for one projection,
-    // taken from the end as if queued one by one. Reads selecting the same
-    // initializers and projection share the remaining items: an item already
-    // taken was expanded with the same projection, so taking it again could
-    // only revisit its expanded root. Requeueing every initializer at each
-    // read reached through an alias cycle grows quadratically per query.
-    interface QueuedInitializers {
-      readonly items: readonly Pending[];
-      readonly capturedSelections: CapturedSelections;
-      remaining: number;
-    }
-    const pending: (Pending | QueuedInitializers)[] = [
-      { node, suffix: projection, readsAtSelf: undefined },
-    ];
-    const queuedInitializers = new Map<
-      JavaScriptSemanticBindingState,
-      Map<string | undefined, QueuedInitializers>
-    >();
-    const take = (): Pending | undefined => {
+    // Initializers sharing a binding and projection are taken once, even
+    // when a cycle reaches that binding at many different reads.
+    type PendingGroup = { readonly group: WidenedStoreGroup };
+    const pending: (Pending | QueuedInitializers | PendingGroup)[] = [];
+    if (summary === undefined)
+      pending.push({
+        node,
+        suffix: receiver?.kind === "widened" ? undefined : projection,
+        readsAtSelf:
+          receiver?.kind === "widened" && capture === undefined
+            ? true
+            : undefined,
+      });
+    else
+      for (const source of summary.values)
+        pending.push({
+          node: source.node,
+          suffix: undefined,
+          readsAtSelf: true,
+        });
+    const queuedInitializers: QueuedInitializersByBinding =
+      receiver?.kind === "widened" ? receiver.initializers : new Map();
+    const take = (): Pending | PendingGroup | undefined => {
       for (;;) {
         const next = pending.pop();
         if (next === undefined || !("items" in next)) return next;
@@ -356,7 +469,24 @@ export const createAmbientPathResolver = (
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
     // Null marks a fully widened root. An absent entry has not been visited.
-    const expanded = new WeakMap<t.Node, AmbientPath | null>();
+    const expanded =
+      receiver?.kind === "widened"
+        ? receiver.expanded
+        : (summaryWalk?.roots ?? new WeakMap<t.Node, AmbientPath | null>());
+    const expandedAtCapture =
+      receiver?.kind === "widened" && capture !== undefined
+        ? new WeakMap<t.Node, AmbientPath | null>()
+        : expanded;
+    const queuedGroups = new Set<WidenedStoreGroup>();
+    // Apply summaries in worklist order. A completed summary dominates later
+    // visits to its roots just as expanding them at any depth would.
+    const activeSummaries = new Map<number, number>();
+    // Array-receiver reads filter stores at their capture. Tentative spread
+    // reads can restore a finite prototype path from an any-depth projection.
+    const summarizeGroups =
+      summary === undefined &&
+      observes !== "array-receiver" &&
+      observes !== "spread-effects";
     const expansionCaptures =
       observes === "array-receiver"
         ? new WeakMap<t.Node, CapturedSelections>()
@@ -374,7 +504,12 @@ export const createAmbientPathResolver = (
       // Keep the continuation for coverage even when no expansion is needed.
       if (suffix === undefined) {
         const root = memberPaths.get(node)?.root;
-        if (root !== undefined && expanded.get(root) === null) return;
+        if (
+          root !== undefined &&
+          ((readsAtSelf ? expanded : expandedAtCapture).get(root) === null ||
+            coverage.covered(root, activeSummaries))
+        )
+          return;
       }
       pending.push({ node, suffix, readsAtSelf, capturedSelections });
     };
@@ -403,8 +538,45 @@ export const createAmbientPathResolver = (
       }
     };
     for (;;) {
+      if (observes === "ownership" && unknownReasons.size > 0) break;
       const current = take();
       if (current === undefined) break;
+      if ("group" in current) {
+        if (observes === "ownership") {
+          unknownReasons.add("widened-projection");
+          break;
+        }
+        const cache = escapedContents ? widenedEscapes : widenedEffects;
+        let effects = cache.get(current.group);
+        if (effects === undefined) {
+          resolve(
+            node,
+            undefined,
+            escapedContents,
+            [],
+            undefined,
+            "ambient-effects",
+            {
+              values: current.group,
+              retain: (value) => {
+                effects = value;
+                cache.set(current.group, value);
+              },
+            },
+          );
+        }
+        if (effects !== undefined) {
+          for (const [key, path] of effects.paths) result.set(key, path);
+          for (const reason of effects.unknownReasons)
+            unknownReasons.add(reason);
+          if (observes === "ambient-effects" && effects.projectedSpread)
+            projectedSpread = true;
+          const { word, bit } = effects.slot;
+          activeSummaries.set(word, (activeSummaries.get(word) ?? 0) | bit);
+          for (const next of effects.frontier) queue(next, undefined, true);
+        }
+        continue;
+      }
       continued = false;
       const pathsBefore = result.size;
       let resolvedIdentity = false;
@@ -415,6 +587,31 @@ export const createAmbientPathResolver = (
           memberPaths.set(current.node, memberPath);
         }
         const { root, members } = memberPath;
+        // A settled dispatch and source-local return graph can be folded
+        // into the shared traversal. Keep effect-sensitive captures on the
+        // live frontier, including the array-receiver check of iterator calls.
+        const isCall =
+          t.isCallExpression(root) || t.isOptionalCallExpression(root);
+        const callee = possibleWrites
+          ? ambientResultCallee(root, escapedContents)
+          : undefined;
+        const observedCall =
+          frontier !== undefined && isCall
+            ? facts?.callResult(root)
+            : undefined;
+        if (
+          frontier !== undefined &&
+          ((isCall &&
+            (observedCall?.settled !== true ||
+              observedCall.result?.kind === "array-iterator")) ||
+            (callee !== undefined &&
+              observedCall?.result?.kind !== "prototype" &&
+              returnedReferences.observesAmbientEffects(callee)))
+        ) {
+          frontier.add(root);
+          resolvedIdentity = true;
+          continue;
+        }
         let suffix: AmbientProjection =
           current.suffix === undefined || members.length === 0
             ? current.suffix
@@ -429,7 +626,10 @@ export const createAmbientPathResolver = (
                 ) ?? []),
               ]
             : current.capturedSelections;
-        const previous = expanded.get(root);
+        const expansions = current.readsAtSelf ? expanded : expandedAtCapture;
+        const previous = coverage.covered(root, activeSummaries)
+          ? null
+          : expansions.get(root);
         if (previous !== undefined) {
           const previousCaptures = expansionCaptures?.get(root);
           // Multiple aliases may choose the same slot at different reads.
@@ -463,7 +663,11 @@ export const createAmbientPathResolver = (
           }
         }
         if (suffix === undefined) capturedSelections = undefined;
-        expanded.set(root, suffix ?? null);
+        expansions.set(root, suffix ?? null);
+        if (suffix === undefined && receiver?.kind === "finite") {
+          receiver.widen(root, current.readsAtSelf ? undefined : capture);
+          continue;
+        }
         expansionCaptures?.set(root, capturedSelections);
         if (suffix === undefined || suffix.includes(null))
           unknownReasons.add("widened-projection");
@@ -516,32 +720,58 @@ export const createAmbientPathResolver = (
             possibleArrayReceiver: true,
           };
         if (!t.isIdentifier(root) && facts?.freshObject(root)) {
-          receiver?.(root, suffix);
+          if (receiver?.kind === "widened") receiver.visit(root);
+          if (receiver?.kind === "finite" && suffix !== undefined)
+            receiver.visit(root, suffix);
           // The allocation owns itself; a projected child needs its own proof.
           if (suffix?.length === 0) {
             hasLocalIdentity = true;
             resolvedIdentity = true;
           }
-          for (const [source, path] of facts?.stores.get(root) ?? []) {
-            const readAt =
-              (path === undefined
-                ? undefined
-                : capturedSelections?.find(({ depth }) => path.length <= depth)
-                    ?.at) ?? capture;
-            if (
-              observes === "array-receiver" &&
-              readAt !== undefined &&
-              !semanticEffectMayPrecede(state, readAt, source.mutation)
-            )
-              continue;
-            const stored = storedValueProjection(
-              suffix,
-              source,
-              path,
-              escapedContents,
-            );
-            if (stored === null) continue;
-            queue(source.node, stored, true);
+          const storedReferences =
+            receiver?.kind === "widened" ? undefined : facts?.stores.get(root);
+          if (storedReferences !== undefined) {
+            const { finite, widened } = storedReferences;
+            for (const [source, path] of finite) {
+              if (hasWidenedStore(widened, source)) continue;
+              const readAt =
+                capturedSelections?.find(({ depth }) => path.length <= depth)
+                  ?.at ?? capture;
+              if (
+                observes === "array-receiver" &&
+                readAt !== undefined &&
+                !semanticEffectMayPrecede(state, readAt, source.mutation)
+              )
+                continue;
+              const stored = storedValueProjection(
+                suffix,
+                source,
+                path,
+                escapedContents,
+              );
+              if (stored !== null) queue(source.node, stored, true);
+            }
+            // Receiver indexing subscribes to these values' shared traversal.
+            // Other queries still apply their own timing and observation mode.
+            if (receiver === undefined)
+              for (const group of widened) {
+                if (queuedGroups.has(group)) continue;
+                queuedGroups.add(group);
+                if (summarizeGroups && group.size > 0) {
+                  pending.push({ group });
+                  continued = true;
+                  continue;
+                }
+                for (const source of group) {
+                  if (
+                    observes === "array-receiver" &&
+                    capture !== undefined &&
+                    !semanticEffectMayPrecede(state, capture, source.mutation)
+                  )
+                    continue;
+                  queue(source.node, undefined, true);
+                }
+              }
           }
         }
         if (
@@ -629,6 +859,21 @@ export const createAmbientPathResolver = (
               : stable === undefined
                 ? []
                 : [stable];
+            if (
+              frontier !== undefined &&
+              initializers.some(
+                (initializer) =>
+                  ("requiredSources" in initializer &&
+                    initializer.requiredSources !== undefined) ||
+                  ("fallbackSources" in initializer &&
+                    initializer.fallbackSources !== undefined),
+              )
+            ) {
+              frontier.add(root);
+              expansions.delete(root);
+              resolvedIdentity = true;
+              continue;
+            }
             const items: Pending[] = [];
             for (const initializer of initializers) {
               if (semanticReferenceSourcesInactive(initializer, state))
@@ -707,11 +952,10 @@ export const createAmbientPathResolver = (
           );
           continue;
         }
-        const callResult =
-          possibleWrites &&
-          (t.isCallExpression(root) || t.isOptionalCallExpression(root))
-            ? facts?.callResult(root)
-            : undefined;
+        const callResult = (
+          observedCall ??
+          (possibleWrites && isCall ? facts?.callResult(root) : undefined)
+        )?.result;
         if (callResult?.kind === "prototype") {
           continueWith(
             callResult.target,
@@ -725,6 +969,7 @@ export const createAmbientPathResolver = (
         // shared prototype through a prototype projection. Its ordinary
         // return alternatives still pass through the same alias walk.
         if (
+          receiver === undefined &&
           observes !== "array-receiver" &&
           callResult?.kind === "array-iterator" &&
           (suffix === undefined ||
@@ -747,22 +992,8 @@ export const createAmbientPathResolver = (
           ]);
           resolvedIdentity = true;
         }
-        if (
-          possibleWrites &&
-          (t.isCallExpression(root) ||
-            t.isOptionalCallExpression(root) ||
-            t.isNewExpression(root) ||
-            t.isTaggedTemplateExpression(root) ||
-            (escapedContents && (t.isFunction(root) || t.isClass(root))))
-        ) {
-          continueReturned(
-            t.isFunction(root) || t.isClass(root)
-              ? root
-              : t.isTaggedTemplateExpression(root)
-                ? root.tag
-                : root.callee,
-            suffix,
-          );
+        if (callee !== undefined) {
+          continueReturned(callee, suffix);
           continue;
         }
         if (possibleWrites && t.isConditionalExpression(root)) {
@@ -933,16 +1164,26 @@ export const createAmbientPathResolver = (
     const paths = [...result.values()];
     // A separate walk cannot let a tentative selection mask an ordinary one
     // in the identity cache, or publish unrelated tentative ambient paths.
-    const spreadEffectPaths = projectedSpread
-      ? resolve(
-          node,
-          capture,
-          escapedContents,
-          projection,
-          undefined,
-          "spread-effects",
-        ).paths
-      : undefined;
+    if (summaryWalk !== undefined)
+      summary?.retain({
+        frontier: summaryWalk.frontier,
+        slot: coverage.register(summaryWalk.roots.keys()),
+        // The summary owns the canonical keys produced by retain().
+        paths: result,
+        unknownReasons: [...unknownReasons],
+        projectedSpread,
+      });
+    const spreadEffectPaths =
+      projectedSpread && summary === undefined
+        ? resolve(
+            node,
+            capture,
+            escapedContents,
+            projection,
+            undefined,
+            "spread-effects",
+          ).paths
+        : undefined;
     if (paths.length > 0 && hasLocalIdentity)
       unknownReasons.add("mixed-identities");
     const resolution: AmbientResolution = {
@@ -964,6 +1205,200 @@ export const createAmbientPathResolver = (
   };
   return resolve;
 };
+
+interface WidenedReceivers {
+  readonly sources: Set<SemanticIterationSource>;
+  readonly successors: Set<WidenedReceivers>;
+  readonly expanded: WeakMap<t.Node, AmbientPath | null>;
+  readonly initializers: QueuedInitializersByBinding;
+  /** Store values are seeds of a separate traversal from the receivers. */
+  readonly values?: WidenedReceivers;
+  readonly seeded: Set<SemanticIterationSource>;
+  active: boolean;
+}
+
+interface ReferenceStoreReceivers {
+  readonly finite: Map<SemanticIterationSource, AmbientPath>;
+  readonly widened: Set<WidenedReceivers>;
+}
+
+const widenedReceivers = (values?: WidenedReceivers): WidenedReceivers => ({
+  sources: new Set(),
+  successors: new Set(),
+  expanded: new WeakMap(),
+  initializers: new Map(),
+  seeded: new Set(),
+  ...(values === undefined ? {} : { values }),
+  active: false,
+});
+
+/**
+ * An any-depth receiver selects every stored value at each allocation it
+ * reaches. Resolve that traversal once and attach a shared set of stores to
+ * the reached allocations. Publish only new sources and new reachability.
+ *
+ * A region is seeded either by a receiver that widened at a particular read
+ * or by the values of a group of widened stores. When a region reads another
+ * group, only its subscribers flow into that group's value traversal. The
+ * group's original receiver seed may be upstream and is not read back.
+ */
+function* indexAmbientReferenceStoresSteps(
+  sources: readonly SemanticIterationSource[],
+  stores: WeakMap<t.Node, AmbientStoredReferences>,
+  resolve: ReturnType<typeof createAmbientPathResolver>,
+): Generator<void> {
+  const pending = new Set(sources);
+  const work: (() => void)[] = [];
+  const dependents = new WeakMap<t.Node, ReferenceStoreReceivers>();
+  const anchors = new WeakMap<
+    t.Node,
+    Map<t.Node | undefined, WidenedReceivers>
+  >();
+  const widenedAtSlot = new WeakMap<t.Node, WidenedReceivers>();
+  const valueRegions = new WeakMap<WidenedStoreGroup, WidenedReceivers>();
+
+  const at = (node: t.Node): AmbientStoredReferences => {
+    let entries = stores.get(node);
+    if (entries === undefined) {
+      entries = { finite: new Map(), widened: new Set() };
+      stores.set(node, entries);
+    }
+    return entries;
+  };
+  const usersAt = (node: t.Node): ReferenceStoreReceivers => {
+    let users = dependents.get(node);
+    if (users === undefined) {
+      users = { finite: new Map(), widened: new Set() };
+      dependents.set(node, users);
+    }
+    return users;
+  };
+
+  const walk = (region: WidenedReceivers, node: t.Node, capture?: t.Node) => {
+    resolve(node, capture, false, [], {
+      kind: "widened",
+      expanded: region.expanded,
+      initializers: region.initializers,
+      visit: (root) => attach(region, root, true),
+    });
+  };
+  const seed = (region: WidenedReceivers, source: SemanticIterationSource) => {
+    if (region.seeded.has(source)) return;
+    region.seeded.add(source);
+    work.push(() => walk(region, source.node));
+  };
+  const add = (region: WidenedReceivers, source: SemanticIterationSource) => {
+    if (region.sources.has(source)) return;
+    region.sources.add(source);
+    work.push(() => {
+      if (region.active) seed(region.values ?? region, source);
+      for (const successor of region.successors) add(successor, source);
+    });
+  };
+  const link = (from: WidenedReceivers, to: WidenedReceivers) => {
+    if (from === to || from.successors.has(to)) return;
+    from.successors.add(to);
+    for (const source of from.sources) add(to, source);
+  };
+
+  const attach = (region: WidenedReceivers, root: t.Node, reads: boolean) => {
+    const entries = at(root);
+    const users = usersAt(root);
+    const values = region.values ?? region;
+    if (reads && !users.widened.has(region)) {
+      users.widened.add(region);
+      for (const source of entries.finite.keys()) seed(region, source);
+      for (const group of entries.widened) {
+        const fromRoot = valueRegions.get(group);
+        if (fromRoot !== undefined) link(region, fromRoot);
+      }
+    }
+    if (entries.widened.has(region.sources)) return;
+    entries.widened.add(region.sources);
+    valueRegions.set(region.sources, values);
+    if (!region.active) {
+      region.active = true;
+      for (const source of region.sources) seed(values, source);
+    }
+    // A read at this root selects the group's stored values. It does not
+    // traverse the seed that originally widened, which may be upstream.
+    for (const dependent of users.finite.keys()) add(values, dependent);
+    for (const dependent of users.widened) link(dependent, values);
+  };
+  while (pending.size > 0 || work.length > 0) {
+    const task = work.pop();
+    if (task !== undefined) {
+      task();
+      yield;
+      continue;
+    }
+    const source = pending.values().next().value;
+    if (source === undefined) break;
+    pending.delete(source);
+    if (source.target === undefined) continue;
+    const identities = new Map<t.Node, AmbientPath>();
+    resolve(source.target, source.mutation, false, [], {
+      kind: "finite",
+      visit: (root, path) => identities.set(root, path),
+      widen: (root, capture) => {
+        let byCapture = anchors.get(root);
+        if (byCapture === undefined) {
+          byCapture = new Map();
+          anchors.set(root, byCapture);
+        }
+        let region = byCapture.get(capture);
+        if (region === undefined) {
+          const created = widenedReceivers(widenedReceivers());
+          region = created;
+          byCapture.set(capture, region);
+          work.push(() => walk(created, root, capture));
+        }
+        add(region, source);
+      },
+    });
+    for (const [node, path] of identities) {
+      const users = usersAt(node);
+      users.finite.set(source, path);
+      for (const region of at(node).widened) {
+        const values = valueRegions.get(region);
+        if (values !== undefined) add(values, source);
+      }
+    }
+    for (const [node, path] of identities) {
+      const entries = at(node);
+      if (hasWidenedStore(entries.widened, source)) continue;
+      const previous = entries.finite.get(source);
+      const joined =
+        previous === undefined
+          ? path
+          : joinSemanticPropertyPaths(previous, path);
+      if (joined === undefined) {
+        // Conflicting projections across fixpoint rounds widen this store
+        // slot, without asserting that its target read this allocation wide.
+        let region = widenedAtSlot.get(node);
+        if (region === undefined) {
+          region = widenedReceivers(widenedReceivers());
+          widenedAtSlot.set(node, region);
+          attach(region, node, false);
+        }
+        entries.finite.delete(source);
+        add(region, source);
+        continue;
+      }
+      if (joined === previous) continue;
+      entries.finite.set(source, joined);
+      const users = usersAt(node);
+      for (const region of users.widened) seed(region, source);
+      // #7128: consuming the written key reaches its previous value, not
+      // another receiver. Only a surviving projection can change a query.
+      for (const [dependent, reached] of users.finite) {
+        const stored = storedValueProjection(reached, source, joined, false);
+        if (stored !== null && stored?.length !== 0) pending.add(dependent);
+      }
+    }
+    yield;
+  }
+}
 
 /**
  * Index source-local writes through ambient identities and stable aliases.
@@ -999,11 +1434,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     target: t.Node;
     method: readonly string[];
   }[] = [];
-  const stores = new WeakMap<
-    t.Node,
-    Map<SemanticIterationSource, AmbientProjection>
-  >();
+  const stores = new WeakMap<t.Node, AmbientStoredReferences>();
   const interop = createSemanticModuleInterop(state, {
+    fixedIntrinsicPaths: true,
     intrinsicPath: (node) => {
       const [path] = ambientReads(node).paths;
       return path?.[0] === "global" && path.every((key) => key !== null)
@@ -1011,6 +1444,44 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
+  // Resolve captures after the scan has observed every opaque site. Unlike
+  // invocation classification, interpreting the ambient return form is only
+  // needed by the post-scan walk.
+  const settledCalls = new WeakMap<
+    t.CallExpression | t.OptionalCallExpression,
+    ReturnType<AmbientReferenceFacts["callResult"]>
+  >();
+  const classifyCall = (
+    node: t.CallExpression | t.OptionalCallExpression,
+    invocation: JavaScriptIntrinsicInvocation | undefined,
+  ): AmbientCallResult | undefined => {
+    const prototype = intrinsicPrototypeRead(invocation);
+    if (prototype !== undefined)
+      return { kind: "prototype", target: prototype };
+    if (
+      invocation?.path.length === 4 &&
+      invocation.path[1] === "Array" &&
+      invocation.path[2] === "prototype" &&
+      arrayIteratorMethods.has(invocation.path[3]!)
+    )
+      return { kind: "array-iterator" };
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    if (!(t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)))
+      return undefined;
+    const key = semanticStaticPropertyKey(callee.property, callee.computed);
+    if (
+      !(key !== null && arrayIteratorMethods.has(key)) &&
+      !(
+        callee.computed &&
+        globalReferenceNamespace(callee.property, state, [
+          "Symbol",
+          "iterator",
+        ]) !== undefined
+      )
+    )
+      return undefined;
+    return { kind: "array-iterator", receiver: callee.object };
+  };
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
     freshObject: interop.isFreshObject,
@@ -1020,35 +1491,12 @@ export function* indexJavaScriptAmbientWritesSteps(
         (isIntrinsicGlobalReference(node.callee, state, "Array") ||
           isIntrinsicTypedArrayConstruction(node, state))),
     callResult: (node) => {
-      const invocation = interop.intrinsicInvocation(node);
-      const prototype = intrinsicPrototypeRead(invocation);
-      if (prototype !== undefined)
-        return { kind: "prototype", target: prototype };
-      if (
-        invocation?.path.length === 4 &&
-        invocation.path[1] === "Array" &&
-        invocation.path[2] === "prototype" &&
-        arrayIteratorMethods.has(invocation.path[3]!)
-      )
-        return { kind: "array-iterator" };
-      const callee = unwrapJavaScriptExpression(node.callee).node;
-      if (
-        !(t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
-      )
-        return undefined;
-      const key = semanticStaticPropertyKey(callee.property, callee.computed);
-      if (
-        !(key !== null && arrayIteratorMethods.has(key)) &&
-        !(
-          callee.computed &&
-          globalReferenceNamespace(callee.property, state, [
-            "Symbol",
-            "iterator",
-          ]) !== undefined
-        )
-      )
-        return undefined;
-      return { kind: "array-iterator", receiver: callee.object };
+      const cached = settledCalls.get(node);
+      if (cached !== undefined) return cached;
+      const { invocation, settled } = interop.intrinsicInvocationFacts(node);
+      const effects = { result: classifyCall(node, invocation), settled };
+      if (settled) settledCalls.set(node, effects);
+      return effects;
     },
   });
   yield* collectJavaScriptIdentityWritesSteps(
@@ -1139,67 +1587,26 @@ export function* indexJavaScriptAmbientWritesSteps(
       }
     },
   );
-  const pendingStores = new Set(storedReferences);
-  // Each dependent keeps the joined projection its latest query reached.
-  const dependents = new WeakMap<
-    t.Node,
-    Map<SemanticIterationSource, AmbientProjection>
-  >();
-  while (pendingStores.size > 0) {
-    const source = pendingStores.values().next().value;
-    if (source === undefined) break;
-    pendingStores.delete(source);
-    if (source.target === undefined) continue;
-    const identities = new Map<t.Node, AmbientProjection>();
-    // Record the objects this store mutates, not the values it replaces.
-    ambientWrites(source.target, source.mutation, false, [], (node, path) => {
-      identities.set(
-        node,
-        identities.has(node)
-          ? joinAmbientProjection(identities.get(node), path)
-          : path,
-      );
-    });
-    for (const [node, path] of identities) {
-      const users =
-        dependents.get(node) ??
-        new Map<SemanticIterationSource, AmbientProjection>();
-      users.set(source, path);
-      dependents.set(node, users);
-    }
-    // Publish only completed queries; each source/root projection can only widen.
-    for (const [node, path] of identities) {
-      const entries =
-        stores.get(node) ??
-        new Map<SemanticIterationSource, AmbientProjection>();
-      const previous = entries.get(source);
-      const joined = entries.has(source)
-        ? joinAmbientProjection(previous, path)
-        : path;
-      if (
-        entries.has(source) &&
-        (previous === undefined ||
-          (joined !== undefined &&
-            previous.every((key, index) => key === joined[index])))
-      )
-        continue;
-      entries.set(source, joined);
-      stores.set(node, entries);
-      // A receiver query drops a value read from its written slot, so only a
-      // nonempty or widened selection can change a dependent's identities.
-      for (const [dependent, reached] of dependents.get(node) ?? []) {
-        const stored = storedValueProjection(reached, source, joined, false);
-        if (stored !== null && stored?.length !== 0)
-          pendingStores.add(dependent);
-      }
-    }
-    yield;
-  }
+  yield* indexAmbientReferenceStoresSteps(
+    storedReferences,
+    stores,
+    ambientWrites,
+  );
   for (const node of state.escapingThrows)
     escapes.push({ node, target: node.argument, browserReceiver: false });
+  // Keep publication ordered and allow the worker to observe cancellation
+  // between sites even after the reference-store worklist has settled.
   for (const source of storedReferences) {
+    yield;
     if (source.target === undefined) continue;
-    const receiver = ambientWrites(source.target.object, source.mutation);
+    const receiver = ambientWrites(
+      source.target.object,
+      source.mutation,
+      false,
+      [],
+      undefined,
+      "ownership",
+    );
     if (receiver.ownership !== "local") {
       state.escapingReferenceStores.add(source.target);
       escapes.push({
@@ -1213,6 +1620,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
   }
   for (const { node, path } of writes) {
+    yield;
     const target =
       path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
     if (target === undefined) {
@@ -1249,6 +1657,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   // invocation; ambiguous execution order remains conservative.
   const resolverReceivers: typeof escapes = [];
   for (const effect of escapes) {
+    yield;
     const { node, target } = effect;
     const callee =
       t.isCallExpression(node) || t.isOptionalCallExpression(node)
@@ -1267,6 +1676,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     retainEscapeEffect(effect);
   }
   for (const effect of resolverReceivers) {
+    yield;
     const { node } = effect;
     const selected = ["global", "require", "resolve"];
     const mayAffectResolver = (
@@ -1303,31 +1713,34 @@ export function* indexJavaScriptAmbientWritesSteps(
   // that may replace the method before this call makes it user code, which
   // receives the constructor. (Its prototype chain is not consulted: the
   // method is an own property.)
-  for (const { node, target, method } of staticReceivers)
+  for (const { node, target, method } of staticReceivers) {
+    yield;
     if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
       retainEscapeEffect({ node, target, browserReceiver: false });
     else state.retainedGlobalCallReceivers.add(target);
+  }
   // Validate the normalized dispatch at its intrinsic captures. A rejected
   // call can expose a helper used by an earlier textual call in a deferred
   // activation. Recheck provisional reads once after publishing those escapes.
   // If that pass adds another relevant effect, conservatively retain the
   // remaining escapes instead of rescanning the whole source to a fixed point.
   const firstInspectionPass =
-    retainOpaquePrototypeInspections(prototypeInspections);
+    yield* retainOpaquePrototypeInspections(prototypeInspections);
   if (firstInspectionPass.changed) {
-    const secondInspectionPass = retainOpaquePrototypeInspections(
+    const secondInspectionPass = yield* retainOpaquePrototypeInspections(
       firstInspectionPass.provisional,
     );
     if (secondInspectionPass.changed)
       for (const inspection of secondInspectionPass.provisional)
-        retainPrototypeInspectionArguments(inspection);
+        yield* retainPrototypeInspectionArguments(inspection);
   }
-  function retainOpaquePrototypeInspections(
+  function* retainOpaquePrototypeInspections(
     inspections: typeof prototypeInspections,
   ) {
     const provisional: typeof prototypeInspections = [];
     let changed = false;
     for (const inspection of inspections) {
+      yield;
       const invocation = interop.intrinsicInvocation(
         inspection.node,
         undefined,
@@ -1341,19 +1754,23 @@ export function* indexJavaScriptAmbientWritesSteps(
       );
       if (isReadOnlyPrototypeInspection(invocation))
         provisional.push(inspection);
-      else changed = retainPrototypeInspectionArguments(inspection) || changed;
+      else
+        changed =
+          (yield* retainPrototypeInspectionArguments(inspection)) || changed;
     }
     return { provisional, changed };
   }
-  function retainPrototypeInspectionArguments({
+  function* retainPrototypeInspectionArguments({
     node,
     arguments: argumentValues,
-  }: (typeof prototypeInspections)[number]): boolean {
+  }: (typeof prototypeInspections)[number]): Generator<void, boolean> {
     let changed = false;
-    for (const target of argumentValues)
+    for (const target of argumentValues) {
+      yield;
       changed =
         retainEscapeEffect({ node, target, browserReceiver: false }, true) ||
         changed;
+    }
     return changed;
   }
   function retainEscapeEffect(

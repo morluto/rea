@@ -17,6 +17,7 @@ import {
   carriedReason,
   AnalysisInputError,
   fixedCeilingConstraint,
+  parameterBudgetConstraint,
 } from "../../domain/analysisErrorCore.js";
 import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -34,6 +35,7 @@ import {
 } from "../../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
+import { DEFAULT_RASTER_FILE_BYTES } from "../../domain/native/rasterFileReadBudget.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 
 export interface SelectedRasterSnapshot {
@@ -45,12 +47,13 @@ export interface SelectedRasterWindow {
   path: string;
   offset: number;
   length?: number | undefined;
+  max_file_bytes?: number | undefined;
 }
 interface SnapshotReadOptions {
   signal?: AbortSignal | undefined;
   completedObservation?: ((value: unknown) => Evidence | undefined) | undefined;
 }
-const MAX_FILE_BYTES = 128 * 1024 * 1024;
+
 /** One bounded selected-file admission owner shared by inspection and export. */
 export class SelectedRasterSnapshotReader {
   constructor(
@@ -197,17 +200,24 @@ export class SelectedRasterSnapshotReader {
               "length",
               "Selected byte window extends beyond the end of the file.",
             );
-          if (size > MAX_FILE_BYTES)
-            throw fixedCeilingConstraint(
+          const fileBudget = input.max_file_bytes ?? DEFAULT_RASTER_FILE_BYTES;
+          if (size > fileBudget)
+            throw parameterBudgetConstraint(
               operation,
-              "capacity",
-              "Discovery accepts at most a 128 MiB file.",
+              "file-size",
+              "The selected file exceeds the whole-file SHA-256 read budget.",
+              { max_file_bytes: fileBudget, required: size },
               {
-                name: "Raster discovery whole-file input",
-                kind: "input",
-                limit: MAX_FILE_BYTES,
+                control_kind: "parameter",
+                parameter: "max_file_bytes",
+                effective_value: fileBudget,
                 unit: "bytes",
+                minimum: 1,
+                maximum: Number.MAX_SAFE_INTEGER,
+                default_value: DEFAULT_RASTER_FILE_BYTES,
+                applies_at: "next_call",
               },
+              `Set max_file_bytes to at least ${size} bytes to hash this file, or select a smaller file. The selected-range limit is separate.`,
             );
           if (length > 16 * 1024 * 1024)
             throw fixedCeilingConstraint(

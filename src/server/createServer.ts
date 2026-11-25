@@ -14,6 +14,7 @@ import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import {
+  artifactAnalysisForAdmission,
   artifactExecutionParameters,
   managedAnalysisForAdmission,
 } from "./providerOperationFamilies.js";
@@ -24,13 +25,12 @@ import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContract
 import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { captureProviderEnvironment } from "./providerEnvironment.js";
+import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
 import {
-  createByteEntropyService,
   createRawRasterDiscoveryService,
   createStructuredRasterDiscoveryService,
   createStructuredRasterExportService,
-} from "../composition/binaryDiagnostics.js";
+} from "../composition/binaryDiagnostics/raster.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
@@ -51,10 +51,12 @@ import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
-import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
-import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import {
+  createJebAnalysisService,
+  createPcapAnalysisService,
+  createApktoolResourceAnalysisService,
+  createFlutterBuildAnalysisService,
+} from "../application/ProviderOperationServices.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
@@ -156,9 +158,8 @@ export const createServer = (
   );
   if (!catalogProfile.ok) throw catalogProfile.error;
   const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
-  const providerEnvironment = captureProviderEnvironment(
-    options.providerEnvironment,
-    environment,
+  const providerEnvironment = snapshotEnvironment(
+    options.providerEnvironment ?? environment,
     host.platform,
   );
   const baseDelivery = selectToolResultDelivery(environment, options.delivery);
@@ -203,6 +204,7 @@ export const createServer = (
     kernelModule,
     kernelBuildConfig,
     peLoadConfig,
+    peUnwindRanges,
     binaryHardening,
     peCertificates,
     peImports,
@@ -271,6 +273,10 @@ export const createServer = (
             options.availabilityPolicy,
             {
               ...capabilities.availability,
+              observeOptionalFeatures: () =>
+                server.advertisesFamily("artifact")
+                  ? capabilities.observeOptionalFeatures()
+                  : {},
               optionalProviderLoadFailures:
                 options.optionalProviderLoadFailures,
             },
@@ -317,9 +323,7 @@ export const createServer = (
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const previousOnclose = server.server.onclose;
-  server.server.onclose = () => {
-    previousOnclose?.();
+  server.registerTransportCloseHook(() => {
     void closeProviders().catch((cause: unknown) => {
       logger.error(
         {
@@ -329,17 +333,10 @@ export const createServer = (
         "Provider cleanup failed during server shutdown",
       );
     });
-  };
-  const closeServer = server.close.bind(server);
-  server.close = async () => {
-    const results = await Promise.allSettled([closeServer(), closeProviders()]);
-    const failures = results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
-    );
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1)
-      throw new AggregateError(failures, "REA server cleanup failed");
-  };
+  });
+  server.registerCloseHook(closeProviders, {
+    failureMessage: "REA server cleanup failed",
+  });
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
@@ -419,6 +416,7 @@ export const createServer = (
           kernelModule,
           kernelBuildConfig,
           peLoadConfig,
+          peUnwindRanges,
           releaseExposure,
           binaryHardening,
           peCertificates,
@@ -439,6 +437,9 @@ export const createServer = (
             contracts: ARTIFACT_TOOL_CONTRACTS,
             activeTarget,
             parametersForExecution: artifactExecutionParameters,
+            analysisForAdmission: artifactAnalysisForAdmission(
+              capabilities.createArtifactPathInspection,
+            ),
           },
         },
         contractTools,
@@ -508,14 +509,14 @@ export const createServer = (
     pcap: () => {
       registerServiceTools(
         server,
-        { pcapAnalysis: new PcapAnalysisService(pcap) },
+        { pcapAnalysis: createPcapAnalysisService(pcap) },
         contractTools,
       );
     },
     flutter: () => {
       registerServiceTools(
         server,
-        { flutterAnalysis: new FlutterBuildAnalysisService(flutter) },
+        { flutterAnalysis: createFlutterBuildAnalysisService(flutter) },
         contractTools,
       );
     },
@@ -530,13 +531,13 @@ export const createServer = (
     apktool: () =>
       registerServiceTools(
         server,
-        { apktoolAnalysis: new ApktoolResourceAnalysisService(apktool) },
+        { apktoolAnalysis: createApktoolResourceAnalysisService(apktool) },
         contractTools,
       ),
     jeb: () =>
       registerServiceTools(
         server,
-        { jebAnalysis: new JebAnalysisService(jeb) },
+        { jebAnalysis: createJebAnalysisService(jeb) },
         contractTools,
       ),
     adb: () =>
@@ -641,6 +642,7 @@ export const createServer = (
         environment,
         platform: host.platform,
         artifactResources,
+        createArtifactPathInspection: capabilities.createArtifactPathInspection,
         ...(availability === undefined
           ? {}
           : { availabilityPolicy: availability.policy }),

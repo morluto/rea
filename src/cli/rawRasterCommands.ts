@@ -1,12 +1,10 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { createRawRasterDiscoveryService } from "../composition/binaryDiagnostics.js";
+import { createRawRasterDiscoveryService } from "../composition/binaryDiagnostics/raster.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  registerContractCommand,
-  inspectWithService,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 /** The canonical contract owns bounds, defaults and repeated numeric options. */
 export function registerRawRasterCommands(
   cli: CliInstance,

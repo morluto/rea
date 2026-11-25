@@ -83,6 +83,7 @@ export const rasterExportResolvedControlsSchema = exportRequestShape
   .required({
     offset: true,
     length: true,
+    max_file_bytes: true,
     profile: true,
     resource_family: true,
     family_max_work: true,

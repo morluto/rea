@@ -5,6 +5,8 @@ import { ParseFailureError } from "./parseFailure.js";
 import {
   materializeRasterSegments,
   parseFgsRasterSegments,
+  referenceRasterLogicalSegments,
+  walkRasterLogicalSegments,
 } from "./rasterLogicalSegments.js";
 it("preserves discontiguous provenance and rejects gap-as-data", () => {
   const r = materializeRasterSegments(Uint8Array.from([1, 2, 3, 4]), [
@@ -252,4 +254,26 @@ it("separates bounded publication from a complete traversal beyond 256 spans", a
     segmentCount: 0,
     complete: false,
   });
+});
+
+it("matches the full traversal across adjacent segments, gaps and empty ranges", () => {
+  const image = materializeRasterSegments(new Uint8Array(12), [
+    { logicalOffset: 100, fileOffset: 0, length: 3 },
+    { logicalOffset: 103, fileOffset: 3, length: 3 },
+    { logicalOffset: 106, fileOffset: 6, length: 3 },
+    { logicalOffset: 111, fileOffset: 9, length: 3 },
+  ]);
+  for (let offset = 98; offset <= 115; offset++) {
+    for (let length = 0; length <= 16; length++) {
+      expect(
+        referenceRasterLogicalSegments(
+          image.segments,
+          offset,
+          length,
+          image.coverage,
+          image.logicalBase,
+        ),
+      ).toEqual(walkRasterLogicalSegments(image.segments, offset, length));
+    }
+  }
 });

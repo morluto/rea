@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { analysisErrorJsonSchema } from "../dist/contracts/errorSchemas.js";
+import { analysisErrorJsonSchema } from "../dist/contracts/analysisErrorJsonSchema.js";
 import { analysisErrorCatalogue } from "../dist/domain/analysisErrorClassification.js";
 import { hopperErrorCatalogue } from "../dist/hopper/HopperErrors.js";
 import { formatGeneratedFile } from "./lib/format-generated-file.mjs";

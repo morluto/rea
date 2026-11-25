@@ -154,10 +154,10 @@ test("rejects physical EOF at the selected-range read before output", async () =
     };
     try {
       const output = join(root, "truncated");
-      await assert.rejects(
-        writeFilePreview(path, layout, output),
-        /Selected raster range was truncated during reading/,
-      );
+      await assert.rejects(writeFilePreview(path, layout, output), {
+        reason: "integrity",
+        integrityCheck: "read-coverage",
+      });
       assert.equal(rangeRead, true);
       await assert.rejects(stat(output), { code: "ENOENT" });
     } finally {

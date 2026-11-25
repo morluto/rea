@@ -38,7 +38,7 @@ import { z } from "zod";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
-import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
+import { unsupportedTarget } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -356,9 +356,10 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
     inspect: async ({ path }) => {
       goCalls += 1;
       return err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "inspect_go_binary",
           path,
+          "fixture",
           "fixture rejection",
         ),
       );

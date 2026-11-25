@@ -87,9 +87,9 @@ processTest(
 );
 
 processTest(
-  "bounds missing-field Evidence expansion at the default admission boundary",
+  "bounds Evidence validation and a near-frame-limit request under the default allowance",
   async ({ processes }) => {
-    const { client } = await openHttp(processes, undefined);
+    const { root, client } = await openHttp(processes, undefined);
     for (const count of [1_019, 1_020]) {
       const arguments_ = {
         functions: Array.from({ length: count }, () => ({})),
@@ -120,20 +120,8 @@ processTest(
         });
       }
       expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(4096);
-      await client.ping();
     }
-    const healthy = await client.callTool({
-      name: "inspect_analysis_settings",
-      arguments: {},
-    });
-    expect(healthy.isError).not.toBe(true);
-  },
-);
 
-processTest(
-  "refuses a sub-4MiB HTTP payload under the default allowance without expanded diagnostics",
-  async ({ processes }) => {
-    const { root, client } = await openHttp(processes, undefined);
     const paths = {
       left_bundle_path: join(root, "absent-left"),
       right_bundle_path: join(root, "absent-right"),

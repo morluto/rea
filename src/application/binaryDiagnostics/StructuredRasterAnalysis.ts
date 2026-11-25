@@ -10,6 +10,7 @@ import {
   parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../../domain/parseFailureAnalysisError.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { z } from "zod";
 import type { inspectStructuredRasterCandidatesInputSchema } from "../../domain/native/structuredRasterCandidates.js";
@@ -66,11 +67,12 @@ export function prepareStructuredRasterAnalysis(
           }),
         });
       }
+      if (field === "segments" && cause instanceof ParseFailureError)
+        throw invalid(field, cause.failure.detail);
       const formatFailure = parseFailureAnalysisError(
         operation,
         input.path,
         cause,
-        field,
       );
       if (formatFailure !== undefined) throw formatFailure;
       throw cause;

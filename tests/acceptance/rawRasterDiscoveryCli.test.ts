@@ -8,6 +8,8 @@ import { cliTest } from "../support/cli/cliFixture.js";
 cliTest.for([
   [],
   [
+    "--max-file-bytes",
+    "512",
     "--widths",
     "32",
     "--heights",
@@ -40,7 +42,9 @@ cliTest.for([
       "inspect_raw_raster_candidates",
     ).outputSchema.parse(result.json);
     expect(evidence.parameters).not.toHaveProperty("max_hypotheses");
-    expect(evidence.normalized_result.resolved_controls).toBeDefined();
+    expect(evidence.normalized_result.resolved_controls.max_file_bytes).toBe(
+      grid.length === 0 ? 128 * 1024 * 1024 : 512,
+    );
     expect(evidence.confidence).toBe("inferred");
     expect(evidence.normalized_result.candidates.length).toBeGreaterThan(0);
   },

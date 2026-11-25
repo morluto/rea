@@ -1,4 +1,4 @@
-import { walkRasterLogicalSegments } from "../../domain/rasterLogicalSegments.js";
+import { referenceRasterLogicalSegments } from "../../domain/rasterLogicalSegments.js";
 import { selectRasterRegistries } from "./RasterRenderingSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { StructuredRasterExportInput } from "../../domain/native/structuredRasterExport.js";
@@ -26,10 +26,12 @@ export const invalid = (field: string, message: string) =>
 /** Full segment-table references, never the bounded inspection projection. */
 export function reference(prepared: Prepared, range: StructuredRasterRange) {
   const offset = range.offset + prepared.logical.logicalBase;
-  const traversal = walkRasterLogicalSegments(
+  const traversal = referenceRasterLogicalSegments(
     prepared.logical.segments,
     offset,
     range.length,
+    prepared.logical.coverage,
+    prepared.logical.logicalBase,
   );
   return {
     offset,

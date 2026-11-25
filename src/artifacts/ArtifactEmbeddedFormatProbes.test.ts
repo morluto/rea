@@ -6,6 +6,9 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
+import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
+import * as bunLayout from "./bun/BunModuleGraphLayout.js";
+import { artifactReaderLimitFailure } from "../resources/index.js";
 import * as dotnetLayout from "./dotnet/DotnetBundle.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
 import { denoMachO } from "./deno/DenoStandalone.fixture.js";
@@ -13,6 +16,7 @@ import * as denoLocation from "./deno/DenoStandaloneLocation.js";
 import * as pckLocation from "./GodotPckLocation.js";
 import { resolveArtifactReaderLimits } from "../domain/artifactReaderLimits.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
+import * as nodeSeaLocation from "./nodeSea/NodeSeaLocation.js";
 
 it("readmits cached SEA recognition when the accepted policy changes", async () => {
   const path = join(
@@ -31,14 +35,15 @@ it("readmits cached SEA recognition when the accepted policy changes", async () 
       original.completedFacts(),
       resolveArtifactReaderLimits({ node_sea: { blob_bytes: 1 } }),
     );
-    await expect(lower.nodeSea()).rejects.toMatchObject({
+    await expect(lower.nodeSea()).resolves.toBeUndefined();
+    expect(Object.hasOwn(lower.completedFacts(), "nodeSea")).toBe(false);
+    expect(lower.completedFacts().nodeSeaRecognitionFailure).toMatchObject({
       reason: "limit",
       readerLimit: {
         parameter: "artifact_limits.node_sea.blob_bytes",
         effective_value: 1,
       },
     });
-    expect(Object.hasOwn(lower.completedFacts(), "nodeSea")).toBe(false);
     const restored = new ArtifactEmbeddedFormatProbes(
       path,
       source,
@@ -47,6 +52,7 @@ it("readmits cached SEA recognition when the accepted policy changes", async () 
       resolveArtifactReaderLimits(),
     );
     expect(await restored.nodeSea()).toEqual(location);
+    expect(restored.completedFacts().nodeSeaRecognitionFailure).toBeUndefined();
     const recognitionLimited = new ArtifactEmbeddedFormatProbes(
       path,
       source,
@@ -257,5 +263,101 @@ it("caches a present Deno section and records examined absence", async () => {
     });
   } finally {
     locate.mockRestore();
+  }
+});
+
+it("propagates I/O and cancellation errors from nodeSea without caching absence or recognition failure", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-sea-probe-errors-"),
+    "carrier",
+  );
+  await writeFile(path, nodeSeaElf({ fuse: "set", ownership: "section" }));
+  const ioError = Object.assign(new Error("injected SEA read failure"), {
+    code: "EIO",
+  });
+  const locate = vi
+    .spyOn(nodeSeaLocation, "locateNodeSea")
+    .mockRejectedValueOnce(ioError);
+  try {
+    await withOwnedRegularFile(path, {}, async (source) => {
+      const probes = new ArtifactEmbeddedFormatProbes(path, source);
+      await expect(probes.nodeSea()).rejects.toBe(ioError);
+      expect(Object.hasOwn(probes.completedFacts(), "nodeSea")).toBe(false);
+      expect(probes.completedFacts().nodeSeaRecognitionFailure).toBeUndefined();
+
+      const controller = new AbortController();
+      const cancelled = new ArtifactEmbeddedFormatProbes(
+        path,
+        source,
+        controller.signal,
+      );
+      const reason = new Error("cancel SEA probe");
+      controller.abort(reason);
+      await expect(cancelled.nodeSea()).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: reason,
+      });
+    });
+  } finally {
+    locate.mockRestore();
+  }
+});
+
+it("reports unknown rather than absent from classifyEmbeddedExecutablePackage when Node SEA or Bun recognition is limited", async () => {
+  const root = await createTestTempDirectory("rea-embedded-classify-unknown-");
+  const seaPath = join(root, "sea-carrier");
+  await writeFile(seaPath, nodeSeaElf({ fuse: "set", ownership: "section" }));
+  await withOwnedRegularFile(seaPath, {}, async (source) => {
+    const seaLimited = new ArtifactEmbeddedFormatProbes(
+      seaPath,
+      source,
+      undefined,
+      undefined,
+      resolveArtifactReaderLimits({ node_sea: { blob_bytes: 1 } }),
+    );
+    await expect(
+      classifyEmbeddedExecutablePackage(seaLimited, "elf"),
+    ).resolves.toEqual({
+      status: "unknown",
+      limitations: [
+        expect.stringMatching(/Node SEA recognition remains unknown/iu),
+      ],
+    });
+  });
+
+  const plainPath = join(root, "plain-elf");
+  await writeFile(
+    plainPath,
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, ...new Uint8Array(60)]),
+  );
+  const bunFailure = artifactReaderLimitFailure(
+    "artifact_limits.bun.recognition_table_bytes",
+    64,
+    "bytes",
+    128,
+    "memory",
+  );
+  const bunSpy = vi
+    .spyOn(bunLayout, "probeBunStandaloneGraph")
+    .mockResolvedValueOnce({ status: "limited", failure: bunFailure });
+  try {
+    await withOwnedRegularFile(plainPath, {}, async (source) => {
+      const bunLimited = new ArtifactEmbeddedFormatProbes(plainPath, source);
+      await expect(
+        classifyEmbeddedExecutablePackage(bunLimited, "elf"),
+      ).resolves.toEqual({
+        status: "unknown",
+        limitations: [
+          expect.stringMatching(/Bun graph recognition remains unknown/iu),
+        ],
+      });
+
+      const plain = new ArtifactEmbeddedFormatProbes(plainPath, source);
+      await expect(
+        classifyEmbeddedExecutablePackage(plain, "elf"),
+      ).resolves.toEqual({ status: "absent" });
+    });
+  } finally {
+    bunSpy.mockRestore();
   }
 });

@@ -3,13 +3,11 @@ import type { CliInstance } from "./types.js";
 import {
   createStructuredRasterDiscoveryService,
   createStructuredRasterExportService,
-} from "../composition/binaryDiagnostics.js";
+} from "../composition/binaryDiagnostics/raster.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  registerContractCommand,
-  inspectWithService,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 /** Configured family search: JSON decoding and argv admission use the contract owner. */
 export function registerStructuredRasterCommands(
   cli: CliInstance,

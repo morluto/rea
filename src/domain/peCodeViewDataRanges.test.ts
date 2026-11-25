@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { peCodeViewDirectoryEntries } from "./binaryTarget.js";
+import {
+  inspectPeCodeViewFromBuffer,
+  inspectPeCodeViewFromReader,
+  peCodeViewDirectoryEntries,
+} from "./binaryTarget.js";
+import { pe } from "./binaryTarget.fixture.js";
 
 const entry = (type: number, size: number, rva: number, raw: number) => {
   const bytes = Buffer.alloc(28);
@@ -61,4 +66,55 @@ it("maps the bounded payload prefix while retaining its full declared size", () 
     { fileOffset: 0x400, declaredSize: 8192 },
     { fileOffset: undefined, declaredSize: 8192 },
   ]);
+});
+
+it("finds a CodeView record beyond the first directory read", async () => {
+  const peOffset = 64;
+  const optionalHeader = peOffset + 24;
+  const sectionHeader = optionalHeader + 240;
+  const directory = 512;
+  const firstRead = 1024 * 28;
+  const directorySize = firstRead + 28;
+  const payloadOffset = directory + directorySize;
+  const original = pe(0x8664, peOffset, 0x0002, false, { pdbPath: "app.pdb" });
+  const image = Buffer.alloc(payloadOffset + original.length - directory - 28);
+  original.copy(image, 0, 0, directory);
+  original.copy(image, directory + firstRead, directory);
+  image.writeUInt32LE(directorySize, optionalHeader + 112 + 6 * 8 + 4);
+  image.writeUInt32LE(directorySize, sectionHeader + 8);
+  image.writeUInt32LE(directorySize, sectionHeader + 16);
+  image.writeUInt32LE(payloadOffset, directory + firstRead + 24);
+  const reads: Array<{ offset: number; length: number }> = [];
+  const inspect = (bytes: Buffer) =>
+    inspectPeCodeViewFromReader(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          reads.push({ offset, length });
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      peOffset,
+    );
+
+  const expected = inspectPeCodeViewFromBuffer(original, peOffset);
+  expect(expected).toMatchObject({ ok: true, value: { pdbPath: "app.pdb" } });
+  expect(inspectPeCodeViewFromBuffer(image, peOffset)).toEqual(expected);
+  expect(await inspect(image)).toEqual(expected);
+  expect(
+    reads.filter(({ offset }) => offset >= directory && offset < payloadOffset),
+  ).toEqual([
+    { offset: directory, length: firstRead },
+    { offset: directory + firstRead, length: 28 },
+  ]);
+
+  reads.length = 0;
+  const truncated = image.subarray(0, payloadOffset - 1);
+  const incomplete = inspectPeCodeViewFromBuffer(truncated, peOffset);
+  expect(incomplete).toMatchObject({
+    ok: false,
+    error: { kind: "incomplete" },
+  });
+  expect(await inspect(truncated)).toEqual(incomplete);
+  expect(reads.every(({ offset }) => offset < directory)).toBe(true);
 });

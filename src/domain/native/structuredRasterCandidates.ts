@@ -22,6 +22,10 @@ function reportControlFailure(action: () => void, ctx: z.RefinementCtx): void {
   }
 }
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  DEFAULT_RASTER_FILE_BYTES,
+  rasterFileBytesSchema,
+} from "./rasterFileReadBudget.js";
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const positive = offset.min(1);
 const field = z.strictObject({
@@ -56,6 +60,7 @@ export const rasterLogicalSegmentSchema = z.strictObject({
 });
 export const structuredRasterInputShape = z.strictObject({
   path: absoluteLocalPathStringSchema,
+  max_file_bytes: rasterFileBytesSchema.default(DEFAULT_RASTER_FILE_BYTES),
   offset: offset.default(0),
   length: positive.max(16 * 1024 * 1024).optional(),
   profile: z.enum(["flat", "fgs-records"]).default("flat"),
@@ -155,6 +160,7 @@ export const inspectStructuredRasterCandidatesInputSchema =
   structuredRasterInputShape.superRefine(refineStructuredControls);
 /** Caller-supplied controls preserve omission; resolved defaults are reported separately. */
 export const structuredRasterRequestShape = structuredRasterInputShape.extend({
+  max_file_bytes: rasterFileBytesSchema.optional(),
   color_policy: structuredRasterInputShape.shape.color_policy
     .removeDefault()
     .optional(),
@@ -204,6 +210,7 @@ export const inspectStructuredRasterCandidatesRequestSchema =
   structuredRasterRequestShape.superRefine(refineStructuredControls);
 const resolvedStructuredRasterControlsSchema = structuredRasterInputShape
   .extend({
+    max_file_bytes: rasterFileBytesSchema,
     color_policy: structuredRasterRequestShape.shape.color_policy.unwrap(),
     resource_family:
       structuredRasterRequestShape.shape.resource_family.unwrap(),
