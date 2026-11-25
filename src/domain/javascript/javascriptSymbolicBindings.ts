@@ -560,6 +560,10 @@ export class JavaScriptSymbolicBindings {
         )
           return symbolicUnknown("export getter skipped by an owned key");
       }
+      // A local alias such as `const out = exports` keeps its writes under
+      // its own binding, but `out.handle = ...` also owns the getter's key.
+      if (write?.getter && this.#exportAliasOwnsKey(value.bindingId, key))
+        return symbolicUnknown("export getter skipped by an owned key");
       // A getter keeps the key's first definition: an earlier write makes
       // the helper skip the key, and a later one fails against the accessor.
       if (
@@ -2380,6 +2384,30 @@ export class JavaScriptSymbolicBindings {
       group !== undefined &&
       (this.#aliasMemberWrites.get(group)?.length ?? 0) > 0
     );
+  }
+
+  /**
+   * Whether a local alias of a factory's exports parameter writes `key`, or
+   * an unknown key, on the namespace object.
+   */
+  #exportAliasOwnsKey(namespaceId: string, key: string): boolean {
+    for (const [bindingId, alias] of this.#exportAliases) {
+      if (alias !== namespaceId || this.#moduleBindings.has(bindingId))
+        continue;
+      const group = this.#bindingAliasGroup(bindingId);
+      if (this.#mutatedAliasGroups.has(group)) return true;
+      for (const member of group) {
+        if (this.#exportAliases.has(member)) continue;
+        if (this.#mutated.has(member)) return true;
+        if (
+          this.#bindingWrites(member).some(
+            (write) => write.path.length > 0 && write.path[0] === key,
+          )
+        )
+          return true;
+      }
+    }
+    return false;
   }
 
   #bindingWrites(bindingId: string): readonly PropertyWrite[] {

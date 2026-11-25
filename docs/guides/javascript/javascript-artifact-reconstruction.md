@@ -664,8 +664,9 @@ expression in the completed module. A key also written another way, a replaced
 or reshaped helper, a write to an intrinsic they call by its global path
 (`Object.defineProperty`, `Object.prototype.hasOwnProperty` or its `call`, and
 `Function.prototype.call`), and helpers installed inside another function stay
-unresolved. Writes that reach `exports` through a local alias are not tracked,
-for getters as for assigned exports. Recovered Electron
+unresolved, as does a getter whose key a local alias of `exports`
+(`const out = exports`) also writes. Other reads of an export written through
+such an alias do not see that write. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
 conditions as static candidates. A channel the IPC call site itself
 determines, such as a local constant, resolves that call's observation rather
