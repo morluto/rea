@@ -906,6 +906,7 @@
 
 * **analysis-view:** qualify javascript-fact-groups readback to scalar values ([1dc1c20](https://github.com/morluto/rea/commit/1dc1c20cd614d38a8bfe8ef23d0cea4e391fc561))
 * **artifacts:** explain the per-file verification cost of extraction ([#12745](https://github.com/morluto/rea/issues/12745)) ([6878c17](https://github.com/morluto/rea/commit/6878c17a833e6a595d4f80e47e98c256d60ca9c0))
+* **ci:** correct default main push coverage ([#14535](https://github.com/morluto/rea/issues/14535)) ([1ff864b](https://github.com/morluto/rea/commit/1ff864bd21d9df6c6f48c0adde570acac905ca62))
 * **cli:** explain Ghidra annotation lifetime in command help ([f8192bd](https://github.com/morluto/rea/commit/f8192bd39d233ccf6e3dd8fd06b1e21082316ddf)), refs [#8242](https://github.com/morluto/rea/issues/8242)
 * **cli:** list the desktop_build doctor scope in provider selection ([4bd9327](https://github.com/morluto/rea/commit/4bd9327325b75a4632a3a50f0500ae2bfbd00718)), refs [#10251](https://github.com/morluto/rea/issues/10251)
 * codify pagination, schema-flatness, DDIA, and flat-ownership guidance in tool-design docs and skills ([#13865](https://github.com/morluto/rea/issues/13865)) ([69e96c3](https://github.com/morluto/rea/commit/69e96c3564e58be6c7062a7f7fd506a0218916d8))
