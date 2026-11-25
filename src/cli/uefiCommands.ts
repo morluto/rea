@@ -7,11 +7,12 @@ import { UEFI_TOOL_CONTRACTS } from "../contracts/uefi/uefiToolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
 import { cliDecimalField } from "./options.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 
 const FLASH_PATH = { description: "Local UEFI firmware image" };
@@ -26,8 +27,11 @@ const targetOffset = cliDecimalField(z.number().int().nonnegative().optional());
 export const registerUefiCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): void => {
-  const service = createUefiAnalysisService(createUefiAnalysisProvider());
+  const service = createUefiAnalysisService(
+    createUefiAnalysisProvider(environment),
+  );
   const run = (operation: UefiOperation) =>
     inspectWithService(
       () => ({
@@ -160,5 +164,29 @@ export const registerUefiCommands = (
         context,
       );
     },
+  );
+
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(UEFI_TOOL_CONTRACTS, "decompile_uefi_firmware"),
+    {
+      description:
+        "Decompile all PE32 and TE modules of a UEFI flash image or pre-extracted module directory into a structured C source tree",
+      positionals: ["path", "output_directory"],
+      callerPaths: ["path", "output_directory"],
+      jsonText: ["producer_limits"],
+      fields: {
+        path: {
+          description:
+            "Firmware image or pre-extracted module directory to decompile",
+        },
+        output_directory: {
+          description: "Absent output directory; parent must exist",
+        },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+      },
+    },
+    run("decompile_uefi_firmware"),
   );
 };

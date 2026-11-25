@@ -22,6 +22,12 @@ import {
   type PcapRequest,
 } from "../domain/pcap/pcapAnalysis.js";
 import { createPcapEvidence } from "../domain/pcap/pcapEvidence.js";
+import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  createUefiEvidenceFromWrapper,
+  isUefiObservationWrapper,
+} from "../domain/uefi/uefiEvidence.js";
 import {
   uefiRequestSchema,
   type UefiOperation,
@@ -78,8 +84,47 @@ export const createJebAnalysisService = (
 
 export const createUefiAnalysisService = (
   provider: UefiAnalysisPort,
-): UefiAnalysisService =>
-  new ProviderOperationService(provider, uefiRequestSchema, "observed");
+): UefiAnalysisService => {
+  const convertingProvider: UefiAnalysisPort = {
+    inspectAvailability: (signal) => provider.inspectAvailability(signal),
+    close: () => provider.close(),
+    execute: async (request, options) => {
+      const executed = await provider.execute(request, options);
+      if (!executed.ok) {
+        if (isUefiObservationWrapper(executed.error.partialObservation)) {
+          executed.error.partialObservation = createUefiEvidenceFromWrapper(
+            request.operation,
+            request.input,
+            executed.error.partialObservation,
+          );
+        }
+        if (
+          executed.error instanceof ProviderCleanupError &&
+          isUefiObservationWrapper(executed.error.completedObservation)
+        ) {
+          const evidence = createUefiEvidenceFromWrapper(
+            request.operation,
+            request.input,
+            executed.error.completedObservation,
+          );
+          (
+            executed.error as {
+              completedObservation?: AnalysisPartialObservation;
+            }
+          ).completedObservation = evidence;
+          executed.error.partialObservation ??= evidence;
+        }
+      }
+      return executed;
+    },
+  };
+  return new ProviderOperationService(
+    convertingProvider,
+    uefiRequestSchema,
+    (operation) =>
+      operation === "decompile_uefi_firmware" ? "derived" : "observed",
+  );
+};
 
 export const createPcapAnalysisService = (
   provider: RequestAnalysisPort<PcapRequest>,

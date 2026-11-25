@@ -1199,7 +1199,7 @@ export const ghidraHeadlessArguments = (
   ];
 };
 
-const ghidraRuntimePaths = (runtimeRoot: string) => ({
+export const ghidraRuntimePaths = (runtimeRoot: string) => ({
   projectRoot: join(runtimeRoot, "project"),
   homeRoot: join(runtimeRoot, "home"),
   tempRoot: join(runtimeRoot, "tmp"),
@@ -1220,28 +1220,35 @@ const ghidraRuntimePaths = (runtimeRoot: string) => ({
  * that no supported JDK was found. Create the release directory while this
  * process still owns the runtime, leaving Ghidra only a file write inside it.
  */
-const createGhidraRuntimeDirectories = async (
+export const createGhidraRuntimeDirectories = async (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   platform: NodeJS.Platform,
   configReleaseDirectory: string,
 ): Promise<void> => {
   if (platform === "win32") {
-    const runtime = windowsPrivateRuntime(dirname(paths.projectRoot));
-    for (const path of [
-      paths.projectRoot,
-      paths.homeRoot,
-      paths.tempRoot,
-      paths.cacheRoot,
-      paths.configRoot,
-      paths.dataRoot,
-    ])
-      runtime.mkdir(basename(path));
-    // Each level needs its parent first: the native owner opens every existing
-    // component and creates only the final one.
-    const configRoot = basename(paths.configRoot);
-    runtime.mkdir(win32.join(configRoot, "ghidra"));
-    runtime.mkdir(win32.join(configRoot, "ghidra", configReleaseDirectory));
-    return;
+    let runtime;
+    try {
+      runtime = windowsPrivateRuntime(dirname(paths.projectRoot));
+    } catch {
+      runtime = undefined;
+    }
+    if (runtime !== undefined) {
+      for (const path of [
+        paths.projectRoot,
+        paths.homeRoot,
+        paths.tempRoot,
+        paths.cacheRoot,
+        paths.configRoot,
+        paths.dataRoot,
+      ])
+        runtime.mkdir(basename(path));
+      // Each level needs its parent first: the native owner opens every existing
+      // component and creates only the final one.
+      const configRoot = basename(paths.configRoot);
+      runtime.mkdir(win32.join(configRoot, "ghidra"));
+      runtime.mkdir(win32.join(configRoot, "ghidra", configReleaseDirectory));
+      return;
+    }
   }
   await Promise.all(
     [
@@ -1256,7 +1263,7 @@ const createGhidraRuntimeDirectories = async (
   );
 };
 
-const ghidraLaunchEnvironment = (
+export const ghidraLaunchEnvironment = (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   javaHome: string | undefined,
   platform: NodeJS.Platform,

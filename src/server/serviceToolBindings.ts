@@ -243,7 +243,10 @@ const SERVICE_TOOL_BINDINGS = {
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
   uefiAnalysis: ((service) => ({
-    ...contractServiceBindings(service, ["inspect_uefi_nvram"]),
+    ...contractServiceBindings(service, [
+      "inspect_uefi_nvram",
+      "decompile_uefi_firmware",
+    ]),
     inspect_uefi_firmware: {
       admission: "application",
       summary: (input, options) =>

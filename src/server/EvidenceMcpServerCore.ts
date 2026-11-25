@@ -225,15 +225,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     // Transport discovery has no target or analysis lifecycle. Domain tools
     // continue through registerTool and their original named handlers. Its
     // advertisement still follows the selected input presentation.
-    const adapter = super.registerTool(
+    let catalog: ProgressiveToolCatalog | undefined;
+    const adapter: RegisteredTool = super.registerTool(
       name,
       { ...config, ...this.presentInput(name, config) },
       (input, context) => {
         context.mcpReq.signal.throwIfAborted();
+        if (catalog === undefined) {
+          throw new Error("Progressive catalog is not yet initialized");
+        }
         return catalog.discover(input);
       },
     );
-    const catalog: ProgressiveToolCatalog = new ProgressiveToolCatalog(
+    catalog = new ProgressiveToolCatalog(
       this.registrations,
       adapter,
       this.catalogIdentity,

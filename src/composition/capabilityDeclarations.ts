@@ -1,5 +1,5 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
-import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
+import { UEFI_PROVIDER_IDENTITY } from "../domain/uefi/uefiEvidence.js";
 import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type {
   TOOL_CONTRACTS,

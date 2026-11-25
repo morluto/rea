@@ -288,11 +288,7 @@ export const ENTRY_FILES = Object.freeze(
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
       erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
       evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
-      uefi: [
-        "UefiAnalysisProvider.ts",
-        "UefiProviderIdentity.ts",
-        "UefiFormatProbe.ts",
-      ],
+      uefi: ["UefiAnalysisProvider.ts", "UefiFormatProbe.ts"],
       firmware: [
         "FirmwareCommand.ts",
         "FirmwareProvider.ts",
@@ -494,6 +490,17 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // the executable identity rules have one owner.
     reason:
       "live packet capture selects and verifies tshark with the pcap provider's Wireshark tool configuration",
+  }),
+  Object.freeze({
+    from: "uefi",
+    to: "ghidra",
+    files: Object.freeze([
+      "GhidraInstallation.ts",
+      "GhidraLauncher.ts",
+      "GhidraReleasePolicy.ts",
+    ]),
+    reason:
+      "UEFI decompiler reuses the authoritative Ghidra installation observation, launcher runtime setup, and release defect policies for headless decompile-to-C admission and reporting",
   }),
 ]);
 

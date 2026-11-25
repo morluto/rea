@@ -85,3 +85,12 @@ export const missingJavaProbe = err<GhidraJavaProbeFailure>({
   code: "runtime_missing",
   detail: "Java command was not found",
 });
+
+/** Simulated host with no Ghidra installation or Java runtime. */
+export const unavailableGhidraInstallationHost: GhidraInstallationHost = {
+  platform: "linux",
+  architecture: "x64",
+  readText: () => undefined,
+  executable: () => false,
+  probeJava: () => missingJavaProbe,
+};

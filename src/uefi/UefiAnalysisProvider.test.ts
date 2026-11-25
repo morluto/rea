@@ -1,19 +1,57 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
+import { safeParseEvidence } from "../domain/evidenceValidation.js";
+import { DirectoryArtifactReader } from "../resources/DirectoryArtifactReader.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import * as ExecFileOutputModule from "../process/ExecFileOutput.js";
+import * as OwnedCommandModule from "../process/OwnedCommand.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import type { GhidraInstallationHost } from "../ghidra/GhidraInstallation.js";
+import {
+  ghidraProfileInstallationHost,
+  unavailableGhidraInstallationHost,
+  verifiedGhidraJavaObservation,
+} from "../ghidra/GhidraInstallation.fixture.js";
+import { ok as javaProbeOk } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import {
+  UEFI_PROVIDER_IDENTITY,
+  createUefiEvidenceFromWrapper,
+} from "../domain/uefi/uefiEvidence.js";
+import { windowsBatchCommand } from "../process/WindowsBatchCommand.js";
+import {
+  ghidraHeadlessJavaOptions,
+  ghidraLaunchEnvironment,
+  ghidraRuntimePaths,
+} from "../ghidra/GhidraLauncher.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
+import { createUefiAnalysisProvider } from "../composition/uefi.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
 import {
   buildCompressionSection,
@@ -26,9 +64,20 @@ import {
   guidBytes,
 } from "../../tests/fixtures/uefiImage.js";
 import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
-import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
 import {
+  UefiAnalysisProvider,
+  buildUefiEntryPointScaffolding,
+  detectPeTeMachineWidth,
+  isPhaseSupportedByFfsType,
+  parsePeTeHeader,
+  phaseFromFfsTypeName,
+  sanitizeCComment,
+} from "./UefiAnalysisProvider.js";
+import {
+  uefiInputSchemas,
+  uefiResultSchemas,
   uefiRequestSchema,
+  type UefiDecompileResult,
   type UefiExtractResult,
   type UefiRequest,
   type UefiInspectResult,
@@ -125,6 +174,32 @@ const extractRequest = (
     input: { path, output_directory: outputDirectory, ...overrides },
   });
 
+const decompileRequest = (
+  path: string,
+  outputDirectory: string,
+  overrides?: {
+    readonly max_modules?: number;
+    readonly include_disassembly?: boolean;
+    readonly filter_phase?:
+      | "all"
+      | "pei"
+      | "dxe"
+      | "smm"
+      | "sec"
+      | "app"
+      | "misc";
+    readonly producer_limits?: {
+      readonly input_bytes?: number;
+      readonly output_bytes?: number;
+      readonly file_bytes?: number;
+    };
+  },
+) =>
+  uefiRequestSchema.parse({
+    operation: "decompile_uefi_firmware",
+    input: { path, output_directory: outputDirectory, ...overrides },
+  });
+
 const expectOk = <
   T extends
     | { readonly ok: true; readonly value: { readonly result: unknown } }
@@ -142,6 +217,60 @@ const countPublishedFiles = async (path: string): Promise<number> =>
   (await readdir(path, { recursive: true, withFileTypes: true })).filter(
     (entry) => entry.isFile(),
   ).length;
+
+const expectErr = <
+  T extends
+    | { readonly ok: true; readonly value: unknown }
+    | { readonly ok: false; readonly error: unknown },
+>(
+  executed: T,
+): Extract<T, { readonly ok: false }> => {
+  if (executed.ok) {
+    throw new Error(
+      `Expected error but received ok: ${JSON.stringify(executed.value, null, 2)}`,
+    );
+  }
+  return executed as Extract<T, { readonly ok: false }>;
+};
+
+const createMinimalPeBuffer = (
+  machine = 0x8664,
+  numSections = 1,
+  totalSize = 256,
+  optHeaderMagic?: number,
+): Buffer => {
+  const buf = Buffer.alloc(Math.max(totalSize, 256), 0);
+  buf[0] = 0x4d;
+  buf[1] = 0x5a;
+  buf.writeUInt32LE(0x80, 0x3c);
+  buf.set(Buffer.from("PE\0\0"), 0x80);
+  buf.writeUInt16LE(machine, 0x84);
+  buf.writeUInt16LE(numSections, 0x86);
+  buf.writeUInt16LE(0xf0, 0x94);
+  const defaultMagic =
+    machine === 0x8664 ||
+    machine === 0xaa64 ||
+    machine === 0x5064 ||
+    machine === 0x5128 ||
+    machine === 0x6264
+      ? 0x20b
+      : 0x10b;
+  buf.writeUInt16LE(optHeaderMagic ?? defaultMagic, 0x98);
+  return buf;
+};
+
+const createMinimalTeBuffer = (
+  machine = 0x8664,
+  numSections = 1,
+  totalSize = 64,
+): Buffer => {
+  const buf = Buffer.alloc(Math.max(totalSize, 40), 0);
+  buf[0] = 0x56;
+  buf[1] = 0x5a;
+  buf.writeUInt16LE(machine, 2);
+  buf[4] = numSections;
+  return buf;
+};
 
 it("retains the unsupported guided observation with either carrier publication policy", async () => {
   const { imagePath, directory } = await writeTestImage();
@@ -1905,6 +2034,848 @@ it("retains a signed guided section as opaque when its processing flag is clear"
   }
 });
 
+it("decompiles UEFI image modules into structured C scaffolding, headers and relative README links via SafeOutputTree", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled");
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(imagePath, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.phases.dxe).toBe(1);
+
+    const mod = result.modules[0];
+    expect(mod).toBeDefined();
+    expect(mod?.guid).toBe(GUID_DRIVER);
+    expect(mod?.phase).toBe("DXE");
+    expect(mod?.occurrence).toBe(0);
+    expect(mod?.relative_c_file).toContain("DXE/");
+    expect(mod?.c_file).toBe(join(outDir, mod!.relative_c_file!));
+
+    expect(executed.value.subject?.format).toBe("file");
+    expect(result.receipts).toBeDefined();
+    expect(result.receipts!.length).toBeGreaterThan(0);
+    expect(existsSync(mod!.c_file!)).toBe(true);
+    expect(existsSync(mod!.header_file!)).toBe(true);
+    expect(existsSync(mod!.payload_file!)).toBe(true);
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+
+    expect(mod!.c_generator).toBe("scaffold");
+    expect(result.producers).toBeDefined();
+
+    expect(mod!.c_sha256).toBe(sha256(await readFile(mod!.c_file!)));
+    expect(mod!.header_sha256).toBe(sha256(await readFile(mod!.header_file!)));
+    expect(mod!.payload_sha256).toBe(
+      sha256(await readFile(mod!.payload_file!)),
+    );
+
+    const cContent = await readFile(mod!.c_file!, "utf8");
+    expect(cContent).toContain("Reconstructed Entry Scaffolding");
+    expect(cContent).toContain("EFI_STATUS EFIAPI");
+
+    const headerContent = await readFile(mod!.header_file!, "utf8");
+    expect(headerContent).toContain("#ifndef EFIAPI");
+    expect(headerContent).toContain("#include <stdint.h>");
+
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).toContain(
+      `[${mod!.name}.c](${mod!.relative_c_file})`,
+    );
+    expect(readmeContent).not.toContain(outDir);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("filters UEFI decompilation by initialization phase", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_filtered");
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, outDir, { filter_phase: "pei" }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(0);
+    expect(result.total_modules_decompiled).toBe(0);
+    expect(result.modules).toEqual([]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("decompiles directory of pre-extracted binaries with bounded sniffing, duplicate disambiguation, and relative links", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-decompile-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const mzHeader = createMinimalPeBuffer();
+
+  const secDir = join(inDir, "sec");
+  const dxeDir = join(inDir, "dxe");
+  const dxeSubDir = join(inDir, "dxe", "recovery");
+  const rootDir = inDir;
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(secDir, { recursive: true });
+  await mkdirFs(dxeSubDir, { recursive: true });
+
+  const guid = "11112222-3333-4444-5555-666677778888";
+  await writeFile(join(secDir, "sec_core.efi"), mzHeader);
+  await writeFile(join(dxeDir, `${guid}_mod.efi`), mzHeader);
+  await writeFile(join(dxeSubDir, `${guid}_mod.efi`), mzHeader); // duplicate!
+  await writeFile(join(rootDir, "section-0.bin"), mzHeader); // should NOT match SEC
+  await writeFile(join(rootDir, "ignored.txt"), Buffer.from("just plain text"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(4);
+    expect(result.phases.sec).toBe(1);
+    expect(result.phases.dxe).toBe(2); // 2 duplicates in dxe=DXE
+    expect(result.phases.misc).toBe(1); // section-0 in root=MISC (unclassified root defaults to MISC, not DXE or SEC)
+
+    const duplicates = result.modules.filter((m) => m.guid === guid);
+    expect(duplicates).toHaveLength(2);
+    expect(duplicates[0]?.occurrence).toBe(0);
+    expect(duplicates[1]?.occurrence).toBe(1);
+    expect(duplicates[0]?.relative_c_file).not.toBe(
+      duplicates[1]?.relative_c_file,
+    );
+
+    expect(executed.value.subject?.format).toBe("directory");
+    expect(existsSync(duplicates[0]!.c_file!)).toBe(true);
+    expect(existsSync(duplicates[1]!.c_file!)).toBe(true);
+
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).not.toContain(outDir);
+    expect(readmeContent).toContain(duplicates[0]!.relative_c_file!);
+    expect(readmeContent).toContain(duplicates[1]!.relative_c_file!);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("rejects an already existing output directory under SafeOutputTree", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "existing_output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(outDir, { recursive: true });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(imagePath, outDir),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(
+        (executed.error as { issues?: readonly { path: readonly string[] }[] })
+          .issues?.[0]?.path,
+      ).toEqual(["output_directory"]);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("caps decompilation to max_modules while discovering all candidate modules", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-cap-decompile-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const mzHeader = createMinimalPeBuffer();
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), mzHeader);
+  await writeFile(join(inDir, "mod2.efi"), mzHeader);
+  await writeFile(join(inDir, "mod3.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          max_modules: 2,
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(3);
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(result.limitations.some((l) => l.includes("capped at 2 of 3"))).toBe(
+      true,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("records derived confidence for decompile_uefi_firmware in service Evidence", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_service");
+  const provider = new UefiAnalysisProvider();
+  const service = createUefiAnalysisService(provider);
+  try {
+    const result = await service.execute("decompile_uefi_firmware", {
+      path: imagePath,
+      output_directory: outDir,
+      max_modules: 10,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.confidence).toBe("derived");
+  } finally {
+    await service.close();
+  }
+});
+
+it("converts completed UEFI observations to authenticated Evidence when cancelled in service", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_service_cancel");
+  const controller = new AbortController();
+
+  const provider = new UefiAnalysisProvider();
+  const service = createUefiAnalysisService(provider);
+  let intercepted = false;
+
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("test cancellation after publication commit");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await service.execute(
+      "decompile_uefi_firmware",
+      {
+        path: imagePath,
+        output_directory: outDir,
+      },
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const parsed = safeParseEvidence(executed.error.partialObservation);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.value.operation).toBe("decompile_uefi_firmware");
+    expect(parsed.value.confidence).toBe("derived");
+    expect(parsed.value.subject).toMatchObject({
+      identity: { format: "file" },
+    });
+    expect(
+      (parsed.value.normalized_result as { output_directory?: string })
+        .output_directory,
+    ).toBe(outDir);
+  } finally {
+    vi.restoreAllMocks();
+    await service.close();
+  }
+});
+
+it("converts completed UEFI directory observations to authenticated Evidence with directory format when cancelled", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cancel-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  const service = createUefiAnalysisService(provider);
+  let intercepted = false;
+
+  const originalRelease = DirectoryArtifactReader.prototype.close;
+  vi.spyOn(DirectoryArtifactReader.prototype, "close").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("test cancellation after directory publication");
+      }
+      return originalRelease.call(this);
+    },
+  );
+
+  try {
+    const executed = await service.execute(
+      "decompile_uefi_firmware",
+      {
+        path: inDir,
+        output_directory: outDir,
+      },
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const parsed = safeParseEvidence(executed.error.partialObservation);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.value.operation).toBe("decompile_uefi_firmware");
+    expect(parsed.value.confidence).toBe("derived");
+    expect(parsed.value.subject).toMatchObject({
+      identity: { format: "directory" },
+    });
+    expect(
+      (parsed.value.normalized_result as { output_directory?: string })
+        .output_directory,
+    ).toBe(outDir);
+  } finally {
+    vi.restoreAllMocks();
+    await service.close();
+  }
+});
+
+it("computes deterministic content-addressed directory sha256 regardless of discovery order", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-det-dir-");
+  const dirA = join(directory, "dirA");
+  const dirB = join(directory, "dirB");
+  const outA = join(directory, "outA");
+  const outB = join(directory, "outB");
+
+  const mzHeader1 = createMinimalPeBuffer();
+  mzHeader1.write("MODULE_ALPHA", 64, "utf8");
+
+  const mzHeader2 = createMinimalPeBuffer();
+  mzHeader2.write("MODULE_BETA", 64, "utf8");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(dirA, { recursive: true });
+  await mkdirFs(dirB, { recursive: true });
+
+  // In dirA: write file 1 then file 2
+  await writeFile(join(dirA, "alpha.efi"), mzHeader1);
+  await writeFile(join(dirA, "beta.efi"), mzHeader2);
+
+  // In dirB: write file 2 then file 1
+  await writeFile(join(dirB, "beta.efi"), mzHeader2);
+  await writeFile(join(dirB, "alpha.efi"), mzHeader1);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const resA = expectOk(await provider.execute(decompileRequest(dirA, outA)));
+    const resB = expectOk(await provider.execute(decompileRequest(dirB, outB)));
+    const outResultA = resA.value.result as UefiDecompileResult;
+    const outResultB = resB.value.result as UefiDecompileResult;
+
+    expect(outResultA.image_sha256).toBe(outResultB.image_sha256);
+    expect(outResultA.total_modules_decompiled).toBe(2);
+    expect(outResultB.total_modules_decompiled).toBe(2);
+
+    // Empty directory returns deterministic empty sha256
+    const emptyDir = join(directory, "empty");
+    const emptyOut = join(directory, "emptyOut");
+    await mkdirFs(emptyDir, { recursive: true });
+    const resEmpty = expectOk(
+      await provider.execute(decompileRequest(emptyDir, emptyOut)),
+    );
+    const emptyResult = resEmpty.value.result as UefiDecompileResult;
+    expect(emptyResult.image_sha256).toBe(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    expect(emptyResult.total_modules_decompiled).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains partial observation and committed receipts when cancelled during post-publication cleanup", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_cancel");
+  const controller = new AbortController();
+
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("test cancellation after publication commit");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(imagePath, outDir),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const partial = executed.error.partialObservation as {
+      kind: string;
+      result: UefiDecompileResult;
+    };
+    expect(partial.kind).toBe("uefi");
+    expect(partial.result.output_directory).toBe(outDir);
+    expect(partial.result.total_modules_decompiled).toBe(1);
+    expect(partial.result.receipts).toBeDefined();
+    expect(partial.result.receipts!.length).toBeGreaterThan(0);
+
+    // Verify files were preserved and committed on disk
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("preserves combined-peim-driver and combined-smm-dxe across multi-phase filtering", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-combined-phases-");
+  const pePayload = Buffer.concat([
+    Buffer.from([0x4d, 0x5a]),
+    Buffer.alloc(62, 0),
+    Buffer.from("COMBINED_MODULE_CODE", "utf8"),
+  ]);
+
+  const guidPeimDriver = "44445555-6666-7777-8888-999900001111";
+  const guidSmmDxe = "55556666-7777-8888-9999-000011112222";
+
+  const combinedPeim = buildFfsFile({
+    guid: guidPeimDriver,
+    typeCode: 0x08, // combined-peim-driver
+    payload: buildSection(0x10, pePayload),
+  });
+  const combinedSmm = buildFfsFile({
+    guid: guidSmmDxe,
+    typeCode: 0x0c, // combined-smm-dxe
+    payload: buildSection(0x10, pePayload),
+  });
+
+  const pad = buildFfsFile({
+    guid: GUID_PAD,
+    typeCode: 0xf0,
+    payload: Buffer.alloc(0),
+  });
+
+  const volume = buildFv({ files: [pad, combinedPeim, combinedSmm] });
+  const image = buildImage({ volumes: [volume.buffer] });
+
+  const imagePath = join(directory, "combined.bin");
+  await writeFile(imagePath, image);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    // 1. Filter: "pei" -> should match combined-peim-driver (0x08), NOT combined-smm-dxe (0x0c)
+    const peiRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_pei"), {
+          filter_phase: "pei",
+        }),
+      ),
+    );
+    const peiResult = peiRes.value.result as UefiDecompileResult;
+    expect(peiResult.total_modules_found).toBe(1);
+    expect(peiResult.modules[0]?.guid).toBe(guidPeimDriver);
+
+    // 2. Filter: "smm" -> should match combined-smm-dxe (0x0c), NOT combined-peim-driver (0x08)
+    const smmRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_smm"), {
+          filter_phase: "smm",
+        }),
+      ),
+    );
+    const smmResult = smmRes.value.result as UefiDecompileResult;
+    expect(smmResult.total_modules_found).toBe(1);
+    expect(smmResult.modules[0]?.guid).toBe(guidSmmDxe);
+
+    // 3. Filter: "dxe" -> should match BOTH combined-peim-driver AND combined-smm-dxe
+    const dxeRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_dxe"), {
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const dxeResult = dxeRes.value.result as UefiDecompileResult;
+    expect(dxeResult.total_modules_found).toBe(2);
+    const dxeGuids = dxeResult.modules.map((m) => m.guid);
+    expect(dxeGuids).toContain(guidPeimDriver);
+    expect(dxeGuids).toContain(guidSmmDxe);
+
+    // 4. Filter: "sec" -> should match neither
+    const secRes = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, join(directory, "out_sec"), {
+          filter_phase: "sec",
+        }),
+      ),
+    );
+    const secResult = secRes.value.result as UefiDecompileResult;
+    expect(secResult.total_modules_found).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("truncates raw executable payload staging when reaching aggregate budget of 128 MiB", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-payload-budget-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const pe = Buffer.alloc(25 * 1024 * 1024);
+  createMinimalPeBuffer().copy(pe);
+
+  for (let i = 0; i < 6; i++) {
+    await writeFile(join(inDir, `mod_${i}.efi`), pe);
+  }
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(6);
+    expect(result.coverage).toBe("partial");
+    expect(typeof result.modules[4]?.payload_file).toBe("string");
+    expect(result.modules[5]?.payload_file).toBeNull();
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes(
+            "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget",
+          ) && l.includes("producer_limits.input_bytes"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("gracefully filters out non-PE, corrupt, and oversized files during directory decompilation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-filtering-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 1. Valid PE file
+  const validPe = createMinimalPeBuffer();
+  await writeFile(join(inDir, "valid.efi"), validPe);
+
+  // 2. Plain DOS executable (MZ with no PE signature / invalid e_lfanew)
+  const plainDos = Buffer.alloc(128, 0);
+  plainDos[0] = 0x4d;
+  plainDos[1] = 0x5a;
+  await writeFile(join(inDir, "dos.exe"), plainDos);
+
+  // 3. Corrupt PE file with invalid signature
+  const corruptPe = Buffer.alloc(128, 0);
+  corruptPe[0] = 0x4d;
+  corruptPe[1] = 0x5a;
+  corruptPe.writeUInt32LE(0x40, 0x3c);
+  corruptPe.set(Buffer.from("NOPE"), 0x40);
+  await writeFile(join(inDir, "corrupt.efi"), corruptPe);
+
+  // 4. Non-PE file (random data, no MZ/VZ)
+  const nonPe = Buffer.from("NOT_A_PE_OR_TE_BINARY_AT_ALL");
+  await writeFile(join(inDir, "notes.txt"), nonPe);
+
+  // 5. Zero-byte file
+  await writeFile(join(inDir, "empty.efi"), Buffer.alloc(0));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // Only valid PE should be discovered
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("valid");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("generates correct ABI signature for PEI core entry point including Context parameter", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "PeiCore",
+    "PeiCoreModule",
+    1024,
+    "PEI",
+    "pei-core",
+  );
+  expect(scaffold.prototype).toContain("void *Context");
+  expect(scaffold.functionDefinition).toContain("void *Context");
+});
+
+it("declares opaque struct types for PEI services and system table to avoid pointer-level inflation", () => {
+  const peimScaffold = buildUefiEntryPointScaffolding(
+    "TestPeim",
+    "TestPeimModule",
+    1024,
+    "PEI",
+    "peim",
+  );
+  expect(peimScaffold.typedefs).toContain("struct _EFI_PEI_SERVICES;");
+  expect(peimScaffold.typedefs).toContain(
+    "typedef struct _EFI_PEI_SERVICES EFI_PEI_SERVICES;",
+  );
+  expect(peimScaffold.typedefs).not.toContain(
+    "typedef void* EFI_PEI_SERVICES;",
+  );
+
+  const dxeScaffold = buildUefiEntryPointScaffolding(
+    "TestDxe",
+    "TestDxeModule",
+    2048,
+    "DXE",
+    "dxe-driver",
+  );
+  expect(dxeScaffold.typedefs).toContain("struct _EFI_SYSTEM_TABLE;");
+  expect(dxeScaffold.typedefs).toContain(
+    "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
+  );
+  expect(dxeScaffold.typedefs).not.toContain("typedef void* EFI_SYSTEM_TABLE;");
+
+  const smmCoreScaffold = buildUefiEntryPointScaffolding(
+    "TestSmmCore",
+    "TestSmmCoreModule",
+    4096,
+    "SMM",
+    "smm-core",
+    "64",
+  );
+  expect(smmCoreScaffold.prototype).toBe(
+    "EFI_STATUS EFIAPI TestSmmCoreEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "EFI_HANDLE ImageHandle",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "EFI_SYSTEM_TABLE *SystemTable",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "EFI_STATUS Status = EFI_SUCCESS;",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain("return Status;");
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "// Reconstructed SMM Core EntryPoint scaffolding for TestSmmCoreModule",
+  );
+  expect(smmCoreScaffold.typedefs).toContain("typedef uint64_t EFI_STATUS;");
+  expect(smmCoreScaffold.typedefs).toContain("typedef void* EFI_HANDLE;");
+  expect(smmCoreScaffold.typedefs).toContain("struct _EFI_SYSTEM_TABLE;");
+
+  const smmMiscScaffold = buildUefiEntryPointScaffolding(
+    "TestSmmMisc",
+    "TestSmmMiscModule",
+    2048,
+    "MISC",
+    "smm",
+    "32",
+  );
+  expect(smmMiscScaffold.prototype).toBe(
+    "EFI_STATUS EFIAPI TestSmmMiscEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+  expect(smmMiscScaffold.typedefs).toContain("typedef uint32_t EFI_STATUS;");
+});
+
+it("discovers Terse Executable (TE / VZ) binaries in directory input mode", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-te-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // Valid TE file header: 0x56, 0x5a ('VZ')
+  const teHeader = createMinimalTeBuffer();
+  await writeFile(join(inDir, "sec_core.te"), teHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("sec_core");
+    expect(result.modules[0]?.c_file).toBeDefined();
+    expect(existsSync(result.modules[0]!.c_file!)).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("treats caller abort reasons as opaque cancellations rather than timeouts", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-caller-cancel-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const mzHeader = createMinimalPeBuffer();
+  await writeFile(join(inDir, "mod1.efi"), mzHeader);
+
+  const controller = new AbortController();
+  const timeoutError = new AnalysisTimeoutError(
+    "decompile_uefi_firmware",
+    5000,
+  );
+  controller.abort(timeoutError);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(decompileRequest(inDir, outDir), {
+      signal: controller.signal,
+    });
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(executed.error._tag).toBe("AnalysisCancelledError");
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("omits disassembly and records limitation when staging disassembly exceeds remaining budget", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-asm-budget-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const mzHeader = createMinimalPeBuffer();
+  await writeFile(join(inDir, "mod1.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: true,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(["ok", "failed", "omitted"]).toContain(
+      result.modules[0]?.disassembly_status,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("recognizes MISC directory segments and filters them correctly", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-misc-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  const miscDir = join(inDir, "MISC", "extra_pkg");
+  await mkdirFs(miscDir, { recursive: true });
+
+  const mzHeader = createMinimalPeBuffer();
+  await writeFile(join(miscDir, "payload.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.phases.misc).toBe(1);
+    expect(result.phases.dxe).toBe(0);
+    expect(result.modules[0]?.phase).toBe("MISC");
+
+    // Also verify that filter_phase: "dxe" excludes it
+    const dxeOut = join(directory, "output-dxe");
+    const filtered = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, dxeOut, { filter_phase: "dxe" }),
+      ),
+    );
+    const filteredResult = filtered.value.result as UefiDecompileResult;
+    expect(filteredResult.total_modules_found).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("recovers GUID and module name from directory hierarchy <guid>_<name>/<name>.efi and manifest", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-guid-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  const testGuid = "11223344-5566-7788-99aa-bbccddeeff00";
+  const modDir = join(inDir, "DXE", `${testGuid}_SpecialDriver`);
+  await mkdirFs(modDir, { recursive: true });
+
+  const mzHeader = createMinimalPeBuffer();
+  await writeFile(join(modDir, "SpecialDriver.efi"), mzHeader);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(inDir, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.modules[0]?.guid).toBe(testGuid);
+    expect(result.modules[0]?.name).toBe("SpecialDriver");
+  } finally {
+    await provider.close();
+  }
+});
+
 it.each([
   { erase: 0xff as const, dirty: 0x00 },
   { erase: 0x00 as const, dirty: 0xff },
@@ -2366,3 +3337,7276 @@ it.each([
     }
   },
 );
+
+it("surfaces a ProviderCleanupError with completedObservation when closing scratch root fails during decompile_uefi_firmware", async () => {
+  const root = await createTestTempDirectory("rea-uefi-cleanup-scratch-");
+  const path = join(root, "image.fd");
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildSection(0x10, MODULE_A),
+  });
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+
+  const provider = new UefiAnalysisProvider();
+  const spy = vi
+    .spyOn(PrivateRuntimeRoot.prototype, "close")
+    .mockRejectedValueOnce(new Error("scratch root close locked"));
+  let cleanupErr: ProviderCleanupError | undefined;
+  try {
+    const executed = await provider.execute(
+      decompileRequest(path, join(root, "out")),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(ProviderCleanupError);
+      cleanupErr = executed.error as ProviderCleanupError;
+      expect(cleanupErr.cleanupIncomplete).toBe(true);
+      expect(cleanupErr.completedObservation).toBeDefined();
+      if (
+        cleanupErr.completedObservation &&
+        "kind" in cleanupErr.completedObservation
+      ) {
+        expect(cleanupErr.completedObservation.kind).toBe("uefi");
+      }
+    }
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+  expect(cleanupErr?.cleanupIncomplete).toBe(false);
+});
+
+it("surfaces a cleanup error with incomplete cleanup when closing directory sniff file handle fails", async () => {
+  const root = await createTestTempDirectory("rea-uefi-cleanup-handle-");
+  const efiDir = join(root, "extracted");
+  await mkdir(efiDir, { recursive: true });
+  await writeFile(
+    join(efiDir, "driver.efi"),
+    Buffer.from("MZ" + "\0".repeat(62)),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const spy = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValue(new Error("file handle close error"));
+  let cleanupErr: { cleanupIncomplete?: boolean } | undefined;
+  try {
+    const executed = await provider.execute(
+      decompileRequest(efiDir, join(root, "out")),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error.cleanupIncomplete).toBe(true);
+      cleanupErr = executed.error;
+    }
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+  expect(cleanupErr?.cleanupIncomplete).toBe(false);
+});
+
+it("sanitizes C comment markers and newlines in module names and types", () => {
+  expect(sanitizeCComment("Foo*/Bar")).toBe("Foo* /Bar");
+  expect(sanitizeCComment("Driver\nName\r\nSecond")).toBe("Driver Name Second");
+  expect(sanitizeCComment("/* Injected */ Payload */")).toBe(
+    "/* Injected * / Payload * /",
+  );
+  expect(sanitizeCComment("  NormalName  ")).toBe("NormalName");
+});
+
+it("detects 32-bit and 64-bit machine width from PE and TE headers", () => {
+  // TE IA32: signature "VZ" (0x56, 0x5a) + machine 0x014c
+  const teIa32 = Buffer.alloc(16);
+  teIa32[0] = 0x56;
+  teIa32[1] = 0x5a;
+  teIa32.writeUInt16LE(0x014c, 2);
+  expect(detectPeTeMachineWidth(teIa32)).toBe("32");
+
+  // TE X64: signature "VZ" + machine 0x8664
+  const teX64 = Buffer.alloc(16);
+  teX64[0] = 0x56;
+  teX64[1] = 0x5a;
+  teX64.writeUInt16LE(0x8664, 2);
+  expect(detectPeTeMachineWidth(teX64)).toBe("64");
+
+  // TE ARMNT: signature "VZ" + machine 0x01c4
+  const teArmnt = Buffer.alloc(16);
+  teArmnt[0] = 0x56;
+  teArmnt[1] = 0x5a;
+  teArmnt.writeUInt16LE(0x01c4, 2);
+  expect(detectPeTeMachineWidth(teArmnt)).toBe("32");
+
+  // TE ARM Thumb: signature "VZ" + machine 0x01c2
+  const teArm = Buffer.alloc(16);
+  teArm[0] = 0x56;
+  teArm[1] = 0x5a;
+  teArm.writeUInt16LE(0x01c2, 2);
+  expect(detectPeTeMachineWidth(teArm)).toBe("32");
+
+  // PE IA32: "MZ" at 0, e_lfanew at 0x3c -> 0x40, PE\0\0 at 0x40, machine 0x014c at 0x44, opt header magic 0x10b at 0x58
+  const peIa32 = Buffer.alloc(0x80);
+  peIa32[0] = 0x4d;
+  peIa32[1] = 0x5a;
+  peIa32.writeUInt32LE(0x40, 0x3c);
+  peIa32.set(Buffer.from("PE\0\0"), 0x40);
+  peIa32.writeUInt16LE(0x014c, 0x44);
+  peIa32.writeUInt16LE(0xe0, 0x54);
+  peIa32.writeUInt16LE(0x10b, 0x58);
+  expect(detectPeTeMachineWidth(peIa32)).toBe("32");
+
+  // PE ARMNT: machine 0x01c4 at 0x44, opt header magic 0x10b at 0x58
+  const peArmnt = Buffer.alloc(0x80);
+  peArmnt[0] = 0x4d;
+  peArmnt[1] = 0x5a;
+  peArmnt.writeUInt32LE(0x40, 0x3c);
+  peArmnt.set(Buffer.from("PE\0\0"), 0x40);
+  peArmnt.writeUInt16LE(0x01c4, 0x44);
+  peArmnt.writeUInt16LE(0xe0, 0x54);
+  peArmnt.writeUInt16LE(0x10b, 0x58);
+  expect(detectPeTeMachineWidth(peArmnt)).toBe("32");
+
+  // PE AARCH64: machine 0xaa64 at 0x44, opt header magic 0x20b at 0x58
+  const peAarch64 = Buffer.alloc(0x80);
+  peAarch64[0] = 0x4d;
+  peAarch64[1] = 0x5a;
+  peAarch64.writeUInt32LE(0x40, 0x3c);
+  peAarch64.set(Buffer.from("PE\0\0"), 0x40);
+  peAarch64.writeUInt16LE(0xaa64, 0x44);
+  peAarch64.writeUInt16LE(0xf0, 0x54);
+  peAarch64.writeUInt16LE(0x20b, 0x58);
+  expect(detectPeTeMachineWidth(peAarch64)).toBe("64");
+
+  // PE X64: "MZ" at 0, e_lfanew at 0x3c -> 0x40, PE\0\0 at 0x40, machine 0x8664 at 0x44, opt header magic 0x20b at 0x58
+  const peX64 = Buffer.alloc(0x80);
+  peX64[0] = 0x4d;
+  peX64[1] = 0x5a;
+  peX64.writeUInt32LE(0x40, 0x3c);
+  peX64.set(Buffer.from("PE\0\0"), 0x40);
+  peX64.writeUInt16LE(0x8664, 0x44);
+  peX64.writeUInt16LE(0xf0, 0x54);
+  peX64.writeUInt16LE(0x20b, 0x58);
+  expect(detectPeTeMachineWidth(peX64)).toBe("64");
+
+  // PE without optional header magic returns unknown
+  const peNoOpt = Buffer.alloc(0x80);
+  peNoOpt[0] = 0x4d;
+  peNoOpt[1] = 0x5a;
+  peNoOpt.writeUInt32LE(0x40, 0x3c);
+  peNoOpt.set(Buffer.from("PE\0\0"), 0x40);
+  peNoOpt.writeUInt16LE(0x8664, 0x44);
+  expect(detectPeTeMachineWidth(peNoOpt)).toBe("unknown");
+
+  // RISC-V 128-bit (0x5128) returns unknown width
+  const peRiscv128 = createMinimalPeBuffer(0x5128);
+  expect(detectPeTeMachineWidth(peRiscv128)).toBe("unknown");
+
+  // Short buffer fallback
+  expect(detectPeTeMachineWidth(Buffer.alloc(2))).toBe("unknown");
+});
+
+it("emits 32-bit or 64-bit EFI_STATUS and sanitized comments in scaffolding", () => {
+  const scaffold32 = buildUefiEntryPointScaffolding(
+    "MyDriver",
+    "My*/Driver\nMalicious",
+    1024,
+    "DXE",
+    undefined,
+    "32",
+  );
+  expect(scaffold32.typedefs).toContain("typedef uint32_t EFI_STATUS;");
+  expect(scaffold32.functionDefinition).toContain("My* /Driver Malicious");
+
+  const scaffold64 = buildUefiEntryPointScaffolding(
+    "MyDriver",
+    "MyDriver",
+    1024,
+    "PEI",
+    "peim",
+    "64",
+  );
+  expect(scaffold64.typedefs).toContain("typedef uint64_t EFI_STATUS;");
+});
+
+it("allocates strictly injective directory paths for colliding names without GUID", async () => {
+  const root = await createTestTempDirectory("rea-uefi-injective-paths-");
+  const inDir = join(root, "input");
+  const outDir = join(root, "out");
+  await mkdir(join(inDir, "a"), { recursive: true });
+  await mkdir(join(inDir, "b"), { recursive: true });
+  await mkdir(join(inDir, "c"), { recursive: true });
+
+  const dummyPeA = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPeA.fill(0xaa, 140);
+
+  const dummyPeB = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPeB.fill(0xbb, 140);
+
+  const dummyPeC = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPeC.fill(0xcc, 140);
+
+  // Three files where a simple counter would collide: Foo, Foo_1, Foo
+  await writeFile(join(inDir, "a", "Foo.efi"), dummyPeA);
+  await writeFile(join(inDir, "b", "Foo_1.efi"), dummyPeB);
+  await writeFile(join(inDir, "c", "Foo.efi"), dummyPeC);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(3);
+
+    for (const m of result.modules) {
+      expect(m.c_file).not.toBeNull();
+      expect(m.relative_c_file).not.toBeNull();
+    }
+    const relativeDirs = result.modules.map((m) =>
+      m.relative_c_file!.split("/").slice(0, 2).join("/"),
+    );
+    const uniqueDirs = new Set(relativeDirs);
+    expect(uniqueDirs.size).toBe(3);
+
+    const cFiles = result.modules.map((m) => m.c_file!);
+    const uniqueCFiles = new Set(cFiles);
+    expect(uniqueCFiles.size).toBe(3);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains read bytes for directory modules without TOCTOU drift", async () => {
+  const root = await createTestTempDirectory("rea-uefi-bytes-retention-");
+  const inDir = join(root, "input");
+  const outDir = join(root, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const dummyPe = createMinimalPeBuffer(0x8664, 1, 256);
+  dummyPe.fill(0x77, 140);
+  const sourcePath = join(inDir, "module.efi");
+  await writeFile(sourcePath, dummyPe);
+
+  const expectedSha256 = createHash("sha256").update(dummyPe).digest("hex");
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.payload_sha256).toBe(expectedSha256);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("declares opaque struct types for PEI core hand-off and PPI descriptor to avoid pointer-level inflation", () => {
+  const peiCoreScaffold = buildUefiEntryPointScaffolding(
+    "PeiCore",
+    "PeiCoreModule",
+    1024,
+    "PEI",
+    "pei-core",
+  );
+  expect(peiCoreScaffold.typedefs).toContain("struct _EFI_SEC_PEI_HAND_OFF;");
+  expect(peiCoreScaffold.typedefs).toContain(
+    "typedef struct _EFI_SEC_PEI_HAND_OFF EFI_SEC_PEI_HAND_OFF;",
+  );
+  expect(peiCoreScaffold.typedefs).toContain("struct _EFI_PEI_PPI_DESCRIPTOR;");
+  expect(peiCoreScaffold.typedefs).toContain(
+    "typedef struct _EFI_PEI_PPI_DESCRIPTOR EFI_PEI_PPI_DESCRIPTOR;",
+  );
+  expect(peiCoreScaffold.typedefs).not.toContain(
+    "typedef void* EFI_SEC_PEI_HAND_OFF;",
+  );
+  expect(peiCoreScaffold.typedefs).not.toContain(
+    "typedef void* EFI_PEI_PPI_DESCRIPTOR;",
+  );
+  expect(peiCoreScaffold.prototype).toContain(
+    "const EFI_SEC_PEI_HAND_OFF *SecCoreData",
+  );
+  expect(peiCoreScaffold.prototype).toContain(
+    "const EFI_PEI_PPI_DESCRIPTOR *PpiList",
+  );
+});
+
+it("defines EFIAPI with ms_abi calling convention for x86-64 in generated header", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-efiapi-header-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const peX64 = createMinimalPeBuffer(0x8664, 1, 128);
+  await writeFile(join(inDir, "driver.efi"), peX64);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const headerPath = result.modules[0]?.header_file;
+    expect(headerPath).toBeDefined();
+    const headerContent = await readFile(headerPath!, "utf8");
+    expect(headerContent).toContain(
+      "#elif defined(__x86_64__) || defined(__amd64__)",
+    );
+    expect(headerContent).toContain("#define EFIAPI __attribute__((ms_abi))");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds generated module directory and file paths to avoid filesystem path component limits", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-path-bounds-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 240-char module name: exceeding 255 bytes when combined with prefixes if unbounded
+  const longName = "A".repeat(240);
+  const peBuf = createMinimalPeBuffer(0x8664, 1, 128);
+  await writeFile(join(inDir, `${longName}.efi`), peBuf);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0];
+    expect(mod?.name).toBe(longName);
+    expect(mod?.relative_c_file).toBeDefined();
+
+    // Each path segment in the relative C path must be <= 255 bytes
+    const segments = mod!.relative_c_file!.split("/");
+    for (const segment of segments) {
+      expect(Buffer.byteLength(segment, "utf8")).toBeLessThanOrEqual(255);
+    }
+    expect(existsSync(mod!.c_file!)).toBe(true);
+    expect(existsSync(mod!.header_file!)).toBe(true);
+    expect(existsSync(mod!.payload_file!)).toBe(true);
+
+    const manifestRaw = await readFile(
+      join(outDir, "firmware_manifest.json"),
+      "utf8",
+    );
+    const manifestJson = JSON.parse(manifestRaw);
+    expect(manifestJson.modules[0]?.name).toBe(longName);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("discovers RISC-V and EFI Byte Code binaries in directory input mode and detects machine widths", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-riscv-ebc-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // 1. RISC-V 64-bit PE (machine 0x5064)
+  const peRiscv64 = createMinimalPeBuffer(0x5064, 1, 256);
+  await writeFile(join(inDir, "riscv64.efi"), peRiscv64);
+
+  // 2. RISC-V 32-bit PE (machine 0x5032)
+  const peRiscv32 = createMinimalPeBuffer(0x5032, 1, 256);
+  await writeFile(join(inDir, "riscv32.efi"), peRiscv32);
+
+  // 3. EFI Byte Code PE (machine 0x0ebc)
+  const peEbc = createMinimalPeBuffer(0x0ebc, 1, 256);
+  await writeFile(join(inDir, "ebc.efi"), peEbc);
+
+  // 4. RISC-V 64-bit TE (machine 0x5064)
+  const teRiscv64 = createMinimalTeBuffer(0x5064, 1, 64);
+  await writeFile(join(inDir, "riscv64_core.te"), teRiscv64);
+
+  expect(detectPeTeMachineWidth(peRiscv64)).toBe("64");
+  expect(detectPeTeMachineWidth(peRiscv32)).toBe("32");
+  expect(detectPeTeMachineWidth(peEbc)).toBe("unknown");
+  expect(detectPeTeMachineWidth(teRiscv64)).toBe("64");
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // All 4 valid firmware modules must be discovered and decompiled
+    expect(result.total_modules_found).toBe(4);
+    expect(result.total_modules_decompiled).toBe(4);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("resolves packaged Ghidra script ReaDecompileToC.java from module URL at package root", () => {
+  const bridgeDir = fileURLToPath(
+    new URL("../../bridge/ghidra", import.meta.url),
+  );
+  expect(existsSync(join(bridgeDir, "ReaDecompileToC.java"))).toBe(true);
+});
+
+it("decompiles multiple modules under normal deadline budget without premature stopping", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-multi-module-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  // Create 3 valid PE modules
+  for (let i = 1; i <= 3; i++) {
+    const pe = createMinimalPeBuffer(0x8664, 1, 256);
+    pe.fill(i * 0x11, 140);
+    await writeFile(join(inDir, `Driver${i}.efi`), pe);
+  }
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(3);
+    // All 3 modules must be decompiled without hitting premature nextModuleReserve
+    expect(result.total_modules_decompiled).toBe(3);
+    expect(result.modules.length).toBe(3);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("tolerates fractional millisecond remaining time values without command deadline failures", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-fractional-time-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x55, 140);
+  await writeFile(join(inDir, "Sample.efi"), pe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+  } finally {
+    await provider.close();
+  }
+});
+
+it.skipIf(process.getuid?.() === 0 || HOST_PLATFORM.platform === "win32")(
+  "fails when directory root is inaccessible",
+  async () => {
+    const directory = await createTestTempDirectory("rea-uefi-missing-dir-");
+    const inDir = join(directory, "unreadable_root");
+    const outDir = join(directory, "output");
+    await mkdir(inDir, { recursive: true });
+    await chmod(inDir, 0o000);
+
+    const provider = new UefiAnalysisProvider();
+    try {
+      const executed = await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      );
+      expect(executed.ok).toBe(false);
+      if (!executed.ok) {
+        expect(String(executed.error.cause)).toContain(
+          "Selected directory root is not accessible",
+        );
+      }
+    } finally {
+      await chmod(inDir, 0o755);
+      await provider.close();
+    }
+  },
+);
+
+it("includes manifest in directory corpus digest so manifest changes alter image identity", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-digest-");
+  const inDir = join(directory, "input");
+  const outDir1 = join(directory, "output1");
+  const outDir2 = join(directory, "output2");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x33, 140);
+  await writeFile(join(inDir, "Sample.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      modules: [{ payload_file: "Sample.efi", name: "Version1", phase: "DXE" }],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const sha1 = (res1.value.result as UefiDecompileResult).image_sha256;
+
+    // Now modify the manifest
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        modules: [
+          { payload_file: "Sample.efi", name: "Version2", phase: "DXE" },
+        ],
+      }),
+    );
+
+    const res2 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir2, { include_disassembly: false }),
+      ),
+    );
+    const sha2 = (res2.value.result as UefiDecompileResult).image_sha256;
+
+    expect(sha1).not.toBe(sha2);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("validates manifest rows and emits limitations with payload fallbacks on malformed metadata", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-malformed-",
+  );
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x44, 140);
+  await writeFile(join(inDir, "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      modules: [
+        {
+          payload_file: "Driver.efi",
+          guid: "not-a-valid-uuid",
+          phase: "INVALID_PHASE",
+          name: 12345,
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.phase).toBe("MISC");
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("invalid GUID format"),
+        expect.stringContaining("non-string name"),
+        expect.stringContaining("unrecognized phase"),
+      ]),
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("sanitizes Windows device basenames like CON to avoid reserved name collisions", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-win-device-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x77, 140);
+  await writeFile(join(inDir, "CON.efi"), pe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0];
+    expect(mod?.name).toBe("CON");
+    expect(mod?.relative_c_file).toContain("_CON.c");
+    expect(mod?.relative_header_file).toContain("_CON.h");
+    expect(mod?.relative_payload_file).toContain("_CON.efi");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("escapes special Markdown characters in module names when generating README", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-md-escape-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  pe.fill(0x88, 140);
+  await writeFile(join(inDir, "Special.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      modules: [
+        {
+          payload_file: "Special.efi",
+          name: "Driver|With`Pipe\nAndNewline[Bracket]",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+
+    const readmeRaw = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeRaw).toContain("``Driver\\|With`Pipe AndNewline[Bracket]``");
+    expect(readmeRaw).toContain("Driver_With_Pipe AndNewline_Bracket_.c");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves manifest identity in dirHash for empty module directories", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-empty-manifest-");
+  const inDir1 = join(directory, "input1");
+  const inDir2 = join(directory, "input2");
+  const outDir1 = join(directory, "output1");
+  const outDir2 = join(directory, "output2");
+  await mkdir(inDir1, { recursive: true });
+  await mkdir(inDir2, { recursive: true });
+
+  await writeFile(
+    join(inDir1, "firmware_manifest.json"),
+    JSON.stringify({ note: "Manifest A" }),
+  );
+  await writeFile(
+    join(inDir2, "firmware_manifest.json"),
+    JSON.stringify({ note: "Manifest B" }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir1, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const sha1 = (res1.value.result as UefiDecompileResult).image_sha256;
+
+    const res2 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir2, outDir2, { include_disassembly: false }),
+      ),
+    );
+    const sha2 = (res2.value.result as UefiDecompileResult).image_sha256;
+
+    expect(sha1).not.toBe(sha2);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("admits MISC as a phase filter for decompilation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-filter-misc-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(join(inDir, "misc"), { recursive: true });
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+
+  await writeFile(join(inDir, "misc", "MiscMod.efi"), pePayload);
+  await writeFile(join(inDir, "dxe", "DxeMod.efi"), pePayload);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          filter_phase: "misc",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = res.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.phases.misc).toBe(1);
+    expect(result.phases.dxe).toBe(0);
+    expect(result.modules[0]?.phase).toBe("MISC");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("folds output allocation keys to avoid collisions on case-insensitive filesystems", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-case-fold-dest-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(join(inDir, "dir1"), { recursive: true });
+  await mkdir(join(inDir, "dir2"), { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+
+  await writeFile(join(inDir, "dir1", "Foo.efi"), pePayload);
+  await writeFile(join(inDir, "dir2", "foo.efi"), pePayload);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = res.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves distinct POSIX case in manifest lookup keys", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-case-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+
+  await writeFile(join(inDir, "ModA.efi"), pePayload);
+  await writeFile(join(inDir, "moda.efi"), pePayload);
+
+  const manifest = {
+    modules: [
+      {
+        payload_file: "ModA.efi",
+        name: "ModuleUpper",
+        phase: "PEI",
+        guid: "11111111-1111-1111-1111-111111111111",
+      },
+      {
+        payload_file: "moda.efi",
+        name: "ModuleLower",
+        phase: "DXE",
+        guid: "22222222-2222-2222-2222-222222222222",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = res.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+
+    const modUpper = result.modules.find((m) => m.name === "ModuleUpper");
+    const modLower = result.modules.find((m) => m.name === "ModuleLower");
+    expect(modUpper).toBeDefined();
+    expect(modLower).toBeDefined();
+    expect(modUpper?.guid).toBe("11111111-1111-1111-1111-111111111111");
+    expect(modUpper?.phase).toBe("PEI");
+    expect(modLower?.guid).toBe("22222222-2222-2222-2222-222222222222");
+    expect(modLower?.phase).toBe("DXE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("passes relative scratch basenames and working directory to disassemblers", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-disasm-basename-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Sample.efi"), pePayload);
+
+  let capturedCommand: string | undefined;
+  let capturedArgs: readonly string[] | undefined;
+  let capturedCwd: string | undefined;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command === "llvm-objdump" || command === "objdump") {
+        capturedCommand = command;
+        capturedArgs = args;
+        capturedCwd =
+          options?.cwd !== undefined ? String(options.cwd) : undefined;
+        return {
+          stdout: "dummy disassembly",
+          stderr: "",
+          stdoutBytes: 17,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    expect(
+      (res.value.result as UefiDecompileResult).total_modules_decompiled,
+    ).toBe(1);
+    expect(capturedCommand).toBe("llvm-objdump");
+    expect(capturedArgs).toEqual(["-d", "--no-show-raw-insn", "mod_1.efi"]);
+    expect(capturedCwd).toBeDefined();
+    expect(capturedCwd).not.toContain("mod_1.efi");
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("injects isolated JVM home and tmpdir properties for Ghidra execution", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-jvm-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+
+  const pePayload = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Sample.efi"), pePayload);
+
+  let ghidraArgsCaptured: readonly string[] | undefined;
+  let ghidraEnvCaptured: NodeJS.ProcessEnv | undefined;
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraArgsCaptured = args;
+        ghidraEnvCaptured = options?.env;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "EFI_STATUS UefiMain() { return 0; }");
+        }
+        return {
+          stdout: "decompiled output",
+          stderr: "",
+          stdoutBytes: 17,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(ghidraArgsCaptured).toBeDefined();
+    expect(ghidraArgsCaptured).not.toContain("-vmargs");
+    expect(ghidraArgsCaptured?.some((a) => a.startsWith("-Duser.home="))).toBe(
+      false,
+    );
+    expect(
+      ghidraArgsCaptured?.some((a) => a.startsWith("-Djava.io.tmpdir=")),
+    ).toBe(false);
+    expect(ghidraArgsCaptured).toContain("-deleteProject");
+    expect(ghidraEnvCaptured?.JDK_JAVA_OPTIONS).toMatch(
+      /-Duser\.home=".*" -Djava\.io\.tmpdir=".*"/,
+    );
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("validates output destination before analyzing image or scanning directory", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dest-check-");
+  const inDir = join(directory, "in");
+  const existingOut = join(directory, "existing_out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await mkdirFs(existingOut, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, existingOut),
+    );
+    expect(executed.ok).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports ghidra producer as null when Ghidra fails or produces no output", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-null-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  process.env.GHIDRA_INSTALL_DIR = "/fake/ghidra";
+
+  const execModule = await import("../process/ExecFileOutput.js");
+  const spy = vi
+    .spyOn(execModule, "execFileOutput")
+    .mockImplementation(async () => {
+      throw new Error("Ghidra headless crash");
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(result.producers?.ghidra).toBeNull();
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("preserves FFS type metadata and specialized entry point across directory round-trips", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-roundtrip-type-");
+  const inDir = join(directory, "in");
+  const outDir1 = join(directory, "out1");
+  const outDir2 = join(directory, "out2");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "PeiCore.efi"), peBuffer);
+
+  const manifest = {
+    image_sha256: "test",
+    total_modules_found: 1,
+    total_modules_decompiled: 1,
+    phases: { sec: 0, pei: 1, dxe: 0, smm: 0, app: 0, misc: 0 },
+    modules: [
+      {
+        occurrence: 1,
+        guid: "11111111-2222-3333-4444-555555555555",
+        name: "PeiCore",
+        phase: "PEI",
+        type: "pei-core",
+        payload_file: "PeiCore.efi",
+        code_bytes: peBuffer.length,
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const result1 = executed1.value.result as UefiDecompileResult;
+    expect(result1.modules[0]?.type).toBe("pei-core");
+    expect(result1.modules[0]?.source_path).toBe("PeiCore.efi");
+
+    const cContent1 = await readFile(result1.modules[0]!.c_file!, "utf8");
+    expect(cContent1).toContain("PeiCoreEntryPoint(");
+    expect(cContent1).toContain("EFI_SEC_PEI_HAND_OFF");
+
+    const manifest1 = JSON.parse(
+      await readFile(join(outDir1, "firmware_manifest.json"), "utf8"),
+    );
+    expect(manifest1.modules[0].type).toBe("pei-core");
+    expect(manifest1.modules[0].source_path).toBe("PeiCore.efi");
+
+    const executed2 = expectOk(
+      await provider.execute(
+        decompileRequest(outDir1, outDir2, { include_disassembly: false }),
+      ),
+    );
+    const result2 = executed2.value.result as UefiDecompileResult;
+    expect(result2.modules[0]?.type).toBe("pei-core");
+    const cContent2 = await readFile(result2.modules[0]!.c_file!, "utf8");
+    expect(cContent2).toContain("PeiCoreEntryPoint(");
+    expect(cContent2).toContain("EFI_SEC_PEI_HAND_OFF");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves source coordinates for disambiguated duplicate candidates in directory mode", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-coords-dup-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(join(inDir, "dirA"), { recursive: true });
+  await mkdirFs(join(inDir, "dirB"), { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "dirA", "Driver.efi"), peBuffer);
+  await writeFile(join(inDir, "dirB", "Driver.efi"), peBuffer);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules.length).toBe(2);
+    expect(result.modules[0]?.source_path).toBe("dirA/Driver.efi");
+    expect(result.modules[1]?.source_path).toBe("dirB/Driver.efi");
+    expect(result.modules[0]?.occurrence).toBe(0);
+    expect(result.modules[1]?.occurrence).toBe(1);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("composes cleanup failure with ordinary staging Node errors via analysisErrorWithCleanupDependencies", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-cleanup-compose-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  let createdRootPath: string | undefined;
+  const origCreate = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  const createSpy = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementation(async (options) => {
+      const root = await origCreate(options);
+      createdRootPath = root.path;
+      // Make scratch directory read-only so staging scratch writeFile throws EACCES
+      await chmod(root.path, 0o500);
+      return root;
+    });
+
+  const closeSpy = vi
+    .spyOn(PrivateRuntimeRoot.prototype, "close")
+    .mockRejectedValueOnce(new Error("Simulated root cleanup failure"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error.cleanupIncomplete).toBe(true);
+      expect(executed.error.cleanupResources).toContainEqual(
+        expect.stringContaining("rea-uefi-decompile-"),
+      );
+    }
+  } finally {
+    if (createdRootPath !== undefined) {
+      try {
+        await chmod(createdRootPath, 0o700);
+      } catch {
+        // ignore
+      }
+    }
+    createSpy.mockRestore();
+    closeSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("describes pre-extracted directories in the decompile path schema", () => {
+  const desc = uefiInputSchemas.decompile_uefi_firmware.shape.path.description;
+  expect(desc).toContain("pre-extracted module directory");
+});
+
+it("attributes pre-extracted directory destination collision to output_directory via outputDirectoryAdmissionRefusal", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-dest-refusal-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await mkdirFs(outDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(
+        (executed.error as { issues?: readonly { path: readonly string[] }[] })
+          .issues?.[0]?.path,
+      ).toEqual(["output_directory"]);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("detects concurrent source module modification via expectedSha256 and refuses to decompile", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-toctou-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  // Create two 17 MiB PE modules so the 32 MiB preload budget is exhausted by the second
+  const minimalPe = createMinimalPeBuffer();
+  const pe17Mb = Buffer.concat([
+    minimalPe,
+    Buffer.alloc(17 * 1024 * 1024 - minimalPe.length, 0),
+  ]);
+  await writeFile(join(inDir, "00_first.efi"), pe17Mb);
+
+  // Second module will have mod.bytes === undefined due to preload budget (17 + 17 > 32)
+  const targetPe = join(inDir, "01_target.efi");
+  await writeFile(targetPe, pe17Mb);
+
+  // Mutate targetPe on disk when PrivateRuntimeRoot is created (between inventory and staging)
+  const origCreate = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  const createSpy = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementation(async (options) => {
+      const root = await origCreate(options);
+      await writeFile(
+        targetPe,
+        Buffer.concat([pe17Mb, Buffer.from("CORRUPTED_BYTES")]),
+      );
+      return root;
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, {
+        include_disassembly: false,
+        max_modules: 5,
+      }),
+    );
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      const detail =
+        executed.error.message +
+        " " +
+        ((executed.error.cause as Error)?.message ?? "");
+      expect(detail).toMatch(
+        /modified concurrently during analysis|Directory entry changed before open/,
+      );
+    }
+  } finally {
+    createSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("escapes names containing backticks using CommonMark compliant multi-backtick code spans in README table", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-backtick-table-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "My`Tricky`Module.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    expect(executed.ok).toBe(true);
+
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).toContain("``");
+    expect(readmeContent).not.toMatch(/\\`/);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("generates architecture-neutral scaffolding with uintptr_t UINTN for unknown machine width", () => {
+  const scaffolding = buildUefiEntryPointScaffolding(
+    "EbcDriver",
+    "EbcDriver.efi",
+    1024,
+    "DXE",
+    undefined,
+    "unknown",
+  );
+  expect(scaffolding.typedefs).toContain("typedef uintptr_t UINTN;");
+  expect(scaffolding.typedefs).toContain("typedef UINTN EFI_STATUS;");
+});
+
+it("honors REA_OBJDUMP_COMMAND and reports mixed disassembler when both LLVM and GNU objdump produce output", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-mixed-disasm-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "mod2.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  const origExec = ExecFileOutputModule.execFileOutput;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command === "llvm-objdump") {
+        if (args.some((a) => a.includes("mod_1"))) {
+          const stdout = "Disassembly of mod1 from llvm";
+          return {
+            stdout,
+            stderr: "",
+            stdoutBytes: Buffer.byteLength(stdout),
+            stderrBytes: 0,
+          };
+        }
+        throw new Error("Simulated llvm-objdump refusal");
+      }
+      if (command === "custom-objdump") {
+        const stdout = "Disassembly of mod2 from custom-objdump";
+        return {
+          stdout,
+          stderr: "",
+          stdoutBytes: Buffer.byteLength(stdout),
+          stderrBytes: 0,
+        };
+      }
+      return origExec(command, args, options);
+    });
+
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = "custom-objdump";
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.producers?.disassembler).toBe("mixed");
+    expect(result.modules.length).toBe(2);
+    expect(result.modules[0]?.asm_generator).toBe("llvm-objdump");
+    expect(result.modules[1]?.asm_generator).toBe("custom-objdump");
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+    execSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("honors combined types during directory round-trip under filter_phase: dxe", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-combined-types-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(join(inDir, "PEI"), { recursive: true });
+  await mkdirFs(join(inDir, "SMM"), { recursive: true });
+
+  await writeFile(
+    join(inDir, "PEI", "CombinedPeim.efi"),
+    createMinimalPeBuffer(),
+  );
+  await writeFile(
+    join(inDir, "SMM", "CombinedSmm.efi"),
+    createMinimalPeBuffer(),
+  );
+
+  const manifest = {
+    modules: [
+      {
+        payload_file: "PEI/CombinedPeim.efi",
+        name: "CombinedPeim",
+        phase: "PEI",
+        type: "combined-peim-driver",
+      },
+      {
+        payload_file: "SMM/CombinedSmm.efi",
+        name: "CombinedSmm",
+        phase: "SMM",
+        type: "combined-smm-dxe",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          filter_phase: "dxe",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(result.modules.map((m) => m.name)).toEqual(
+      expect.arrayContaining(["CombinedPeim", "CombinedSmm"]),
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds inline receipts and excludes module-owned duplicate artifact paths", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-receipts-bound-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "TestDriver.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.receipts).toBeDefined();
+    const relReceipts = result.receipts!.map((r) => r.relative_path);
+    expect(relReceipts).toContain("firmware_manifest.json");
+    expect(relReceipts).toContain("README.md");
+    for (const m of result.modules) {
+      expect(relReceipts).not.toContain(m.relative_c_file);
+      expect(relReceipts).not.toContain(m.relative_header_file);
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains directory reader ownership in provider scope when reader cleanup fails", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cleanup-fail-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+
+  const { DirectoryArtifactReader } =
+    await import("../resources/DirectoryArtifactReader.js");
+  const origClose = DirectoryArtifactReader.prototype.close;
+  let closeAttempts = 0;
+  const closeSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockImplementation(async function (
+      this: InstanceType<typeof DirectoryArtifactReader>,
+    ) {
+      closeAttempts++;
+      if (closeAttempts === 1) {
+        throw new Error("Simulated directory reader close failure");
+      }
+      return origClose.call(this);
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(executed.ok).toBe(false);
+    await expect(provider.close()).resolves.toBeUndefined();
+  } finally {
+    closeSpy.mockRestore();
+  }
+});
+
+it("resolves relative REA_OBJDUMP_COMMAND paths against process.cwd()", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-relative-objdump-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+
+  let executedCommand: string | undefined;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command === "llvm-objdump") {
+        throw new Error("Simulated llvm-objdump unavailable");
+      }
+      executedCommand = command;
+      const stdout = "Disassembly from relative objdump";
+      return {
+        stdout,
+        stderr: "",
+        stdoutBytes: Buffer.byteLength(stdout),
+        stderrBytes: 0,
+      };
+    });
+
+  const relativeCommand = "./tools/custom-objdump";
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = relativeCommand;
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    expect(executed.value.result).toBeDefined();
+    expect(executedCommand).toBe(resolve(process.cwd(), relativeCommand));
+  } finally {
+    execSpy.mockRestore();
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+  }
+});
+
+it("computes whole-corpus image_sha256 invariant under filter_phase in directory mode", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-phase-hash-");
+  const inDir = join(directory, "in");
+  const outDirAll = join(directory, "out-all");
+  const outDirDxe = join(directory, "out-dxe");
+  const outDirPei = join(directory, "out-pei");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(join(inDir, "pei"), { recursive: true });
+  await mkdirFs(join(inDir, "dxe"), { recursive: true });
+  await writeFile(join(inDir, "pei", "peim.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "dxe", "driver.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  const resAll = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirAll, { filter_phase: "all" }),
+    ),
+  ).value.result as UefiDecompileResult;
+
+  const resDxe = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirDxe, { filter_phase: "dxe" }),
+    ),
+  ).value.result as UefiDecompileResult;
+
+  const resPei = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirPei, { filter_phase: "pei" }),
+    ),
+  ).value.result as UefiDecompileResult;
+
+  expect(resAll.image_sha256).toBe(resDxe.image_sha256);
+  expect(resAll.image_sha256).toBe(resPei.image_sha256);
+  expect(resDxe.modules.length).toBe(1);
+  expect(resPei.modules.length).toBe(1);
+  expect(resAll.modules.length).toBe(2);
+});
+
+it("reports candidate files exceeding 32 MiB in limitations without failing", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-oversized-cand-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const oversizedPath = join(inDir, "huge.efi");
+  const handle = await open(oversizedPath, "w");
+  await handle.truncate(33 * 1024 * 1024);
+  await handle.close();
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(decompileRequest(inDir, outDir)),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules.length).toBe(1);
+  expect(
+    result.limitations.some(
+      (lim) => lim.includes("huge.efi") && lim.includes("32 MiB"),
+    ),
+  ).toBe(true);
+});
+
+it("reports and ignores manifest exceeding 16 MiB", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-oversized-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  const handle = await open(manifestPath, "w");
+  await handle.truncate(17 * 1024 * 1024);
+  await handle.close();
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(decompileRequest(inDir, outDir)),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules.length).toBe(1);
+  expect(
+    result.limitations.some(
+      (lim) =>
+        lim.includes("firmware_manifest.json") && lim.includes("size limit"),
+    ),
+  ).toBe(true);
+});
+
+it("caps manifest rows at 10,000 entries and reports limitation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-cap-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const modules = Array.from({ length: 10_050 }, (_, i) => ({
+    payload_file: `valid_${i}.efi`,
+  }));
+  const manifestContent = JSON.stringify({ modules });
+  await writeFile(join(inDir, "firmware_manifest.json"), manifestContent);
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(decompileRequest(inDir, outDir)),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(
+    result.limitations.some(
+      (lim) =>
+        lim.includes("firmware_manifest.json") &&
+        lim.includes("truncated to 10000 entries"),
+    ),
+  ).toBe(true);
+});
+
+it("does not allocate tempRoot when inspectGhidraInstallation rejects", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-reject-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const createSpy = vi.spyOn(PrivateRuntimeRoot, "create");
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: {
+      executable: () => false,
+      readText: () => undefined,
+      probeJava: () => {
+        throw new Error("Simulated Ghidra probe failure");
+      },
+      discoverInstallDirOnPath: () => {
+        throw new Error("Simulated Ghidra probe failure");
+      },
+    },
+  });
+
+  try {
+    const executed = await provider.execute(decompileRequest(inDir, outDir));
+    expect(executed.ok).toBe(false);
+    expect(createSpy).not.toHaveBeenCalled();
+  } finally {
+    createSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("attaches completedObservation when directory reader cleanup fails after publication", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cleanup-obs-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const { DirectoryArtifactReader } =
+    await import("../resources/DirectoryArtifactReader.js");
+  const closeSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockRejectedValue(new Error("Simulated reader close failure"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(decompileRequest(inDir, outDir));
+    expect(executed.ok).toBe(false);
+    if (!executed.ok) {
+      expect(executed.error).toBeInstanceOf(ProviderCleanupError);
+      const cleanupErr = executed.error as ProviderCleanupError;
+      expect(cleanupErr.completedObservation).toBeDefined();
+      expect((cleanupErr.completedObservation as any)?.kind).toBe("uefi");
+    }
+  } finally {
+    closeSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("detects machine width as unknown for unlisted architectures and correctly detects LoongArch", () => {
+  // LoongArch32: machine 0x6232
+  const loong32 = createMinimalPeBuffer(0x6232);
+  expect(detectPeTeMachineWidth(loong32)).toBe("32");
+
+  // LoongArch64: machine 0x6264
+  const loong64 = createMinimalPeBuffer(0x6264);
+  expect(detectPeTeMachineWidth(loong64)).toBe("64");
+
+  // Unlisted architecture: 0x9999
+  const unlisted = createMinimalPeBuffer(0x9999);
+  expect(detectPeTeMachineWidth(unlisted)).toBe("unknown");
+});
+
+it("assigns MISC phase to unclassified directory modules without phase evidence", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-unclassified-misc-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const outDirDxe = join(directory, "out-dxe");
+  const outDirMisc = join(directory, "out-misc");
+  await mkdir(inDir, { recursive: true });
+  // Unclassified root driver without phase subdirectory or manifest row
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  const allRes = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    ),
+  ).value.result as UefiDecompileResult;
+  expect(allRes.total_modules_found).toBe(1);
+  expect(allRes.phases.misc).toBe(1);
+  expect(allRes.phases.dxe).toBe(0);
+  expect(allRes.modules[0]?.phase).toBe("MISC");
+
+  // filter_phase: dxe must exclude it
+  const dxeRes = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirDxe, {
+        filter_phase: "dxe",
+        include_disassembly: false,
+      }),
+    ),
+  ).value.result as UefiDecompileResult;
+  expect(dxeRes.total_modules_found).toBe(0);
+
+  // filter_phase: misc must include it
+  const miscRes = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDirMisc, {
+        filter_phase: "misc",
+        include_disassembly: false,
+      }),
+    ),
+  ).value.result as UefiDecompileResult;
+  expect(miscRes.total_modules_found).toBe(1);
+});
+
+it("propagates inspected javaHome into Ghidra launch environment", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-javahome-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "valid.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedEnv = options?.env;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "EFI_STATUS UefiMain() { return 0; }");
+        }
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const customJdkHome = "/opt/homebrew/opt/openjdk-custom";
+  const customHost = {
+    ...ghidraProfileInstallationHost,
+    probeJava: () => javaProbeOk(verifiedGhidraJavaObservation(customJdkHome)),
+  };
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: customHost,
+  });
+  try {
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+    expect(capturedEnv).toBeDefined();
+    expect(capturedEnv?.JAVA_HOME).toBe(customJdkHome);
+    expect(capturedEnv?.PATH?.startsWith(`${customJdkHome}/bin`)).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("bounds manifest module names to prevent scaffold expansion memory amplification", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-huge-name-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "huge.efi"), createMinimalPeBuffer());
+
+  // Huge name with 10,000 characters
+  const hugeName = "VeryLongModuleName_".repeat(500);
+  const manifest = {
+    modules: [{ payload_file: "huge.efi", name: hugeName }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules.length).toBe(1);
+  // Full raw name preserved in metadata
+  expect(result.modules[0]?.name).toBe(hugeName);
+
+  // But generated .c file and .h header should have bounded file size (< 10 KB, not megabytes)
+  const cFile = result.modules[0]!.c_file;
+  const headerFile = result.modules[0]!.header_file;
+  expect(cFile).not.toBeNull();
+  expect(headerFile).not.toBeNull();
+  const cStat = await stat(cFile!);
+  const headerStat = await stat(headerFile!);
+  expect(cStat.size).toBeLessThan(16 * 1024);
+  expect(headerStat.size).toBeLessThan(16 * 1024);
+});
+
+it("scaffolds combined-peim-driver with the PEI ABI rather than generic DXE ABI", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "CombinedDriver",
+    "CombinedDriver",
+    2048,
+    "PEI",
+    "combined-peim-driver",
+    "64",
+  );
+  expect(scaffold.prototype).toContain("EFI_PEI_FILE_HANDLE FileHandle");
+  expect(scaffold.prototype).toContain("const EFI_PEI_SERVICES **PeiServices");
+  expect(scaffold.functionDefinition).toContain(
+    "EFI_PEI_FILE_HANDLE FileHandle",
+  );
+  expect(scaffold.functionDefinition).toContain(
+    "const EFI_PEI_SERVICES **PeiServices",
+  );
+  expect(scaffold.typedefs.some((t) => t.includes("EFI_PEI_SERVICES"))).toBe(
+    true,
+  );
+});
+
+it("escapes table delimiters in displayed module names in README index", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-readme-pipe-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "pipe.efi"), createMinimalPeBuffer());
+
+  const manifest = {
+    modules: [{ payload_file: "pipe.efi", name: "Driver|Pipe|Test" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  await provider.execute(
+    decompileRequest(inDir, outDir, { include_disassembly: false }),
+  );
+  const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+  expect(readmeContent).toContain("Driver\\|Pipe\\|Test");
+  // Check that every table row in Modules Index has exactly 8 pipe delimiters (7 columns)
+  const tableRows = readmeContent
+    .split("\n")
+    .filter((line) => line.startsWith("|") && line.includes(".c]"));
+  expect(tableRows.length).toBe(1);
+  const pipesCount = (tableRows[0]!.match(/(?<!\\)\|/g) || []).length;
+  expect(pipesCount).toBe(8);
+});
+
+it("classifies modules by FFS type name and preserves phase filters for unannotated manifest types", async () => {
+  expect(phaseFromFfsTypeName("security-core")).toBe("SEC");
+  expect(phaseFromFfsTypeName("peim")).toBe("PEI");
+  expect(phaseFromFfsTypeName("combined-peim-driver")).toBe("PEI");
+  expect(phaseFromFfsTypeName("smm-core")).toBe("SMM");
+  expect(phaseFromFfsTypeName("application")).toBe("APP");
+  expect(phaseFromFfsTypeName("dxe-core")).toBe("DXE");
+  expect(phaseFromFfsTypeName("driver")).toBe("DXE");
+  expect(phaseFromFfsTypeName("unknown-type")).toBeUndefined();
+  expect(phaseFromFfsTypeName(undefined)).toBeUndefined();
+
+  const directory = await createTestTempDirectory("rea-uefi-ffs-type-phase-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "core.efi"), createMinimalPeBuffer());
+
+  const manifest = {
+    modules: [{ payload_file: "core.efi", type: "dxe-core" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, {
+        filter_phase: "dxe",
+        include_disassembly: false,
+      }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.total_modules_found).toBe(1);
+  expect(result.modules[0]?.phase).toBe("DXE");
+  expect(result.phases.dxe).toBe(1);
+});
+
+it("preserves explicitly null manifest GUIDs without falling back to filename UUID sniffing", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-null-guid-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  const uuidFilename = "11112222-3333-4444-5555-666677778888_mod.efi";
+  await writeFile(join(inDir, uuidFilename), createMinimalPeBuffer());
+
+  const manifest = {
+    modules: [{ payload_file: uuidFilename, guid: null, name: "NullGuidMod" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  expect(result.modules[0]?.guid).toBeNull();
+});
+
+it("threads complete and partial coverage fact into decompile results", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-coverage-fact-");
+  const inDir = join(directory, "in");
+  const outDir1 = join(directory, "out1");
+  const outDir2 = join(directory, "out2");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
+  try {
+    const execComplete = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, { include_disassembly: false }),
+      ),
+    );
+    const resComplete = execComplete.value.result as UefiDecompileResult;
+    expect(resComplete.coverage).toBe("complete");
+
+    const execPartial = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir2, {
+          max_modules: 1,
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const resPartial = execPartial.value.result as UefiDecompileResult;
+    expect(resPartial.coverage).toBe("partial");
+    expect(resPartial.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Decompilation capped at 1 of 2"),
+      ]),
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds module names in header comments and fallback scaffolding without amplifying buffers", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-header-bound-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "huge.efi"), createMinimalPeBuffer());
+
+  const hugeName = "A".repeat(5000);
+  const manifest = {
+    modules: [{ payload_file: "huge.efi", name: hugeName }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  const executed = expectOk(
+    await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    ),
+  );
+  const result = executed.value.result as UefiDecompileResult;
+  const headerPath = result.modules[0]!.header_file!;
+  const cPath = result.modules[0]!.c_file!;
+  const headerContent = await readFile(headerPath, "utf8");
+  const cContent = await readFile(cPath, "utf8");
+
+  expect(headerContent).toContain("UEFI Module Header: AAAAAAAA");
+  expect(headerContent).toContain("…");
+  expect(headerContent.length).toBeLessThan(4096);
+  expect(cContent.length).toBeLessThan(4096);
+});
+
+it("sanitizes target module names in README limitations to prevent markdown forging", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-readme-forge-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "malicious.efi"), createMinimalPeBuffer());
+
+  const maliciousName = "Malicious\n## Injected Heading\n| Injected | Table |";
+  const manifest = {
+    modules: [{ payload_file: "malicious.efi", name: maliciousName }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = "/nonexistent/path/to/objdump";
+  const provider = new UefiAnalysisProvider();
+  try {
+    await provider.execute(
+      decompileRequest(inDir, outDir, {
+        include_disassembly: true,
+      }),
+    );
+
+    const readme = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readme).not.toContain("\n## Injected Heading");
+    expect(readme).not.toContain("\n| Injected | Table |");
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+  }
+});
+
+it("refuses output directory nested under directory input with outputDirectoryAdmissionRefusal", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-nested-out-");
+  const inDir = join(directory, "corpus");
+  const outDir = join(inDir, "nested-output");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "sample.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  const executed = await provider.execute(
+    decompileRequest(inDir, outDir, { include_disassembly: false }),
+  );
+  expect(executed.ok).toBe(false);
+  if (!executed.ok) {
+    expect(
+      (executed.error as { issues?: readonly { path: readonly string[] }[] })
+        .issues?.[0]?.path,
+    ).toEqual(["output_directory"]);
+  }
+});
+
+it("marks coverage partial when execution halts early to preserve deadline", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-deadline-partial-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  let simulatedTime = 0;
+  const nowSpy = vi
+    .spyOn(performance, "now")
+    .mockImplementation(() => simulatedTime);
+  const originalOpen = DirectoryArtifactReader.prototype.open;
+  let openedModuleCount = 0;
+  const openSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "open")
+    .mockImplementation(async function (
+      this: unknown,
+      entry: unknown,
+      signal: unknown,
+    ) {
+      const handle = await originalOpen.call(
+        this as any,
+        entry as any,
+        signal as any,
+      );
+      if ((entry as { path: string }).path.endsWith(".efi")) {
+        openedModuleCount++;
+        // Advance clock at the completion of the first module boundary
+        if (openedModuleCount === 1) {
+          simulatedTime = 58_000;
+        }
+      }
+      return handle;
+    });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.total_modules_found).toBe(2);
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Decompilation halted early"),
+      ]),
+    );
+  } finally {
+    nowSpy.mockRestore();
+    openSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("matches Ghidra decompilation budget failures before excerpting diagnostics", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-budget-err-",
+  );
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const longInvocation = "x".repeat(300);
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async () => {
+      throw new Error(
+        `Command failed: ${longInvocation}: decompiled C output exceeded 4194304 byte limit`,
+      );
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "stopped after reaching 4 MiB per-module limit",
+        ),
+      ]),
+    );
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("preserves stderr diagnostic details from OwnedCommandFailure snapshot on Windows", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-win-ghidra-diag-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless.bat");
+  await writeFile(mockHeadless, "@echo off\r\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const mockSnapshot = {
+    stdout: { text: "", bytes: 0, observedBytes: 0 },
+    stderr: {
+      text: "ERROR: Ghidra encountered decompilation exception in function sub_140001000: OutOfMemory",
+      bytes: 84,
+      observedBytes: 84,
+    },
+    exitCode: 1,
+    signal: null,
+  };
+  const spy = vi
+    .spyOn(OwnedCommandModule, "runOwnedCommand")
+    .mockImplementation(async () => {
+      throw new OwnedCommandFailure(
+        "process",
+        "Command failed; inspect its exit status and diagnostics.",
+        mockSnapshot,
+      );
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+    hostPlatform: { platform: "win32", architecture: "x64" },
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Ghidra encountered decompilation exception"),
+      ]),
+    );
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("retains process cleanup lease when owned Ghidra command cleanup fails on Windows", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-win-ghidra-retain-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless.bat");
+  await writeFile(mockHeadless, "@echo off\r\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let retainCleanupCalled = false;
+  const mockSupervisor = {
+    launch: {
+      ownership: {
+        runId: "test-run",
+        leaderPid: 1234,
+        processGroupId: 1234,
+      },
+    },
+    stop: vi.fn().mockResolvedValue({ status: "complete" }),
+  } as unknown as ProviderProcessSupervisor;
+
+  const spy = vi
+    .spyOn(OwnedCommandModule, "runOwnedCommand")
+    .mockImplementation(async (_spawn, _limits, options) => {
+      if (options?.retainCleanup) {
+        options.retainCleanup(mockSupervisor, {
+          status: "incomplete",
+          reason: "Cannot terminate Windows process tree",
+        });
+        retainCleanupCalled = true;
+      }
+      throw new OwnedCommandFailure(
+        "process",
+        "Command failed; inspect its exit status and diagnostics.",
+        null,
+        null,
+        undefined,
+        [],
+        mockSupervisor,
+      );
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+    hostPlatform: { platform: "win32", architecture: "x64" },
+  });
+  try {
+    const executionResult = expectErr(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    expect(executionResult.error).toBeInstanceOf(ProviderCleanupError);
+    expect(retainCleanupCalled).toBe(true);
+    await provider.close();
+    expect(mockSupervisor.stop).toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+  }
+});
+
+it("scaffolds mm-standalone module with Standalone MM ABI", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "StandaloneMmDriver",
+    "StandaloneMmDriver",
+    4096,
+    "DXE",
+    "mm-standalone",
+    "64",
+  );
+  expect(scaffold.prototype).toContain(
+    "EFI_STATUS EFIAPI StandaloneMmDriverEntryPoint(EFI_HANDLE ImageHandle, EFI_MM_SYSTEM_TABLE *MmSystemTable);",
+  );
+  expect(scaffold.functionDefinition).toContain(
+    "EFI_MM_SYSTEM_TABLE *MmSystemTable",
+  );
+  expect(scaffold.typedefs.some((t) => t.includes("EFI_MM_SYSTEM_TABLE"))).toBe(
+    true,
+  );
+  expect(
+    scaffold.typedefs.some((t) => t.includes("struct _EFI_MM_SYSTEM_TABLE;")),
+  ).toBe(true);
+});
+
+it("skips manifest entry with excessive payload_file path length (> 4096 bytes)", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-excessive-path-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const longPath = "a/".repeat(2049) + "Sample.efi";
+  const manifest = {
+    modules: [{ payload_file: longPath, name: "LongPathModule" }],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(
+      result.limitations.some((l) =>
+        l.includes("excessive payload_file path length"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("checks Ghidra exporter outcome and falls back to scaffolding when no usable functions are found", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-outcome-nofunc-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "no_functions",
+              decompiled_functions: 0,
+              failed_functions: 2,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("found no usable functions (2 failed)"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("checks Ghidra exporter outcome and marks coverage partial on limit_exceeded", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-outcome-limit-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 4194304,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("stopped after reaching 4 MiB per-module limit"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("checks Ghidra exporter outcome and reports aggregate budget when effective cap is under 4 MiB", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-outcome-agg-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 1024 * 1024,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("stopped after reaching 64 MiB aggregate staging budget"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("strips NUL bytes and control characters from C comment sanitization", () => {
+  expect(sanitizeCComment("Hello\0World")).toBe("Hello World");
+  expect(sanitizeCComment("A\x00B\x07C*/D\r\nE")).toBe("A B C* /D E");
+  expect(sanitizeCComment("Module\x1fName\x7fTest")).toBe("Module Name Test");
+});
+
+it("scaffolds unclassified MISC module with unknown neutral entry point ABI", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "UnclassifiedPayload",
+    "unclassified.bin",
+    2048,
+    "MISC",
+    undefined,
+    "64",
+  );
+  expect(scaffold.prototype).toBe(
+    "void EFIAPI UnclassifiedPayloadEntryPoint(void);",
+  );
+  expect(scaffold.functionDefinition).toContain(
+    "void EFIAPI UnclassifiedPayloadEntryPoint(",
+  );
+  expect(scaffold.functionDefinition).toContain("Unknown ABI");
+  expect(scaffold.typedefs).toEqual([]);
+});
+
+it("treats caller abort as cancellation when caller aborts request before execution", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-caller-abort-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const controller = new AbortController();
+    controller.abort(new Error("caller stopped waiting"));
+
+    const result = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+    const err = expectErr(result).error;
+    expect(err).toBeInstanceOf(AnalysisCancelledError);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports limitation for discovered but unavailable Ghidra installation on PATH", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-path-unavail-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  delete process.env.GHIDRA_INSTALL_DIR;
+
+  const mockHost: GhidraInstallationHost = {
+    ...ghidraProfileInstallationHost,
+    discoverInstallDirOnPath: () => "/opt/mock-ghidra-path",
+    readText: () => "application.version=11.0\napplication.name=Ghidra\n",
+  };
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: mockHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(
+      result.limitations.some((l) =>
+        l.startsWith("Discovered Ghidra installation is unavailable:"),
+      ),
+    ).toBe(true);
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("does not substitute outer container GUID for nested module without GUID", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-nested-guid-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const containerDir = join(
+    inDir,
+    "volume-0",
+    "11111111-2222-3333-4444-555555555555",
+    "section-0",
+  );
+  await mkdir(containerDir, { recursive: true });
+  await writeFile(join(containerDir, "payload.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules.length).toBe(1);
+    expect(result.modules[0]?.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("incorporates omitted oversized candidate facts into directory image_sha256 rather than collapsing to empty hash", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-omitted-dirhash-");
+  const inDirA = join(directory, "inA");
+  const inDirB = join(directory, "inB");
+  const inDirEmpty = join(directory, "inEmpty");
+  const outDirA = join(directory, "outA");
+  const outDirB = join(directory, "outB");
+  const outDirEmpty = join(directory, "outEmpty");
+
+  await mkdir(inDirA, { recursive: true });
+  await mkdir(inDirB, { recursive: true });
+  await mkdir(inDirEmpty, { recursive: true });
+
+  const emptyHash = createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+
+  const fhA = await open(join(inDirA, "hugeA.efi"), "w");
+  await fhA.truncate(33 * 1024 * 1024);
+  await fhA.close();
+
+  const fhB = await open(join(inDirB, "hugeB.efi"), "w");
+  await fhB.truncate(33 * 1024 * 1024);
+  await fhB.close();
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const resEmpty = expectOk(
+      await provider.execute(
+        decompileRequest(inDirEmpty, outDirEmpty, {
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const shaEmpty = (resEmpty.value.result as UefiDecompileResult)
+      .image_sha256;
+    expect(shaEmpty).toBe(emptyHash);
+
+    const resA = expectOk(
+      await provider.execute(
+        decompileRequest(inDirA, outDirA, { include_disassembly: false }),
+      ),
+    );
+    const shaA = (resA.value.result as UefiDecompileResult).image_sha256;
+    expect(shaA).not.toBe(emptyHash);
+
+    const resB = expectOk(
+      await provider.execute(
+        decompileRequest(inDirB, outDirB, { include_disassembly: false }),
+      ),
+    );
+    const shaB = (resB.value.result as UefiDecompileResult).image_sha256;
+    expect(shaB).not.toBe(emptyHash);
+    expect(shaA).not.toBe(shaB);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("strips control characters and NULs from README link labels, cell names, and limitations", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-readme-controls-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "Driver\x00With\x07Controls",
+          payload_file: "test.efi",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).not.toContain("\0");
+    expect(readmeContent).not.toContain("\x07");
+    expect(readmeContent).toContain("Driver With Controls");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks aggregate disassembly truncation as partial coverage", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-disasm-trunc-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const count = 33;
+  for (let i = 1; i <= count; i++) {
+    await writeFile(join(inDir, `mod${i}.efi`), createMinimalPeBuffer());
+  }
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const maxModuleOutput = "A".repeat(2 * 1024 * 1024);
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command === "llvm-objdump" || command === "objdump") {
+        return {
+          stdout: maxModuleOutput,
+          stderr: "",
+          status: 0,
+        } as never;
+      }
+      throw new Error("unexpected command: " + command);
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Disassembly output truncated after reaching 64 MiB"),
+      ),
+    ).toBe(true);
+    expect(
+      result.modules.filter((m) => m.disassembly_status === "ok").length,
+    ).toBe(32);
+    expect(
+      result.modules.filter((m) => m.disassembly_status === "omitted").length,
+    ).toBe(1);
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("discovers direct PE\\0\\0 executable modules without DOS stub during directory discovery", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-direct-pe-discovery-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // Direct COFF/PE without MZ header: starts with PE\0\0
+  const directPe = Buffer.alloc(256, 0);
+  directPe.set(Buffer.from("PE\0\0"), 0);
+  directPe.writeUInt16LE(0x8664, 4); // machine x86_64
+  directPe.writeUInt16LE(1, 6); // numSections
+  directPe.writeUInt16LE(0xf0, 20); // size of optional header
+  directPe.writeUInt16LE(0x20b, 24); // PE32+ (64-bit) optional header magic
+
+  await writeFile(join(inDir, "direct.efi"), directPe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("direct");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("incorporates directory traversal limit into directory image_sha256 without admitted candidates", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-trav-limit-sha-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const { DirectoryArtifactReader, DirectoryArtifactTraversalLimit } =
+    await import("../resources/DirectoryArtifactReader.js");
+
+  const entriesSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "entries")
+    .mockImplementation(async function* () {
+      throw new DirectoryArtifactTraversalLimit(10000, 10000);
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const emptySha = createHash("sha256").update("").digest("hex");
+    expect(result.image_sha256).not.toBe(emptySha);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "Directory discovery stopped after reaching 10000 entry budget",
+        ),
+      ),
+    ).toBe(true);
+  } finally {
+    entriesSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("retains POSIX backslash in filename and derives hierarchy strictly from directory segments", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-posix-backslash-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // On POSIX, a file can have a backslash in its name, e.g. "PEI\\driver.efi"
+  const fileName = "PEI\\driver.efi";
+  await writeFile(join(inDir, fileName), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0]!;
+    // In POSIX, because the parent directory is "." and not "PEI", phase must be MISC
+    expect(mod.phase).toBe("MISC");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when Ghidra decompilation is incomplete with failed functions", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-incomplete-ghidra-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  await writeFile(
+    join(mockGhidraDir, "support", "analyzeHeadless"),
+    "#!/bin/sh\nexit 0\n",
+  );
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "void SampleEntry(void) { /* decompiled */ }\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 1,
+              failed_functions: 2,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("was incomplete; 2 function(s) failed to decompile"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("validates manifest payload digests and falls back to path/payload metadata on mismatch", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-digest-mismatch-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "StaleName",
+          payload_file: "driver.efi",
+          payload_sha256: "0".repeat(64),
+          phase: "PEI",
+          guid: "11111111-2222-3333-4444-555555555555",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Manifest payload_sha256 mismatch for driver.efi"),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]!.name).toBe("driver");
+    expect(result.modules[0]!.phase).toBe("MISC");
+    expect(result.modules[0]!.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports skipped symlink entry as partial coverage and incorporates it into directory identity", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-symlink-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const { symlink } = await import("node:fs/promises");
+  await symlink("nonexistent.efi", join(inDir, "broken_link.efi"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) => lim.includes("Omitted symlink entry")),
+    ).toBe(true);
+    const emptySha = createHash("sha256").update("").digest("hex");
+    expect(result.image_sha256).not.toBe(emptySha);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("keeps machine width unknown for short executable payloads under 4 bytes and uses UINTN", () => {
+  const shortBuffer = Buffer.from([0x56, 0x5a, 0x01]);
+  expect(detectPeTeMachineWidth(shortBuffer)).toBe("unknown");
+  const scaffolding = buildUefiEntryPointScaffolding(
+    "ShortPayload",
+    "short_payload",
+    shortBuffer.length,
+    "PEI",
+    undefined,
+    detectPeTeMachineWidth(shortBuffer),
+  );
+  expect(scaffolding.typedefs).toContain("typedef UINTN EFI_STATUS;");
+  expect(scaffolding.typedefs).not.toContain("typedef uint64_t EFI_STATUS;");
+});
+
+it("retains configured REA_OBJDUMP_COMMAND as disassembler producer when GNU objdump is the sole disassembler", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-custom-objdump-sole-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command === "llvm-objdump") {
+        throw new Error("llvm-objdump simulated failure");
+      }
+      if (command === "custom-gnu-objdump") {
+        return {
+          stdout: "00000000 <Entry>:\n  0: nop\n",
+          stderr: "",
+          stdoutBytes: 25,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = "custom-gnu-objdump";
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.producers?.disassembler).toBe("custom-gnu-objdump");
+    expect(result.modules[0]?.asm_generator).toBe("custom-gnu-objdump");
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+    execSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("honors late cancellation during directory reader finalization and retains published observation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cancel-late-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = DirectoryArtifactReader.prototype.close;
+  vi.spyOn(DirectoryArtifactReader.prototype, "close").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("late cancellation during reader release");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const partial = executed.error.partialObservation as {
+      kind: string;
+      result: UefiDecompileResult;
+    };
+    expect(partial.kind).toBe("uefi");
+    expect(partial.result.output_directory).toBe(outDir);
+    expect(partial.result.total_modules_decompiled).toBe(1);
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("rejects malformed manifest payload digests, marks coverage partial, and ignores row metadata", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-malformed-sha-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "InvalidDigestName",
+          payload_file: "driver.efi",
+          payload_sha256: "deadbeef",
+          phase: "PEI",
+          guid: "11111111-2222-3333-4444-555555555555",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Manifest payload_sha256 for driver.efi is malformed"),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]!.name).toBe("driver");
+    expect(result.modules[0]!.phase).toBe("MISC");
+    expect(result.modules[0]!.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("incorporates oversized manifest into corpus image_sha256 rather than collapsing to empty hash", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-oversized-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const largeManifest = Buffer.alloc(17 * 1024 * 1024, 0x20);
+  await writeFile(join(inDir, "firmware_manifest.json"), largeManifest);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("exceeds size limit (16777216 bytes)"),
+      ),
+    ).toBe(true);
+    const emptySha = createHash("sha256").update("").digest("hex");
+    expect(result.image_sha256).not.toBe(emptySha);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("splits nested POSIX path on slashes and classifies phase from parent segments", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-posix-nested-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const peiDir = join(inDir, "vendor", "PEI");
+  await mkdir(peiDir, { recursive: true });
+  await writeFile(join(peiDir, "mod.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          filter_phase: "pei",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.phase).toBe("PEI");
+    expect(result.modules[0]?.name).toBe("mod");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when available Ghidra command execution fails", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-crash-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = await createTestTempDirectory("rea-ghidra-mock-crash-");
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command.includes("analyzeHeadless")) {
+        throw new Error("Simulated Ghidra decompiler internal crash");
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Ghidra C decompilation for `mod` failed"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("keeps machine width unknown for native-OS encoded machine override without managed proof", () => {
+  // 0xc020 is 0x8664 ^ 0x4644 (Apple OS override for x86_64)
+  const teOverrideBuf = Buffer.alloc(16);
+  teOverrideBuf[0] = 0x56; // 'V'
+  teOverrideBuf[1] = 0x5a; // 'Z'
+  teOverrideBuf.writeUInt16LE(0xc020, 2); // Machine: 0xc020
+  expect(detectPeTeMachineWidth(teOverrideBuf)).toBe("unknown");
+});
+
+it("preserves inner cancellation partial observation when outer directory reader finalizes", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-inner-cancel-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("late cancellation during inner tempRoot release");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const partial = executed.error.partialObservation as {
+      kind: string;
+      result: UefiDecompileResult;
+    };
+    expect(partial.kind).toBe("uefi");
+    expect(partial.result.output_directory).toBe(outDir);
+    expect(partial.result.total_modules_decompiled).toBe(1);
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("keeps unclassified MISC module ABI-neutral when type is freeform or raw", () => {
+  const freeformScaffold = buildUefiEntryPointScaffolding(
+    "FreeformModule",
+    "freeform.bin",
+    1024,
+    "MISC",
+    "freeform",
+    "64",
+  );
+  expect(freeformScaffold.prototype).toBe(
+    "void EFIAPI FreeformModuleEntryPoint(void);",
+  );
+  expect(freeformScaffold.functionDefinition).toContain(
+    "void EFIAPI FreeformModuleEntryPoint(",
+  );
+  expect(freeformScaffold.functionDefinition).toContain("Unknown ABI");
+  expect(freeformScaffold.typedefs).toEqual([]);
+
+  const rawScaffold = buildUefiEntryPointScaffolding(
+    "RawModule",
+    "raw.bin",
+    512,
+    "MISC",
+    "raw",
+    "64",
+  );
+  expect(rawScaffold.prototype).toBe("void EFIAPI RawModuleEntryPoint(void);");
+  expect(rawScaffold.typedefs).toEqual([]);
+
+  const driverScaffold = buildUefiEntryPointScaffolding(
+    "DriverModule",
+    "driver.bin",
+    2048,
+    "MISC",
+    "driver",
+    "64",
+  );
+  expect(driverScaffold.prototype).toContain("EFI_HANDLE ImageHandle");
+});
+
+it("hashes unknown directory-name coverage facts into dirHash instead of empty-directory hash", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-unknown-cov-hash-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  vi.spyOn(DirectoryArtifactReader.prototype, "entries").mockImplementation(
+    async function* (
+      this: DirectoryArtifactReader,
+      _signal?: AbortSignal,
+      options?: Parameters<DirectoryArtifactReader["entries"]>[1],
+    ) {
+      if (typeof options === "object" && options !== null) {
+        options.onCoverage?.({
+          status: "unknown",
+          limitations: [
+            "Directory contains 1 entry name(s) that are not valid UTF-8",
+          ],
+        });
+      }
+    },
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+
+    expect(executed.ok).toBe(true);
+    if (!executed.ok) return;
+
+    const res = executed.value.result as UefiDecompileResult;
+    const emptySha =
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    expect(res.image_sha256).not.toBe(emptySha);
+    expect(res.coverage).toBe("partial");
+    expect(res.limitations).toContain(
+      "Directory contains 1 entry name(s) that are not valid UTF-8",
+    );
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("keeps PE machine width unknown when COFF machine conflicts with optional header magic", () => {
+  // Machine is 0x8664 (x86_64, expects 0x20b), but optional header magic is 0x10b (PE32)
+  const conflictingPe = createMinimalPeBuffer(0x8664, 1, 256, 0x10b);
+  expect(detectPeTeMachineWidth(conflictingPe)).toBe("unknown");
+
+  // Valid agreement returns "64"
+  const valid64Pe = createMinimalPeBuffer(0x8664, 1, 256, 0x20b);
+  expect(detectPeTeMachineWidth(valid64Pe)).toBe("64");
+
+  // TE images don't have optional header and retain machine-only handling
+  const teBuf = createMinimalTeBuffer(0x8664);
+  expect(detectPeTeMachineWidth(teBuf)).toBe("64");
+});
+
+it("preserves declared manifest omissions when re-reading partial output trees", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-omissions-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "mod1",
+          payload_file: "mod1.efi",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("declares 1 omitted module(s)"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds manifest module names to 65,536 chars and falls back to filename with partial coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-bound-name-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "target_driver.efi"), createMinimalPeBuffer());
+  const hugeName = "A".repeat(100_000);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: hugeName,
+          payload_file: "target_driver.efi",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has excessive name length (> 65536 chars)"),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]?.name).toBe("target_driver");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("composes primaryError with cleanupError before retaining cancellation in directory mode", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-cancel-cleanup-composed-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "target.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  vi.spyOn(DirectoryArtifactReader.prototype, "open").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      throw new Error("Simulated primary stream read failure");
+    },
+  );
+
+  const originalClose = DirectoryArtifactReader.prototype.close;
+  vi.spyOn(DirectoryArtifactReader.prototype, "close").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("late cancellation during reader release");
+        throw new Error("Simulated directory reader cleanup failure");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error.cleanupIncomplete).toBe(true);
+    expect(executed.error.cleanupPrimary).toBeDefined();
+    expect(JSON.stringify(executed.error)).toContain(
+      "Simulated primary stream read failure",
+    );
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("sanitizes and bounds typeName in unclassified MISC scaffolding", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "MaliciousTypeModule",
+    "mod.bin",
+    1024,
+    "MISC",
+    "freeform\n#error broken\0active",
+    "64",
+  );
+  expect(scaffold.functionDefinition).not.toContain("\n#error");
+  expect(scaffold.functionDefinition).not.toContain("\0");
+  expect(scaffold.functionDefinition).toContain(
+    "freeform #error broken active",
+  );
+});
+
+it("quotes omitted paths with markdown code span in limitations", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-omitted-quote-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const targetFile = join(inDir, "real.efi");
+  await writeFile(targetFile, createMinimalPeBuffer());
+  const linkPath = join(inDir, "[docs](https:evil.example).efi");
+  try {
+    const { symlink: symlinkFs } = await import("node:fs/promises");
+    await symlinkFs(targetFile, linkPath);
+  } catch {
+    // If symlinks not supported, skip
+    return;
+  }
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const symlinkLim = result.limitations.find((l) =>
+      l.includes("Omitted symlink entry"),
+    );
+    expect(symlinkLim).toBeDefined();
+    // Path should be wrapped in code span
+    expect(symlinkLim).toContain("`[docs](https:evil.example).efi`");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("computes invariant dirHash regardless of host root directory path during unknown coverage", async () => {
+  const dir1 = await createTestTempDirectory("rea-uefi-inv-hash-1-");
+  const dir2 = await createTestTempDirectory("rea-uefi-inv-hash-2-");
+  const in1 = join(dir1, "in");
+  const in2 = join(dir2, "in");
+  const out1 = join(dir1, "out");
+  const out2 = join(dir2, "out");
+  await mkdir(in1, { recursive: true });
+  await mkdir(in2, { recursive: true });
+
+  let callCount = 0;
+  vi.spyOn(DirectoryArtifactReader.prototype, "entries").mockImplementation(
+    async function* (
+      this: DirectoryArtifactReader,
+      _signal?: AbortSignal,
+      options?: Parameters<DirectoryArtifactReader["entries"]>[1],
+    ) {
+      callCount++;
+      if (typeof options === "object" && options !== null) {
+        options.onCoverage?.({
+          status: "unknown",
+          limitations: [
+            `Directory /host/path/${callCount} contains unreadable descendant`,
+          ],
+        });
+      }
+    },
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res1 = expectOk(
+      await provider.execute(
+        decompileRequest(in1, out1, { include_disassembly: false }),
+      ),
+    );
+    const res2 = expectOk(
+      await provider.execute(
+        decompileRequest(in2, out2, { include_disassembly: false }),
+      ),
+    );
+
+    const hash1 = (res1.value.result as UefiDecompileResult).image_sha256;
+    const hash2 = (res2.value.result as UefiDecompileResult).image_sha256;
+    expect(hash1).toBe(hash2);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("normalizes and trims manifest types and classifies standalone MM core", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-trim-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod_pei.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod_mm.efi"), createMinimalPeBuffer());
+
+  const manifest = {
+    modules: [
+      {
+        payload_file: "mod_pei.efi",
+        name: "PeiMod",
+        type: "  peim  ",
+      },
+      {
+        payload_file: "mod_mm.efi",
+        name: "MmCoreMod",
+        type: "  mm-core-standalone  ",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const peiMod = result.modules.find((m) => m.name === "PeiMod");
+    expect(peiMod?.phase).toBe("PEI");
+    expect(peiMod?.c_generator).toBe("scaffold");
+    expect(peiMod?.relative_c_file).toBeDefined();
+    const peiC = await readFile(join(outDir, peiMod!.relative_c_file!), "utf8");
+    expect(peiC).toContain("EFI_PEI_FILE_HANDLE");
+
+    const mmMod = result.modules.find((m) => m.name === "MmCoreMod");
+    expect(mmMod?.c_generator).toBe("scaffold");
+    expect(mmMod?.relative_c_file).toBeDefined();
+    const mmC = await readFile(join(outDir, mmMod!.relative_c_file!), "utf8");
+    expect(mmC).toContain("EFI_MM_STARTUP_DESCRIPTOR");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds excessive manifest type length and records limitation", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-type-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "target.efi"), createMinimalPeBuffer());
+
+  const excessiveType = "peim_".repeat(100);
+  const manifest = {
+    modules: [
+      {
+        payload_file: "target.efi",
+        name: "TargetMod",
+        type: excessiveType,
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has excessive type length (> 128 chars)"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("decompiles multiple modules using a single batched Ghidra execution and retains partial functions on cap", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-batch-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let ghidraInvocations = 0;
+  let batchArgsCaptured: readonly string[] | undefined;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraInvocations++;
+        batchArgsCaptured = args;
+        const outDirArg = args[args.indexOf("-postScript") + 2];
+        if (outDirArg) {
+          const mod1C = join(outDirArg, "mod_1.efi.c");
+          await writeFile(mod1C, "void func1(void) {}\nvoid func2(void) {}\n");
+          await writeFile(
+            `${mod1C}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 2,
+              failed_functions: 0,
+            }),
+          );
+
+          const mod2C = join(outDirArg, "mod_2.efi.c");
+          await writeFile(mod2C, "void funcA(void) {}\n");
+          await writeFile(
+            `${mod2C}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              decompiled_functions: 1,
+              failed_functions: 0,
+              bytes_written: 20,
+              max_output_bytes: 20,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(ghidraInvocations).toBe(1);
+    expect(batchArgsCaptured).toContain("UefiDecompBatch");
+
+    expect(result.modules).toHaveLength(2);
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(result.modules[1]?.c_generator).toBe("ghidra");
+    expect(result.coverage).toBe("partial");
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("persists and consumes partial source coverage in directory manifests even when all discovered modules are decompiled", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      image_sha256:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      coverage: "partial",
+      source_coverage: "partial",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      phases: { sec: 0, pei: 0, dxe: 1, smm: 0, app: 0, misc: 0 },
+      limitations: ["Test limitation: unsupported region omitted"],
+      modules: [
+        {
+          occurrence: 1,
+          name: "Sample",
+          phase: "DXE",
+          payload_file: "Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("declares partial source coverage"),
+      ),
+    ).toBe(true);
+
+    const generatedManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(generatedManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds multi-megabyte invalid manifest phase diagnostics and truncates diagnostics cleanly", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-phase-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  const hugePhase = "UNKNOWN_PHASE_".repeat(1000); // 14,000 chars
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "Sample",
+          phase: hugePhase,
+          payload_file: "Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(
+      result.limitations.some(
+        (l) => l.includes("oversized phase") && !l.includes(hugePhase),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds Ghidra batch input materialization to 128 MiB aggregate staging budget", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-batch-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // Over-budget batch: 5 modules of 28 MiB each = 140 MiB > 128 MiB staging allowance.
+  // Modules 1-4 total 112 MiB (fit under 128 MiB); Module 5 would push total to 140 MiB.
+  const moduleSize = 28 * 1024 * 1024;
+  for (let i = 1; i <= 5; i++) {
+    const pe = createMinimalPeBuffer(0x8664, 1, moduleSize);
+    await writeFile(join(inDir, `Module_${i}.efi`), pe);
+  }
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let capturedArgs: string[] = [];
+  let filesReachingGhidra: string[] = [];
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (_command, args) => {
+      capturedArgs = [...args];
+      const importIdx = args.indexOf("-import");
+      if (importIdx !== -1 && args[importIdx + 1]) {
+        try {
+          filesReachingGhidra = (await readdir(args[importIdx + 1]!)).sort();
+        } catch {
+          // Ignore readdir error in mock
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(capturedArgs).toContain("UefiDecompBatch");
+    expect(capturedArgs).toContain(String(4 * 1024 * 1024));
+    expect(capturedArgs).toContain(String(64 * 1024 * 1024));
+
+    // Exactly the 4 modules that fit under 128 MiB were staged to Ghidra's batch input directory;
+    // Module 5 exceeded the 128 MiB budget and was omitted from Ghidra staging.
+    expect(filesReachingGhidra).toEqual([
+      "mod_1.efi",
+      "mod_2.efi",
+      "mod_3.efi",
+      "mod_4.efi",
+    ]);
+    expect(filesReachingGhidra).not.toContain("mod_5.efi");
+
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "Batch decompilation input staging truncated after reaching 128 MiB aggregate staging budget",
+        ),
+      ),
+    ).toBe(true);
+
+    // Module 5 falls back to entry point scaffolding because it was omitted from Ghidra batch
+    expect(result.modules).toHaveLength(5);
+    expect(result.modules[4]?.c_generator).toBe("scaffold");
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("stages all modules to Ghidra batch when total input is under the 128 MiB budget", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-batch-under-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // Under-budget control: 2 modules well under 128 MiB
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let filesReachingGhidra: string[] = [];
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (_command, args) => {
+      const importIdx = args.indexOf("-import");
+      if (importIdx !== -1 && args[importIdx + 1]) {
+        filesReachingGhidra = (await readdir(args[importIdx + 1]!)).sort();
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(filesReachingGhidra).toEqual(["mod_1.efi", "mod_2.efi"]);
+    expect(result.modules).toHaveLength(2);
+    expect(
+      result.limitations.some((l) =>
+        l.includes("Batch decompilation input staging truncated"),
+      ),
+    ).toBe(false);
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("rejects corrupted or truncated scratch inputs and verifies digest before accepting", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-corrupt-scratch-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // Two 17 MiB modules: 17 + 17 = 34 MiB > 32 MiB discovery preload cap.
+  // Module 1 is cached; Module 2 has mod.bytes === undefined, forcing scratch readback.
+  const moduleSize = 17 * 1024 * 1024;
+  const mod1Buffer = createMinimalPeBuffer(0x8664, 1, moduleSize);
+  const mod2Buffer = createMinimalPeBuffer(0x8664, 1, moduleSize);
+  await writeFile(join(inDir, "Module_1.efi"), mod1Buffer);
+  await writeFile(join(inDir, "Module_2.efi"), mod2Buffer);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let scratchCorrupted = false;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (_command, args) => {
+      // Corrupt the staged scratch copy of mod_2.efi in the batch input directory
+      const batchDir = args[args.indexOf("-import") + 1];
+      if (batchDir && existsSync(batchDir)) {
+        const stagedMod2 = join(batchDir, "mod_2.efi");
+        if (existsSync(stagedMod2)) {
+          await writeFile(stagedMod2, Buffer.from("TRUNCATED_BAD_INPUT"));
+          scratchCorrupted = true;
+        }
+      }
+      const postScriptIdx = args.indexOf("-postScript");
+      const outDirArg = args[postScriptIdx + 2];
+      if (outDirArg && existsSync(outDirArg)) {
+        await writeFile(
+          join(outDirArg, "mod_1.efi.c"),
+          "void Module_1(void) {}\n",
+        );
+        await writeFile(
+          join(outDirArg, "mod_1.efi.c.outcome.json"),
+          JSON.stringify({ status: "success", decompiled_functions: 1 }),
+        );
+        await writeFile(
+          join(outDirArg, "mod_2.efi.c"),
+          "void CorruptedModule_2(void) {}\n",
+        );
+        await writeFile(
+          join(outDirArg, "mod_2.efi.c.outcome.json"),
+          JSON.stringify({ status: "success", decompiled_functions: 1 }),
+        );
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(scratchCorrupted).toBe(true);
+    expect(result.modules).toHaveLength(2);
+
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    // Module 2 was beyond the 32 MiB preload cap, so its scratch copy was checked.
+    // The corrupted scratch copy was rejected, its Ghidra C output was discarded,
+    // and authentic source bytes were re-read to generate entry scaffolding.
+    expect(result.modules[1]?.c_generator).toBe("scaffold");
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("discarded due to scratch input digest mismatch"),
+      ),
+    ).toBe(true);
+    expect(result.modules[1]?.code_bytes).toBe(mod2Buffer.length);
+    const expectedSha2 = createHash("sha256").update(mod2Buffer).digest("hex");
+    expect(result.modules[1]?.payload_sha256).toBe(expectedSha2);
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("prefers source_coverage over legacy coverage when evaluating directory manifest", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-source-cov-pref-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await mkdir(join(inDir, "DXE"), { recursive: true });
+  await writeFile(join(inDir, "DXE", "Sample.efi"), peBuffer);
+  // Prior run had tool output failures (coverage: "partial"), but source was intact (source_coverage: "complete")
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      image_sha256:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      coverage: "partial",
+      source_coverage: "complete",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      phases: { sec: 0, pei: 0, dxe: 1, smm: 0, app: 0, misc: 0 },
+      modules: [
+        {
+          occurrence: 1,
+          name: "Sample",
+          phase: "DXE",
+          payload_file: "DXE/Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // Rerun over intact payloads reports complete coverage, not partial
+    expect(result.coverage).toBe("complete");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("declares partial source coverage"),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves distinct POSIX manifest rows with literal backslashes", async () => {
+  if (HOST_PLATFORM.platform === "win32") return; // POSIX-specific test
+
+  const directory = await createTestTempDirectory("rea-uefi-posix-backslash-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "sub"), { recursive: true });
+
+  const pe1 = createMinimalPeBuffer(0x8664, 1, 256);
+  const pe2 = createMinimalPeBuffer(0x8664, 1, 512);
+  // Two legal POSIX paths: sub/mod.efi and sub\mod.efi in root
+  await writeFile(join(inDir, "sub", "mod.efi"), pe1);
+  await writeFile(join(inDir, "sub\\mod.efi"), pe2);
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "SlashModule",
+          phase: "DXE",
+          payload_file: "sub/mod.efi",
+          guid: "11111111-1111-1111-1111-111111111111",
+        },
+        {
+          name: "BackslashModule",
+          phase: "PEI",
+          payload_file: "sub\\mod.efi",
+          guid: "22222222-2222-2222-2222-222222222222",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(2);
+    const slashMod = result.modules.find((m) => m.name === "SlashModule");
+    const backslashMod = result.modules.find(
+      (m) => m.name === "BackslashModule",
+    );
+    expect(slashMod).toBeDefined();
+    expect(backslashMod).toBeDefined();
+    expect(slashMod?.guid).toBe("11111111-1111-1111-1111-111111111111");
+    expect(backslashMod?.guid).toBe("22222222-2222-2222-2222-222222222222");
+    expect(slashMod?.phase).toBe("DXE");
+    expect(backslashMod?.phase).toBe("PEI");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains PEIM ABI for noncanonical vendor type with PEI phase", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-vendor-peim-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "VendorPei.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "VendorPei",
+          phase: "PEI",
+          type: "vendor-peim",
+          payload_file: "VendorPei.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.phase).toBe("PEI");
+
+    const cFile = join(outDir, result.modules[0]!.relative_c_file!);
+    const cContent = await readFile(cFile, "utf8");
+    // PEIM entry point prototype must be retained, NOT DXE EFI_SYSTEM_TABLE
+    expect(cContent).toContain("EFI_PEI_SERVICES");
+    expect(cContent).toContain("EFI_PEI_FILE_HANDLE");
+    expect(cContent).not.toContain("EFI_SYSTEM_TABLE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reconciles declared manifest payload rows and records missing payloads as omissions with partial coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-missing-manifest-payload-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const mod1Buffer = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Module_1.efi"), mod1Buffer);
+
+  // Manifest declares two modules: Module_1 (exists) and Module_2 (missing from disk)
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      coverage: "complete",
+      source_coverage: "complete",
+      modules: [
+        {
+          guid: "11111111-2222-3333-4444-555555555555",
+          name: "Module_1",
+          phase: "DXE",
+          payload_file: "Module_1.efi",
+        },
+        {
+          guid: "66666666-7777-8888-9999-aaaaaaaaaaaa",
+          name: "MissingModule_2",
+          phase: "DXE",
+          payload_file: "DXE/missing/MissingModule_2.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("Module_1");
+    // Missing declared payload must result in partial coverage and limitation
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("Manifest payload") && l.includes("MissingModule_2.efi"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves fallback manifest metadata when a single manifest row with backslashes is lowercase", async () => {
+  if (HOST_PLATFORM.platform === "win32") return; // POSIX-specific test
+
+  const directory = await createTestTempDirectory(
+    "rea-uefi-lowercase-backslash-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "modules"), { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "modules", "driver.efi"), peBuffer);
+
+  // Manifest with Windows backslash in payload_file, entirely lowercase
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      coverage: "complete",
+      source_coverage: "complete",
+      modules: [
+        {
+          guid: "12345678-1234-1234-1234-123456789abc",
+          name: "MyDriver",
+          phase: "DXE",
+          type: "driver",
+          payload_file: "modules\\driver.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("MyDriver");
+    expect(result.modules[0]?.guid).toBe(
+      "12345678-1234-1234-1234-123456789abc",
+    );
+    expect(result.modules[0]?.phase).toBe("DXE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves partial coverage when manifest has coverage: 'partial' and source_coverage: 'unknown'", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-unknown-coverage-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      coverage: "partial",
+      source_coverage: "unknown",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "Sample",
+          phase: "DXE",
+          payload_file: "Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("declares unknown source coverage"),
+      ),
+    ).toBe(true);
+
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("checks Ghidra exporter outcome and marks coverage partial on status 'failed'", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-outcome-failed-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "void func() { /* partial */ }\n");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "failed",
+              decompiled_functions: 1,
+              failed_functions: 0,
+              error: "internal Ghidra exception",
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("failed: internal Ghidra exception"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("treats malformed non-string source_coverage as unknown source coverage", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-nonstring-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      coverage: "complete",
+      source_coverage: 42,
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      modules: [{ name: "Sample", payload_file: "Sample.efi" }],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) => l.includes("unrecognized source coverage") && l.includes("42"),
+      ),
+    ).toBe(true);
+
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reconciles manifest row with conflicting phase and FFS type and neutralizes type", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-conflicting-phase-type-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      coverage: "complete",
+      source_coverage: "complete",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "Sample",
+          payload_file: "Sample.efi",
+          phase: "DXE",
+          type: "peim",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(
+      result.limitations.some((l) =>
+        l.includes('declares conflicting phase "DXE" and type "peim"'),
+      ),
+    ).toBe(true);
+
+    const cContent = await readFile(
+      join(outDir, result.modules[0]!.relative_c_file!),
+      "utf8",
+    );
+    expect(cContent).toContain("EFI_HANDLE ImageHandle");
+    expect(cContent).not.toContain("EFI_PEI_SERVICES");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves combined module types when paired with either supported phase", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-combined-phases-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "Mod2.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      coverage: "complete",
+      source_coverage: "complete",
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      modules: [
+        {
+          name: "Mod1",
+          payload_file: "Mod1.efi",
+          phase: "DXE",
+          type: "combined-smm-dxe",
+        },
+        {
+          name: "Mod2",
+          payload_file: "Mod2.efi",
+          phase: "DXE",
+          type: "combined-peim-driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules[0]?.type).toBe("combined-smm-dxe");
+    expect(result.modules[1]?.type).toBe("combined-peim-driver");
+    expect(
+      result.limitations.some((l) => l.includes("declares conflicting phase")),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("omits disassembly when remaining time cannot cover publication reserve and shutdown grace", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-disasm-grace-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const baseNow = performance.now();
+  let nowCallCount = 0;
+  const nowSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+    nowCallCount++;
+    // After initialization, simulate dropping to 9s remaining (below 5s publication + 5s grace = 10s)
+    if (nowCallCount > 5) {
+      return baseNow + UEFI_FIRMWARE_LIMITS.timeoutMs - 9_000;
+    }
+    return baseNow;
+  });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.disassembly_status).toBe("omitted");
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "Disassembly omitted for remaining modules to preserve deadline",
+        ),
+      ),
+    ).toBe(true);
+  } finally {
+    nowSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("projects combined modules into requested phase when filtering by phase", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-proj-phase-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Combined.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "CombinedMod",
+          payload_file: "Combined.efi",
+          phase: "PEI",
+          type: "combined-peim-driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.phases.dxe).toBe(1);
+    expect(result.phases.pei).toBe(0);
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.relative_c_file?.startsWith("DXE/")).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reconciles declared decompiled count with valid manifest module rows", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-reconcile-rows-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      coverage: "complete",
+      source_coverage: "complete",
+      modules: [
+        {
+          name: "Mod1",
+          payload_file: "Mod1.efi",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("declares 2 decompiled module(s)") &&
+          l.includes("contains only 1 valid module payload row(s)"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves malformed legacy coverage as unknown", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-malformed-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      coverage: 42,
+      modules: [
+        {
+          name: "Mod1",
+          payload_file: "Mod1.efi",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) => l.includes("declares unrecognized coverage") && l.includes("42"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("suppresses cross-platform fallback when normalized key is ambiguous in directory inventory", async () => {
+  if (process.platform === "win32") {
+    return;
+  }
+  const directory = await createTestTempDirectory("rea-uefi-disambig-inv-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "sub"), { recursive: true });
+  await writeFile(join(inDir, "sub", "mod.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "sub\\mod.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      modules: [
+        {
+          name: "WindowsLiteralMod",
+          payload_file: "sub\\mod.efi",
+          phase: "SMM",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // The literal file sub\mod.efi gets the manifest row (SMM)
+    // The slash file sub/mod.efi must NOT get the Windows row as a fallback
+    const literalMod = result.modules.find((m) =>
+      m.source_path?.includes("sub\\mod.efi"),
+    );
+    const slashMod = result.modules.find((m) =>
+      m.source_path?.includes("sub/mod.efi"),
+    );
+    expect(literalMod).toBeDefined();
+    expect(slashMod).toBeDefined();
+    expect(literalMod?.name).toBe("WindowsLiteralMod");
+    expect(slashMod?.name).not.toBe("WindowsLiteralMod");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("does not suppress cross-platform fallback for unrelated lowercase file when normalized key is ambiguous in directory inventory", async () => {
+  if (process.platform === "win32") return;
+  const directory = await createTestTempDirectory("rea-uefi-case-disambig-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "Sub"), { recursive: true });
+  await mkdir(join(inDir, "sub"), { recursive: true });
+  // Sub/mod.efi and Sub\mod.efi collide on normalized slash
+  await writeFile(join(inDir, "Sub", "mod.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "Sub\\mod.efi"), createMinimalPeBuffer());
+  // Unrelated lowercase file sub/mod.efi
+  await writeFile(join(inDir, "sub", "mod.efi"), createMinimalPeBuffer());
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 3,
+      modules: [
+        {
+          payload_file: "sub\\mod.efi",
+          name: "SubMod",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const lowerMod = result.modules.find((m) =>
+      m.source_path?.includes("sub/mod.efi"),
+    );
+    expect(lowerMod).toBeDefined();
+    expect(lowerMod?.name).toBe("SubMod");
+    expect(lowerMod?.phase).toBe("DXE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("keeps cross-platform fallback keys case-sensitive on POSIX", async () => {
+  if (process.platform === "win32") return;
+  const directory = await createTestTempDirectory("rea-uefi-posix-case-sens-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "modules"), { recursive: true });
+  await writeFile(join(inDir, "modules", "Foo.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "modules", "foo.efi"), createMinimalPeBuffer());
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 2,
+      modules: [
+        {
+          payload_file: "modules\\Foo.efi",
+          name: "FooUpper",
+          guid: "11111111-2222-3333-4444-555555555555",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const upperMod = result.modules.find((m) =>
+      m.source_path?.includes("Foo.efi"),
+    );
+    const lowerMod = result.modules.find((m) =>
+      m.source_path?.includes("foo.efi"),
+    );
+    expect(upperMod).toBeDefined();
+    expect(lowerMod).toBeDefined();
+    expect(upperMod?.name).toBe("FooUpper");
+    expect(upperMod?.guid).toBe("11111111-2222-3333-4444-555555555555");
+    // foo.efi must NOT receive FooUpper's metadata
+    expect(lowerMod?.name).not.toBe("FooUpper");
+    expect(lowerMod?.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks declared manifests with non-array modules or missing modules array as partial coverage with unknown source coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-nonarray-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "ModA.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "ModB.efi"), createMinimalPeBuffer());
+
+  // Manifest has total_modules_decompiled > 0 but modules is an object instead of array
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 2,
+      modules: { invalid: true },
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("malformed (non-array) modules inventory"),
+      ),
+    ).toBe(true);
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks declared manifest with missing modules property and declared count as partial coverage with unknown source coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-missing-modules-array-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "ModA.efi"), createMinimalPeBuffer());
+
+  // Manifest has total_modules_decompiled: 1 but modules property is missing
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 1,
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) => l.includes("contains no module array")),
+    ).toBe(true);
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("records missing modules inventory explanation limitation when manifest is empty object", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-empty-manifest-obj-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "ModA.efi"), createMinimalPeBuffer());
+
+  // Empty manifest {}
+  await writeFile(join(inDir, "firmware_manifest.json"), JSON.stringify({}));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("contains no modules inventory array"),
+      ),
+    ).toBe(true);
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+    expect(
+      outManifest.limitations?.some((l: string) =>
+        l.includes("contains no modules inventory array"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("rejects empty Ghidra C output and falls back to entry point scaffolding with diagnostic limitation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-empty-ghidra-out-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "EmptyOutputMod.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          // Emitting an empty / whitespace-only file
+          await writeFile(outC, "   \n\n  \t  \n");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 0,
+              failed_functions: 0,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "produced empty output; generated entry point scaffolding instead",
+        ),
+      ),
+    ).toBe(true);
+    const cContent = await readFile(
+      join(outDir, result.modules[0]!.relative_c_file!),
+      "utf8",
+    );
+    expect(cContent).toContain("Reconstructed Entry Scaffolding");
+    expect(cContent).toContain("EntryPoint");
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("disambiguates duplicate module names and GUIDs in manifest with numeric occurrence suffixes without collision", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dup-modules-");
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const payload1 = createMinimalPeBuffer(0x8664, 1, 256);
+  const payload2 = createMinimalPeBuffer(0x8664, 1, 512);
+  const path1 = join(inDir, "dxe", "DupMod_1.efi");
+  const path2 = join(inDir, "dxe", "DupMod_2.efi");
+  await writeFile(path1, payload1);
+  await writeFile(path2, payload2);
+
+  const manifest = {
+    parser: { name: "rea-uefi", version: "1.0.0" },
+    source_coverage: "complete",
+    total_modules_found: 2,
+    total_modules_decompiled: 2,
+    phases: { sec: 0, pei: 0, dxe: 2, smm: 0, app: 0, misc: 0 },
+    modules: [
+      {
+        occurrence: 0,
+        guid: "11111111-2222-3333-4444-555555555555",
+        name: "DupMod",
+        phase: "dxe",
+        type: "driver",
+        payload_file: "dxe/DupMod_1.efi",
+        payload_sha256: sha256(payload1),
+        size: payload1.length,
+      },
+      {
+        occurrence: 1,
+        guid: "11111111-2222-3333-4444-555555555555",
+        name: "DupMod",
+        phase: "dxe",
+        type: "driver",
+        payload_file: "dxe/DupMod_2.efi",
+        payload_sha256: sha256(payload2),
+        size: payload2.length,
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(result.modules).toHaveLength(2);
+
+    const rel1 = result.modules[0]!.relative_c_file;
+    const rel2 = result.modules[1]!.relative_c_file;
+    expect(rel1).toBeDefined();
+    expect(rel2).toBeDefined();
+    expect(rel1).not.toBe(rel2);
+    expect(rel1).toContain(
+      "DXE/11111111-2222-3333-4444-555555555555_DupMod/DupMod.c",
+    );
+    expect(rel2).toContain(
+      "DXE/11111111-2222-3333-4444-555555555555_DupMod_1/DupMod.c",
+    );
+
+    expect(existsSync(join(outDir, rel1!))).toBe(true);
+    expect(existsSync(join(outDir, rel2!))).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("sanitizes non-ASCII Unicode module names into valid C identifier scaffolding and macros", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-unicode-mod-");
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "pei"), { recursive: true });
+
+  const payload = createMinimalPeBuffer(0x8664, 1, 256);
+  const payloadPath = join(inDir, "pei", "unicode_mod.efi");
+  await writeFile(payloadPath, payload);
+
+  const manifest = {
+    parser: { name: "rea-uefi", version: "1.0.0" },
+    source_coverage: "complete",
+    total_modules_found: 1,
+    total_modules_decompiled: 1,
+    phases: { sec: 0, pei: 1, dxe: 0, smm: 0, app: 0, misc: 0 },
+    modules: [
+      {
+        occurrence: 0,
+        guid: "22222222-3333-4444-5555-666666666666",
+        name: "日本語_Драйвер_🚀",
+        phase: "pei",
+        type: "peim",
+        payload_file: "pei/unicode_mod.efi",
+        payload_sha256: sha256(payload),
+        size: payload.length,
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0]!;
+    expect(mod.relative_c_file).toBeDefined();
+    expect(mod.relative_header_file).toBeDefined();
+
+    const header = await readFile(
+      join(outDir, mod.relative_header_file!),
+      "utf8",
+    );
+    const c = await readFile(join(outDir, mod.relative_c_file!), "utf8");
+
+    expect(header).toMatch(/#ifndef _UEFI_[A-Z0-9_]+_H_/);
+    expect(header).toMatch(/EFI_STATUS EFIAPI [a-zA-Z0-9_]+EntryPoint/);
+    expect(c).toContain("Reconstructed Entry Scaffolding");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("recalculates Ghidra command timeout immediately before launch when staging consumes time", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-staging-timeout-",
+  );
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const payload = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "dxe", "mod1.efi"), payload);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      parser: { name: "rea-uefi", version: "1.0.0" },
+      source_coverage: "complete",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      phases: { sec: 0, pei: 0, dxe: 1, smm: 0, app: 0, misc: 0 },
+      modules: [
+        {
+          occurrence: 0,
+          guid: "11111111-2222-3333-4444-555555555555",
+          name: "TimeoutMod",
+          phase: "dxe",
+          type: "driver",
+          payload_file: "dxe/mod1.efi",
+          payload_sha256: sha256(payload),
+          size: payload.length,
+        },
+      ],
+    }),
+  );
+
+  const mockGhidraDir = join(directory, "fake-ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  const origGhidra = process.env.GHIDRA_INSTALL_DIR;
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const origExecFileOutput = ExecFileOutputModule.execFileOutput;
+  let capturedTimeout: number | undefined;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedTimeout = options?.timeout;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "void func() {}\n");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({ decompiled_functions: 1, failed_functions: 0 }),
+          );
+        }
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return origExecFileOutput(command, args, options);
+    });
+
+  let remainingCalls = 0;
+  const baseNow = 100_000;
+  const perfSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+    const stack = new Error().stack ?? "";
+    if (stack.includes("remainingTimeMs")) {
+      remainingCalls++;
+      // Calls 1 and 2: initial check and single-module staging check (remaining time is full)
+      if (remainingCalls <= 2) {
+        return baseNow;
+      }
+      // Call 3+: launch check immediately before launch, simulated staging took 35s
+      return baseNow + 35_000;
+    }
+    return baseNow;
+  });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(capturedTimeout).toBeDefined();
+    // At deadline initialization: deadline = baseNow + 60_000.
+    // Staging advanced simulated time to baseNow + 35_000 ms.
+    // At launch: remainingTimeMs is (baseNow + 60_000) - (baseNow + 35_000) = 25_000 ms.
+    // launchTimeLeft = 25_000 - 5_000 (reserve) - 5_000 (grace) = 15_000 ms.
+    expect(capturedTimeout).toBe(15_000);
+  } finally {
+    execSpy.mockRestore();
+    perfSpy.mockRestore();
+    if (origGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = origGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("truncates batch decompilation input staging and omits Ghidra launch when staging consumes publication reserve", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-staging-truncate-",
+  );
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const payload1 = createMinimalPeBuffer(0x8664, 1, 256);
+  const payload2 = createMinimalPeBuffer(0x8664, 1, 512);
+  await writeFile(join(inDir, "dxe", "mod1.efi"), payload1);
+  await writeFile(join(inDir, "dxe", "mod2.efi"), payload2);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      parser: { name: "rea-uefi", version: "1.0.0" },
+      source_coverage: "complete",
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      phases: { sec: 0, pei: 0, dxe: 2, smm: 0, app: 0, misc: 0 },
+      modules: [
+        {
+          occurrence: 0,
+          guid: "11111111-2222-3333-4444-555555555555",
+          name: "Mod1",
+          phase: "dxe",
+          type: "driver",
+          payload_file: "dxe/mod1.efi",
+          payload_sha256: sha256(payload1),
+          size: payload1.length,
+        },
+        {
+          occurrence: 1,
+          guid: "22222222-3333-4444-5555-666666666666",
+          name: "Mod2",
+          phase: "dxe",
+          type: "driver",
+          payload_file: "dxe/mod2.efi",
+          payload_sha256: sha256(payload2),
+          size: payload2.length,
+        },
+      ],
+    }),
+  );
+
+  const mockGhidraDir = join(directory, "fake-ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  const origGhidra = process.env.GHIDRA_INSTALL_DIR;
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const origExecFileOutput = ExecFileOutputModule.execFileOutput;
+  let ghidraLaunched = false;
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraLaunched = true;
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return origExecFileOutput(command, args, options);
+    });
+
+  let remainingCalls = 0;
+  const baseNow = 100_000;
+  const perfSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+    const stack = new Error().stack ?? "";
+    if (stack.includes("remainingTimeMs")) {
+      remainingCalls++;
+      // Call 1: initial timeLeftForGhidra check (remaining time is full)
+      // Call 2: batch module 1 staging check (remaining time is full)
+      if (remainingCalls <= 2) {
+        return baseNow;
+      }
+      // Call 3: batch module 2 staging check (staging took 52s, leaving 8s <= 10s reserve+grace)
+      // Call 4+: launch check (leaving 8s <= 10s reserve+grace)
+      return baseNow + 52_000;
+    }
+    return baseNow;
+  });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    // Ghidra must not have been launched because staging consumed available time
+    expect(ghidraLaunched).toBe(false);
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("staging truncated to preserve deadline") ||
+          l.includes("Ghidra C decompilation omitted to preserve deadline"),
+      ),
+    ).toBe(true);
+  } finally {
+    execSpy.mockRestore();
+    perfSpy.mockRestore();
+    if (origGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = origGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("rejects truncated PE headers during parsePeTeHeader and directory candidate discovery", async () => {
+  // 136-byte file with eLfanew: 128 (only 8 bytes after eLfanew, truncated 20-byte COFF header)
+  const truncatedMz = Buffer.alloc(136, 0);
+  truncatedMz[0] = 0x4d;
+  truncatedMz[1] = 0x5a;
+  truncatedMz.writeUInt32LE(128, 0x3c);
+  truncatedMz.set(Buffer.from("PE\0\0"), 128);
+  truncatedMz.writeUInt16LE(0x8664, 132); // machine: x86_64
+  truncatedMz.writeUInt16LE(1, 134); // numSections: 1
+
+  // Direct parsePeTeHeader must reject truncated COFF header
+  expect(parsePeTeHeader(truncatedMz)).toBeUndefined();
+
+  // Direct PE with truncated COFF header (< 24 bytes) must also be rejected
+  const truncatedDirectPe = Buffer.alloc(16, 0);
+  truncatedDirectPe.set(Buffer.from("PE\0\0"), 0);
+  truncatedDirectPe.writeUInt16LE(0x8664, 4);
+  expect(parsePeTeHeader(truncatedDirectPe)).toBeUndefined();
+
+  // Directory candidate discovery must not admit truncated PE files
+  const directory = await createTestTempDirectory("rea-uefi-trunc-pe-disc-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "truncated.efi"), truncatedMz);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(0);
+    expect(result.total_modules_decompiled).toBe(0);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("records malformed manifest rows as omitted candidates and marks coverage partial", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-malformed-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const manifest = {
+    parser: { name: "rea-uefi", version: "1.0.0" },
+    modules: [
+      { payload_file: 42, name: "NonStringPayload" },
+      "not an object row",
+      { payload_file: "", name: "EmptyPayload" },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    const writtenManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(writtenManifest.source_coverage).toBe("partial");
+    expect(writtenManifest.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Manifest module entry at index 1 is not an object"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has non-string payload_file"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) => lim.includes("has empty payload_file")),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("rejects truncated TE headers (< 4 bytes or machine 0) during parsePeTeHeader and directory candidate discovery", async () => {
+  // Truncated TE header: starts with "VZ" but is only 3 bytes (< 4 bytes required for machine field)
+  const shortTe = Buffer.from([0x56, 0x5a, 0x01]);
+  expect(parsePeTeHeader(shortTe)).toBeUndefined();
+
+  // TE header with machine 0 must also be rejected
+  const zeroMachineTe = Buffer.from([0x56, 0x5a, 0x00, 0x00]);
+  expect(parsePeTeHeader(zeroMachineTe)).toBeUndefined();
+
+  // Directory candidate discovery must not admit short TE files
+  const directory = await createTestTempDirectory("rea-uefi-trunc-te-disc-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "truncated.te"), shortTe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(0);
+    expect(result.total_modules_decompiled).toBe(0);
+    expect(result.coverage).toBe("complete");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when Ghidra decompiled C contains function decompilation warnings", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-warning-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "/* Ghidra Decompiler output */\nvoid Entry(void) {}\n/* WARNING: Failed to decompile function Sub_1000 */\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 1,
+              failed_functions: 0,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "was incomplete; one or more functions failed to decompile",
+        ),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when Ghidra outcome reports failed functions count", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-failed-count-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "sec_driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "/* Ghidra Decompiler output */\nvoid SecEntry(void) {}\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 1,
+              failed_functions: 3,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("was incomplete; 3 function(s) failed to decompile"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("matches manifest rows with relative path components (./ or ../) to discovered modules without dropping phase-filtered modules", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-relpath-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "./Driver.efi",
+          name: "DxeRelativeDriver",
+          guid: "11223344-5566-7788-99aa-bbccddeeff00",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("DxeRelativeDriver");
+    expect(result.modules[0]?.guid).toBe(
+      "11223344-5566-7788-99aa-bbccddeeff00",
+    );
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "was not found or admitted as a valid UEFI candidate module",
+        ),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("matches manifest rows with complex relative segments like ./sub/../Driver.efi", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-complex-relpath-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "./sub/../Driver.efi",
+          name: "DxeDotDotDriver",
+          guid: "aabbccdd-eeff-1122-3344-5566778899aa",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("DxeDotDotDriver");
+    expect(result.modules[0]?.guid).toBe(
+      "aabbccdd-eeff-1122-3344-5566778899aa",
+    );
+    expect(result.total_modules_decompiled).toBe(1);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("labels budget limit warning as retained recovered functions when Ghidra decompilation capped but kept candidate C", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-cap-retained-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "/* Ghidra Decompiler output */\nvoid RecoveredFunc(void) {}\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 4194304,
+              decompiled_functions: 1,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(
+      result.limitations.some(
+        (lim) =>
+          lim.includes("stopped after reaching 4 MiB per-module limit") &&
+          lim.includes("retained recovered functions") &&
+          lim.includes("producer_limits.output_bytes"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("recovered with reconstructed entry scaffolding"),
+      ),
+    ).toBe(false);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("labels budget limit warning as reconstructed entry scaffolding when Ghidra produces no C output", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-cap-scaffold-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "limit_exceeded",
+              max_output_bytes: 4194304,
+              decompiled_functions: 0,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some(
+        (lim) =>
+          lim.includes("stopped after reaching 4 MiB per-module limit") &&
+          lim.includes("recovered with reconstructed entry scaffolding") &&
+          lim.includes("producer_limits.output_bytes"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("retained recovered functions"),
+      ),
+    ).toBe(false);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("rejects rooted or escaping manifest payload paths and marks coverage partial", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-rooted-manifest-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "DXE"), { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "DXE", "Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "/DXE/Driver.efi",
+          name: "RootedAttackerName",
+          guid: "11111111-2222-3333-4444-555555555555",
+          phase: "DXE",
+        },
+        {
+          payload_file: "../../outside.efi",
+          name: "EscapingName",
+          guid: "66666666-7777-8888-9999-000000000000",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "has rooted or absolute payload_file (`/DXE/Driver.efi`); ignored.",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has empty or escaping payload_file; ignored."),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]?.name).not.toBe("RootedAttackerName");
+    expect(result.modules[0]?.guid).not.toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves manifest metadata for valid payload files starting with two dots like ..Driver.efi", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-two-dot-name-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "..Driver.efi"), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: "..Driver.efi",
+          name: "TwoDotDriver",
+          guid: "12345678-1234-1234-1234-123456789abc",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("TwoDotDriver");
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.guid).toBe(
+      "12345678-1234-1234-1234-123456789abc",
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves native POSIX payload files containing backslashes without rejecting as escaping cross-platform paths", async () => {
+  if (process.platform === "win32") {
+    return;
+  }
+  const directory = await createTestTempDirectory("rea-uefi-posix-bs-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const pe = createMinimalPeBuffer(0x8664, 1, 256);
+  const posixFilename = "vendor\\..\\..\\Driver.efi";
+  await writeFile(join(inDir, posixFilename), pe);
+
+  const manifestPath = join(inDir, "firmware_manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      manifest_version: "1.0",
+      modules: [
+        {
+          payload_file: posixFilename,
+          name: "PosixBackslashDriver",
+          guid: "98765432-1234-1234-1234-123456789abc",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: unavailableGhidraInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("PosixBackslashDriver");
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.guid).toBe(
+      "98765432-1234-1234-1234-123456789abc",
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves caller-selected provider environment for tool configuration over ambient process.env", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-provider-env-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "Sample.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+
+  let capturedCommand: string | undefined;
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args, options) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedCommand = command;
+        capturedEnv = options?.env;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "EFI_STATUS UefiMain() { return 0; }");
+        }
+        return {
+          stdout: "decompiled output",
+          stderr: "",
+          stdoutBytes: 17,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const origGhidra = process.env.GHIDRA_INSTALL_DIR;
+  try {
+    process.env.GHIDRA_INSTALL_DIR = "/ambient/wrong/ghidra";
+
+    const customEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      GHIDRA_INSTALL_DIR: mockGhidraDir,
+      REA_OBJDUMP_COMMAND: "custom-selected-objdump",
+    };
+
+    const provider = new UefiAnalysisProvider({
+      environment: customEnv,
+      ghidraInstallationHost: ghidraProfileInstallationHost,
+    });
+    try {
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, { include_disassembly: false }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(result.coverage).toBe("complete");
+      expect(capturedCommand).toBe(
+        join(mockGhidraDir, "support", "analyzeHeadless"),
+      );
+      expect(capturedEnv).toBeDefined();
+      expect(capturedEnv?.GHIDRA_INSTALL_DIR).toBe(mockGhidraDir);
+      expect(result.producers?.ghidra).toBeDefined();
+      expect(result.limitations).not.toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("/ambient/wrong/ghidra"),
+        ]),
+      );
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+    if (origGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = origGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+  }
+});
+
+it("exercises factory-created provider to assert caller-selected environment is forwarded and honored", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-factory-env-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "Sample.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  let capturedCommand: string | undefined;
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, _args, options) => {
+      if (command === "llvm-objdump") {
+        throw new Error("llvm-objdump unavailable in test stub");
+      }
+      capturedCommand = command;
+      capturedEnv = options?.env;
+      return {
+        stdout: "0000000000000000 <main>:\n   0: 48 83 ec 08 sub $0x8,%rsp\n",
+        stderr: "",
+        stdoutBytes: 56,
+        stderrBytes: 0,
+      };
+    });
+
+  const origObjdump = process.env.REA_OBJDUMP_COMMAND;
+  try {
+    process.env.REA_OBJDUMP_COMMAND = "/ambient/wrong/objdump";
+
+    const customEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      REA_OBJDUMP_COMMAND: "custom-selected-objdump",
+    };
+
+    const provider = createUefiAnalysisProvider(customEnv);
+    try {
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, {
+            include_disassembly: true,
+          }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(capturedCommand).toBe("custom-selected-objdump");
+      expect(capturedEnv?.REA_OBJDUMP_COMMAND).toBe("custom-selected-objdump");
+      expect(result.producers?.disassembler).toBe("custom-selected-objdump");
+      expect(result.modules[0]?.disassembly_status).toBe("ok");
+      expect(result.modules[0]?.relative_asm_file).toBeDefined();
+      const asmPath = join(outDir, result.modules[0]!.relative_asm_file!);
+      expect(existsSync(asmPath)).toBe(true);
+      expect(await readFile(asmPath, "utf8")).toContain("<main>:");
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+    if (origObjdump !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origObjdump;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+  }
+});
+
+it("strictly sanitizes C comments, newlines, null bytes, and comment delimiters in module rawName and typeName", () => {
+  const maliciousName =
+    "ExploitDriver*/\n#define INJECTED_MACRO 1\r\n/* \x00\x1b[31mEnd";
+  const sanitized = sanitizeCComment(maliciousName);
+  expect(sanitized).not.toContain("*/");
+  expect(sanitized).toContain("* /");
+  expect(sanitized).not.toContain("\n");
+  expect(sanitized).not.toContain("\r");
+  expect(sanitized).not.toContain("\0");
+  expect(sanitized).not.toContain("\x1b");
+
+  const scaffold = buildUefiEntryPointScaffolding(
+    "ExploitDriver",
+    maliciousName,
+    1024,
+    "DXE",
+    "driver*/\n#include <evil.h>",
+    "64",
+  );
+  expect(scaffold.functionDefinition).not.toContain("*/\n");
+  expect(scaffold.functionDefinition).toContain(
+    "EFI_STATUS EFIAPI ExploitDriverEntryPoint(",
+  );
+  expect(scaffold.prototype).toBe(
+    "EFI_STATUS EFIAPI ExploitDriverEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+});
+
+it("detects machine width robustly under corrupted TE/PE headers and refuses mismatched optional-header magics", () => {
+  // Truncated / empty buffers
+  expect(detectPeTeMachineWidth(Buffer.alloc(0))).toBe("unknown");
+  expect(detectPeTeMachineWidth(Buffer.from([0x56]))).toBe("unknown");
+  expect(detectPeTeMachineWidth(Buffer.from([0x56, 0x5a]))).toBe("unknown"); // VZ only 2 bytes
+
+  // TE headers with various machine architectures
+  const makeTe = (machine: number) => {
+    const buf = Buffer.alloc(40);
+    buf[0] = 0x56;
+    buf[1] = 0x5a; // "VZ"
+    buf.writeUInt16LE(machine, 2);
+    buf[4] = 1; // 1 section
+    return buf;
+  };
+
+  expect(detectPeTeMachineWidth(makeTe(0xaa64))).toBe("64"); // ARM64
+  expect(detectPeTeMachineWidth(makeTe(0x8664))).toBe("64"); // x86_64
+  expect(detectPeTeMachineWidth(makeTe(0x014c))).toBe("32"); // x86
+  expect(detectPeTeMachineWidth(makeTe(0x01c0))).toBe("32"); // ARM
+  expect(detectPeTeMachineWidth(makeTe(0x0000))).toBe("unknown"); // Machine 0
+  expect(detectPeTeMachineWidth(makeTe(0xffff))).toBe("unknown"); // Unrecognized machine
+
+  // PE with mismatched optional header magic: x86_64 (0x8664) with PE32 magic (0x10b)
+  const mismatchedPe64 = createMinimalPeBuffer(0x8664, 1, 256, 0x10b);
+  expect(detectPeTeMachineWidth(mismatchedPe64)).toBe("unknown");
+
+  // PE with mismatched optional header magic: x86 (0x014c) with PE32+ magic (0x20b)
+  const mismatchedPe32 = createMinimalPeBuffer(0x014c, 1, 256, 0x20b);
+  expect(detectPeTeMachineWidth(mismatchedPe32)).toBe("unknown");
+});
+
+it("generates fallback typedefs with uintptr_t for unknown machine widths", () => {
+  const scaffoldUnknown = buildUefiEntryPointScaffolding(
+    "UnknownArchModule",
+    "UnknownArchModule",
+    2048,
+    "DXE",
+    "driver",
+    "unknown",
+  );
+  expect(scaffoldUnknown.typedefs).toContain("typedef uintptr_t UINTN;");
+  expect(scaffoldUnknown.typedefs).toContain("typedef UINTN EFI_STATUS;");
+  expect(scaffoldUnknown.prototype).toBe(
+    "EFI_STATUS EFIAPI UnknownArchModuleEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+});
+
+it("strictly validates isPhaseSupportedByFfsType across all standard and standalone phases", () => {
+  // SMM types
+  expect(isPhaseSupportedByFfsType("SMM", "smm")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "smm-core")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "mm-standalone")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "mm-core-standalone")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "smm")).toBe(false);
+  expect(isPhaseSupportedByFfsType("DXE", "smm-core")).toBe(false);
+  expect(isPhaseSupportedByFfsType("PEI", "mm-standalone")).toBe(false);
+
+  // Combined types
+  expect(isPhaseSupportedByFfsType("DXE", "combined-smm-dxe")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "combined-smm-dxe")).toBe(true);
+  expect(isPhaseSupportedByFfsType("PEI", "combined-smm-dxe")).toBe(false);
+
+  expect(isPhaseSupportedByFfsType("PEI", "combined-peim-driver")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "combined-peim-driver")).toBe(true);
+  expect(isPhaseSupportedByFfsType("SMM", "combined-peim-driver")).toBe(false);
+
+  // SEC and PEI types
+  expect(isPhaseSupportedByFfsType("SEC", "security-core")).toBe(true);
+  expect(isPhaseSupportedByFfsType("PEI", "security-core")).toBe(false);
+  expect(isPhaseSupportedByFfsType("PEI", "pei-core")).toBe(true);
+  expect(isPhaseSupportedByFfsType("PEI", "peim")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "peim")).toBe(false);
+
+  // Application
+  expect(isPhaseSupportedByFfsType("APP", "application")).toBe(true);
+  expect(isPhaseSupportedByFfsType("DXE", "application")).toBe(false);
+});
+
+it("strictly enforces UEFI_PROVIDER_IDENTITY contract and forbids re-export shims", () => {
+  expect(UEFI_PROVIDER_IDENTITY.id).toBe("rea-uefi");
+  expect(UEFI_PROVIDER_IDENTITY.name).toBe("REA UEFI firmware parser");
+  expect(UEFI_PROVIDER_IDENTITY.version).toBeDefined();
+
+  // Regression check: ensure UefiProviderIdentity.ts was deleted and is never resurrected
+  const shimPath = resolve(
+    fileURLToPath(import.meta.url),
+    "../UefiProviderIdentity.ts",
+  );
+  expect(existsSync(shimPath)).toBe(false);
+});
+
+it("strictly verifies WindowsBatchCommand ComSpec normalization and absolute command invariants", () => {
+  // Relative ComSpec must throw WindowsBatchCommandError
+  expect(() =>
+    windowsBatchCommand({
+      batchPath: "analyzeHeadless.bat",
+      arguments: ["project", "dir"],
+      environment: {
+        SystemRoot: "C:\\Windows",
+        ComSpec: "cmd.exe",
+      },
+    }),
+  ).toThrowError(/Windows ComSpec must be an absolute cmd\.exe path/);
+
+  // Absolute ComSpec resolution
+  const res2 = windowsBatchCommand({
+    batchPath: "C:\\Ghidra\\support\\analyzeHeadless.bat",
+    arguments: ["--help"],
+    environment: {
+      ComSpec: "C:\\Custom\\cmd.exe",
+    },
+  });
+  expect(res2.command).toBe("C:\\Custom\\cmd.exe");
+  expect(res2.arguments.join(" ")).toContain(
+    "C:\\Ghidra\\support\\analyzeHeadless.bat",
+  );
+
+  // Lowercase comspec environment variable with absolute path
+  const res3 = windowsBatchCommand({
+    batchPath: "test.bat",
+    arguments: [],
+    environment: {
+      comspec: "C:\\Windows\\System32\\cmd.exe",
+    },
+  });
+  expect(res3.command).toBe("C:\\Windows\\System32\\cmd.exe");
+});
+
+it("strictly verifies ghidraLaunchEnvironment ComSpec and Java options isolation on Windows", () => {
+  const customEnv = {
+    ComSpec: "C:\\Windows\\System32\\cmd.exe",
+    SystemRoot: "C:\\Windows",
+  };
+  const paths = ghidraRuntimePaths("C:\\GhidraRuntime");
+  const launchEnv = ghidraLaunchEnvironment(
+    paths,
+    "C:\\Java",
+    "win32",
+    "C:\\Windows\\System32\\cmd.exe",
+    customEnv,
+  );
+
+  expect(launchEnv.ComSpec).toBe("C:\\Windows\\System32\\cmd.exe");
+  expect(launchEnv.USERPROFILE).toBe(paths.homeRoot);
+  expect(launchEnv.TEMP).toBe(paths.tempRoot);
+  expect(launchEnv.JDK_JAVA_OPTIONS).toBeDefined();
+});
+
+it("strictly verifies ghidraHeadlessJavaOptions quotes paths with spaces", () => {
+  const opts = ghidraHeadlessJavaOptions(
+    "C:\\My Documents\\GhidraHome",
+    "C:\\Program Files\\Temp",
+    "win32",
+  );
+  expect(opts.JDK_JAVA_OPTIONS).toContain(
+    '"-Duser.home=C:\\My Documents\\GhidraHome"',
+  );
+  expect(opts.JDK_JAVA_OPTIONS).toContain(
+    '"-Djava.io.tmpdir=C:\\Program Files\\Temp"',
+  );
+});
+
+it("strictly verifies createUefiEvidenceFromWrapper propagates format identity and derived confidence", () => {
+  const dummyShaA = "a".repeat(64);
+  const dummyShaB = "b".repeat(64);
+
+  // Directory format propagation
+  const dirEvidence = createUefiEvidenceFromWrapper(
+    "decompile_uefi_firmware",
+    decompileRequest("/tmp/in_dir", "/tmp/out_dir").input,
+    {
+      kind: "uefi",
+      result: { total_modules_decompiled: 5, limitations: ["omitted module"] },
+      provenance: {
+        path: "/tmp/in_dir",
+        sha256: dummyShaA,
+        format: "directory",
+      },
+    },
+  );
+  expect(dirEvidence.operation).toBe("decompile_uefi_firmware");
+  expect(dirEvidence.confidence).toBe("derived");
+  expect(dirEvidence.subject).toMatchObject({
+    identity: {
+      sha256: dummyShaA,
+      format: "directory",
+    },
+    local_path: "/tmp/in_dir",
+  });
+
+  // File format propagation
+  const fileEvidence = createUefiEvidenceFromWrapper(
+    "decompile_uefi_firmware",
+    decompileRequest("/tmp/sample.efi", "/tmp/out_file").input,
+    {
+      kind: "uefi",
+      result: { total_modules_decompiled: 1, limitations: [] },
+      provenance: {
+        path: "/tmp/sample.efi",
+        sha256: dummyShaB,
+        format: "file",
+      },
+    },
+  );
+  expect(fileEvidence.operation).toBe("decompile_uefi_firmware");
+  expect(fileEvidence.confidence).toBe("derived");
+  expect(fileEvidence.subject).toMatchObject({
+    identity: {
+      sha256: dummyShaB,
+      format: "file",
+    },
+    local_path: "/tmp/sample.efi",
+  });
+
+  // Default fallback when provenance is missing
+  const fallbackEvidence = createUefiEvidenceFromWrapper(
+    "inspect_uefi_firmware",
+    inspectRequest("/tmp/inspect.rom").input,
+    {
+      kind: "uefi",
+      result: { volumes: [] },
+    },
+  );
+  expect(fallbackEvidence.operation).toBe("inspect_uefi_firmware");
+  expect(fallbackEvidence.confidence).toBe("observed");
+  expect(fallbackEvidence.subject).toMatchObject({
+    identity: {
+      kind: "unknown",
+      reason: "not-observed",
+    },
+    name: null,
+    local_path: null,
+  });
+  expect(fallbackEvidence.locations).toEqual([
+    { kind: "artifact-path", path: "/tmp/inspect.rom" },
+  ]);
+});
+
+it("strictly verifies malformed and out-of-bounds PE headers are safely handled", () => {
+  // Empty buffer
+  expect(detectPeTeMachineWidth(Buffer.alloc(0))).toBe("unknown");
+
+  // Short buffer (< 64 bytes)
+  const shortMz = Buffer.from("MZ" + "\0".repeat(30));
+  expect(detectPeTeMachineWidth(shortMz)).toBe("unknown");
+
+  // MZ with negative e_lfanew
+  const negLfanew = Buffer.alloc(64);
+  negLfanew.write("MZ", 0);
+  negLfanew.writeInt32LE(-1, 0x3c);
+  expect(detectPeTeMachineWidth(negLfanew)).toBe("unknown");
+
+  // MZ with e_lfanew exceeding buffer
+  const outOfBoundsLfanew = Buffer.alloc(64);
+  outOfBoundsLfanew.write("MZ", 0);
+  outOfBoundsLfanew.writeInt32LE(0x1000, 0x3c);
+  expect(detectPeTeMachineWidth(outOfBoundsLfanew)).toBe("unknown");
+
+  // MZ with e_lfanew pointing to non-PE signature
+  const nonPeSig = Buffer.alloc(128);
+  nonPeSig.write("MZ", 0);
+  nonPeSig.writeInt32LE(64, 0x3c);
+  nonPeSig.write("NOTP", 64);
+  expect(detectPeTeMachineWidth(nonPeSig)).toBe("unknown");
+});
+
+it("strictly verifies manifest order invariance and resolves conflicting metadata to unresolved null", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-conflict-",
+  );
+  const inDir = join(directory, "in");
+  const outDir1 = join(directory, "out1");
+  const outDir2 = join(directory, "out2");
+  await mkdir(inDir, { recursive: true });
+
+  const peBytes = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "SampleDriver.efi"), peBytes);
+
+  const rowA = {
+    payload_file: "SampleDriver.efi",
+    phase: "pei",
+    name: "PeiSample",
+    guid: "11111111-1111-1111-1111-111111111111",
+  };
+  const rowB = {
+    payload_file: "./SampleDriver.efi",
+    phase: "dxe",
+    name: "DxeSample",
+    guid: "22222222-2222-2222-2222-222222222222",
+  };
+
+  // Order 1: [rowA, rowB]
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({ modules: [rowA, rowB] }),
+  );
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+
+  try {
+    // Under filter_phase: "dxe", neither conflicting phase should be adopted
+    const executedFiltered = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, join(directory, "out_dxe"), {
+          filter_phase: "dxe",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const resultFiltered = executedFiltered.value.result as UefiDecompileResult;
+    // Because phase conflicted, it was left unresolved (null), falling back to MISC, so it does not match "dxe"
+    expect(resultFiltered.modules).toHaveLength(0);
+
+    // Run Order 1 with filter_phase: "all"
+    const executed1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, {
+          filter_phase: "all",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result1 = executed1.value.result as UefiDecompileResult;
+    expect(result1.modules).toHaveLength(1);
+    const mod1 = result1.modules[0]!;
+    // Conflicting GUID and name are left unresolved (null)
+    expect(mod1.guid).toBeNull();
+    expect(result1.coverage).toBe("partial");
+    expect(result1.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("conflicting metadata for payload"),
+      ]),
+    );
+
+    // Order 2: [rowB, rowA] - reversed order must produce the exact same outcome
+    await writeFile(
+      join(inDir, "firmware_manifest.json"),
+      JSON.stringify({ modules: [rowB, rowA] }),
+    );
+
+    const executed2 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir2, {
+          filter_phase: "all",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result2 = executed2.value.result as UefiDecompileResult;
+    expect(result2.modules).toHaveLength(1);
+    const mod2 = result2.modules[0]!;
+    expect(mod2.guid).toBeNull();
+    expect(mod2.name).toBe(mod1.name);
+    expect(mod2.phase).toBe(mod1.phase);
+    expect(result2.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("strictly verifies caller-configured producer_limits are forwarded to Ghidra args and staging bounds", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-producer-limits-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "Module.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+
+  let capturedArgs: readonly string[] = [];
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedArgs = args;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "void func() {}");
+        }
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  try {
+    const provider = new UefiAnalysisProvider({
+      environment: {
+        PATH: process.env.PATH,
+        GHIDRA_INSTALL_DIR: mockGhidraDir,
+      },
+      ghidraInstallationHost: ghidraProfileInstallationHost,
+    });
+    try {
+      // 1. With custom producer_limits
+      const customOutputBytes = 16 * 1024 * 1024;
+      const customFileBytes = 128 * 1024 * 1024;
+      const customInputBytes = 256 * 1024 * 1024;
+
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, {
+            include_disassembly: false,
+            producer_limits: {
+              output_bytes: customOutputBytes,
+              file_bytes: customFileBytes,
+              input_bytes: customInputBytes,
+            },
+          }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(result.coverage).toBe("complete");
+
+      const scriptIdx = capturedArgs.indexOf("-postScript");
+      expect(scriptIdx).toBeGreaterThanOrEqual(0);
+      const perModuleArg = capturedArgs[scriptIdx + 3];
+      const totalArg = capturedArgs[scriptIdx + 4];
+      expect(perModuleArg).toBe(String(customOutputBytes));
+      expect(totalArg).toBe(String(customFileBytes));
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it("preserves agreed manifest phase and metadata when payload digests conflict, matching filter_phase dxe", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-digest-conflict-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const modName = "AgreedDxeModule.efi";
+  await writeFile(join(inDir, modName), createMinimalPeBuffer(0x8664, 1, 256));
+
+  const manifest = {
+    modules: [
+      {
+        name: "AgreedDxeModule",
+        guid: "11111111-2222-3333-4444-555555555555",
+        phase: "dxe",
+        payload_file: modName,
+        payload_sha256:
+          "0000000000000000000000000000000000000000000000000000000000000001",
+      },
+      {
+        name: "AgreedDxeModule",
+        guid: "11111111-2222-3333-4444-555555555555",
+        phase: "dxe",
+        payload_file: modName,
+        payload_sha256:
+          "0000000000000000000000000000000000000000000000000000000000000002",
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("AgreedDxeModule");
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.guid).toBe(
+      "11111111-2222-3333-4444-555555555555",
+    );
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("contains conflicting metadata for payload") &&
+          l.includes("conflicting fields left unresolved"),
+      ),
+    ).toBe(true);
+    expect(
+      result.limitations.some((l) =>
+        l.includes("manifest row metadata ignored"),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds single-module Ghidra input staging with producer_limits.input_bytes and reports KiB budget naming producer_limits", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-single-input-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const modBuffer = createMinimalPeBuffer(0x8664, 1, 1024);
+  await writeFile(join(inDir, "BigModule.efi"), modBuffer);
+
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+
+  let ghidraExecuted = false;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command.includes("analyzeHeadless")) {
+        ghidraExecuted = true;
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  try {
+    const provider = new UefiAnalysisProvider({
+      environment: {
+        PATH: process.env.PATH,
+        GHIDRA_INSTALL_DIR: mockGhidraDir,
+      },
+      ghidraInstallationHost: ghidraProfileInstallationHost,
+    });
+    try {
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, {
+            include_disassembly: false,
+            producer_limits: {
+              input_bytes: 512,
+            },
+          }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(result.coverage).toBe("partial");
+      expect(ghidraExecuted).toBe(false);
+      expect(result.modules[0]?.c_generator).toBe("scaffold");
+      expect(
+        result.limitations.some((l) =>
+          l.includes(
+            "Decompilation input staging truncated after reaching 512 B aggregate staging budget (raise producer_limits.input_bytes).",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+  }
+});
