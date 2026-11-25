@@ -154,6 +154,7 @@ it.each([
       {
         name: "analyze_javascript_application",
         arguments: {
+          detail: "complete",
           input_path: root,
           format: "directory",
         },
@@ -218,10 +219,7 @@ it.each([
     expect(view.isError, JSON.stringify(view)).not.toBe(true);
     const next = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: {
-        input_path: root,
-        format: "directory",
-      },
+      arguments: { detail: "complete", input_path: root, format: "directory" },
     });
     expect(next.isError, JSON.stringify(next)).not.toBe(true);
     await client.ping();

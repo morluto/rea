@@ -965,9 +965,10 @@ jobs:
     needs: [changes, static, build]
     if: needs.changes.outputs.apple == 'true'
     runs-on: macos-15
-    # Passing runs take 10-15 minutes on macOS runners of varying speed, so a
-    # 15-minute budget cancelled about a third of runs. Keep a hang bounded.
-    timeout-minutes: 25
+    # Passing runs took 10-15 minutes on macOS runners of varying speed before
+    # the discovered macOS-gated tests added about 7.5 minutes; a 15-minute
+    # budget cancelled about a third of runs. Keep a hang bounded.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

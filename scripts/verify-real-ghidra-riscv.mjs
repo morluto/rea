@@ -42,6 +42,10 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -99,7 +103,9 @@ const transport = new StdioClientTransport({
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-riscv-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -551,6 +557,7 @@ try {
     });
     assert.equal(global.bytes_hex, "07000000");
     const callees = await call("procedure_callees", {
+      detail: "complete",
       procedure: addressFor("rea_riscv_entry"),
     });
     for (const name of abi
@@ -657,12 +664,14 @@ try {
         process.execPath,
         [
           entrypoint,
-          command,
-          fixture.path,
-          ...arguments_,
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            command,
+            fixture.path,
+            ...arguments_,
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ],
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
@@ -759,12 +768,14 @@ try {
         );
         const cliArguments = [
           entrypoint,
-          "function",
-          mutatedPath,
-          "rea_riscv_entry",
-          "--provider",
-          "ghidra",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            mutatedPath,
+            "rea_riscv_entry",
+            "--provider",
+            "ghidra",
+            "--json",
+          ])),
         ];
         const cliOptions = {
           env,

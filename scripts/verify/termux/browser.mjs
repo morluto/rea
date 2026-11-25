@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
+import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 assert.equal(process.platform, "android", "Run this verifier inside Termux");
@@ -48,9 +49,11 @@ try {
     process.execPath,
     [
       "scripts/rea.mjs",
-      "capture-browser-scenario",
-      JSON.stringify(scenario),
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "capture-browser-scenario",
+        JSON.stringify(scenario),
+        "--json",
+      ])),
     ],
     { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 },
   );

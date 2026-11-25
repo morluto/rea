@@ -293,3 +293,19 @@ export const MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = 1_000;
 export const DEFAULT_ZSTD_MAX_FRAMES = 4_096;
 export const MINIMUM_ZSTD_MAX_FRAMES = 1;
 export const MAXIMUM_ZSTD_MAX_FRAMES = 65_536;
+
+/**
+ * Agent delivery budget for one tool result's inline JSON text. This is not
+ * an admission limit: an over-budget result is retained and delivered as its
+ * summary with a cursor, never refused. Claude Code moves MCP results above
+ * 25,000 tokens out of context and warns above 10,000. A 120-row inventory
+ * page of 73K characters already crossed the 25,000-token cap there (about
+ * 2.9 bytes per token for dense JSON), so 32 KiB is about 11,000 tokens: more
+ * than twice under the cap, with room for the delivery facts. 48 KiB would be
+ * about 17,000 tokens, too close to the cap for denser rows.
+ */
+export const DEFAULT_AGENT_RESULT_BUDGET_BYTES = 32_768;
+/** Below one small summary, every result would overflow. */
+export const MINIMUM_AGENT_RESULT_BUDGET_BYTES = 4_096;
+/** The stdio frame floor (10 MiB); the transport limit applies above it. */
+export const MAXIMUM_AGENT_RESULT_BUDGET_BYTES = 10 * 1024 * 1024;

@@ -296,6 +296,59 @@ same effective setting so readiness changes along with repair and reset.
 `REA_NATIVE_MATCHING_REPRESENTATION_BYTES` is validated the same way, by
 `match_native_functions` alone.
 
+## Agent result budget
+
+`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
+limit. It defaults to 32,768 compact JSON bytes. Claude Code moves MCP
+results above 25,000 tokens out of context, and dense JSON (addresses,
+digests, identifiers) measured about 2.9 bytes per token there, so the
+default is about 11,000 tokens: under half the cap, with room for the
+delivery facts. Token figures in delivery facts use an estimate of 3 bytes
+per token, not a tokenizer measurement. The budget applies to tools with a
+`detail` selector when the caller omits `detail`, on MCP and the CLI; it is
+the only size that chooses between complete and summary delivery. An MCP
+session summarizes only when it retains Evidence and advertises
+`inspect_analysis_view`, which pages the summary; otherwise it delivers the
+complete Evidence. Its launch seed, `REA_AGENT_RESULT_BUDGET_BYTES`, also
+sets it for one-shot CLI invocations; an invalid seed leaves delivery
+unbudgeted (complete, as before) rather than falling back to the default,
+and settings inspection reports it. The stdio frame limit,
+`REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
+
+When complete Evidence fits, it is delivered inline as before. When it does
+not, the work is never refused or truncated:
+
+- MCP retains the complete Evidence in the session and returns the
+  operation's summary view, the same record `detail: "summary"` returns, so
+  its identity holds wherever a summary is accepted. The delivery facts
+  travel beside it, in a second text block `{"delivery": …}` and in
+  `_meta["rea/agent-budget-delivery"]`: `budget_bytes`, `budget_source`, the
+  range, `complete_bytes`, `estimated_complete_tokens`, `evidence_id`,
+  `retained`, `next` (the exact `inspect_analysis_view` call that pages the
+  complete record) and a `note` with the recovery.
+- `inspect_analysis_view` with view
+  `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
+  retained record in UTF-16 code units. Joining every page in offset order
+  reproduces it exactly, and no page splits a surrogate pair. With `limit`
+  omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
+  its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
+  up to 1,048,576. The producer's own views (`managed-members`, `inventory`
+  and so on) select facts more cheaply.
+- The CLI with `--evidence_output` prints
+  `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
+  the bundle as an `evidence-file` source. Without it, the one-shot CLI
+  writes nothing to disk, no bundle, cache or spill file: it prints
+  `{"summary", "delivery"}` with `retained: "not-retained"`, and
+  `delivery.rerun` gives the arguments to add to the original command as argv
+  arrays for every invocation: `complete` (`["--detail", "complete"]`) and
+  `retained` (`["--evidence_output", "<new-bundle-path>"]`). Caller inputs are
+  never echoed, since they can carry access credentials; the note names both.
+
+Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
+inline on one call, or raise the setting for the runtime with
+`update_analysis_settings`. An operation without a summary view, or with no
+retained session, keeps complete delivery.
+
 ## Keep a fixed ceiling honest
 
 A fixed ceiling is the exception. Keep one only for a stated format, protocol,

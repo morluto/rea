@@ -21,6 +21,10 @@ import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -189,17 +193,19 @@ const cli = async () => {
   phase = "production CLI function analysis";
   const commands = await createVerifierCommands();
   const { stdout } = await withVerifierCleanup(
-    () =>
+    async () =>
       commands.exec(
         process.execPath,
         [
           entry,
-          "function",
-          target,
-          values.procedure,
-          "--provider",
-          "ida",
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "function",
+            target,
+            values.procedure,
+            "--provider",
+            "ida",
+            "--json",
+          ])),
         ],
         {
           env: environment,
@@ -286,7 +292,9 @@ const verifyPeerCleanup = async (analysis, closeWithPeer, retryClose) => {
 };
 
 const mcp = async (cliDossier) => {
-  const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-ida-verifier", version: "1" }),
+  );
   const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entry, "mcp"],
@@ -399,7 +407,12 @@ const mcp = async (cliDossier) => {
         "list_documents reported the private workspace copy.",
       );
       const resolveAt = async (address) =>
-        observe(await call("resolve_containing_procedure", { address }));
+        observe(
+          await call("resolve_containing_procedure", {
+            detail: "complete",
+            address,
+          }),
+        );
       const instructionAddresses = dossier.assembly
         .map((line) => /^(0x[0-9a-f]+)/iu.exec(line)?.[1])
         .filter((address) => address !== undefined);
@@ -416,7 +429,9 @@ const mcp = async (cliDossier) => {
       const unmapped = await resolveAt("0xffffffffffffff00");
       assert.equal(unmapped.found, false);
       assert.equal(unmapped.reason, "outside_segments");
-      const strings = observe(await call("list_strings", {}));
+      const strings = observe(
+        await call("list_strings", { detail: "complete" }),
+      );
       const mappedString = await findMappedNonFunction(strings, resolveAt);
       if (mappedString === undefined)
         report.unverified.push(
@@ -436,7 +451,7 @@ const mcp = async (cliDossier) => {
       );
       const traced = await client.callTool({
         name: "trace_feature",
-        arguments: { query: dossier.procedure.name },
+        arguments: { detail: "complete", query: dossier.procedure.name },
       });
       assert.notEqual(traced.isError, true);
       const trace = traced.structuredContent.normalized_result;
@@ -461,12 +476,14 @@ const mcp = async (cliDossier) => {
     if (values["second-procedure"] !== undefined) {
       const secondAddress = observe(
         await call("procedure_address", {
+          detail: "complete",
           procedure: values["second-procedure"],
         }),
       );
       assert.notEqual(secondAddress, dossier.procedure.address);
       const secondCode = observe(
         await call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: values["second-procedure"],
         }),
       );
@@ -482,6 +499,7 @@ const mcp = async (cliDossier) => {
       );
       const restored = observe(
         await call("procedure_pseudo_code", {
+          detail: "complete",
           procedure: dossier.procedure.address,
         }),
       );

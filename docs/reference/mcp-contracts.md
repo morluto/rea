@@ -338,10 +338,12 @@ framing.
 `list_procedures`, `search_procedures`, `list_strings`, `search_strings` and
 `list_names` accept `detail: "complete"` or `detail: "summary"`. These five
 inventories, `batch_decompile` and `trace_feature` grow with the target, so an
-omitted `detail` is size-aware: the complete Evidence is returned inline when
-its UTF-8 JSON is at most 32 KiB, and otherwise the session retains it and
-returns its summary. A server that retains no Evidence returns the complete
-Evidence. On a stripped 1.2 MB ELF (Debian 12 `zstd`), complete MCP results
+omitted `detail` follows the
+[agent result budget](limits-and-recovery.md#agent-result-budget): the complete
+Evidence is returned inline when its UTF-8 JSON fits
+`delivery.agent_result_budget_bytes`, and otherwise the session retains it and
+returns its summary. A server that retains no Evidence, or a session that does
+not advertise `inspect_analysis_view`, returns the complete Evidence. On a stripped 1.2 MB ELF (Debian 12 `zstd`), complete MCP results
 were 8.2 MB for `list_names` and 3.6 MB for `trace_feature` with `error`. Summary retains the original complete Evidence and returns its row
 count, provider identity, analysis-profile digest, original query, parent Evidence
 ID, limitations and explicit unknown discovery coverage. Delivery detail is excluded from provider arguments
@@ -889,8 +891,8 @@ reachability. The CLI keeps complete trace JSON; save it and use
 
 ### Selected batch decompile results
 
-`batch_decompile` returns every pseudocode body inline when the batch Evidence is
-at most 32 KiB; an omitted `detail` summarizes a larger batch, and
+`batch_decompile` returns every pseudocode body inline when the batch Evidence
+fits the agent result budget; an omitted `detail` summarizes a larger batch, and
 `detail: "complete"` always returns every body. `detail: "summary"`
 retains the complete batch in the session first and returns its producer counts,
 `source_provider` (the composing workflow), `source_analysis_profile_digest`,

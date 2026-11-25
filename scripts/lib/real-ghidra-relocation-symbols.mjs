@@ -7,6 +7,7 @@ import { parseEvidence } from "../../dist/domain/evidence.js";
 import { PrivateRuntimeRoot } from "../../dist/process/PrivateRuntimeRoot.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { createVerifierCommands } from "./verify-commands.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 const source = fileURLToPath(
   new URL(
@@ -53,11 +54,13 @@ export async function verifyGhidraRelocationSymbols({ clang, lld, env }) {
     const before = await hash();
     const { stdout } = await run(process.execPath, [
       "scripts/rea.mjs",
-      "inspect-native-load-image",
-      target,
-      "--provider",
-      "ghidra",
-      "--json",
+      ...(await completeEvidenceCliArguments([
+        "inspect-native-load-image",
+        target,
+        "--provider",
+        "ghidra",
+        "--json",
+      ])),
     ]);
     const evidence = parseEvidence(JSON.parse(stdout));
     assert.equal(evidence.subject?.identity.sha256, before);

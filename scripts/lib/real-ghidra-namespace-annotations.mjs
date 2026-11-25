@@ -71,6 +71,7 @@ export async function verifyGhidraNamespaceAnnotations({
     // Search accepts the leaf spelling exact lookup accepts, keeping each
     // procedure as one row under its qualified primary name.
     const leafMatches = await call("search_procedures", {
+      detail: "complete",
       pattern: "^same$",
       mode: "regex",
       case_sensitive: true,
@@ -106,6 +107,7 @@ export async function verifyGhidraNamespaceAnnotations({
       }
       assert.equal(
         await call("procedure_address", {
+          detail: "complete",
           procedure: qualified.annotations.name,
         }),
         address,
