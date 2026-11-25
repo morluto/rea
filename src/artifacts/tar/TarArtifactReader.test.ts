@@ -277,6 +277,38 @@ describe.each([
       end_state: "end-marker",
     });
   });
+
+  it("ignores pax and long-name sizes on header-only members", async () => {
+    const longDir = `${"d/".repeat(60)}dir/`;
+    const result = await read(
+      build([
+        {
+          name: "latest",
+          type: "2",
+          linkname: "a.txt",
+          pax: { size: "512" },
+        },
+        { name: "a.txt", data: "a" },
+        {
+          name: "././@LongLink",
+          type: "L",
+          data: `${longDir}\u0000`,
+          dialect: "gnu",
+        },
+        // A NUL typeflag is a directory only through its resolved name.
+        { name: "truncated", type: "\u0000", dialect: "gnu", size: 512 },
+        { name: "b.txt", data: "b" },
+      ]),
+    );
+    expect(result.entries.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: "latest", kind: "symlink" },
+      { path: "a.txt", kind: "file" },
+      { path: longDir, kind: "directory" },
+      { path: "b.txt", kind: "file" },
+    ]);
+    expect(result.contents.get("b.txt")).toBe("b");
+    expect(result.coverage).toEqual([{ status: "complete", limitations: [] }]);
+  });
 });
 
 describe("truncated tar", () => {
