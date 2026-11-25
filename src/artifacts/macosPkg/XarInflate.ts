@@ -8,6 +8,7 @@ import {
 } from "../../domain/macosPkgFormat.js";
 import { malformedInput, unsupportedInput } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 import {
   ArtifactReaderFailure,
   artifactReaderLimitFailure,
@@ -84,7 +85,7 @@ export const extractedSizeMismatchError = (
   );
 
 export const isZlibOutputLimitError = (cause: unknown): boolean => {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return (
     /exceeding/iu.test(message) ||
     /maxOutputLength/u.test(message) ||

@@ -15,6 +15,7 @@ import {
   unsupportedInput,
 } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export const CPIO_ODC_MAGIC = "070707";
 export const CPIO_ODC_HEADER_BYTES = 76;
@@ -264,7 +265,7 @@ const gunzipBounded = (
   try {
     return ok(gunzipSync(bytes, { maxOutputLength: limit }));
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     const code =
       typeof cause === "object" && cause !== null && "code" in cause
         ? cause.code
