@@ -38,7 +38,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
 } from "../../resources/index.js";
@@ -359,9 +359,9 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            outcome.cause,
             { cleanup: cause.cleanup },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
@@ -390,9 +390,9 @@ export class ByteEntropyService {
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
+            cause,
             completion === undefined
               ? {}
               : {

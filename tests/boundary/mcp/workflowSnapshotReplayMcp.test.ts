@@ -281,7 +281,7 @@ describe("MCP composed workflow snapshot replay", () => {
       .parse(output);
     const primitiveResult = await mcp.callTool({
       name: "list_strings",
-      arguments: { document: "fixture" },
+      arguments: { detail: "complete", document: "fixture" },
     });
     expect(
       primitiveResult.isError,
@@ -329,7 +329,7 @@ describe("MCP composed workflow snapshot replay", () => {
     expect(reopened.isError, JSON.stringify(reopened.content)).not.toBe(true);
     const cachedPrimitive = await mcp.callTool({
       name: "list_strings",
-      arguments: { document: "fixture" },
+      arguments: { detail: "complete", document: "fixture" },
     });
     expect(
       cachedPrimitive.isError,
@@ -464,7 +464,7 @@ describe("MCP investigation history snapshot replay", () => {
       if (disposition === "verified") {
         const inspected = await mcp.callTool({
           name: "list_strings",
-          arguments: {},
+          arguments: { detail: "complete" },
         });
         expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(
           true,
@@ -482,7 +482,7 @@ describe("MCP investigation history snapshot replay", () => {
       await openWorkflowTarget(mcp, secondPath);
       const unrelated = await mcp.callTool({
         name: "list_strings",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(unrelated.isError).not.toBe(true);
       const foreignEvidence = toolContract("list_strings").outputSchema.parse(
@@ -628,7 +628,7 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       (
         await client.callTool({
           name: "list_strings",
-          arguments: { document: "fixture" },
+          arguments: { detail: "complete", document: "fixture" },
         })
       ).structuredContent,
     );
@@ -783,7 +783,7 @@ const expectRestoredSourceReplay = async (
     (
       await mcp.callTool({
         name: "list_strings",
-        arguments: { document: "fixture" },
+        arguments: { detail: "complete", document: "fixture" },
       })
     ).structuredContent,
   );

@@ -5,7 +5,7 @@ import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFileCompletion,
   selectedFileTargetError,
 } from "../resources/index.js";
@@ -30,8 +30,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   parseFailureAnalysisError,
@@ -114,7 +112,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      // Malformed and truncated bytes are an invalid `path`; unsupported
+      // Malformed and truncated bytes are a malformed target; unsupported
       // bytes are an unsupported target, as for every other format parser.
       const formatFailure = parseFailureAnalysisError(
         OPERATION,
@@ -150,10 +148,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = cancelledBy(
-          OPERATION,
-          carriedReason(artifactFileCancellationCause(primary)),
-        );
+        error = artifactFileCancellationError(OPERATION, primary);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&

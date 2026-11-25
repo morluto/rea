@@ -12,6 +12,7 @@ import {
   captureScope,
 } from "./DesktopCaptureScope.js";
 import { CheckpointRecorder } from "./DesktopCheckpointRecorder.js";
+import { SQLITE_HEADER } from "../../domain/sqliteFormat.js";
 
 const inventory = (
   overrides: Partial<DesktopApplicationInventory> = {},
@@ -77,7 +78,7 @@ describe("captureScope", () => {
     await mkdir(home, { recursive: true });
     await mkdir(library, { recursive: true });
     await mkdir(join(root, "out"));
-    await writeFile(database, "SQLite format 3\0");
+    await writeFile(database, `${SQLITE_HEADER}`);
     await writeFile(`${database}-wal`, "wal v1");
 
     const { scope } = await captureScope(

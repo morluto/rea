@@ -589,12 +589,21 @@ cliTest(
         detail: "complete",
       }),
     );
-    expect(failed.error.code).toBe("invalid_request");
-    const reference = failed.error.details?.partial_observation;
-    expect(reference).toEqual({
-      kind: "retained-evidence",
-      evidence_id: expect.any(String),
+    expect(failed.error).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retryable: false,
+      retry: "none",
+      details: {
+        failure_kind: "malformed",
+        format: "zip",
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: expect.any(String),
+        },
+      },
     });
+    const reference = failed.error.details?.partial_observation;
     const { evidence_id } = reference as { evidence_id: string };
     const page = await call("inspect_analysis_view", {
       source: { kind: "retained-evidence", evidence_id },
@@ -624,7 +633,12 @@ cliTest(
       kind: "playwright-trace",
       collection: "streams",
     });
-    for (const delivery of [[], ["--detail", "complete"]]) {
+    // An omitted --detail with a view selects summary delivery, which still
+    // needs a bundle; --detail complete cannot page a view at all.
+    for (const [delivery, path] of [
+      [[], "evidence_output"],
+      [["--detail", "complete"], "view"],
+    ] as const) {
       const result = await cli.run({
         arguments: [
           "inspect-playwright-trace",
@@ -638,7 +652,7 @@ cliTest(
       expect(result.exitCode).not.toBe(0);
       expect(result.json).toMatchObject({
         code: "invalid_request",
-        details: { issues: [{ path: ["view"], reason: "invalid_value" }] },
+        details: { issues: [{ path: [path], reason: "invalid_value" }] },
       });
     }
   },

@@ -60,14 +60,17 @@ cliTest.skipIf(process.platform !== "darwin")(
           }),
         })
         .parse(result.structuredContent);
-      const apktoolGroup = discovery.result.tool_availability.groups.find(
-        ({ names }) => names.includes("inspect_apktool_client"),
-      );
-      expect(apktoolGroup).toMatchObject({
-        available: false,
-        reason: "provider_unavailable",
-        remediation: expect.stringContaining("Swift compiler configuration"),
-      });
+      // Each owned-process provider reports the same host prerequisite.
+      for (const tool of ["inspect_apktool_client", "inspect_adb_client"]) {
+        const group = discovery.result.tool_availability.groups.find(
+          ({ names }) => names.includes(tool),
+        );
+        expect(group, tool).toMatchObject({
+          available: false,
+          reason: "provider_unavailable",
+          remediation: expect.stringContaining("Swift compiler configuration"),
+        });
+      }
       const failedProbe = await client.callTool({
         name: "inspect_apktool_client",
         arguments: {},

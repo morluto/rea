@@ -151,6 +151,14 @@ try {
       typed
         ? {
             ...process.env,
+            // Oxlint otherwise prefers tsrs-lint when both backends are installed.
+            OXLINT_TSGOLINT_PATH:
+              process.env.OXLINT_TSGOLINT_PATH ??
+              join(
+                import.meta.dirname,
+                "../../node_modules/.bin",
+                process.platform === "win32" ? "tsgolint.cmd" : "tsgolint",
+              ),
             // One worker reuses its checker caches across the full file queue.
             GOMAXPROCS: process.env.GOMAXPROCS ?? "1",
             GOMEMLIMIT: process.env.GOMEMLIMIT ?? "1024MiB",

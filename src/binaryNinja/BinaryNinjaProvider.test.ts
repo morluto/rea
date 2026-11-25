@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 import { readBinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
 import { BinaryNinjaProvider } from "./BinaryNinjaProvider.js";
 import { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
@@ -236,8 +237,7 @@ describe("Binary Ninja provider", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x0",
-        entryPointSource: "0x0",
+        rawLoad: rawLoadAtEntry("0x0"),
       }),
     ).toMatchObject({ code: "target_format_unsupported" });
     expect(

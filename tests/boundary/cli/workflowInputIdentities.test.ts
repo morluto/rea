@@ -353,10 +353,12 @@ cliTest(
     );
     const { client, tools, call } = await connectMcp(root);
     const first = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: left,
       format: "directory",
     });
     const second = await call("analyze_javascript_application", {
+      detail: "complete",
       input_path: right,
       format: "directory",
     });

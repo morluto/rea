@@ -16,6 +16,7 @@ import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { ok } from "../../src/domain/result.js";
 import { silentLogger } from "../../src/logger.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { completeApplicationAnalysis } from "../support/completeDetail.js";
 
 const runtimeFactory = vi.hoisted(() => ({
   provider: undefined as JavaScriptRuntimeObservationPort | undefined,
@@ -109,7 +110,7 @@ cliTest(
       },
     });
     const analyzed = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
+      arguments: completeApplicationAnalysis(root),
     });
     expect(analyzed.exitCode, analyzed.stderr).toBe(0);
     const analysis = parseEvidence(analyzed.json);

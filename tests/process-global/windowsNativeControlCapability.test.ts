@@ -120,7 +120,7 @@ it("reports a missing Windows native control as an unavailable capability", asyn
 
     const response = await client.callTool({
       name: "trace_web_source_location",
-      arguments: webSourceLocationArgs,
+      arguments: { ...webSourceLocationArgs, detail: "complete" },
     });
 
     const { error } = parseMcpToolError(response as CallToolResult);

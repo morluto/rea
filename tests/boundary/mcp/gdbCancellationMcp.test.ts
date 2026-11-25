@@ -1,6 +1,5 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -122,7 +121,11 @@ process.stdin.on("data", (chunk) => {
 
       const command = await client.callTool({
         name: "gdb_console",
-        arguments: { session_id: sessionId, command: "show version" },
+        arguments: {
+          detail: "complete",
+          session_id: sessionId,
+          command: "show version",
+        },
       });
       expect(parseMcpToolError(command)).toMatchObject({
         error: { code: "invalid_request" },
@@ -213,7 +216,11 @@ process.stdin.on("data", async (chunk) => {
       const command = client.callTool(
         {
           name: "gdb_console",
-          arguments: { session_id: sessionId, command: "shell sleep 600" },
+          arguments: {
+            detail: "complete",
+            session_id: sessionId,
+            command: "shell sleep 600",
+          },
         },
         { signal: controller.signal },
       );
@@ -237,7 +244,11 @@ process.stdin.on("data", async (chunk) => {
         parseMcpToolError(
           (await client.callTool({
             name: "gdb_console",
-            arguments: { session_id: sessionId, command: "info registers" },
+            arguments: {
+              detail: "complete",
+              session_id: sessionId,
+              command: "info registers",
+            },
           })) as CallToolResult,
         ).error,
       ).toMatchObject({
@@ -510,6 +521,7 @@ it("records partial GDB Evidence from an MCP command error", async () => {
     const response = await client.callTool({
       name: "gdb_console",
       arguments: {
+        detail: "complete",
         session_id: "00000000-0000-4000-8000-000000000001",
         command: "info registers",
       },
@@ -565,7 +577,11 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
     await client.connect(clientTransport);
     const command = await client.callTool({
       name: "gdb_console",
-      arguments: { session_id: ownerId, command: "shell writer" },
+      arguments: {
+        detail: "complete",
+        session_id: ownerId,
+        command: "shell writer",
+      },
     });
     expect(command.isError).toBe(true);
 

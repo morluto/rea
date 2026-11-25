@@ -563,7 +563,11 @@ export class BinaryNinjaOperationRunner {
       coverage:
         unattributed === 0
           ? { status: "complete" }
-          : { status: "partial", limitations: [limitation] },
+          : {
+              status: "partial",
+              limitations: [limitation],
+              limited_directions: ["callers"],
+            },
     };
   }
 
@@ -601,6 +605,7 @@ export class BinaryNinjaOperationRunner {
           ? { status: "complete" }
           : {
               status: "partial",
+              limited_directions: ["callees"],
               limitations: [
                 `${String(unnamed.size)} callee addresses have neither an analyzed function nor a symbol and are omitted.`,
               ],

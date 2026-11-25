@@ -36,25 +36,30 @@ export const inspectBinaryNinjaRegistration = async (
     registrationEnvironment:
       valid && path !== undefined ? { REA_BINARY_NINJA_MCP_CONFIG: path } : {},
     checks: [
-      {
-        name: "registration",
-        ok: valid,
-        code: valid
-          ? null
-          : path === undefined
-            ? "not_configured"
-            : "invalid_configuration",
-        detail: valid
-          ? "Binary Ninja MCP registration is valid. Server availability, the open file, and its identity are checked when analysis starts; no connection was made."
-          : parsed !== undefined && !parsed.ok
-            ? parsed.error.message
-            : "Binary Ninja MCP registration is not configured.",
-        remediation: valid
-          ? null
-          : "Set REA_BINARY_NINJA_MCP_CONFIG to your Binary Ninja GUI MCP registration JSON; see docs/providers/binary-ninja.md.",
-        classification:
-          path === undefined ? "missing_analysis_engine" : "config_drift",
-      },
+      valid
+        ? {
+            name: "registration",
+            ok: true,
+            code: null,
+            detail:
+              "Binary Ninja MCP registration is valid. Server availability, the open file, and its identity are checked when analysis starts; no connection was made.",
+            remediation: null,
+            classification: "healthy",
+          }
+        : {
+            name: "registration",
+            ok: false,
+            code:
+              path === undefined ? "not_configured" : "invalid_configuration",
+            detail:
+              parsed !== undefined && !parsed.ok
+                ? parsed.error.message
+                : "Binary Ninja MCP registration is not configured.",
+            remediation:
+              "Set REA_BINARY_NINJA_MCP_CONFIG to your Binary Ninja GUI MCP registration JSON; see docs/providers/binary-ninja.md.",
+            classification:
+              path === undefined ? "missing_analysis_engine" : "config_drift",
+          },
     ],
   };
 };

@@ -447,7 +447,10 @@ describe("Binary Ninja relationships, strings and dossiers", () => {
       procedure: "0x401100",
     });
     expect(callees.result).toEqual([]);
-    expect(callees.relationshipCoverage?.status).toBe("partial");
+    expect(callees.relationshipCoverage).toMatchObject({
+      status: "partial",
+      limited_directions: ["callees"],
+    });
   });
 
   it("combines data references with direct call sites and never claims completeness", async () => {

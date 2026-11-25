@@ -1,6 +1,9 @@
+import {
+  listenCutterServer as listen,
+  windowsDescriptorReaderFixture,
+} from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 
 import { join } from "node:path";
@@ -21,18 +24,6 @@ afterEach(async () => {
   server = undefined;
   directory = undefined;
 });
-
-const listen = async (
-  listener: ReturnType<typeof createServer>,
-): Promise<number> => {
-  await new Promise<void>((resolve) =>
-    listener.listen(0, "127.0.0.1", resolve),
-  );
-  const address = listener.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral IPv4 listener");
-  return address.port;
-};
 
 const bridgeServer = (
   currentFile: string | null,
@@ -114,15 +105,7 @@ const clientFor = (bridgeDirectory: string): CutterBridgeClient =>
     ? new CutterBridgeClient(
         { REA_CUTTER_BRIDGE_DIR: bridgeDirectory },
         {
-          windowsPrivateReader: {
-            verifyDirectory: () => true,
-            readDescriptor: (root, name, maxBytes) => {
-              const bytes = readFileSync(join(root, name));
-              if (bytes.byteLength > maxBytes)
-                throw new Error("Descriptor too large");
-              return bytes;
-            },
-          },
+          windowsPrivateReader: windowsDescriptorReaderFixture(),
         },
       )
     : new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: bridgeDirectory });

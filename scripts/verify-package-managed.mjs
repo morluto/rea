@@ -46,7 +46,13 @@ const verifyManagedArtifact = async ({
   const managedArtifact = JSON.parse(
     await commands.run(
       cli,
-      ["inspect-managed-artifact", managedPath, "--json"],
+      [
+        "inspect-managed-artifact",
+        "--detail",
+        "complete",
+        managedPath,
+        "--json",
+      ],
       environment,
     ),
   );
@@ -68,7 +74,13 @@ const verifyManagedMembers = async ({
   const managedMembers = JSON.parse(
     await commands.run(
       cli,
-      ["inspect-managed-members", managedPath, "--json"],
+      [
+        "inspect-managed-members",
+        "--detail",
+        "complete",
+        managedPath,
+        "--json",
+      ],
       environment,
     ),
   );

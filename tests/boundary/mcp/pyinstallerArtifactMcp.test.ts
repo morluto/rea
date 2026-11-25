@@ -22,6 +22,7 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../../fixtures/nativeCarrierProbes.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -217,14 +218,15 @@ mcpTest.for([false, true])(
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(inspected.structuredContent).normalized_result,
     );
     expect(inspection.subject.root_format).toBe("pyinstaller");
-    if (!opaque) expect(inspection.next_probes).toEqual([]);
+    // The archive has no package reader; its ELF carrier keeps its readers.
+    if (!opaque) expectCarrierProbes(inspection.next_probes, "elf");
     expect(
       inspection.substeps[0]?.evidence.normalized_result.coverage.status,
     ).toBe(opaque ? "unknown" : "complete");
@@ -341,7 +343,7 @@ mcpTest(
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inventory = artifactInspectionResultSchema.parse(
@@ -394,7 +396,7 @@ mcpTest(
     expect(opened.isError).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(inspected.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
@@ -512,7 +514,7 @@ mcpTest.for([
     ).not.toBe(true);
     const reply = await client.callTool({
       name: "inspect_artifact",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     expect(reply.isError).not.toBe(true);
     const inspection = artifactInspectionResultSchema.parse(
@@ -634,7 +636,7 @@ mcpTest.for([false, true])(
       ).not.toBe(true);
       const reply = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(reply.isError).not.toBe(true);
       const inventory = artifactInspectionResultSchema.parse(

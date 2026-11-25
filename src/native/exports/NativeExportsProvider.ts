@@ -1,8 +1,10 @@
+import { maxFileBytesReadBudget } from "../../domain/artifactReadBudget.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
-  imageFileSizeRemediation,
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -18,10 +20,10 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  DEFAULT_NATIVE_EXPORTS_READ_BYTES,
   MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
   type InspectNativeExportsInput,
 } from "../../domain/native/nativeExports.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -34,7 +36,6 @@ import {
   type NativeExportLimit,
   parseNativeExportsFromHandle,
 } from "../../domain/native/nativeExportParser.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_exports";
 const HEADER_PREFIX_BYTES = 4096;
@@ -44,16 +45,12 @@ export class NativeExportsProvider implements NativeExportsPort {
   readonly identity = NATIVE_EXPORTS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        NATIVE_EXPORTS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      NATIVE_EXPORTS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
@@ -65,8 +62,13 @@ export class NativeExportsProvider implements NativeExportsPort {
       return await this.#resources.run(async () => {
         const report = await withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
+          MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
           {
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+              DEFAULT_NATIVE_EXPORTS_READ_BYTES,
+            ),
             signal,
             resourceScope: this.#resources,
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
@@ -76,11 +78,7 @@ export class NativeExportsProvider implements NativeExportsPort {
           },
           (handle) =>
             parseNativeExportsFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               { path: input.path, sha256: handle.sha256, bytes: handle.size },
               () => yieldArtifactRead(signal),
             ),
@@ -136,7 +134,10 @@ const nativeExportsFailure = (
       path: input.path,
       description: "image",
       recognise: (failure) =>
-        failure instanceof BinaryResourceFailure
+        artifactReadBudgetConstraint(OPERATION, failure, {
+          max_file_bytes: input.max_file_bytes,
+        }) ??
+        (failure instanceof BinaryResourceFailure
           ? parseLimitConstraint(OPERATION, "capacity", failure, {
               path: input.path,
               ...limitRecovery(
@@ -144,30 +145,19 @@ const nativeExportsFailure = (
                 failure,
               ),
             })
-          : undefined,
+          : undefined),
       fileSize: (failure) =>
-        new AnalysisResourceConstraintError(
+        artifactFileCeilingConstraint(
           OPERATION,
-          "file-size",
-          failure.message,
-          { max_file_bytes: input.max_file_bytes },
+          failure,
           {
-            cause: failure,
-            retryable: false,
-            remediationAction: imageFileSizeRemediation(
-              input.max_file_bytes,
-              MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
-            ),
+            name: "The native exports whole-file ceiling",
+            bytes: MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES,
+          },
+          {
+            max_file_bytes: input.max_file_bytes,
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(NATIVE_EXPORTS_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   return projectStableArtifactFailure(

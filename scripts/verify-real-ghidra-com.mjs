@@ -17,7 +17,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import {
   buildDosComFixture,
   buildRejectedDosComFixture,
@@ -37,6 +37,7 @@ import {
   createVerifierMcpOwner,
   VerifierStdioTransport,
 } from "./lib/verifier-mcp-owner.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -49,13 +50,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "verify:ghidra:com prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 if (installation.status !== "available")
   throw new Error(
     `verify:ghidra:com prerequisite unavailable: ${JSON.stringify(installation)}`,
@@ -107,7 +102,9 @@ const transport = new StdioClientTransport({
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-com-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-com-proof", version: "1" }),
+);
 let stderr = "";
 let connected = false;
 let verifierRun;
@@ -406,7 +403,10 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(outside.comment.state, "unavailable");
     assert.match(outside.comment.remediation, /binary_session/u);
     assert.equal(
-      await call("procedure_address", { procedure: changes.name }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: changes.name,
+      }),
       fixture.entry,
     );
     assert.equal(
@@ -565,10 +565,12 @@ async function verifyRejectedCom() {
   await writeFile(rejectedPath, rejectedFixture.bytes, { mode: 0o600 });
   const fallbackOwner = createVerifierMcpOwner();
   workspaceFixture.releaseAfter(() => fallbackOwner.close());
-  const rejectedClient = new Client({
-    name: "rea-real-com-fallback",
-    version: "1",
-  });
+  const rejectedClient = completeEvidenceClient(
+    new Client({
+      name: "rea-real-com-fallback",
+      version: "1",
+    }),
+  );
   const rejectedTransport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -594,7 +596,7 @@ async function verifyRejectedCom() {
     const session = requireMcpLifecycleResult(opened, "open_binary");
     assert.equal(session.format, "dos-com");
     const response = await rejectedClient.callTool(
-      { name: "inspect_native_load_image", arguments: {} },
+      { name: "inspect_native_load_image", arguments: { detail: "complete" } },
       { timeout: 240000 },
     );
     const evidence = parseEvidence(

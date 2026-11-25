@@ -70,7 +70,6 @@ import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
   type ClientRegistrationStatus,
-  type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import {
@@ -82,6 +81,7 @@ import {
   doctorHealthy,
 } from "./DoctorDiagnostics.js";
 import {
+  clientRegistrationCheck,
   normalizeDoctorScope,
   scopeDoctorChecks,
   type DoctorScopeReport,
@@ -191,7 +191,11 @@ export interface DoctorReport {
   readonly healthy: boolean;
   readonly environment_healthy: boolean;
   readonly scope: DoctorScopeReport;
-  readonly scope_checks: readonly DoctorCheck[];
+  /**
+   * Checks that decide `healthy` in an explicit scope. Absent in audit-wide
+   * mode, where every check in `checks` is in scope.
+   */
+  readonly scope_checks?: readonly DoctorCheck[];
   readonly informational_checks: readonly DoctorCheck[];
   readonly hopperPath?: string;
   readonly staticProviderSettings?: StaticDoctorProviderSettings;
@@ -347,7 +351,9 @@ const inspectDoctor = async (
     healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
     environment_healthy: environmentHealthy,
     scope,
-    scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
+    ...(scope.mode === "audit-wide"
+      ? {}
+      : { scope_checks: scoped.scopeChecks }),
     informational_checks:
       scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
     ...(hopperPath === undefined ? {} : { hopperPath }),
@@ -490,7 +496,9 @@ const doctorReportWithCleanup = (
     healthy: false,
     environment_healthy: false,
     checks: [...report.checks, check],
-    scope_checks: [...report.scope_checks, check],
+    ...(report.scope_checks === undefined
+      ? {}
+      : { scope_checks: [...report.scope_checks, check] }),
   };
 };
 
@@ -541,10 +549,10 @@ const collectDoctorIdentity = async (
           ]),
       ...registrations
         .filter(
-          (registration): registration is UnhealthyClientRegistrationStatus =>
+          (registration) =>
             registration.state !== "aligned" && registration.state !== "manual",
         )
-        .map(registrationCheck),
+        .map(clientRegistrationCheck),
     ],
     value: {
       cli_package_version: PRODUCT_IDENTITY.packageVersion,
@@ -657,19 +665,6 @@ const skillIdentityCheck = (
     remediation: skillIdentityRemediation(identity),
   };
 };
-
-const registrationCheck = (
-  registration: UnhealthyClientRegistrationStatus,
-): DoctorCheck => ({
-  name: `registration:${registration.client}`,
-  ok: false,
-  classification: registration.state === "unknown" ? "unknown" : "config_drift",
-  detail: registration.config_path,
-  ...(registration.scope === undefined
-    ? {}
-    : { details: { scope: registration.scope } }),
-  remediation: registration.remediation,
-});
 
 /** A PATH launcher and the installation identity its host resolved it to. */
 export interface DoctorInstallationLauncher {

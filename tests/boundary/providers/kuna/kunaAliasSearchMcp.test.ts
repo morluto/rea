@@ -144,7 +144,7 @@ test("searches the aliases exact lookup accepts without listing them as procedur
   ).toBe("0x1334");
   const ambiguous = await client.callTool({
     name: "procedure_address",
-    arguments: { procedure: "audit_transform" },
+    arguments: { detail: "complete", procedure: "audit_transform" },
   });
   expect(parseMcpToolError(ambiguous).error.message).toContain(
     "0x1334, 0x133a",
@@ -247,7 +247,7 @@ test("omits a data entry an alias names while keeping the code entry that shares
   const { error } = parseMcpToolError(
     await client.callTool({
       name: "procedure_address",
-      arguments: { procedure: "global_count" },
+      arguments: { detail: "complete", procedure: "global_count" },
     }),
   );
   expect(error.recovery).toBeUndefined();
@@ -267,7 +267,7 @@ test("reports lookup failures with recovery for the selected target, not the inp
   ]) {
     const response = await client.callTool({
       name: "procedure_address",
-      arguments: { procedure },
+      arguments: { detail: "complete", procedure },
     });
     const { error } = parseMcpToolError(response);
     expect(error.code).toBe("invalid_request");

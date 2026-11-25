@@ -7,10 +7,12 @@ const { reply } = vi.hoisted(() => ({
 }));
 vi.mock("node:worker_threads", () => ({
   Worker: class extends EventEmitter {
-    constructor() {
-      super();
+    postMessage(): void {
       queueMicrotask(() => this.emit("message", reply.value));
     }
+
+    ref(): void {}
+    unref(): void {}
 
     terminate(): Promise<number> {
       return Promise.resolve(0);

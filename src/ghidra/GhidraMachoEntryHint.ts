@@ -1,7 +1,9 @@
 import { decodeMachoFixedName } from "../domain/apple/appleMachoNames.js";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
-import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
-import { readMachoLoadCommandTableHeader } from "../domain/apple/machoLoadCommands.js";
+import {
+  MAX_LOAD_COMMAND_BYTES,
+  readBoundedMachoLoadCommandTableHeader,
+} from "../domain/apple/machoLoadCommands.js";
 import {
   admitMachoSegmentCommand,
   machoSegmentHeaderSize,
@@ -52,13 +54,8 @@ export const ghidraMachoMainEntryCandidate = async (
     Math.min(MACHO_HEADER_BYTES, fileSize),
   );
   if (header === undefined) return undefined;
-  const table = readMachoLoadCommandTableHeader(header, fileSize);
-  if (
-    !table.ok ||
-    table.value === null ||
-    table.value.commandBytes > MAX_LOAD_COMMAND_BYTES
-  )
-    return undefined;
+  const table = readBoundedMachoLoadCommandTableHeader(header, fileSize);
+  if (!table.ok || table.value === null) return undefined;
   const commands = await readExactly(
     read,
     0,
@@ -73,6 +70,8 @@ export const ghidraMachoMainEntryCandidate = async (
       fileSize,
       MAX_LOAD_COMMAND_BYTES,
       MAX_HINT_RECORDS,
+      undefined,
+      table.value,
     );
   } catch (cause: unknown) {
     if (parseFailureFromCause(cause) !== undefined) return undefined;

@@ -19,7 +19,10 @@ import * as pythonRuntime from "./application/LinuxHopperPython.js";
 import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
-import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
+import {
+  createDoctorHostFixture,
+  scopeChecksOf,
+} from "./application/Doctor.fixture.js";
 import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./hopperPaths/MacHopperPaths.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
@@ -590,6 +593,7 @@ test("carries a validated REA_BINARY_NINJA_MCP_CONFIG into the provider registra
   expect(inspections?.find(({ id }) => id === "binary-ninja")).toMatchObject({
     configured: true,
     available: true,
+    checks: [{ name: "registration", ok: true, classification: "healthy" }],
   });
   expect(providerRegistrationEnvironment(inspections ?? [])).toMatchObject({
     REA_BINARY_NINJA_MCP_CONFIG: registration,
@@ -1310,7 +1314,7 @@ test.each([
       classification === "healthy" ? found : undefined,
     );
     expect(
-      report.scope_checks.filter(
+      scopeChecksOf(report).filter(
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toEqual(

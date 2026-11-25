@@ -39,9 +39,9 @@ const checkCliPublication = async (
   const args = [
     "inspect-api-contract",
     "./SDL 雪.graphql",
-    "--contractFormat",
+    "--contract-format",
     "graphql-sdl",
-    "--operationsPath",
+    "--operations-path",
     "./queries file.graphql",
   ];
   const cliComplete = await run({
@@ -345,9 +345,9 @@ cliTest(
       arguments: [
         "inspect-api-contract",
         path,
-        "--contractFormat",
+        "--contract-format",
         "graphql-sdl",
-        "--operationsPath",
+        "--operations-path",
         operations_path,
         "--json",
       ],
@@ -398,7 +398,7 @@ cliTest(
       arguments: [
         "inspect-api-contract",
         path,
-        "--contractFormat",
+        "--contract-format",
         "graphql-sdl",
         "--json",
       ],

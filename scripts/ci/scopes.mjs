@@ -23,6 +23,14 @@ const CAPTURE_SHARED_INPUTS = [
 const UBUNTU_ARCHIVE_ACTION =
   ".github/actions/ubuntu-archive/action.{yml,yaml}";
 
+const CLI_LAUNCHER_INPUTS = [
+  "scripts/rea.mjs",
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+];
+
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
@@ -161,6 +169,9 @@ const PATH_SCOPES = {
     "bridge/native/**",
     "bridge/process/**",
     "scripts/verify/apple/**",
+    "scripts/ci/darwin-gated-tests.mjs",
+    "scripts/ci/darwin-gate-candidates.mjs",
+    "tests/boundary/filesystem/ciDarwinGatedTests.test.ts",
     "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
     "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
     "tests/process-global/dmgCancellationReason.test.ts",
@@ -265,12 +276,9 @@ const PATH_SCOPES = {
     "scripts/prepare.mjs",
     "scripts/lib/release-proposal.*",
     "scripts/lib/release-pull-request.mjs",
-    "patches/release-please+17.3.0.patch",
+    "patches/release-please+17.11.2.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
-    "scripts/rea.mjs",
-    "scripts/lib/cli-process-environment.mjs",
-    "scripts/lib/runtime-admission.mjs",
-    "scripts/lib/runtime-admission.d.mts",
+    ...CLI_LAUNCHER_INPUTS,
     "install.sh",
     "src/config/**",
     "src/hopperPaths/**",
@@ -543,10 +551,7 @@ const PATH_SCOPES = {
     "src/contracts/cliCommandNames.ts",
     "src/contracts/toolContracts.ts",
     "src/contracts/toolEffects.ts",
-    "scripts/rea.mjs",
-    "scripts/lib/cli-process-environment.mjs",
-    "scripts/lib/runtime-admission.mjs",
-    "scripts/lib/runtime-admission.d.mts",
+    ...CLI_LAUNCHER_INPUTS,
     "src/process/**",
     "src/resources/SafeOutputTree.ts",
     "scripts/verify/javascript/recovery.mjs",
@@ -737,6 +742,14 @@ const PATH_SCOPES = {
   ],
 };
 
+// Only the broad PR matrix waits for static checks. Shared qualification and
+// selected PR tests can start as soon as their runtime artifact is available.
+export function testShardJob(event, tier, mode) {
+  return event === "pull_request" && tier === "fast" && mode === "full"
+    ? "test-shard-broad"
+    : "test-shard";
+}
+
 // Each lane owns its path inputs, selection policy, and required jobs. The
 // workflow stays explicit; contract tests bind it to this registry.
 const sameJobs = (paths, jobs, selection = {}) => ({
@@ -748,11 +761,11 @@ export const CI_LANES = {
   code: {
     paths: [],
     required: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     // A selected PR subset runs its source tests in the test-shard groups.
-    selectedTests: ["build", "test-shard"],
+    selectedTests: ["build", "test-shard", "test"],
   },
   runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
   package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {
