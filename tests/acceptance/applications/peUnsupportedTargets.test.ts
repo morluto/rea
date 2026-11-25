@@ -65,7 +65,7 @@ cliTest.for(cases)(
         expect(error).toMatchObject({
           details: {
             path,
-            format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+            failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
           },
         });
       } else {

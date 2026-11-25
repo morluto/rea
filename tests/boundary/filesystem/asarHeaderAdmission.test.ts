@@ -186,7 +186,7 @@ it("names the default header admission budget and its setting when source select
     translateArtifactFailure("inventory_artifact", inventoryFailure),
   );
   expect(inventory).toMatchObject({
-    code: "truncated",
+    code: "partial",
     message: recovery,
     remediation: { action: recovery },
     details: {
@@ -272,7 +272,7 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
         .runProviderAnalysis(archive, operation, {})
         .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
-      code: "truncated",
+      code: "partial",
       message: recovery,
       details: {
         maximum_header_bytes: headerBytes - 1,

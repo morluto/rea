@@ -1,5 +1,5 @@
 import { BinaryReader } from "../binaryContainer.js";
-import type { TruncatedExtent } from "../parseFailure.js";
+import type { TruncatedExtent } from "../targetFailure.js";
 import {
   hasJvmClassHeader,
   isJvmClassFile,

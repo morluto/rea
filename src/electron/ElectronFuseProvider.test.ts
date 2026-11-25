@@ -310,7 +310,7 @@ describe("Electron fuse reader resource boundaries", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatchObject({
-        _tag: "AnalysisMalformedTargetError",
+        _tag: "AnalysisTargetFailureError",
         path,
         failure: {
           kind: "malformed",
