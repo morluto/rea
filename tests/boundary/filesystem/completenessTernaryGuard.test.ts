@@ -17,6 +17,17 @@ it.each([
   // Parenthesized and type-asserted literals still count.
   ['const s = ok ? ("complete" as const) : "partial";', 1],
   ['const s = truncated ? "partial" : ("complete" satisfies string);', 1],
+  [
+    'const s = ok ? ("complete" as const) satisfies CoverageStatus : "partial";',
+    1,
+  ],
+  [
+    'const s = truncated ? "partial" : ("complete" as const) satisfies CoverageStatus;',
+    1,
+  ],
+  ['const s = ok ? ("complete" as const).length : "partial";', 0],
+  // Templates with multiple substitutions keep bracket depth balanced.
+  ['const s = skipped ? observed.get(`${prefix}:${name}`) : "complete";', 1],
   // Two separate ternaries in the same file.
   [
     'const a = x ? "complete" : "partial";\nconst b = y\n  ? "partial"\n  : "complete";',

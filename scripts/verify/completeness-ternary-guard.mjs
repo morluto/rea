@@ -67,64 +67,119 @@ const isCompleteLiteral = (source, token) => {
 };
 
 /**
- * Checks whether the token slice `[start, end)` represents a standalone
- * `"complete"` literal (allowing wrapping parentheses and trailing `as ...` /
- * `satisfies ...` assertions).
+ * Advances past the type expression immediately following `as` or `satisfies`,
+ * stopping at the first token at depth 0 that terminates the type (an unmatched
+ * closer, a delimiter `;` / `,` / `?` / `:`, a chained `as` / `satisfies`, or
+ * a binary expression continuation).
+ *
+ * @param {readonly import("./source-tokens.d.mts").SourceToken[]} tokens
+ * @param {number} start
+ * @param {number} end
+ * @returns {number}
+ */
+const skipTypeAnnotation = (tokens, start, end) => {
+  let index = start;
+  let bracketDepth = 0;
+  let angleDepth = 0;
+  while (index < end) {
+    const token = tokens[index];
+    if (token === undefined) break;
+    if (token.kind === "substitution-end") {
+      if (bracketDepth === 0) break;
+      bracketDepth -= 1;
+      if (token.opensSubstitution === true) bracketDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (token.opensSubstitution === true) {
+      bracketDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (token.kind === "punct" && OPENERS.has(token.text)) {
+      bracketDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (token.kind === "punct" && CLOSERS.has(token.text)) {
+      if (bracketDepth === 0) break;
+      bracketDepth -= 1;
+      index += 1;
+      continue;
+    }
+    if (bracketDepth === 0) {
+      if (isPunct(token, "<")) {
+        angleDepth += 1;
+        index += 1;
+        continue;
+      }
+      if (isPunct(token, ">") && angleDepth > 0) {
+        angleDepth -= 1;
+        index += 1;
+        continue;
+      }
+      if (
+        angleDepth === 0 &&
+        (isPunct(token, ";") ||
+          isPunct(token, ",") ||
+          isPunct(token, "?") ||
+          isPunct(token, ":") ||
+          isId(token, "as") ||
+          isId(token, "satisfies") ||
+          (token.kind === "punct" &&
+            token.text !== "." &&
+            EXPRESSION_CONTINUATIONS.has(token.text)))
+      ) {
+        break;
+      }
+    }
+    index += 1;
+  }
+  return index;
+};
+
+/**
+ * Checks whether the expression starting at `start` (bounded by `end`) is a
+ * standalone `"complete"` literal, unwrapping arbitrary combinations of
+ * parentheses and trailing `as ...` / `satisfies ...` assertions.
+ *
+ * When `bounded` is `true` (a ternary true branch `[qIndex + 1, colonIndex)`),
+ * the entire slice up to `end` must be consumed. When `bounded` is `false` (a
+ * ternary false branch starting at `colonIndex + 1`), the expression ends at
+ * the first non-continuation token once all opened parentheses are balanced.
  *
  * @param {string} source
  * @param {readonly import("./source-tokens.d.mts").SourceToken[]} tokens
  * @param {number} start
  * @param {number} end
+ * @param {boolean} bounded
  * @returns {boolean}
  */
-const isCompleteWhenTrueBranch = (source, tokens, start, end) => {
-  let left = start;
-  let right = end;
-  while (
-    left + 1 < right &&
-    isPunct(tokens[left], "(") &&
-    isPunct(tokens[right - 1], ")")
-  ) {
-    left += 1;
-    right -= 1;
-  }
-  if (!isCompleteLiteral(source, tokens[left])) return false;
-  if (left + 1 === right) return true;
-  const next = tokens[left + 1];
-  return isId(next, "as") || isId(next, "satisfies");
-};
-
-/**
- * Checks whether the expression starting at `start` (the token immediately
- * after `:`) is a standalone `"complete"` literal (allowing wrapping
- * parentheses and trailing `as ...` / `satisfies ...` assertions).
- *
- * @param {string} source
- * @param {readonly import("./source-tokens.d.mts").SourceToken[]} tokens
- * @param {number} start
- * @returns {boolean}
- */
-const isCompleteWhenFalseBranch = (source, tokens, start) => {
+const isWrappedCompleteLiteral = (source, tokens, start, end, bounded) => {
   let index = start;
   let openParens = 0;
-  while (isPunct(tokens[index], "(")) {
+  while (index < end && isPunct(tokens[index], "(")) {
     openParens += 1;
     index += 1;
   }
-  if (!isCompleteLiteral(source, tokens[index])) return false;
-  let after = index + 1;
-  if (isId(tokens[after], "as") || isId(tokens[after], "satisfies")) {
-    return true;
+  if (index >= end || !isCompleteLiteral(source, tokens[index])) return false;
+  index += 1;
+  while (index < end) {
+    if (openParens > 0 && isPunct(tokens[index], ")")) {
+      openParens -= 1;
+      index += 1;
+      continue;
+    }
+    if (isId(tokens[index], "as") || isId(tokens[index], "satisfies")) {
+      index = skipTypeAnnotation(tokens, index + 1, end);
+      continue;
+    }
+    break;
   }
-  while (openParens > 0 && isPunct(tokens[after], ")")) {
-    openParens -= 1;
-    after += 1;
-  }
-  if (openParens > 0) return false;
-  const next = tokens[after];
-  if (next === undefined) return true;
-  if (isId(next, "as") || isId(next, "satisfies")) return true;
-  return !EXPRESSION_CONTINUATIONS.has(next.text);
+  if (openParens !== 0) return false;
+  if (bounded) return index === end;
+  const next = tokens[index];
+  return next === undefined || !EXPRESSION_CONTINUATIONS.has(next.text);
 };
 
 /**
@@ -149,13 +204,14 @@ const isArrowReturnTypeColon = (tokens, colonIndex) => {
   for (let index = colonIndex + 1; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === undefined) continue;
-    if (token.opensSubstitution === true) {
-      bracketDepth += 1;
-      continue;
-    }
     if (token.kind === "substitution-end") {
       if (bracketDepth === 0) return false;
       bracketDepth -= 1;
+      if (token.opensSubstitution === true) bracketDepth += 1;
+      continue;
+    }
+    if (token.opensSubstitution === true) {
+      bracketDepth += 1;
       continue;
     }
     if (token.kind === "punct" && OPENERS.has(token.text)) {
@@ -200,13 +256,14 @@ const isArrowReturnTypeColon = (tokens, colonIndex) => {
   for (let index = arrowIndex + 1; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === undefined) continue;
-    if (token.opensSubstitution === true) {
-      exprDepth += 1;
-      continue;
-    }
     if (token.kind === "substitution-end") {
       if (exprDepth === 0) return false;
       exprDepth -= 1;
+      if (token.opensSubstitution === true) exprDepth += 1;
+      continue;
+    }
+    if (token.opensSubstitution === true) {
+      exprDepth += 1;
       continue;
     }
     if (token.kind === "punct" && OPENERS.has(token.text)) {
@@ -270,14 +327,25 @@ export const adhocCompletenessTernaryCount = (content) => {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === undefined) continue;
+    if (token.kind === "substitution-end") {
+      while (
+        ternaryStack.length > 0 &&
+        /** @type {{ depth: number }} */ (ternaryStack.at(-1)).depth >= depth
+      ) {
+        ternaryStack.pop();
+      }
+      depth = Math.max(0, depth - 1);
+      if (token.opensSubstitution === true) {
+        depth += 1;
+        sawExtendsAtDepth[depth] = false;
+        extendsAngleDepth[depth] = 0;
+      }
+      continue;
+    }
     if (token.opensSubstitution === true) {
       depth += 1;
       sawExtendsAtDepth[depth] = false;
       extendsAngleDepth[depth] = 0;
-      continue;
-    }
-    if (token.kind === "substitution-end") {
-      depth = Math.max(0, depth - 1);
       continue;
     }
     if (token.kind === "punct" && OPENERS.has(token.text)) {
@@ -348,8 +416,20 @@ export const adhocCompletenessTernaryCount = (content) => {
       ) {
         ternaryStack.pop();
         if (
-          isCompleteWhenTrueBranch(content, tokens, open.qIndex + 1, index) ||
-          isCompleteWhenFalseBranch(content, tokens, index + 1)
+          isWrappedCompleteLiteral(
+            content,
+            tokens,
+            open.qIndex + 1,
+            index,
+            true,
+          ) ||
+          isWrappedCompleteLiteral(
+            content,
+            tokens,
+            index + 1,
+            tokens.length,
+            false,
+          )
         ) {
           count += 1;
         }
