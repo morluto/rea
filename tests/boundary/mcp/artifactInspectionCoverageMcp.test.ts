@@ -84,7 +84,7 @@ describe.skipIf(process.platform === "win32")(
         expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
         const inspected = await client.callTool({
           name: "inspect_artifact",
-          arguments: {},
+          arguments: { detail: "complete" },
         });
         expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
         const parent = parseEvidence(inspected.structuredContent);

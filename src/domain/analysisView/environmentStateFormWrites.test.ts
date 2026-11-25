@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
-import {
   BULK_EMPTY_TAG_ROWS,
   CREATION_ORDER_ROWS,
   DERIVED_TEXT_ROWS,
@@ -21,18 +17,10 @@ import {
   CONFIRMED_RENAME_ROWS,
   UNPLACED_CREATE_ROWS,
 } from "../../../tests/fixtures/environmentStateFormWrites.js";
-import { environmentStateViewOf } from "../../../tests/fixtures/environmentStateWrites.js";
+import { planOf } from "../../../tests/fixtures/environmentStateWrites.js";
 import { mergedCreatePlan } from "./environmentStateWriteCreateCalls.js";
 import { resortedMembers } from "./environmentStateWriteExplain.js";
 import type { WriteBody } from "./environmentStateWriteRules.js";
-
-const planOf = (rows: readonly TimedCaptureRow[], tool: string) => {
-  const plan = environmentStateViewOf(timedCaptureEvidence(rows)).writes.find(
-    (candidate) => candidate.tool === tool,
-  );
-  if (plan === undefined) throw new Error(`No plan for ${tool}`);
-  return plan;
-};
 
 const BY_NAME = {
   rule: "sorted",

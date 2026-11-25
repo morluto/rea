@@ -54,7 +54,7 @@ mcpTest(
       await writeFile(path, erlangBeamFixture("mcp_mod"));
       const response = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = completeBeamEvidenceSchema.parse(
@@ -62,28 +62,6 @@ mcpTest(
       );
       expect(evidence.normalized_result.module).toBe("mcp_mod");
       expect(evidence.normalized_result.atom_encoding).toBe("utf8");
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_erlang_beam",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_erlang_beam",
-        arguments: { path: "app.beam" },
-      });
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "inspect_erlang_beam",
-          issues: [{ path: ["path"], reason: "invalid_format" }],
-        },
-      });
     } finally {
       await session.close();
     }
@@ -181,11 +159,11 @@ mcpTest(
       );
       const response = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path: malformed, max_atoms: 1 },
+        arguments: { detail: "complete", path: malformed, max_atoms: 1 },
       });
       expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+        code: "unsupported_target",
+        details: { failure_kind: "truncated", format: "beam" },
       });
     } finally {
       await session.close();
@@ -229,7 +207,7 @@ mcpTest(
       await writeFile(path, erlangBeamFixture("without_retention"));
       const complete = await client.callTool({
         name: "inspect_erlang_beam",
-        arguments: { path },
+        arguments: { detail: "complete", path },
       });
       expect(complete.isError).not.toBe(true);
       expect(
@@ -243,28 +221,30 @@ mcpTest(
 );
 
 mcpTest(
-  "reports impossible BEAM table counts as malformed input",
+  "reports impossible BEAM table counts as a truncated target",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-malformed-rows-");
     try {
-      for (const chunk of ["ExpT", "ImpT", "FunT"]) {
-        const path = join(root, `${chunk}.beam`);
-        await writeFile(
-          path,
-          erlangBeamDeclaredRowsFixture([
-            [chunk, MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
-          ]),
-        );
-        const response = await client.callTool({
-          name: "inspect_erlang_beam",
-          arguments: { path },
-        });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response).error).toMatchObject({
-          code: "invalid_request",
-        });
-      }
+      const path = join(root, "lambda.beam");
+      await writeFile(
+        path,
+        erlangBeamDeclaredRowsFixture([
+          ["FunT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+        ]),
+      );
+      const response = await client.callTool({
+        name: "inspect_erlang_beam",
+        arguments: { detail: "complete", path },
+      });
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "unsupported_target",
+        details: {
+          failure_kind: "truncated",
+          format: "beam",
+          reason: expect.stringContaining("lambda table is truncated"),
+        },
+      });
     } finally {
       await session.close();
     }

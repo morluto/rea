@@ -144,21 +144,34 @@ export function safeSha(value) {
     ? value.toLowerCase()
     : null;
 }
+export function staticCheckArtifactName(name, runAttempt) {
+  if (
+    typeof name !== "string" ||
+    !Number.isSafeInteger(runAttempt) ||
+    runAttempt < 1
+  )
+    return null;
+  return runAttempt === 1 ? name : `${name}-attempt-${runAttempt}`;
+}
+
 export function selectStaticCheckArtifact(
   page,
   run,
   runAttempt,
   name = STATIC_EVIDENCE_ARTIFACTS["Static checks"],
 ) {
-  if (runAttempt !== 1) return null;
+  const attemptName = staticCheckArtifactName(name, runAttempt);
   if (
+    attemptName === null ||
     !Array.isArray(page?.artifacts) ||
     !Number.isSafeInteger(page.total_count) ||
     page.total_count !== page.artifacts.length ||
     page.artifacts.length >= 100
   )
     return null;
-  const matches = page.artifacts.filter((artifact) => artifact.name === name);
+  const matches = page.artifacts.filter(
+    (artifact) => artifact.name === attemptName,
+  );
   if (matches.length !== 1) return null;
   const [artifact] = matches;
   if (

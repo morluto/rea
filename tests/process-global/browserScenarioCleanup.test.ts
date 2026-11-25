@@ -12,7 +12,7 @@ import type {
 import { PlaywrightBrowserScenarioProvider } from "../../src/browser/PlaywrightBrowserScenarioProvider.js";
 import { PlaywrightScenarioSession } from "../../src/browser/PlaywrightScenarioSession.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "../../src/browser/PlaywrightScenarioBrowser.js";
-import { registerBrowserScenarioCommands } from "../../src/cliBrowserScenarioCommands.js";
+import { registerBrowserScenarioCommands } from "../../src/cli/browserScenarioCommands.js";
 import { sanitizeBrowserUrl } from "../../src/domain/browserObservation.js";
 import {
   browserScenarioSchema,
@@ -34,6 +34,7 @@ import {
 import { ok } from "../../src/domain/result.js";
 import { phaseGate } from "../support/lifecycleHarness.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
+import { COMPLETE_DETAIL } from "../support/completeDetail.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
@@ -151,7 +152,12 @@ const serveScenario = async () => {
   let stdout = "";
   let exitCode = 0;
   await cli.serve(
-    ["capture-browser-scenario", JSON.stringify(scenario), "--json"],
+    [
+      "capture-browser-scenario",
+      ...COMPLETE_DETAIL,
+      JSON.stringify(scenario),
+      "--json",
+    ],
     {
       env: {},
       exit: (code) => {

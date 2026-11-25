@@ -51,6 +51,7 @@ import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { sortByProcedureAddress } from "./selection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { reportedSystemCode } from "../../kernel/reportedSystemCode.js";
 
 export interface ExportIdentity {
   readonly targetSha256: string | null;
@@ -82,7 +83,7 @@ export const classifyOutputPath = async (
     (cause: unknown) => cause,
   );
   if (!isDirectoryStat(listed)) {
-    if (resume && nodeCode(listed) === "ENOENT")
+    if (resume && reportedSystemCode(listed) === "ENOENT")
       return err(
         decompileInputError(
           "output_directory",
@@ -470,7 +471,7 @@ const commitFunctionFile = async (
         linked,
       ),
     };
-  if (nodeCode(linked) !== "EEXIST") return { status: "io" };
+  if (reportedSystemCode(linked) !== "EEXIST") return { status: "io" };
   const existing = await resources
     .hashFile(finalPath)
     .catch((cause: unknown) => cause);
@@ -509,7 +510,7 @@ const missingOrRejected = async (
         "The output path exists and is not a directory.",
       ),
     );
-  if (nodeCode(listed) !== "ENOENT")
+  if (reportedSystemCode(listed) !== "ENOENT")
     return err(
       decompileInputError(
         "output_directory",
@@ -537,7 +538,7 @@ const createPrivateDirectory = async (
   );
   if (created !== undefined)
     return err(
-      nodeCode(created) === "EEXIST"
+      reportedSystemCode(created) === "EEXIST"
         ? decompileInputError(
             "output_directory",
             "Output directory already exists. Pass resume to continue an export that matches this target and analysis profile.",
@@ -577,7 +578,7 @@ const prepareFunctionsDirectory = async (
   const created = await mkdir(directory, { mode: 0o700 }).catch(
     (cause: unknown) => cause,
   );
-  if (created !== undefined && nodeCode(created) !== "EEXIST")
+  if (created !== undefined && reportedSystemCode(created) !== "EEXIST")
     return err(
       decompileInputError(
         "output_directory",
@@ -693,7 +694,7 @@ interface OpenedJournal {
 const JOURNAL_READ_CHUNK_BYTES = 64 * 1024;
 
 const journalReadError = (cause: unknown): AnalysisInputError =>
-  nodeCode(cause) === "ENOENT"
+  reportedSystemCode(cause) === "ENOENT"
     ? decompileInputError(
         "output_directory",
         "Resume requires decompile-journal.jsonl in the output directory. An export stopped before its journal was written has no functions to keep; choose a new output directory, or remove this one if it is yours.",
@@ -1182,11 +1183,3 @@ const isStat = (
   "isSymbolicLink" in value &&
   typeof value.isDirectory === "function" &&
   typeof value.isSymbolicLink === "function";
-
-const nodeCode = (cause: unknown): string | undefined =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  typeof cause.code === "string"
-    ? cause.code
-    : undefined;

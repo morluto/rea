@@ -7,7 +7,6 @@ import {
 } from "../domain/parseFailure.js";
 import {
   Reader,
-  Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipReader,
   type Entry,
@@ -18,6 +17,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  malformedArtifact,
   decodeZipEntryText,
   zipEntryNameLimitations,
   typedZipFailure,
@@ -43,6 +43,7 @@ import {
 } from "../domain/nuget/nupkg.js";
 import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import { Budget } from "../domain/budget.js";
+import type { PrefixedByteSource } from "../domain/byteSource.js";
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
 export const NUPKG_LIMITATIONS = {
@@ -148,7 +149,10 @@ const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
       `NuGet package ZIP uses an unsupported layout: ${typed.message}`,
       { cause: typed },
     );
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
+  if (
+    typed instanceof ArtifactReaderFailure &&
+    typed.parseFailure !== undefined
+  )
     throw malformedInput(NUGET_NUPKG_FORMAT, typed.message, { cause: typed });
   throw cause;
 };
@@ -514,18 +518,11 @@ const findNuspec = (
   return { member: undefined, source: undefined };
 };
 
-/** Random-access source over one verified .nupkg descriptor. */
-export interface NugetNupkgRandomAccessSource {
-  readonly prefix: Uint8Array;
-  readonly size: number;
-  readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
-}
-
 class RandomAccessZipReader extends Reader<undefined> {
-  readonly #source: NugetNupkgRandomAccessSource;
+  readonly #source: PrefixedByteSource;
   readonly #path: string;
 
-  constructor(source: NugetNupkgRandomAccessSource, path: string) {
+  constructor(source: PrefixedByteSource, path: string) {
     super(undefined);
     this.#source = source;
     this.#path = path;
@@ -538,8 +535,8 @@ class RandomAccessZipReader extends Reader<undefined> {
   ): Promise<Uint8Array> {
     const readBytes = Math.min(length, this.size - index);
     if (readBytes < 0)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "zip",
         `ZIP archive is malformed: read at ${String(index)} extends beyond the ${String(this.size)}-byte archive`,
       );
     const bytes = await this.#source.readRange(index, readBytes);
@@ -555,34 +552,27 @@ class RandomAccessZipReader extends Reader<undefined> {
 
 /** Decode one bounded NuGet .nupkg without restore, execution, or network. */
 export const parseNugetNupkg = async (
-  source: Uint8Array | NugetNupkgRandomAccessSource,
+  source: PrefixedByteSource,
   artifact: { path: string; sha256: string; bytes: number },
   input: InspectNugetNupkgInput,
   signal?: AbortSignal,
 ): Promise<NugetNupkg> => {
-  const isBuffer = source instanceof Uint8Array;
-  const sourceLength = isBuffer ? source.length : source.size;
-  if (sourceLength !== artifact.bytes)
+  if (source.size !== artifact.bytes)
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected artifact length disagrees with the retained bytes.",
     );
-  const signatureBytes = isBuffer ? source : source.prefix;
-  if (!hasZipSignature(signatureBytes))
+  if (!hasZipSignature(source.prefix))
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected file is not a ZIP archive (NuGet .nupkg).",
     );
   const reader = new ZipReader(
-    isBuffer
-      ? new Uint8ArrayReader(source)
-      : new RandomAccessZipReader(source, artifact.path),
+    new RandomAccessZipReader(source, artifact.path),
     ZIP_READER_OPTIONS,
   );
-  const readLocalRange: (at: number, length: number) => Promise<Uint8Array> =
-    isBuffer
-      ? (at, length) => Promise.resolve(source.subarray(at, at + length))
-      : (at, length) => source.readRange(at, length);
+  const readLocalRange = (at: number, length: number): Promise<Uint8Array> =>
+    source.readRange(at, length);
   const limitations: string[] = [...BASE_LIMITATIONS];
   const zipAbort = signal === undefined ? undefined : new AbortController();
   const zipSignal = zipAbort?.signal;

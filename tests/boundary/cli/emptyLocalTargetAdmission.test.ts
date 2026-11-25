@@ -1,6 +1,7 @@
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
@@ -32,7 +33,7 @@ const registry = () => {
       }) as const,
   );
   const cli = createCommandCli();
-  registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
+  registerArtifactCommands(cli, silentLogger, runProviderAnalysis, {});
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
   registerManagedCommands(cli, silentLogger, {
@@ -49,14 +50,7 @@ const registry = () => {
     },
   );
   const serve = async (argv: readonly string[]): Promise<unknown> => {
-    let stdout = "";
-    await cli.serve([...argv, "--json"], {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
-    });
+    const { stdout } = await serveInProcessCli(cli, [...argv, "--json"]);
     return JSON.parse(stdout);
   };
   return {

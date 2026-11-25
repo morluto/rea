@@ -33,7 +33,7 @@ export const INSPECT_EVM_INTERFACE_CONTRACT = {
   kind: "artifact-provider",
   requiresActiveTarget: true,
   description:
-    "Infer interface candidates from explicit local flat EVM bytecode using bundled EVMole 0.9.3/WASM; select raw or hex encoding. Linux x64 profile; EOF-style EF00 containers are unsupported. Returns selectors, offsets, arguments and mutability candidates, not verified deployment or runtime behavior. Bytecode kind, hardfork and discovery completeness stay unknown. Default complete includes bytecode/full Evidence; detail summary retains it for inspect_analysis_view kind evm, facets functions/bytecode_hex/stdout/stderr, via parent_evidence_id. timeout_ms and producer_limits are independent of each other and worker heap; tighter inherited limits still apply. No target execution, chain/RPC access, signature lookup, wallet action or broadcast.",
+    "Infer interface candidates from explicit local flat EVM bytecode using the bundled EVMole WASM engine. Select raw or hex encoding. Linux x64 profile; EOF-style EF00 containers are unsupported. Returns selectors, offsets, arguments and mutability candidates, not verified deployment or runtime behavior. Bytecode kind, hardfork and discovery completeness stay unknown. Default complete includes bytecode/full Evidence; detail summary retains it for inspect_analysis_view kind evm, facets functions/bytecode_hex/stdout/stderr, via parent_evidence_id. timeout_ms and producer_limits are independent of each other and worker heap; tighter inherited limits still apply. No target execution, chain/RPC access, signature lookup, wallet action or broadcast.",
   inputSchema: evmInterfaceInspectionInputSchema,
   outputSchema: analysisDetailOutputSchemaOf(
     evmInterfaceSchema,

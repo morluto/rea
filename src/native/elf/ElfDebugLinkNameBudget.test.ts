@@ -28,7 +28,7 @@ import {
   elfDebugLinkFixture,
 } from "./ElfDebugLink.fixture.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import type { ElfNoteByteSource } from "./ElfNoteParser.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const SHF_COMPRESSED = 0x800n;
 const DECODED_NAME_BYTES = 1024 * 1024;
@@ -94,7 +94,7 @@ const inputFor = (maxFileBytes: number) =>
 const parseImage = (
   image: Buffer,
   input: ReturnType<typeof inputFor>,
-  readRange?: ElfNoteByteSource["readRange"],
+  readRange?: PrefixedByteSource["readRange"],
 ) =>
   parseElfDebugLinkFromHandle(
     elfDebugLinkByteSource(image, readRange),

@@ -9,6 +9,7 @@ import type { ScreenJudge } from "../domain/desktop/appTaskScreen.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { RetainedCommandCleanup } from "../process/RetainedCommandCleanup.js";
 import {
@@ -84,15 +85,15 @@ export class ScreenJudgeProcess {
     if (!cleanup.verified) {
       const pending = [...this.#retained].map((item) => item.failure);
       if (pending.length === 1) throw pending[0];
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         AGENTENV_PROVIDER,
-        cleanup.resources,
+        pending,
         { reason: cleanup.reason },
         {
           operation: "check_build_task",
           remediationAction: "Close the build computer to retry judge cleanup.",
         },
-      ).bindCleanupDependencies(pending);
+      );
     }
     if (signal.aborted) throw cancelledBy("check_build_task", signal);
     const python = await agentEnvInterpreter(

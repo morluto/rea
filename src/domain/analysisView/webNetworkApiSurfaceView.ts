@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
+import { unsupportedTarget } from "../analysisErrorCore.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -36,9 +36,10 @@ export const projectWebNetworkApiSurfaceView = (
 ) => {
   if (view.kind !== "api-surface")
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         "inspect_analysis_view",
         parent.evidenceId,
+        "evidence",
         `View ${view.kind} is unsupported for parent operation ${parent.operation}; api-surface requires inspect_web_network_capture.`,
       ),
     );

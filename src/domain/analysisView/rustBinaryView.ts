@@ -8,7 +8,7 @@ import {
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -25,7 +25,7 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
@@ -145,14 +145,8 @@ export const projectRustBinaryView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "rust")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "Rust Evidence supports summary, rust and cyclonedx views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Rust Evidence supports summary, rust and cyclonedx views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof rustBinaryViewRequestSchema>
@@ -217,8 +211,12 @@ export const projectRustBinaryView = (
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
-    const matchPackage = (row: (typeof metadata.packages)[number]) =>
-      (names?.has(row.name) ?? true) && (versions?.has(row.version) ?? true);
+    const matchPackage =
+      names === undefined && versions === undefined
+        ? undefined
+        : (row: (typeof metadata.packages)[number]) =>
+            (names?.has(row.name) ?? true) &&
+            (versions?.has(row.version) ?? true);
     const projectPackage = (
       row: (typeof metadata.packages)[number],
       index: number,
@@ -263,8 +261,12 @@ export const projectRustBinaryView = (
     view.from_indices === undefined ? undefined : new Set(view.from_indices);
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
-  const matchEdge = (row: (typeof metadata.dependency_edges)[number]) =>
-    (from?.has(row.from_index) ?? true) && (to?.has(row.to_index) ?? true);
+  const matchEdge =
+    from === undefined && to === undefined
+      ? undefined
+      : (row: (typeof metadata.dependency_edges)[number]) =>
+          (from?.has(row.from_index) ?? true) &&
+          (to?.has(row.to_index) ?? true);
   const projectEdge = (
     row: (typeof metadata.dependency_edges)[number],
     index: number,

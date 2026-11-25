@@ -4,7 +4,7 @@ import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.
 import type {
   DenoStandaloneEntryMetadata,
   DenoStandaloneMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {

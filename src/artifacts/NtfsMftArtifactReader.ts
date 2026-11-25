@@ -1,9 +1,7 @@
 import type { Readable } from "node:stream";
 
-import {
-  ntfsMftMetadataSchema,
-  type ArtifactFormatMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import { ntfsMftMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createMftDecoder,
@@ -11,6 +9,7 @@ import {
 } from "../domain/windows/ntfsMft.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
 } from "../resources/index.js";
@@ -75,21 +74,33 @@ export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactForm
       }) as AsyncIterable<Buffer>) {
         this.assertOpen(signal);
         const written = decoder.value.write(chunk);
-        if (!written.ok) throw this.#failure(written.error);
+        if (!written.ok) throw await this.#stableFailure(written.error, signal);
       }
     const image = await decoder.value.finish((offset, length) =>
       readFileHandleRange(handle, offset, length, () =>
         this.assertOpen(signal),
       ),
     );
-    if (!image.ok) throw this.#failure(image.error);
+    if (!image.ok) throw await this.#stableFailure(image.error, signal);
     return image.value;
   }
 
+  /**
+   * A decoder failure blames the bytes only once the carrier is shown to be
+   * unchanged; a carrier that shrank or changed reports that instead.
+   */
+  async #stableFailure(
+    failure: RegionDecodeFailure,
+    signal: AbortSignal | undefined,
+  ): Promise<ArtifactReaderFailure> {
+    await this.verifyCarrier(signal);
+    return this.#failure(failure);
+  }
+
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
+    return failure.kind === "malformed"
+      ? malformedArtifact(
+          "ntfs-mft",
           `$MFT stream is malformed: ${failure.message}`,
         )
       : new ArtifactReaderFailure(

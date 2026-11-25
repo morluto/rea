@@ -51,6 +51,7 @@ export const registerCoreBinaryCommands = (
   registerDecompileCommand(cli, logger, run);
   registerDecompileDirectoryCommand(cli, logger, run);
   registerSearchCommand(cli, logger, run);
+  registerProcedureInventoryCommand(cli, logger, run);
   registerContractBinaryCommands(cli, logger, run);
 };
 
@@ -260,7 +261,9 @@ const registerDecompileCommand = (
 };
 
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
-const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
+export const isJavaScriptApplicationPath = async (
+  path: string,
+): Promise<boolean> => {
   try {
     const canonical = await realpath(path);
     if (canonical.toLowerCase().endsWith(".asar")) return true;
@@ -272,6 +275,27 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
     void cause;
     return false;
   }
+};
+
+/** The complete procedure inventory, which function matching consumes. */
+const registerProcedureInventoryCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  run: ReturnType<typeof runDirectOnTarget>,
+): void => {
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "list_procedures"),
+    {
+      description:
+        "List every analyzed procedure as list_procedures Evidence, the inventory match-native-functions accepts. search --kind procedures returns a filtered search_procedures result instead.",
+      sessionTarget: program,
+      evidenceDelivery: true,
+      omit: noDocument,
+    },
+    run,
+  );
 };
 
 const registerSearchCommand = (

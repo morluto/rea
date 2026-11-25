@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 } from "../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -53,8 +54,6 @@ const dmgUrl =
 const packageBytes = Buffer.from("fixture package");
 const sha1 = (bytes: Uint8Array) =>
   createHash("sha1").update(bytes).digest("hex");
-const sha256 = (bytes: Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
 const credentialed =
   "https://fixture-user:fixture-secret@downloads.hopperapp.com/redirected";
 

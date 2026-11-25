@@ -194,7 +194,7 @@ export const readKunaConfiguration = (
 ): Result<KunaConfiguration, KunaConfigurationFailure> => {
   const command = environment.REA_KUNA_COMMAND;
   if (command === undefined || command.length === 0)
-    return failure("not_configured", KUNA_COMMAND_REMEDIATION);
+    return failure("not_configured", "REA_KUNA_COMMAND is not set.");
   if (!isAbsolute(command))
     return failure(
       "open_options_invalid",

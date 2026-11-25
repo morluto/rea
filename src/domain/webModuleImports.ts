@@ -1,3 +1,4 @@
+import { appendToMapList } from "./appendToMapList.js";
 import type { Node } from "@babel/types";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
@@ -181,6 +182,9 @@ const traverseModuleImports = (
         case "ImportExpression":
           record("dynamic-import", node.source);
           break;
+        default:
+          // Other AST nodes declare no module import.
+          break;
       }
     },
   });
@@ -235,19 +239,6 @@ interface CapturedModuleIndex {
   readonly responseByUrl: Map<string, number[]>;
 }
 
-const pushIndex = (
-  map: Map<string, number[]>,
-  key: string,
-  index: number,
-): void => {
-  let bucket = map.get(key);
-  if (bucket === undefined) {
-    bucket = [];
-    map.set(key, bucket);
-  }
-  bucket.push(index);
-};
-
 const buildCapturedModuleIndex = (
   scripts: readonly ExportedWebScript[],
 ): CapturedModuleIndex => {
@@ -255,9 +246,9 @@ const buildCapturedModuleIndex = (
   const responseByUrl = new Map<string, number[]>();
   for (let i = 0; i < scripts.length; i += 1) {
     const script = scripts[i]!;
-    pushIndex(byUrl, script.url, i);
+    appendToMapList(byUrl, script.url, i);
     if (script.source.kind === "scenario-response")
-      pushIndex(responseByUrl, script.url, i);
+      appendToMapList(responseByUrl, script.url, i);
   }
   return { byUrl, responseByUrl };
 };
@@ -379,10 +370,3 @@ export const createCapturedModuleMatcher = (
     return matchIndexed(url, scripts, index);
   };
 };
-
-/** Match reported URLs without collapsing query or module fragment identity. */
-export const matchCapturedModules = (
-  url: string,
-  scripts: readonly ExportedWebScript[],
-): CapturedModuleCandidate[] =>
-  scripts.length === 0 ? [] : matchLinear(url, scripts);

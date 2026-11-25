@@ -5,7 +5,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
@@ -21,6 +21,7 @@ import {
   MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
   MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
   MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
+  type ElfDependencies,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
@@ -43,28 +44,25 @@ export class ElfDependenciesProvider {
   readonly identity = ELF_DEPENDENCIES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        ELF_DEPENDENCIES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      ELF_DEPENDENCIES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
     input: InspectElfDependenciesInput,
     options?: { readonly signal?: AbortSignal },
   ) {
+    let completed: ElfDependencies | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<ElfDependencies>(
           input.path,
           input.max_file_bytes,
           {
@@ -74,15 +72,14 @@ export class ElfDependenciesProvider {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (value) => {
+              completed = value;
+            },
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
             const parsed = await parseElfDependenciesFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -101,7 +98,7 @@ export class ElfDependenciesProvider {
         return ok(result);
       });
     } catch (cause) {
-      return err(elfDependenciesFailure(cause, input, observed));
+      return err(elfDependenciesFailure(cause, input, observed, completed));
     }
   }
 }
@@ -116,6 +113,7 @@ const elfDependenciesFailure = (
   cause: unknown,
   input: InspectElfDependenciesInput,
   observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed?: ElfDependencies,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -192,6 +190,7 @@ const elfDependenciesFailure = (
         ),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

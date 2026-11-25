@@ -1,14 +1,15 @@
 import { decodeStrictUtf8 } from "../../../domain/strictUtf8.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
-import { LosslessNumber, isSafeNumber } from "lossless-json";
+import { recordedJsonNumber } from "../../../domain/exactJsonNumber.js";
+import { LosslessNumber } from "lossless-json";
 import type {
   ArtifactEntry,
   ArtifactReader,
 } from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../../../domain/analysisErrorCore.js";
 import {
   isParseLimit,
@@ -46,9 +47,7 @@ const RETAINED_TRACE_TYPES: ReadonlySet<string> = new Set([
 
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 const number = (value: unknown) =>
-  value instanceof LosslessNumber && isSafeNumber(value.value)
-    ? Number(value.value)
-    : null;
+  value instanceof LosslessNumber ? recordedJsonNumber(value.value) : null;
 
 const ensureTraceHeapHeadroom = (
   inputBytes: number,
@@ -144,9 +143,10 @@ class TraceStreamRead {
     }
     const version = number(raw.version);
     if (version !== null && version !== 10)
-      throw new AnalysisUnsupportedTargetError(
+      throw unsupportedTarget(
         PLAYWRIGHT_TRACE_OPERATION,
         inventory.artifact.path,
+        "playwright-trace",
         "Only Playwright trace version 10 is supported.",
       );
     if (version !== 10) {

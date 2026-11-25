@@ -99,6 +99,7 @@ export const labviewReadDialect = (path: string): ProviderFailureDialect => ({
     fileSize: (_failure, details) =>
       translateArtifactFailure(
         OPERATION,
+        path,
         artifactFixedLimitFailure(
           INPUT_ALLOWANCE,
           `The selected artifact exceeds the ${String(MAX_BYTES)}-byte LabVIEW input allowance: ${path}`,
@@ -107,7 +108,7 @@ export const labviewReadDialect = (path: string): ProviderFailureDialect => ({
         ),
       ),
   },
-  unclassified: (cause) => translateArtifactFailure(OPERATION, cause),
+  unclassified: (cause) => translateArtifactFailure(OPERATION, path, cause),
 });
 
 /** One parser or walk limit, with the fixed allowance that owns its recovery. */

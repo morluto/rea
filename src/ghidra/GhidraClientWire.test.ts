@@ -209,6 +209,7 @@ it("refuses an invalid request seed without sending or leaving a pending reply",
     const result = await request;
     if (result.ok) throw new Error("Expected a configuration refusal");
     expect(result.error.kind).toBe("admission");
+    expect(result.error.configurationFailure).toBe(refusal);
     expect(result.error.cause).toBe(refusal);
   } finally {
     pending.failAll(() => ok(null));

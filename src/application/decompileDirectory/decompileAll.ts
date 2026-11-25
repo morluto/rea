@@ -38,6 +38,7 @@ import { executeFact } from "../AnalysisOperationFacts.js";
 import { addressCoordinate } from "../../domain/native/addressCoordinate.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { inlineLinkedSessionLimitations } from "../binary/SessionLimitationContext.js";
 import {
   classifyOutputPath,
   DecompileExport,
@@ -107,15 +108,40 @@ interface PublishState {
 }
 
 /**
+ * The directory outlives the session, so its files, journal and index keep the
+ * full text of session limitations a result only references.
+ */
+const withInlineSessionLimitations = (
+  session: WorkflowAnalysisPort,
+): WorkflowAnalysisPort => ({
+  ...(session.resourceScope === undefined
+    ? {}
+    : { resourceScope: session.resourceScope }),
+  execute: async (operation, parameters, options) => {
+    const executed = await session.execute(operation, parameters, options);
+    return executed.ok
+      ? ok(inlineLinkedSessionLimitations(executed.value))
+      : executed;
+  },
+  ...(session.recordItemLimitations === undefined
+    ? {}
+    : {
+        recordItemLimitations: (operation, execution) =>
+          session.recordItemLimitations?.(operation, execution),
+      }),
+});
+
+/**
  * Write one pseudocode file per selected function and return only a manifest.
  * Files already committed stay in place when a later function fails or the
  * caller cancels.
  */
 export const decompileAll = async (
-  analysis: WorkflowAnalysisPort,
+  sessionAnalysis: WorkflowAnalysisPort,
   input: DecompileDirectoryInput,
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
+  const analysis = withInlineSessionLimitations(sessionAnalysis);
   const bounds = validateDecompileBounds(input);
   if (!bounds.ok) return bounds;
   const placement = await classifyOutputPath(

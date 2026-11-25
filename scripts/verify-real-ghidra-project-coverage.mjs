@@ -14,7 +14,7 @@ import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { createAnalysisProfile } from "../dist/domain/analysisProfile.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import {
   VerifierFixture,
@@ -28,6 +28,7 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 export async function verifyProjectCoverage(run) {
   const installDir = process.env.GHIDRA_INSTALL_DIR;
@@ -35,13 +36,10 @@ export async function verifyProjectCoverage(run) {
     throw new Error(
       "Set GHIDRA_INSTALL_DIR to an absolute Ghidra installation path.",
     );
-  const installation = await inspectVerifierGhidraInstallation({
-    environment: process.env,
+  const installation = await inspectVerifierGhidraFromEnvironment(
+    process.env,
     installDir,
-    ...(process.env.JAVA_HOME === undefined
-      ? {}
-      : { javaHome: process.env.JAVA_HOME }),
-  });
+  );
   if (installation.status !== "available")
     throw new Error(`Ghidra is unavailable: ${JSON.stringify(installation)}`);
   if (process.platform === "win32")
@@ -86,10 +84,12 @@ export async function verifyProjectCoverage(run) {
     return files.flat().sort((a, b) => a[0].localeCompare(b[0]));
   }
   async function connect(environment) {
-    const client = new Client({
-      name: "selected-project-coverage-verifier",
-      version: "1",
-    });
+    const client = completeEvidenceClient(
+      new Client({
+        name: "selected-project-coverage-verifier",
+        version: "1",
+      }),
+    );
     const transport = new VerifierStdioTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],

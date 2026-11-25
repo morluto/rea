@@ -2,6 +2,7 @@ import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js
 import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,7 +30,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
-  { id: "fixture", name: "Fixture analysis provider", version: "1" },
+  createFixtureProviderIdentity(),
   { fixture: true },
 );
 
