@@ -364,10 +364,7 @@ export class LeandecMcpClient {
         if (cause != null) this.#transportFailure("rpc", cause.message);
       });
     } catch (cause: unknown) {
-      this.#transportFailure(
-        "rpc",
-        errorMessage(cause),
-      );
+      this.#transportFailure("rpc", errorMessage(cause));
     }
   }
 

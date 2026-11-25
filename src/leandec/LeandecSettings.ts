@@ -141,8 +141,7 @@ export const resolveLeandecSettings = (
     return {
       ok: false,
       code: "open_options_invalid",
-      reason:
-        `LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and ${String(MAX_NODE_TIMER_DELAY_MS)}; LEANDEC_AUTO_ANALYZE must be 0 or 1.`,
+      reason: `LEANDEC_CALL_TIMEOUT_MS, LEANDEC_IMPORT_TIMEOUT_MS, LEANDEC_INVENTORY_LIMIT and LEANDEC_STRING_LIMIT must be decimal integers between 1 and ${String(MAX_NODE_TIMER_DELAY_MS)}; LEANDEC_AUTO_ANALYZE must be 0 or 1.`,
     };
   return {
     ok: true,
