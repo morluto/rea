@@ -7,7 +7,13 @@ import { fileURLToPath } from "node:url";
 import { createEvidence } from "#dist/domain/evidence.js";
 import { unknownTarget } from "#dist/domain/targetIdentity.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   correlatePspSymbols,
   parsePspSymbols,
@@ -198,6 +204,7 @@ assert.throws(
   /hex address/u,
 );
 // Exercise the documented command boundary, not just exported functions.
+const verification = createVerifierRun();
 const fixture = await VerifierFixture.open({
   prefix: "rea-psp-symbol-check-",
   private: false,
@@ -206,6 +213,12 @@ const scratch = fixture.path;
 try {
   const commands = await createVerifierCommands();
   fixture.releaseAfter(() => commands.close());
+  fixture.releaseAfter(async () => {
+    const completed = await completeVerifierRun(verification);
+    // Windows command cleanup is verified by the native job owner.
+    if (process.platform !== "win32")
+      assertVerifierCleanupComplete(completed.process_lineage);
+  });
   const exec = (file, args, maxBuffer = 4 * 1024 * 1024) =>
     commands.exec(file, args, { timeout: 15_000, maxBuffer });
   const assertRefusal = (result, message) =>
@@ -370,9 +383,12 @@ try {
       await assertRefusal(pipe(source, bytes), /Input exceeds size limit/u);
     }
   }
-} finally {
-  await fixture.release();
+} catch (cause) {
+  await withVerifierCleanup(() => {
+    throw cause;
+  }, [() => fixture.keep("PSP symbol verification failed")]);
 }
+await fixture.release();
 console.log(
   "PSP_SYMBOL_CORRELATION_SOURCE_PASS: formats, address spaces, bounded output, UTF-8, CLI and identity refusals",
 );
