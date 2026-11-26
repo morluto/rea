@@ -166,7 +166,7 @@ export abstract class PositionalArtifactReader<
       );
       // A changed carrier is reported as changed before cached facts refuse
       // the entry's content.
-      const { handle } = await this.verifyCarrier(signal);
+      const carrier = await this.verifyCarrier(signal);
       this.assertOpen(signal);
       const refusal = this.contentRefusal(stored);
       if (refusal !== undefined) throw refusal;
@@ -175,14 +175,15 @@ export abstract class PositionalArtifactReader<
       const lifecycle = this.#lifecycle.member(signal);
       const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
-        stored.declaredSize === 0
+        this.entrySource(stored, carrier, lifecycle) ??
+        (stored.declaredSize === 0
           ? Readable.from([])
-          : readFileHandleChunks(handle, {
+          : readFileHandleChunks(carrier.handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
               signal: streamSignal,
               cancellationFailure,
-            });
+            }));
       const output = this.#entryStream(stored, lifecycle);
       ownArtifactStream(source, output, {
         scope: this.#scope,
@@ -217,6 +218,22 @@ export abstract class PositionalArtifactReader<
           `Encrypted ${this.#label} member is unsupported: ${entry.path}`,
         )
       : undefined;
+  }
+
+  /**
+   * The bytes to serve for an entry that is not one stored carrier range,
+   * such as a decoded segment; undefined serves the stored range. The source
+   * must honor the member's signal and report cancellation through its
+   * `cancellationFailure`. The base reader owns the returned stream like any
+   * other member: close waits for it, and its length is checked against the
+   * entry's `declaredSize` after the carrier is rechecked.
+   */
+  protected entrySource(
+    _entry: Entry,
+    _carrier: StableRegularFileDescriptor,
+    _member: ArtifactMemberLifecycle,
+  ): Readable | undefined {
+    return undefined;
   }
 
   /** Recheck the carrier's identity and borrow its descriptor. */

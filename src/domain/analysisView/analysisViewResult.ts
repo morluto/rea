@@ -276,6 +276,7 @@ import { nativeProcedureReferencesSummaryViewResultSchema } from "./summarySchem
 import { nativeValueTraceSummaryViewResultSchema } from "./summarySchemas/nativeValueTraceSummarySchema.js";
 import { nugetNupkgSummaryViewResultSchema } from "./summarySchemas/nugetNupkgSummarySchema.js";
 import { objdumpSummaryViewResultSchema } from "./summarySchemas/objdumpSummarySchema.js";
+import { ociImageLayoutSummaryViewResultSchema } from "./summarySchemas/ociImageLayoutSummarySchema.js";
 import { pcapCaptureSummaryViewResultSchema } from "./summarySchemas/pcapCaptureSummarySchema.js";
 import {
   playwrightTracePageViewResultSchema,
@@ -312,6 +313,10 @@ import {
   apktoolResourcesPageViewResultSchema,
   apktoolResourcesSummaryViewResultSchema,
 } from "./summarySchemas/apktoolResourcesSummarySchemas.js";
+import {
+  artifactExtractionPageViewResultSchema,
+  artifactExtractionSummaryViewResultSchema,
+} from "./summarySchemas/artifactExtractionSummarySchemas.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
 import {
   webSourceLocationMatchesViewResultSchema,
@@ -378,6 +383,7 @@ export {
   nativeValueTraceSummaryViewResultSchema,
   nugetNupkgSummaryViewResultSchema,
   objdumpSummaryViewResultSchema,
+  ociImageLayoutSummaryViewResultSchema,
   pcapCaptureSummaryViewResultSchema,
   playwrightTracePageViewResultSchema,
   playwrightTraceSummaryViewResultSchema,
@@ -402,6 +408,8 @@ export {
   webExecutionSummaryViewResultSchema,
   apktoolResourcesPageViewResultSchema,
   apktoolResourcesSummaryViewResultSchema,
+  artifactExtractionPageViewResultSchema,
+  artifactExtractionSummaryViewResultSchema,
   webNetworkCaptureSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationSummaryViewResultSchema,
@@ -415,6 +423,7 @@ const viewResultBase = {
     "inspect_python_pyc",
     "inspect_nuget_nupkg",
     "inspect_vsix_package",
+    "inspect_oci_image_layout",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
@@ -713,6 +722,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   webPagePageViewResultSchema,
   webExecutionPageViewResultSchema,
   apktoolResourcesPageViewResultSchema,
+  artifactExtractionPageViewResultSchema,
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
@@ -827,8 +837,10 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     webExecutionSummaryViewResultSchema,
     apktoolResourcesSummaryViewResultSchema,
     androidReferencesSummaryViewResultSchema,
+    artifactExtractionSummaryViewResultSchema,
     nugetNupkgSummaryViewResultSchema,
     vsixPackageSummaryViewResultSchema,
+    ociImageLayoutSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,

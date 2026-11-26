@@ -5,6 +5,7 @@ import { projectWebPageView } from "./webPageView.js";
 import { projectWebExecutionView } from "./webExecutionView.js";
 import { projectApktoolResourcesView } from "./apktoolResourcesView.js";
 import { projectAndroidReferencesView } from "./androidReferencesView.js";
+import { projectArtifactExtractionView } from "./artifactExtractionView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -24,6 +25,7 @@ import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
 import { projectVsixPackageView } from "./vsixPackageView.js";
+import { projectOciImageLayoutView } from "./ociImageLayoutView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
@@ -214,6 +216,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_python_pyc", projectPythonPycView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),
   retain("inspect_vsix_package", projectVsixPackageView),
+  retain("inspect_oci_image_layout", projectOciImageLayoutView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),
   retain("inspect_with_objdump", projectCommandObservationView),
@@ -256,6 +259,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("observe_web_execution", projectWebExecutionView),
   retain("decode_android_resources", projectApktoolResourcesView),
   retain("trace_android_references", projectAndroidReferencesView),
+  retain("extract_artifact", projectArtifactExtractionView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 

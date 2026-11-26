@@ -102,6 +102,7 @@ import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
 import { VSIX_PACKAGE_PROVIDER_IDENTITY } from "../vsix/VsixPackageProviderIdentity.js";
+import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "../oci/OciImageLayoutProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -524,6 +525,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(VSIX_PACKAGE_PROVIDER_IDENTITY, {
         group: "VSIX_PACKAGE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  ociImageLayout: {
+    providers: [
+      providerBinding(OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY, {
+        group: "OCI_IMAGE_LAYOUT_TOOL_CONTRACTS",
       }),
     ],
   },
