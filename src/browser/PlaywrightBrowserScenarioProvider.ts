@@ -64,7 +64,6 @@ import {
 
 const OPERATION = "capture_browser_scenario" as const;
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [
@@ -524,7 +523,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
           PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
           (pending.cleanupResources ?? []).map(redactText),
           {
-            reason: redactText(errorMessage(cause)),
+            reason: redactText(browserCleanupObservation(cause).reason),
           },
           { operation: OPERATION, cause },
         );

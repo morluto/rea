@@ -10,7 +10,10 @@ import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import {
+  BrowserObservationError,
+  browserCleanupObservation,
+} from "../domain/browserObservationError.js";
 import type {
   RetainBrowserScenarioCleanup,
   BrowserScenarioSessionPort,
@@ -141,7 +144,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           throw new BrowserObservationError(OPERATION, "cleanup_failed", {
             cause,
             cleanup: {
-              reason: this.redactError(cause),
+              reason: this.redactError(
+                new Error(browserCleanupObservation(cause).reason),
+              ),
               resources: this.cleanupLease.cleanupResources ?? [],
             },
           });
@@ -586,7 +591,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           : new BrowserObservationError(OPERATION, "cleanup_failed", {
               cause,
               cleanup: {
-                reason: this.redactError(cause),
+                reason: this.redactError(
+                  new Error(browserCleanupObservation(cause).reason),
+                ),
                 resources: this.cleanupLease.cleanupResources ?? [],
               },
             });
