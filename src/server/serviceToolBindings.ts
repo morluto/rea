@@ -11,6 +11,7 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { compareAndroidDeclarations } from "../application/android/AndroidDeclarationComparisonService.js";
 import {
   androidJniInspectionInputSchema,
   androidPackageInspectionInputSchema,
@@ -27,7 +28,10 @@ import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
+import {
+  recordEvidenceSources,
+  retainAnalysisResultSources,
+} from "../application/investigation/recordEvidenceSources.js";
 import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
 import { OFFLINE_INSPECTION_TOOL_BINDINGS } from "./offlineInspectionToolBindings.js";
@@ -279,6 +283,22 @@ const SERVICE_TOOL_BINDINGS = {
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
+    compare_android_declarations: {
+      admission: "sdk",
+      run: async (input, options) => {
+        const result = retainAnalysisResultSources(
+          "compare_android_declarations",
+          retention.recordEvidence,
+          await compareAndroidDeclarations(
+            input,
+            options,
+            retention.evidenceById,
+          ),
+          { sourceOwner: "caller" },
+        );
+        return result.ok ? ok(result.value.evidence) : result;
+      },
+    },
     ...contractServiceBindings(service, [
       "search_android_classes",
       "trace_android_references",

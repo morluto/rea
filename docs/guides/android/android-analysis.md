@@ -38,6 +38,70 @@ One-shot CLI output remains complete by default. Select `--detail summary` with
 a linked view. Older servers require the existing complete request after schema discovery. APK authenticity and runtime behavior remain
 unverified.
 
+## Compare retained declarations
+
+`compare_android_declarations` compares two complete `inspect_android_package`
+Evidence records without reopening either APK or starting JADX. Select `left`
+and `right` explicitly; these labels do not establish version order. Different
+package names are allowed and remain visible beside both versions, APK digests,
+engine identities, original requested paths and canonical subject paths.
+
+```json
+{
+  "left": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<left inspection ID>"
+  },
+  "right": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<right inspection ID>"
+  }
+}
+```
+
+Use those complete IDs in the current MCP session, or supply complete inline
+Evidence. When starting from a summary or page, use its
+`normalized_result.parent_evidence_id`; the comparison rejects the view itself
+and returns that recovery ID. For portable CLI use:
+
+```sh
+rea compare-android-declarations request.json --evidence-bundle observations.json --json
+```
+
+The command reads only the selected request and authenticated bundle. Omit
+`--evidence-bundle` when the request contains both complete records inline.
+The derived result links both exact source records, which remain available for
+full manifest inspection and export.
+Complete mutable source records are admitted against available heap before
+authentication, cloning or hashing, including their raw results and full manifest
+facts. Retained records reuse only the Evidence owner's authenticated immutable
+snapshot; Android payload validation remains separate. A capacity refusal names
+the selected source rather than attempting an unsafe copy.
+
+`sdk` compares non-null `min_sdk` and `target_sdk` strings exactly; null remains
+unknown and numeric/resource expressions are not reinterpreted. `permissions`
+preserves both original arrays and reports distinct names in
+`observed_only_left`, `observed_only_right` and `observed_both`. Their coverage is
+unknown: the existing source contract does not declare permission-list
+completeness. These are retained name observations, not established permission
+additions/removals; duplicate counts, `maxSdkVersion`, flags and permission tag
+subtypes are not compared.
+
+Components match only by unique `(kind, resolved name)` in complete inventories.
+`components.changes` reports additions, removals, changed selected fields and
+unknown groups, retaining every ambiguous occurrence, source array index,
+declaration ordinal and manifest location. Unchanged groups appear only in the
+summary. Compared fields are exported declaration/default, permission value and
+source, and provider authorities as sets; original authority order is retained.
+Exported declarations and their producer-reported defaults are compared as
+separate facts: an unknown default alone establishes neither a change nor
+equality. A known declaration difference can still establish a change, while
+unknown applicable facts keep comparison coverage partial. An omitted declaration
+with a known default remains distinct from an explicit equal boolean.
+Partial declarations, duplicate names and incomplete inventories remain unknown;
+unseen items cannot prove absence. Unchanged describes these selected facts,
+not the whole manifest, installation policy, runtime exposure or compatibility.
+
 ## Manifest component projection
 
 `inspect_android_package` also returns a static inventory of declared
