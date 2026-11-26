@@ -11,10 +11,14 @@ paths:
 
 # Keep the default query suite and all production roots, including bridge/,
 # install.sh, runtime scripts, release controllers, and GitHub Actions.
-# Exclude test inputs at extraction time so they cannot taint production callers.
+# Exclude test inputs and non-shipped local/CI verifiers at extraction time so
+# they cannot taint production callers or emit local-input path-injection noise.
 paths-ignore:
   - tests
   - scripts/fixtures
+  - scripts/verify
+  - "scripts/verify-real-*.mjs"
+  - "scripts/verify-*-client.mjs"
   - "**/*.test.*"
   - "**/*.fixture.*"
   - "**/test_*.py"

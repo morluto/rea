@@ -98,8 +98,16 @@ export class ProgressiveToolCatalog {
   }
 
   private rankMatches(query: string | undefined): readonly string[] {
-    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
-    return rankCatalogToolMatches(this.tools.values(), words);
+    const words = [
+      ...new Set(
+        (query ?? "").trim().toLowerCase().split(/\s+/u).filter(Boolean),
+      ),
+    ];
+    return rankCatalogToolMatches(
+      this.tools.values(),
+      words,
+      words.length === 0 ? "all" : "any",
+    );
   }
 
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {

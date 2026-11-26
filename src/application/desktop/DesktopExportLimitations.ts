@@ -15,9 +15,7 @@ import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 
 /** The limitation naming files the desktop Trash held at the seed; none when it held none. */
-const trashedFilesLimitation = (
-  files: readonly string[],
-): string | undefined =>
+const trashedFilesLimitation = (files: readonly string[]): string | undefined =>
   files.length === 0
     ? undefined
     : `The desktop Trash held ${String(files.length)} file(s) at the seed checkpoint, which are not seeded: ${files.map((home) => `~/${home}`).join(", ")}. Restore one the task needs and capture again.`;

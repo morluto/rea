@@ -5,8 +5,7 @@ import {
   TOOL_FAMILY_IDS,
   type ToolFamilyId,
 } from "../contracts/toolFamilyIds.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { optionalSettingParser } from "./optionalSetting.js";
 
 // Agents pay context for every advertised tool schema. Scoping a registration
 // to the families a workflow needs keeps the unneeded schemas out of the
@@ -38,21 +37,8 @@ export const mcpToolFamiliesSchema = z
 export type McpToolFamilies = z.infer<typeof mcpToolFamiliesSchema>;
 
 /** Parse the advertised tool-family scope without loading the server. */
-export const parseMcpToolFamilies = (
-  value: string | undefined,
-): Result<McpToolFamilies | undefined, ConfigurationError> => {
-  if (value === undefined) return ok(undefined);
-  const parsed = mcpToolFamiliesSchema.safeParse(value);
-  return parsed.success
-    ? ok(parsed.data)
-    : err(
-        new ConfigurationError(toolFamiliesConstraint, {
-          settings: [
-            {
-              setting: "REA_MCP_TOOL_FAMILIES",
-              constraint: toolFamiliesConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseMcpToolFamilies = optionalSettingParser(
+  "REA_MCP_TOOL_FAMILIES",
+  mcpToolFamiliesSchema,
+  toolFamiliesConstraint,
+);

@@ -1,3 +1,4 @@
+import { bufferByteSource } from "../../domain/byteSource.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import {
@@ -14,7 +15,7 @@ import {
   peImportNameAtRva,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
-import { parsePeImports, parsePeImportsFromHandle } from "./PeImportParser.js";
+import { parsePeImportsFromHandle } from "./PeImportParser.js";
 
 const input = inspectPeImportsInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -26,9 +27,17 @@ const artifact = (bytes: Buffer) => ({
   bytes: bytes.length,
 });
 
+const parse = (bytes: Buffer, options = input, signal?: AbortSignal) =>
+  parsePeImportsFromHandle(
+    bufferByteSource(bytes),
+    artifact(bytes),
+    options,
+    signal,
+  );
+
 it("reads named PE32+ imports and a pefile-compatible import hash", async () => {
   const bytes = peImportImage({ bits: 64 });
-  const report = await parsePeImports(bytes, artifact(bytes), input);
+  const report = await parse(bytes);
   expect(report.format).toBe("pe32-plus");
   expect(report.bits).toBe(64);
   expect(report.imports).toHaveLength(1);
@@ -68,7 +77,7 @@ it.each(["standard", "delay"] as const)(
     // reads descriptors until the null one.
     for (const size of [descriptorBytes, 0]) {
       bytes.writeUInt32LE(size, directoryAt + 4);
-      const report = await parseWithPositionalParity(bytes);
+      const report = await parseWithBothPrefixes(bytes);
       const rows = kind === "standard" ? report.imports : report.delay_imports;
       const directory =
         kind === "standard"
@@ -88,8 +97,6 @@ it.each(["standard", "delay"] as const)(
   },
 );
 
-const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
-
 const parseFromSource = (
   bytes: Buffer,
   readRange: (offset: number, length: number) => Promise<Buffer> = async (
@@ -103,7 +110,7 @@ const parseFromSource = (
     input,
   );
 
-const parseWithPositionalParity = async (bytes: Buffer) => {
+const parseWithBothPrefixes = async (bytes: Buffer) => {
   const report = await parseFromSource(bytes);
   expect(report).toEqual(await parse(bytes));
   return report;
@@ -141,7 +148,7 @@ it.each([
 ] as const)(
   "retains %s rows before a descriptor mapping gap after %s rows",
   async (kind, retained) => {
-    const report = await parseWithPositionalParity(
+    const report = await parseWithBothPrefixes(
       peImportDirectoryMappingStops(kind, retained),
     );
     const directory =
@@ -177,7 +184,7 @@ it.each([
 ] as const)(
   "stops the %s descriptor walk at RVA %s",
   async (kind, rva, retained, invalid) => {
-    const report = await parseWithPositionalParity(
+    const report = await parseWithBothPrefixes(
       peImportDirectoryAtRva(kind, rva),
     );
     const directory =
@@ -205,7 +212,7 @@ it.each([4096, 4097])(
   "reports a %i-byte DLL name at the fixed read boundary",
   async (length) => {
     const name = "n".repeat(length);
-    const report = await parseWithPositionalParity(
+    const report = await parseWithBothPrefixes(
       peImportImage({
         sectionBytes: 8192,
         dlls: [{ name, functions: [] }],
@@ -228,7 +235,7 @@ it.each([4096, 4097])(
 );
 
 it("retains later imports when a function name exceeds the read allowance", async () => {
-  const report = await parseWithPositionalParity(
+  const report = await parseWithBothPrefixes(
     peImportImage({
       sectionBytes: 8192,
       dlls: [
@@ -392,7 +399,7 @@ it("hashes unmapped ordinals as pefile's ord<decimal> fallback", async () => {
       },
     ],
   });
-  const report = await parsePeImports(bytes, artifact(bytes), input);
+  const report = await parse(bytes);
   expect(report.format).toBe("pe32");
   expect(report.imports[0]?.functions[0]).toMatchObject({
     name: null,
@@ -521,7 +528,7 @@ it("reports each discontiguous file span a descriptor array consumes", async () 
     { offset: 0x428, bytes: 64 },
   ]);
   // Second section bytes move to file offset 0x400 + 0x800 + 0x200.
-  const importSplit = await parseWithPositionalParity(
+  const importSplit = await parseWithBothPrefixes(
     peImportImage({ ...options, splitAt: 20 }),
   );
   expect(importSplit.import_directory?.locations).toEqual([
@@ -531,7 +538,7 @@ it("reports each discontiguous file span a descriptor array consumes", async () 
   expect(importSplit.delay_import_directory?.locations).toEqual([
     { offset: 0xe14, bytes: 64 },
   ]);
-  const delaySplit = await parseWithPositionalParity(
+  const delaySplit = await parseWithBothPrefixes(
     peImportImage({ ...options, splitAt: 72 }),
   );
   expect(delaySplit.import_directory?.locations).toEqual([
@@ -626,7 +633,7 @@ it("reads delay-load descriptors separately from the import hash", async () => {
       },
     ],
   });
-  const report = await parsePeImports(bytes, artifact(bytes), input);
+  const report = await parse(bytes);
   expect(report.delay_imports).toHaveLength(1);
   expect(report.delay_imports[0]?.name).toBe("ADVAPI32.dll");
   expect(report.delay_imports[0]?.functions[0]?.name).toBe("RegOpenKeyExW");
@@ -635,7 +642,7 @@ it("reads delay-load descriptors separately from the import hash", async () => {
 
 it("reports an image without an import directory as importing nothing", async () => {
   const bytes = peWithoutImportTableFixture();
-  const report = await parsePeImports(bytes, artifact(bytes), input);
+  const report = await parse(bytes);
   expect(report.import_directory).toBeNull();
   expect(report.imports).toEqual([]);
   expect(report.coverage.status).toBe("complete");
@@ -652,9 +659,8 @@ it("fails closed when the DLL budget is exhausted", async () => {
     ],
   });
   await expect(
-    parsePeImports(
+    parse(
       bytes,
-      artifact(bytes),
       inspectPeImportsInputSchema.parse({
         path: "/artifacts/app.exe",
         max_dlls: 1,
@@ -679,9 +685,8 @@ it("fails closed when the function budget is exhausted", async () => {
     ],
   });
   await expect(
-    parsePeImports(
+    parse(
       bytes,
-      artifact(bytes),
       inspectPeImportsInputSchema.parse({
         path: "/artifacts/app.exe",
         max_functions: 1,
@@ -725,7 +730,7 @@ it("computes a pefile import hash for oleaut32 ordinal names", async () => {
       },
     ],
   });
-  const report = await parsePeImports(bytes, artifact(bytes), input);
+  const report = await parse(bytes);
   expect(report.imports[0]?.functions[0]).toMatchObject({
     name: null,
     ordinal: 2,
@@ -743,7 +748,7 @@ it("records delay-load virtual-address descriptors as unsupported", async () => 
     ],
     delayAttributes: 0,
   });
-  const report = await parsePeImports(bytes, artifact(bytes), input);
+  const report = await parse(bytes);
   expect(report.delay_imports).toEqual([]);
   expect(report.coverage.status).toBe("partial");
   expect(report.issues[0]?.code).toBe("unsupported_form");
@@ -785,12 +790,7 @@ it("yields during long table walks and stops when the caller cancels", async () 
     ],
   });
   const controller = new AbortController();
-  const pending = parsePeImports(
-    bytes,
-    artifact(bytes),
-    input,
-    controller.signal,
-  );
+  const pending = parse(bytes, input, controller.signal);
   let ticks = 0;
   const tick = setImmediate(() => {
     ticks += 1;
@@ -887,7 +887,7 @@ it.each(["function", "DLL"])(
       splitAt: 0x1000,
       dlls: [{ name: "KERNEL32.dll", functions }],
     });
-    const report = await parseWithPositionalParity(bytes);
+    const report = await parseWithBothPrefixes(bytes);
     expect(report.imports[0]?.name).toBe("KERNEL32.dll");
     expect(report.imports[0]?.functions.map((row) => row.name)).toEqual(
       functions.map((row) => row.name),

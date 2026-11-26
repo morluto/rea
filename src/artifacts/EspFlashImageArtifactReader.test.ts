@@ -1,5 +1,7 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -58,12 +60,6 @@ const root = (
 ) =>
   snapshot.occurrences.find(({ logical_path }) => logical_path === ".")
     ?.format_metadata;
-
-const list = async (reader: EspFlashImageArtifactReader) => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
-};
 
 describe("ESP flash layout inventory", () => {
   it("inventories the bootloader, table and partitions with app and otadata facts", async () => {
@@ -402,7 +398,7 @@ describe("ESP flash layout reader identity", () => {
     const path = await writeDump(DUMP);
     const reader = new EspFlashImageArtifactReader(path);
     try {
-      const entry = (await list(reader)).find(
+      const entry = (await collectEntries(reader)).find(
         ({ path: name }) => name === "partitions/nvs.bin",
       );
       if (entry === undefined) throw new Error("Missing nvs partition");
@@ -432,15 +428,12 @@ describe("ESP flash layout reader identity", () => {
     const cut = DUMP.subarray(0, 0x2_8000);
     const reader = new EspFlashImageArtifactReader(await writeDump(cut));
     try {
-      const entry = (await list(reader)).find(
+      const entry = (await collectEntries(reader)).find(
         ({ path }) => path === "partitions/ota_1.bin",
       );
       if (entry === undefined) throw new Error("Missing entry");
       expect(entry).toMatchObject({ byteOffset: cut.length, declaredSize: 0 });
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(chunk as Buffer);
-      expect(Buffer.concat(chunks)).toHaveLength(0);
+      expect(await buffer(await reader.open(entry))).toHaveLength(0);
     } finally {
       await reader.close();
     }
@@ -813,7 +806,7 @@ describe("ESP flash layout app images of overlapping partitions", () => {
     );
     const decode = vi.spyOn(regionReads, "decodeEspFlashImage");
     try {
-      await list(reader);
+      await collectEntries(reader);
       // The bootloader, the whole image and the image cut at 0x80000.
       expect(decode).toHaveBeenCalledTimes(3);
       const apps = reader.formatMetadata()?.apps ?? [];

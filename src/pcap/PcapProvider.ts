@@ -57,8 +57,10 @@ import {
   finalizeTsharkWithDns,
   parseCapinfosOutput,
   prepareTsharkBaseOutput,
-  TSHARK_JSON_MAX_BYTES,
 } from "./PcapOutput.js";
+import { PCAP_PRODUCER_LIMITS } from "../domain/pcap/pcapAnalysis.js";
+import type { AnalysisParameterLimit } from "../domain/analysisSettings.js";
+import { resolveProducerLimits } from "../domain/producerResourceLimits.js";
 import {
   runPcapCommand,
   type PcapCommandCleanup,
@@ -933,7 +935,15 @@ export class PcapProvider {
         await this.prepareCaptureBound(request.operation, signal);
         snapshot = await PcapSnapshot.create();
         this.snapshots.add(snapshot);
-        const identity = await snapshot.capture(request.input.path, signal);
+        const limits = resolveProducerLimits(
+          PCAP_PRODUCER_LIMITS,
+          request.input.producer_limits,
+        );
+        const identity = await snapshot.capture(
+          request.input.path,
+          signal,
+          limits.input_bytes,
+        );
         const captured = await this.inspectCapture(
           selection,
           snapshot,
@@ -943,6 +953,7 @@ export class PcapProvider {
           request,
           provider,
           client,
+          limits.output_bytes,
         );
         const data = pcapResultSchemas.inspect_pcap_capture.parse({
           client,
@@ -1105,7 +1116,14 @@ export class PcapProvider {
       readonly version: string | null;
     },
     client: unknown,
+    /** The selected `producer_limits.output_bytes` for each tshark JSON pass. */
+    outputBytes: number,
   ) {
+    const tsharkLimits = {
+      timeoutMs: 300_000,
+      maxOutputBytes: outputBytes,
+      outputBytesControl: "producer_limits.output_bytes",
+    } as const;
     const withOutputCleanup = (
       cause: unknown,
       command: PcapCommandOutput,
@@ -1195,20 +1213,26 @@ export class PcapProvider {
         `--temp-dir=${snapshot.configurationPath}`,
         ...FIELD_ARGS,
       ],
-      { timeoutMs: 300_000, maxOutputBytes: TSHARK_JSON_MAX_BYTES },
+      tsharkLimits,
       signal,
       snapshot,
       path,
     );
     let prepared: Awaited<ReturnType<typeof prepareTsharkBaseOutput>>;
     try {
-      prepared = await prepareTsharkBaseOutput(dissected.stdout, signal);
+      prepared = await prepareTsharkBaseOutput(
+        dissected.stdout,
+        signal,
+        outputBytes,
+      );
     } catch (cause) {
       throw withOutputCleanup(cause, dissected);
     }
     let fields = prepared.fallback;
     let dnsDissected: typeof dissected | undefined;
     let dnsLimitation: string | undefined;
+    // The producer limit that stopped the DNS pass alone, kept as a fact.
+    let dnsIdentityLimit: AnalysisParameterLimit | undefined;
     if (!prepared.hasDnsProtocol) {
       // Base pass observed no DNS/mDNS/LLMNR frames or fields; skip the second tshark pass.
     } else if (dissected.cleanup === undefined) {
@@ -1231,7 +1255,7 @@ export class PcapProvider {
             "-J",
             "frame dns mdns llmnr",
           ],
-          { timeoutMs: 300_000, maxOutputBytes: TSHARK_JSON_MAX_BYTES },
+          tsharkLimits,
           signal,
           snapshot,
           path,
@@ -1257,7 +1281,14 @@ export class PcapProvider {
           )
         )
           throw cause;
-        dnsLimitation = `DNS wire identity extraction was unavailable: ${dnsFailureReason(cause)}; producer queries and addresses are retained without inferred ownership`;
+        if (
+          cause instanceof AnalysisResourceConstraintError &&
+          cause.limit !== undefined &&
+          "control_kind" in cause.limit &&
+          cause.limit.control_kind === "parameter"
+        )
+          dnsIdentityLimit = cause.limit;
+        dnsLimitation = `DNS wire identity extraction was unavailable: ${dnsFailureReason(cause)}; producer queries and addresses are retained without inferred ownership${dnsIdentityLimit === undefined ? "" : `. dns_identity_limit names ${dnsIdentityLimit.parameter}; raise it on the next call to run the DNS pass`}`;
       }
     } else {
       dnsLimitation =
@@ -1307,6 +1338,9 @@ export class PcapProvider {
         unattributed_dns_address_count: fields.unattributedDnsAddressCount,
         unattributed_dns_packet_count: fields.unattributedDnsPackets,
         coverage: fields.partial ? "partial" : "complete",
+        ...(dnsIdentityLimit === undefined
+          ? {}
+          : { dns_identity_limit: dnsIdentityLimit }),
       },
       limitations: [
         ...fields.dnsLimitations.map((reason) => `DNS wire parsing: ${reason}`),

@@ -18,14 +18,14 @@ it("rejects a blob that ends before the magic", async () => {
   await expect(
     decodeNodeSeaBlob(Buffer.from([0x20, 0xda])),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "truncated",
     message: expect.stringMatching(/Node SEA.*truncated/iu),
   });
 });
 
 it("rejects a blob whose magic is not 0x143da20", async () => {
   await expect(decodeNodeSeaBlob(Buffer.alloc(9))).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/magic.*not.*0x143da20/iu),
   });
 });
@@ -34,21 +34,21 @@ it("rejects a header that ends before the extension byte", async () => {
   await expect(
     decodeNodeSeaBlob(header(0).subarray(0, 8)),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "truncated",
     message: expect.stringMatching(/Node SEA.*truncated/iu),
   });
 });
 
 it("rejects unknown flag bits", async () => {
   await expect(decodeNodeSeaBlob(header(1 << 5))).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/flags.*unknown bits/iu),
   });
 });
 
 it("rejects an unknown exec argv extension", async () => {
   await expect(decodeNodeSeaBlob(header(0, 9))).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/exec argv extension.*unknown/iu),
   });
 });
@@ -86,7 +86,7 @@ it("rejects an unknown main code format in the newer header", async () => {
   const bytes = buildNodeSeaBlob({ mainCodeFormat: 1 });
   bytes[9] = 2;
   await expect(decodeNodeSeaBlob(bytes)).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/main code format.*unknown/iu),
   });
 });
@@ -95,7 +95,7 @@ it("rejects an empty code path", async () => {
   await expect(
     decodeNodeSeaBlob(buildNodeSeaBlob({ codePath: "" })),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/code path.*empty/iu),
   });
 });
@@ -103,7 +103,7 @@ it("rejects an empty code path", async () => {
 it("rejects a truncated length-prefixed field", async () => {
   const bytes = Buffer.concat([header(0), Buffer.alloc(4)]);
   await expect(decodeNodeSeaBlob(bytes)).rejects.toMatchObject({
-    reason: "format",
+    reason: "truncated",
     message: expect.stringMatching(/Node SEA.*truncated/iu),
   });
 });
@@ -119,7 +119,7 @@ it("rejects colliding asset names", async () => {
       }),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/Node SEA asset name collides.*shared/iu),
   });
 });
@@ -155,7 +155,7 @@ it.each([
     expect(offset).toBeGreaterThanOrEqual(0);
     malformed[offset] = 0xff;
     await expect(decodeNodeSeaBlob(malformed)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringMatching(/not valid UTF-8/iu),
     });
   },
@@ -172,7 +172,7 @@ it("rejects impossible asset rows before applying resource admission", async () 
       asset_count: 1,
     }),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "truncated",
     message: expect.stringMatching(/Node SEA.*truncated/iu),
     readerLimit: undefined,
   });
@@ -207,7 +207,7 @@ it.each([
     await expect(
       decodeNodeSeaBlob(bytes.subarray(0, -missingBytes), undefined, limits),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringMatching(/Node SEA.*truncated/iu),
     });
     await expect(
@@ -287,7 +287,7 @@ it("rejects non-zero trailing bytes and keeps zero padding", async () => {
   expect((await decodeNodeSeaBlob(padded)).codePath).toBe("sea.js");
   const dirty = Buffer.concat([padded, Buffer.from([1])]);
   await expect(decodeNodeSeaBlob(dirty)).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/trailing bytes/iu),
   });
 });

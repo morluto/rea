@@ -16,10 +16,13 @@ import {
   responseResult,
 } from "../../../../src/hopper/protocol.js";
 import { HopperProtocolError } from "../../../../src/hopper/HopperErrors.js";
+import { hopperReplySchemas } from "../../../../src/hopper/HopperReplyContracts.js";
+import { projectHopperAddressReferences } from "../../../../src/hopper/HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../../../../src/providers/AnalysisClientFailure.js";
 
 interface ProbeOutput {
   readonly results: Readonly<Record<string, Record<string, JsonValue>>>;
+  readonly incoming: Readonly<Record<string, JsonValue>>;
   readonly name_lookups: readonly string[];
 }
 
@@ -86,6 +89,8 @@ it("Hopper preserves named-entry selection and explicit address containment", ()
     "401004",
     "CloseHandle",
     "missing_fn",
+    "CloseHandle",
+    "CloseHandle",
   ]);
 });
 
@@ -142,7 +147,7 @@ it.each([
   });
 });
 
-it("Hopper reports a name outside every procedure as a resolved symbol and names xrefs", () => {
+it("Hopper reports a name outside every procedure as a resolved symbol and names the operations that answer it", () => {
   expect(observed.results.CloseHandle?.diagnostic).toEqual({
     code: -32000,
     type: "selector_not_found",
@@ -157,13 +162,17 @@ it("Hopper reports a name outside every procedure as a resolved symbol and names
     category: "invalid_input",
     message: expect.stringContaining("CloseHandle resolves to 0x40b000"),
     remediation: {
-      action: expect.stringContaining("call xrefs with address 0x40b000"),
+      action: expect.stringContaining("xrefs with address 0x40b000"),
     },
     details: {
       operation: "procedure_references",
       diagnostic_type: "selector_not_found",
       selector: { value: "CloseHandle", source: "symbol", address: "0x40b000" },
-      related_operations: ["xrefs"],
+      related_operations: [
+        "procedure_callers",
+        "procedure_references",
+        "xrefs",
+      ],
     },
   });
   // Recovery names contract operations only; each adapter renders its spelling.
@@ -179,7 +188,12 @@ it("Hopper reports a name outside every procedure as a resolved symbol and names
       commands: cliCommands(cli),
     }),
   ).toMatchObject({
-    details: { related_cli_commands: { xrefs: "rea xrefs" } },
+    details: {
+      related_cli_commands: {
+        procedure_references: "rea procedure-references",
+        xrefs: "rea xrefs",
+      },
+    },
   });
 });
 
@@ -228,4 +242,51 @@ it("Hopper keeps address and unknown-name misses on procedure inventory recovery
       },
     },
   });
+});
+
+it("Hopper answers incoming references and callers of an address outside every procedure", () => {
+  const references = hopperReplySchemas.procedure_references.parse(
+    observed.incoming["references 0x40b000"],
+  );
+  expect(references).toMatchObject({
+    target_kind: "address",
+    procedure: {
+      address: "0x40b000",
+      name: "CloseHandle",
+      classification: null,
+    },
+    direction: "incoming",
+  });
+  // Each recorded source once, in address order, with its containing procedure.
+  expect(
+    references.references.map(({ source_address, source_procedure }) => [
+      source_address,
+      source_procedure?.address ?? null,
+    ]),
+  ).toEqual([
+    ["0x401010", "0x401000"],
+    ["0x401020", "0x401000"],
+    ["0x40c000", null],
+  ]);
+  expect(projectHopperAddressReferences(references)).not.toHaveProperty(
+    "target_kind",
+  );
+
+  const callers = hopperReplySchemas.rea_caller_base.parse(
+    observed.incoming["callers 0x40b000"],
+  );
+  expect(callers).toMatchObject({
+    target_kind: "address",
+    callers_complete: true,
+  });
+  expect(projectHopperAddressReferences(callers)).toEqual(["0x401000"]);
+
+  // A name stays a procedure selector; the shared owner resolves it.
+  for (const key of ["references CloseHandle", "callers CloseHandle"])
+    expect(observed.incoming[key]).toMatchObject({
+      diagnostic: {
+        type: "selector_not_found",
+        selector: { source: "symbol", address: "0x40b000" },
+      },
+    });
 });

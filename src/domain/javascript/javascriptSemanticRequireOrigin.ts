@@ -39,6 +39,7 @@ import {
   semanticBindingHasPriorValueWrite,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
+  stringValue,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticMemberChain,
@@ -47,10 +48,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
-import {
-  staticSourceRelativeUrlPath,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { staticSourceRelativeUrlPath } from "./javascriptStaticAnalysisHelpers.js";
 import {
   createSemanticModuleInterop,
   semanticModuleInteropWithAmbientWrites,

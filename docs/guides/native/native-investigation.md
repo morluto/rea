@@ -967,7 +967,7 @@ complete observation.
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
   Named parser limits report the exhausted bound and its maximum in
-  `details.reported_limits` on a `truncated` error.
+  `details.reported_limits` on a `partial` error.
   Binary references retain their serialized type-8 UID identity; ordinary
   dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
   Foundation's single numeric `CF$UID` dictionary convention for references;
@@ -1732,7 +1732,29 @@ missing match does not establish absence from uninitialized or excluded memory.
 See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
-Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
+### Name and import selectors
+
+`find_xrefs_to_name`, `xrefs`, `procedure_callers` and incoming
+`procedure_references` resolve one name the same way on every provider. An
+exact observed name wins. Otherwise a provider-reported import matches by its
+imported name or library-qualified name, so `VirtualAlloc` and
+`kernel32.dll::VirtualAlloc` both select Ghidra's `KERNEL32.DLL::VirtualAlloc`
+(the library compares without case). `find_xrefs_to_name` then tries the
+provider's procedure lookup and reports the provider's spelling as
+`resolved_name`. Hopper reports imported names without their library, so a
+library-qualified name stays unresolved there and lists the bare-name rows as
+`candidates`; REA does not select one.
+
+`procedure_callers` and incoming `procedure_references` also answer a symbol or
+address outside every procedure, such as an imported name, an import
+address-table slot or a data label. The result lists the provider's recorded
+references to that address, each with its containing procedure, and identifies
+the target without a body. Providers may disagree about which reference sites
+belong to a function: on one MSVC x64 DLL, Ghidra and Hopper reported the same
+18 references to `VirtualAlloc`, and Hopper placed one more of them inside a
+procedure.
+
+Name lookup reports distinct candidate addresses as an input ambiguity;
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
 

@@ -42,9 +42,9 @@ it.each([
   ["linux", "x64", "tsrs"],
   ["linux", "arm64", "tsrs"],
   ["darwin", "arm64", "tsrs"],
+  ["darwin", "x64", "tsrs"],
   ["win32", "x64", "typescript"],
   ["win32", "arm64", "typescript"],
-  ["darwin", "x64", "typescript"],
   ["android", "arm64", "typescript"],
   ["linux", "riscv64", "typescript"],
 ])(

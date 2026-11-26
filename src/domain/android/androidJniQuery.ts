@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "../analysisView/analysisViewPageFields.js";
 import { z } from "zod";
 import {
   androidJniBindingSchema,
@@ -6,9 +7,7 @@ import {
   androidJniLibrarySchema,
 } from "./androidJniBindings.js";
 const page = {
-  kind: z.literal("android-jni"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
+  ...analysisViewPageFields("android-jni"),
   indices: z.array(z.int().nonnegative()).optional(),
 };
 /** Pages reference original parent collection indices, independently of source ordinals. */

@@ -50,7 +50,7 @@ export const createSearchableCatalogTool = (
 export const rankCatalogToolMatches = (
   tools: Iterable<SearchableCatalogTool>,
   words: readonly string[],
-  mode: "all" | "any" = "all",
+  mode: "all" | "any",
   preferDescriptionLead = false,
 ): readonly string[] => {
   const ranked: {
@@ -69,10 +69,9 @@ export const rankCatalogToolMatches = (
     } else if (matchedWords === 0) {
       continue;
     }
-    const nameLower = tool.name.toLowerCase();
     let nameScore = 0;
     for (let i = 0; i < words.length; i += 1) {
-      if (nameLower.includes(words[i]!)) nameScore += 1;
+      if (tool.name.includes(words[i]!)) nameScore += 1;
     }
     const leadMatch =
       preferDescriptionLead &&

@@ -1,3 +1,7 @@
+import {
+  uint32LE as u32,
+  uint64LE as u64,
+} from "../../native/BinaryInteger.fixture.js";
 import { deflateRawSync } from "node:zlib";
 
 /** Source-owned Microsoft bundle-layout fixture; no target executable is run. */
@@ -101,16 +105,6 @@ export const dotnetBundleFixture = (
   };
 };
 
-const u32 = (value: number): Buffer => {
-  const out = Buffer.alloc(4);
-  out.writeUInt32LE(value);
-  return out;
-};
-const u64 = (value: number): Buffer => {
-  const out = Buffer.alloc(8);
-  out.writeBigUInt64LE(BigInt(value));
-  return out;
-};
 const text = (value: string): Buffer => {
   const bytes = Buffer.from(value);
   const length: number[] = [];

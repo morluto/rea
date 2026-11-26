@@ -1,3 +1,4 @@
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
@@ -17,14 +18,7 @@ const renderWindow = async (
   terminal = false,
   formatExplicit = true,
 ): Promise<{ readonly handled: boolean; readonly text: string }> => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
-  if (terminal) Object.defineProperty(destination, "isTTY", { value: true });
+  const { destination, text: readText } = captureOutput(terminal);
   const argv = [
     "fixture",
     ...(formatExplicit ? ["--format", "toon"] : []),
@@ -43,7 +37,7 @@ const renderWindow = async (
     command: "fixture",
     duration: "0ms",
   });
-  return { handled, text: Buffer.concat(chunks).toString("utf8") };
+  return { handled, text: readText() };
 };
 
 describe("successful CLI token windows", () => {

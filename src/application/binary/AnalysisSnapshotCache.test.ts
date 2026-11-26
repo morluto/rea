@@ -71,6 +71,7 @@ it.each(["provider", "workflow"] as const)(
         relationshipCoverage: {
           status: "partial",
           limitations: ["original coverage"],
+          limited_directions: ["callers", "callees"],
         },
       },
     );
@@ -1201,6 +1202,7 @@ describe("relationship coverage snapshot replay", () => {
     ).toEqual({
       status: "unknown",
       reason: "Snapshot entry does not report relationship coverage.",
+      limited_directions: ["callees"],
     });
   });
 });

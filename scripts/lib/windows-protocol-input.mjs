@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 /** Exercise owned Windows stdin through its production Writable and native boundary. */
 export async function verifyWindowsProtocolInput(packageRoot, workspace) {
-  const { WindowsOwnedProcess } = await import(
+  const { WindowsOwnedProcess, quoteWindowsProcessArgument } = await import(
     pathToFileURL(join(packageRoot, "dist/windows/WindowsOwnedProcess.js"))
   );
   const { requireWindowsNativeAuthority } = await import(
@@ -17,7 +17,11 @@ export async function verifyWindowsProtocolInput(packageRoot, workspace) {
   const launch = (script) => acquire(WindowsOwnedProcess, workspace, script);
   const echo = await verifyEcho(launch);
   const cancellation = await verifyBlockedCancellation(launch);
-  await verifyNativePendingWrite(native, workspace);
+  await verifyNativePendingWrite(
+    native,
+    workspace,
+    quoteWindowsProcessArgument,
+  );
   const { JadxMcpTransport } = await import(
     pathToFileURL(join(packageRoot, "dist/android/JadxMcpTransport.js"))
   );
@@ -143,9 +147,7 @@ async function verifyBlockedCancellation(launch) {
   }
 }
 
-async function verifyNativePendingWrite(native, workspace) {
-  const quote = (value) =>
-    `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
+async function verifyNativePendingWrite(native, workspace, quote) {
   const child = native.call("process_spawn", [
     process.execPath,
     [process.execPath, "-e", "setInterval(() => {}, 1000)"]

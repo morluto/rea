@@ -50,7 +50,7 @@ describe("rankCatalogToolMatches", () => {
     expect(rankCatalogToolMatches(indexed, [], "any")).toEqual([]);
   });
 
-  it("preserves discover_tools nameScore-then-alphabetical ordering by default", () => {
+  it("ranks equal-coverage matches by name score and canonical name", () => {
     expect(rankCatalogToolMatches(indexed, ["decompile"], "all")).toEqual([
       "batch_decompile",
       "decompile_all",

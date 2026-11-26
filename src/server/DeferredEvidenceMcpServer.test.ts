@@ -4,10 +4,7 @@ import type { Tool, ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
-import {
-  listedOutputJsonSchema,
-  presentAdvertisedOutputSchema,
-} from "../contracts/compactOutputSchema.js";
+import { presentAdvertisedOutputSchema } from "../contracts/compactOutputSchema.js";
 import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
 import { isRecord } from "../kernel/isRecord.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
@@ -211,6 +208,7 @@ it("compacts live discovery output and serves the recorded compact schema", asyn
     target: "draft-2020-12",
   });
   if (!isRecord(canonical)) throw new Error("discover_tools output schema");
+  expect(canonical.type).toBe("object");
   const f = await fixture({
     progressive: true,
     outputProfile: "compact",
@@ -221,7 +219,7 @@ it("compacts live discovery output and serves the recorded compact schema", asyn
   );
   expect(discovery?.outputSchema).toEqual(
     presentAdvertisedOutputSchema(
-      listedOutputJsonSchema(canonical),
+      canonical,
       COMPACT_OUTPUT_SCHEMA_PRESENTATION,
     ),
   );

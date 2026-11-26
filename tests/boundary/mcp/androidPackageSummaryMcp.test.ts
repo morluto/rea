@@ -47,10 +47,8 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
-import {
-  createJadxProtocolFixture,
-  verifyJadxFixtureCleanup,
-} from "../../fixtures/android/jadx.js";
+import { expectProviderLaunchCleanup } from "../../support/process/expectProviderLaunchCleanup.js";
+import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 async function assertAndroidPackageSelectedFacetContract(options: {
@@ -429,7 +427,7 @@ it.skipIf(process.platform === "win32")(
     ).toEqual(parent);
     expect(launches).toHaveLength(1);
     await harness.close();
-    await verifyJadxFixtureCleanup(launches);
+    await expectProviderLaunchCleanup(launches);
   },
 );
 

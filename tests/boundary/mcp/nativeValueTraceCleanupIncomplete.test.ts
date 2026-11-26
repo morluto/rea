@@ -1,8 +1,8 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -32,7 +32,6 @@ import {
   jsonResult,
   resources,
 } from "./enhancedToolsHarness.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -275,15 +274,11 @@ const openSession = async (port: AnalysisOperationPort) => {
     }),
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client(
+  const client = await connectFixtureClient(
+    server,
     { name: "value-trace-cleanup", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const opened = await client.callTool({
     name: "open_binary",
     arguments: { path: target, format: "dos-com" },
