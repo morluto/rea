@@ -1,6 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
@@ -13,6 +11,7 @@ import {
   type ProcessCaptureCleanupHost,
   type ProcessCaptureResourceCleanupOptions,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cleanupOptions = (
   temporaryRoot: string,
@@ -34,7 +33,7 @@ const cleanupOptions = (
 };
 
 const createRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "rea-process-cleanup-retry-"));
+  createTestTempDirectory("rea-process-cleanup-retry-");
 
 const expectCaptureError = (operation: () => unknown): ProcessCaptureError => {
   try {
@@ -101,7 +100,6 @@ it("resolves the origin and finalization copy after the exact root retry", async
   } finally {
     denyRemoval = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -183,9 +181,6 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
   } finally {
     denied.clear();
     await scope.close();
-    await Promise.all(
-      roots.map((root) => rm(root, { recursive: true, force: true })),
-    );
   }
 });
 
@@ -215,7 +210,6 @@ it("joins an already-started release when shutdown begins", async () => {
     resourceRelease.release();
     await Promise.allSettled([releasing, ...(closing ? [closing] : [])]);
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
   await releasing;
   await closing;
@@ -256,7 +250,6 @@ it("binds a historical failed report after its owner already retried", async () 
   } finally {
     denyRemoval = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -308,7 +301,6 @@ it("blocks scope admission on owner-bound retry failure and resumes after releas
   } finally {
     denyRemoval = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -339,6 +331,5 @@ it("keeps historical report edits separate from cleanup authority", async () => 
   } finally {
     denied = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

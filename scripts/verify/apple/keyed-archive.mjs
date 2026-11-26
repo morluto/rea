@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
 import {
   artifactCli,
   artifactMcpResult,
   artifactMcpCall,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import {
   assertKeyedArchiveIntegerResult,
   verifyKeyedArchiveIntegerArchives,
@@ -42,9 +43,7 @@ await withVerifierFixture(fixture, async () => {
     archive,
   ]);
   const graph = await artifactCli("inspect-keyed-archive", archive);
-  const digest = createHash("sha256")
-    .update(await readFile(archive))
-    .digest("hex");
+  const digest = await sha256File(archive);
   assert.equal(graph.archive_sha256, digest);
   assert.equal(graph.target_sha256, digest);
   await withArtifactMcp(archive, async (client) => {
@@ -62,7 +61,15 @@ await withVerifierFixture(fixture, async () => {
       name: "inspect_keyed_archive",
       arguments: { path: "../other.plist" },
     });
-    assert.equal(invalid.isError, true);
+    // Standalone archives reject a path other than the admitted basename.
+    // KeyedArchiveReader throws AnalysisInputError; classification is invalid_request.
+    assert.partialDeepStrictEqual(requireMcpToolError(invalid), {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_keyed_archive",
+        issues: [{ path: ["path"], reason: "invalid_value" }],
+      },
+    });
   });
   const xml = join(root, "model.xml.plist");
   await promisify(execFile)("/usr/bin/plutil", [

@@ -20,6 +20,9 @@ describe("REA's CLI command table", () => {
         flags: {
           format: "--target-format",
           architecture: "--architecture",
+          architecture_variant: "--architecture-variant",
+          base_address: "--base-address",
+          vector_table_address: "--vector-table-address",
           entry_point: "--entry-point",
           provider_id: "--provider",
           snapshot_path: "--snapshot",
@@ -53,7 +56,6 @@ describe("REA's CLI command table", () => {
       "binary_overview",
       "open_binary",
     ]);
-    expect(entry("analyze").source.kind).toBe("routed");
     expect(entry("inspect-byte-entropy").operations).toEqual([
       {
         name: "inspect_byte_entropy",
@@ -95,12 +97,10 @@ describe("REA's CLI command table", () => {
     });
   });
 
-  it("distinguishes host commands without operations from host commands that bind contract operations", () => {
+  it("records the operations available from host commands", () => {
     for (const name of ["setup", "doctor"]) {
-      expect(entry(name).source).toEqual({ kind: "host" });
       expect(entry(name).operations).toEqual([]);
     }
-    expect(entry("guidance").source).toEqual({ kind: "host" });
     expect(entry("guidance").operations).toEqual([
       {
         name: "search_guidance",
@@ -117,7 +117,6 @@ describe("REA's CLI command table", () => {
         },
       },
     ]);
-    expect(entry("capture-process").source).toEqual({ kind: "host" });
     expect(entry("capture-process").operations).toEqual([
       { name: "capture_process_scenario", flags: {} },
     ]);

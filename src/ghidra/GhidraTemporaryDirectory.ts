@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
@@ -57,11 +58,6 @@ const writeProbe = async (
   }
 };
 
-const errorCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 /**
  * Create and delete one file under the Ghidra session root from the REA
  * process. This proves only that REA itself can use the root; a host that
@@ -76,7 +72,7 @@ export const probeGhidraTemporaryDirectory = async (
   const path = join(directory, `rea-doctor-probe-${randomUUID()}`);
   const remove = () =>
     unlink(path).catch((cause: unknown) => {
-      if (errorCode(cause) !== "ENOENT") throw cause;
+      if (systemCodeFromError(cause) !== "ENOENT") throw cause;
     });
   const retain = () =>
     resourceOwner.retain({ close: remove, cleanupResources: [path] }, path);
@@ -100,7 +96,7 @@ export const probeGhidraTemporaryDirectory = async (
       ok: false,
       directory,
       stage,
-      code: errorCode(primary),
+      code: systemCodeFromError(primary),
       message: errorMessage(primary),
       ...(removed ? {} : { retainedPath: path }),
     };
@@ -113,7 +109,7 @@ export const probeGhidraTemporaryDirectory = async (
       ok: false,
       directory,
       stage: "cleanup",
-      code: errorCode(cause),
+      code: systemCodeFromError(cause),
       message: errorMessage(cause),
       retainedPath: path,
     };

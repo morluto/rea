@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { scenarioCaptureEvidence } from "../../../tests/fixtures/browserScenarioCapture.js";
 import {
-  createImmutableEvidenceBundle,
   parseEvidenceBundle,
   serializeEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
@@ -29,22 +28,20 @@ describe("analysis view execution environment provenance", () => {
       (id) => ledger.forAnalysis(id),
     );
     if (!manifest.ok) throw manifest.error;
-    for (const view of [summary.value, manifest.value]) {
-      expect(view.environment).toEqual(parent.environment);
-      expect(view.authority).toBe("controlled-replay");
-      expect(view.evidence_links).toEqual([parent.evidence_id]);
+    const views = [summary.value, manifest.value];
+    for (const view of views) {
+      expect(view).toMatchObject({
+        environment: parent.environment,
+        authority: "controlled-replay",
+        evidence_links: [parent.evidence_id],
+      });
       expect(ledger.record(view).ok).toBe(true);
     }
     const bundle = parseEvidenceBundle(
-      JSON.parse(
-        serializeEvidenceBundle(
-          createImmutableEvidenceBundle([
-            parent,
-            summary.value,
-            manifest.value,
-          ]),
-        ),
-      ),
+      JSON.parse(serializeEvidenceBundle(ledger.export())),
+    );
+    expect(bundle.records.map(({ evidence_id }) => evidence_id).sort()).toEqual(
+      [parent, ...views].map(({ evidence_id }) => evidence_id).sort(),
     );
     expect(bundle.environments).toEqual([parent.environment]);
     for (const record of bundle.records)

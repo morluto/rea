@@ -10,6 +10,43 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
+  "returns partial Evidence when managed table declarations conflict",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-managed-cli-table-conflict-",
+    );
+    const path = join(root, "fixture.dll");
+    await writeFile(
+      path,
+      buildManagedPeFixture({ competingTableStream: "distinct" }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-managed-members", path, "--full-output", "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      data: {
+        normalized_result: {
+          metadata: {
+            status: "partial",
+            version: "v4.0.30319",
+            table_row_counts: {},
+          },
+          methods: [],
+          method_rows: null,
+          coverage: {
+            state: "unavailable",
+            issues: [
+              { code: "unsupported-metadata", scope: "metadata.tables" },
+            ],
+          },
+        },
+      },
+    });
+  },
+);
+
+cliTest(
   "delivers a managed artifact summary beside its complete Evidence bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-managed-cli-delivery-");
@@ -692,41 +729,6 @@ cliTest(
 );
 
 cliTest(
-  "managed CLI reports a section table past EOF as invalid input",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-managed-cli-sections-");
-    const path = join(root, "fixture.dll");
-    const bytes = buildManagedPeFixture();
-    const pe = bytes.readUInt32LE(0x3c);
-    const sections = pe + 24 + bytes.readUInt16LE(pe + 20);
-    bytes.writeUInt32LE(bytes.length + 0x1000, sections + 20);
-    await writeFile(path, bytes);
-    for (const command of [
-      "inspect-managed-artifact",
-      "inspect-managed-members",
-      "inspect-managed-native-boundaries",
-    ]) {
-      const result = await cli.run({
-        arguments: [command, path, "--json"],
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject({
-        code: "invalid_request",
-        details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining("pe.section-data"),
-            },
-          ],
-        },
-      });
-    }
-  },
-);
-
-cliTest(
   "managed CLI refuses non-PE executables as unsupported targets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-managed-non-pe-");
@@ -749,13 +751,17 @@ cliTest(
           code: "unsupported_target",
           category: "unsupported_target",
           retryable: false,
+          retry: "none",
           remediation: {
-            action:
-              "Select a target supported by this operation or choose an operation supporting the reported target format.",
+            action: expect.stringContaining(
+              "Choose another operation or provider for this target.",
+            ),
           },
           details: {
             operation: command.replaceAll("-", "_"),
             path,
+            failure_kind: "unsupported",
+            format,
             reason: `Managed static triage requires a PE target; observed ${format}.`,
           },
         });

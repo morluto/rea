@@ -84,6 +84,7 @@ process.stdout.write(JSON.stringify({ failure }));
       env: {
         ...process.env,
         npm_config_cache: npmCache,
+        npm_config_allow_scripts: "rea-test-control",
         TEMP: npmCache,
         TMP: npmCache,
         TMPDIR: npmCache,

@@ -1,3 +1,4 @@
+import { processMayExist } from "./lib/verifier-cleanup.mjs";
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
 
 import { lstat } from "node:fs/promises";
@@ -286,7 +287,7 @@ export async function assertCleanup(coordinates) {
       throw new Error(`Ghidra cleanup left ${name}: ${path}`);
   }
   const pid = coordinates.process_id;
-  if (typeof pid === "number" && processExists(pid))
+  if (typeof pid === "number" && processMayExist(pid))
     throw new Error(`Ghidra cleanup left process ${String(pid)}`);
 }
 
@@ -442,18 +443,5 @@ async function exists(path) {
   } catch (cause) {
     if (cause?.code === "ENOENT") return false;
     throw cause;
-  }
-}
-
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (cause) {
-    return !(
-      cause instanceof Error &&
-      "code" in cause &&
-      cause.code === "ESRCH"
-    );
   }
 }

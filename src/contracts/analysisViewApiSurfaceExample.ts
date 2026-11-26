@@ -4,7 +4,7 @@ export const API_SURFACE_EXAMPLE = {
     source: {
       kind: "retained-evidence",
       evidence_id:
-        "ev_267522986f962ec19b8712fd3dfdaa5644031f68fb547373fc39de3fef643acb",
+        "ev_24b29e1473f6b12069db72f129d0deca15fc226d9658c111b7ecf8e197dc5781",
     },
     view: {
       kind: "api-surface",
@@ -14,12 +14,12 @@ export const API_SURFACE_EXAMPLE = {
   },
   output: {
     parent_evidence_id:
-      "ev_267522986f962ec19b8712fd3dfdaa5644031f68fb547373fc39de3fef643acb",
+      "ev_24b29e1473f6b12069db72f129d0deca15fc226d9658c111b7ecf8e197dc5781",
     parent_operation: "inspect_web_network_capture",
     parent_digest:
-      "267522986f962ec19b8712fd3dfdaa5644031f68fb547373fc39de3fef643acb",
+      "24b29e1473f6b12069db72f129d0deca15fc226d9658c111b7ecf8e197dc5781",
     view_digest:
-      "39fc0119d9290a8bf0d8863e1e0275674c2417c0e1c7b7dcb4df486423cec626",
+      "6a8166eb4b1e516a28bd5c93e8c3bae135c973506fe0679cd0d87b7787f34184",
     artifact: {
       path: "/fixtures/api-surface.har",
       sha256:
@@ -34,7 +34,7 @@ export const API_SURFACE_EXAMPLE = {
     },
     limitations: [
       "Grouping does not establish handler identity, URL-space schemas or causality.",
-      "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+      "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3/12.3.1 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
     ],
     unknowns: [],
     records: {

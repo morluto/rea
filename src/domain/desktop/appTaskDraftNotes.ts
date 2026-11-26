@@ -33,34 +33,34 @@ export const draftNoteSchema = z.strictObject({
   message: z.string(),
   file: z
     .string()
-    .optional()
+    .exactOptional()
     .describe(
       "by_position, view_state_only, long_text, cut_view, unreadable_view, volatile_lines: the drafted file the note is about.",
     ),
   files: z
     .array(z.strictObject({ file: z.string(), role: z.string() }))
-    .optional()
+    .exactOptional()
     .describe(
       "unowned_changes: changed home paths outside the owned paths, up to 5. uncheckable_changes: dconf databases whose app keys changed. unreadable_changes: dconf databases that changed but could not be read.",
     ),
   more: z
     .int()
     .nonnegative()
-    .optional()
+    .exactOptional()
     .describe("unowned_changes: how many more changed."),
   error: z
     .string()
-    .optional()
+    .exactOptional()
     .describe("unreadable_changes: why REA could not read the dconf database."),
   elements: z
     .array(z.string())
-    .optional()
+    .exactOptional()
     .describe(
       "by_position: tags of the elements no attribute names alone, up to 5.",
     ),
   pointers: z
     .array(z.string())
-    .optional()
+    .exactOptional()
     .describe(
       "long_text: the elements whose text is too long to check whole; view_state_only: the noise checks kept. Up to 5.",
     ),

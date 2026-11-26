@@ -56,6 +56,9 @@ export const privateProfileModesCurrent = async (
   );
 };
 
+/** A refusal or retained cleanup from the private directory owner. */
+export class ClientPrivateProfileError extends ConfigurationError {}
+
 /** Apply the private folder mode through the selected directory descriptor. */
 export const securePrivateDirectory = async (
   path: string,
@@ -89,7 +92,7 @@ export const securePrivateDirectory = async (
     // A linked parent can make a profile path name the home folder itself.
     const homeFolder = await stat(home);
     if (homeFolder.dev === before.dev && homeFolder.ino === before.ino)
-      throw new ConfigurationError(
+      throw new ClientPrivateProfileError(
         `The private profile folder ${path} is the home folder; REA will not make the home folder private. Point the client at its own profile folder; no settings were written.`,
       );
     changed = (before.mode & 0o777) !== PRIVATE_PROFILE_MODES.directory;
@@ -111,7 +114,7 @@ export const securePrivateDirectory = async (
   try {
     await lease.release();
   } catch (cause: unknown) {
-    const error = new ConfigurationError(
+    const error = new ClientPrivateProfileError(
       `Private client directory cleanup failed at ${path}`,
       {
         cause:

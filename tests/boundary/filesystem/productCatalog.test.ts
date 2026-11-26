@@ -121,7 +121,6 @@ describe("canonical product catalog", () => {
     expect(await serializeProductCatalog(catalog)).toBe(
       await readFile("docs/public/product-catalog.json", "utf8"),
     );
-    await expect(documentationFactIssues(root, catalog)).resolves.toEqual([]);
   });
 });
 

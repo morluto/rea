@@ -5,7 +5,10 @@ import {
 } from "./JebMcpConnectionOwner.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  withDelegatedCleanupOwner,
+} from "../domain/analysisErrorCleanup.js";
 import { z } from "zod";
 import type {
   JebAnalysisPort,
@@ -630,7 +633,7 @@ export class JebProvider implements JebAnalysisPort {
    */
   #attributed(operation: JebOperation, failure: AnalysisError): AnalysisError {
     if (failure instanceof JebMcpCleanupFailure)
-      return analysisErrorWithCleanupFailure(
+      return analysisErrorWithCleanupDependencies(
         this.#attributed(
           operation,
           classifyProviderFailure(
@@ -640,9 +643,7 @@ export class JebProvider implements JebAnalysisPort {
         ),
         failure.cleanupFailure,
         operation,
-      )
-        .bindCleanupDependencies([failure.cleanupFailure])
-        .bindCleanupResourceOwner(failure.cleanupFailure);
+      ).bindCleanupResourceOwner(failure.cleanupFailure);
     if (
       failure instanceof AnalysisCancelledError ||
       failure instanceof AnalysisTimeoutError
@@ -670,9 +671,7 @@ export class JebProvider implements JebAnalysisPort {
               ...(failure.limit === undefined ? {} : { limit: failure.limit }),
             })
           : cancelledBy(operation, failure, options);
-      return attributed
-        .bindCleanupDependencies([failure])
-        .bindCleanupResourceOwner(failure);
+      return withDelegatedCleanupOwner(attributed, failure);
     }
     return failure.retainDiagnostics({ endpoint: this.#selectedEndpoint });
   }

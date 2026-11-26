@@ -1,3 +1,4 @@
+import { UEFI_TOOL_CONTRACTS } from "./uefi/uefiToolContracts.js";
 import { ANALYSIS_SETTINGS_TOOL_CONTRACTS } from "./analysisSettingsContracts.js";
 import { GPU_TOOL_CONTRACTS } from "./gpu/gpuToolContracts.js";
 import { CAPTURE_TOOL_CONTRACTS } from "./captures/captureToolContracts.js";
@@ -12,8 +13,10 @@ import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
+import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "./v8/v8CodeCacheToolContracts.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "./java/mavenGradleMetadataToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
@@ -70,8 +73,10 @@ const CATALOG_CONTRACT_GROUPS = {
   GPU_TOOL_CONTRACTS,
   RUST_TOOL_CONTRACTS,
   PYTHON_PYC_TOOL_CONTRACTS,
+  NUGET_NUPKG_TOOL_CONTRACTS,
   ERLANG_BEAM_TOOL_CONTRACTS,
   V8_CODE_CACHE_TOOL_CONTRACTS,
+  MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   WASM_TOOL_CONTRACTS,
   APK_SIGNATURE_TOOL_CONTRACTS,
   SQLITE_TOOL_CONTRACTS,
@@ -85,6 +90,7 @@ const CATALOG_CONTRACT_GROUPS = {
   JEB_TOOL_CONTRACTS,
   ADB_TOOL_CONTRACTS,
   FIRMWARE_TOOL_CONTRACTS,
+  UEFI_TOOL_CONTRACTS,
   MANAGED_WORKFLOW_TOOL_CONTRACTS,
   BROWSER_PROVIDER_TOOL_CONTRACTS,
   ELECTRON_TOOL_CONTRACTS,
@@ -125,20 +131,30 @@ export const TOOL_CONTRACTS: readonly CatalogContract[] = Object.values(
   CATALOG_CONTRACT_GROUPS,
 ).flat();
 
+/** Public tool contract paired with its canonical catalog index. */
+export interface ToolContractEntry {
+  readonly contract: CatalogContract;
+  readonly index: number;
+}
+
+const TOOL_CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContractEntry> = new Map(
+  TOOL_CONTRACTS.map((contract, index) => [contract.name, { contract, index }]),
+);
+
+/** Resolve a public contract entry in catalog order in O(1). */
+export const toolContractEntry = (
+  name: string,
+): ToolContractEntry | undefined => TOOL_CONTRACTS_BY_NAME.get(name);
+
 /** Resolve a public contract by name while retaining its exact schema types. */
 export const toolContract = <
   Name extends (typeof TOOL_CONTRACTS)[number]["name"],
 >(
   name: Name,
 ): Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }> => {
-  const contract = TOOL_CONTRACTS.find(
-    (
-      candidate,
-    ): candidate is Extract<
-      (typeof TOOL_CONTRACTS)[number],
-      { readonly name: Name }
-    > => candidate.name === name,
-  );
+  const contract = TOOL_CONTRACTS_BY_NAME.get(name)?.contract as
+    | Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }>
+    | undefined;
   if (contract === undefined) throw new Error(`Missing tool contract: ${name}`);
   return contract;
 };

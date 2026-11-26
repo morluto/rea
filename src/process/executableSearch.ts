@@ -3,16 +3,34 @@ import { posix, win32 } from "node:path";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
 
 /** One file a launcher tries for a bare command, in search order. */
 export interface PathSearchCandidate {
-  /** The absolute file the launch would execute from this entry. */
+  /**
+   * The absolute file the launch would execute from this entry, or, for a
+   * POSIX candidate marked `unresolved`, the entry's relative file as written.
+   */
   readonly path: string;
-  /** An empty or relative PATH entry, which depends on the working directory. */
+  /**
+   * An empty or relative PATH entry, or on Windows a rooted entry without a
+   * drive (`\tools`), which depends on the working directory or its drive.
+   */
   readonly relativeEntry: boolean;
+}
+
+/** A POSIX candidate with the PATH entry it came from. */
+export interface PosixPathSearchCandidate extends PathSearchCandidate {
+  /** The PATH entry as written. */
+  readonly entry: string;
+  /**
+   * Why the working directory of a relative entry could not be read, when the
+   * selection asked for such entries as written.
+   */
+  readonly unresolved?: { readonly cause: unknown };
 }
 
 /**
@@ -22,7 +40,18 @@ export interface PathSearchCandidate {
  */
 export type RelativePathEntries =
   | { readonly relativeEntries: "skip" }
-  | { readonly relativeEntries: "resolve"; readonly workingDirectory?: string };
+  | {
+      readonly relativeEntries: "resolve";
+      /** A directory, or a reader called only when a relative entry is reached. */
+      readonly workingDirectory?: string | (() => string);
+      /**
+       * A working directory that cannot be read: `skip` (the default) leaves
+       * the entry out; `as-written` yields its relative file, marked
+       * `unresolved`, for a caller that probes it against the process's own
+       * directory, as the kernel resolves it during `execvp`.
+       */
+      readonly unreadableWorkingDirectory?: "skip" | "as-written";
+    };
 
 /**
  * The files `execvp` tries for a bare command (one without `/`), in PATH
@@ -37,33 +66,68 @@ export function* posixPathCandidates(
   commands: string | readonly string[],
   searchPath: string,
   selection: RelativePathEntries,
-): Generator<PathSearchCandidate, void, undefined> {
+): Generator<PosixPathSearchCandidate, void, undefined> {
   // Lazy, so an entry after the first match is never resolved: resolving a
   // relative entry reads the working directory, which may no longer exist.
   for (const directory of searchPath.split(posix.delimiter)) {
     const relativeEntry = !posix.isAbsolute(directory);
     if (relativeEntry && selection.relativeEntries === "skip") continue;
-    const workingDirectory =
+    const read =
       relativeEntry && selection.relativeEntries === "resolve"
-        ? (selection.workingDirectory ?? currentDirectory())
+        ? readWorkingDirectory(selection.workingDirectory)
         : undefined;
-    // A removed working directory holds nothing; later entries still count.
-    if (relativeEntry && workingDirectory === undefined) continue;
-    for (const command of typeof commands === "string" ? [commands] : commands)
+    const names = typeof commands === "string" ? [commands] : commands;
+    if (read !== undefined && !read.ok) {
+      // A removed working directory holds no file of its own, but the
+      // kernel still resolves a relative entry such as `..` from it.
+      if (
+        selection.relativeEntries === "resolve" &&
+        selection.unreadableWorkingDirectory === "as-written"
+      )
+        for (const command of names)
+          yield {
+            path: appendCallerPath(
+              directory === "" ? "." : directory,
+              command,
+              "linux",
+            ),
+            relativeEntry,
+            entry: directory,
+            unresolved: { cause: read.cause },
+          };
+      continue;
+    }
+    for (const command of names)
       yield {
         path: absoluteCallerPath(
           appendCallerPath(directory, command, "linux"),
           {
-            ...(workingDirectory === undefined
-              ? {}
-              : { cwd: workingDirectory }),
+            ...(read === undefined ? {} : { cwd: read.directory }),
             platform: "linux",
           },
         ),
         relativeEntry,
+        entry: directory,
       };
   }
 }
+
+/** The working directory a relative entry resolves against, or why it cannot be read. */
+const readWorkingDirectory = (
+  selected: string | (() => string) | undefined,
+):
+  | { readonly ok: true; readonly directory: string }
+  | { readonly ok: false; readonly cause: unknown } => {
+  if (typeof selected === "string") return { ok: true, directory: selected };
+  try {
+    return {
+      ok: true,
+      directory: selected === undefined ? process.cwd() : selected(),
+    };
+  } catch (cause: unknown) {
+    return { ok: false, cause };
+  }
+};
 
 /**
  * This process's directory, or `undefined` once it has been removed: a
@@ -108,6 +172,9 @@ const windowsPathEntries = (value: string): readonly string[] => {
 /** Image extensions Windows starts directly; anything else needs a host such as cmd.exe. */
 const WINDOWS_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([".com", ".exe"]);
 
+/** Launchers cmd.exe starts; a dot before these names an explicit extension. */
+const WINDOWS_BATCH_EXTENSIONS: ReadonlySet<string> = new Set([".bat", ".cmd"]);
+
 /** A PATHEXT entry that is not a filename extension, so the search is unknown. */
 export interface WindowsPathSearchFailure {
   readonly kind: "invalid_extension";
@@ -118,10 +185,11 @@ export interface WindowsPathSearchFailure {
  * The files Windows' PATH/PATHEXT search tries for commands, in order: a
  * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
  * its own location, resolved against `cwd`, and never on PATH; then for each
- * PATH entry (relative ones resolve against `cwd`, or against this process's
- * directory, read only when such an entry is reached and skipped once
- * removed), each bare command with every PATHEXT extension,
- * or as written when it already names an extension. Only `.com` and `.exe`
+ * PATH entry, each bare command with every PATHEXT extension, or as written
+ * when it already names an extension. A PATH entry that depends on the working
+ * directory is marked `relativeEntry` and resolved against `cwd` or the current
+ * working directory. With `relativeEntries: "skip"`, the search omits those
+ * entries before reading the working directory. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
  * PATHEXT entry fails a search that would append extensions; a command that
@@ -131,14 +199,33 @@ export interface WindowsPathSearchFailure {
 export const windowsPathCandidates = (
   commands: string | readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  search: { readonly cwd?: string; readonly allowBatch?: boolean } = {},
+  search: {
+    readonly cwd?: string;
+    readonly allowBatch?: boolean;
+    readonly relativeEntries?: "skip";
+  } = {},
 ): Result<Iterable<PathSearchCandidate>, WindowsPathSearchFailure> => {
   const selected = snapshotEnvironment(environment, "win32");
   const listed = typeof commands === "string" ? [commands] : commands;
   const extensions = (selected.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
     .split(";")
     .filter((extension) => extension !== "");
-  const invalid = listed.every((command) => win32.extname(command) !== "")
+  // Like libuv and cmd.exe, a dot names an extension only when the suffix is
+  // an executable one; in `python3.12` it is part of the name, so PATHEXT is
+  // still appended. A trailing dot still suppresses PATHEXT.
+  const namedExtension = (command: string): string | undefined => {
+    const extension = win32.extname(command).toLowerCase();
+    return extension !== "" &&
+      (extension === "." ||
+        WINDOWS_IMAGE_EXTENSIONS.has(extension) ||
+        WINDOWS_BATCH_EXTENSIONS.has(extension) ||
+        extensions.some((listed) => listed.toLowerCase() === extension))
+      ? extension
+      : undefined;
+  };
+  const invalid = listed.every(
+    (command) => namedExtension(command) !== undefined,
+  )
     ? undefined
     : extensions.find(
         (extension) =>
@@ -150,8 +237,8 @@ export const windowsPathCandidates = (
     search.allowBatch === true ||
     WINDOWS_IMAGE_EXTENSIONS.has(extension.toLowerCase());
   const spelled = (command: string): string[] => {
-    const explicit = win32.extname(command);
-    if (explicit !== "") return runnable(explicit) ? [command] : [];
+    const explicit = namedExtension(command);
+    if (explicit !== undefined) return runnable(explicit) ? [command] : [];
     return extensions
       .filter(runnable)
       .map((extension) => `${command}${extension}`);
@@ -166,7 +253,7 @@ export const windowsPathCandidates = (
   return ok({
     *[Symbol.iterator]() {
       for (const name of located) {
-        const workingDirectory = win32.isAbsolute(name)
+        const workingDirectory = isQualifiedCallerPath(name, "win32")
           ? name
           : (search.cwd ?? currentDirectory());
         if (workingDirectory === undefined) continue;
@@ -179,14 +266,16 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const workingDirectory = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(directory)
-          ? directory
-          : (search.cwd ?? currentDirectory());
+        const relativeEntry = !isQualifiedCallerPath(directory, "win32");
+        if (relativeEntry && search.relativeEntries === "skip") continue;
+        const workingDirectory = relativeEntry
+          ? (search.cwd ?? currentDirectory())
+          : directory;
         if (workingDirectory === undefined) continue;
         for (const name of names)
           yield {
             path: win32.resolve(workingDirectory, directory, name),
-            relativeEntry: !win32.isAbsolute(directory),
+            relativeEntry,
           };
       }
     },

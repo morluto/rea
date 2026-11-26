@@ -31,3 +31,22 @@ it("returns nothing when no whole character fits", () => {
     truncated: true,
   });
 });
+
+it("keeps the bounded suffix of a long stream with supplementary characters", () => {
+  const stream = "prefix".repeat(100_000) + "a𐐷éz";
+  expect(utf8TailExcerpt(stream, 7)).toEqual({
+    text: "𐐷éz",
+    bytes: 7,
+    truncated: true,
+  });
+  expect(utf8TailExcerpt(stream, 6)).toEqual({
+    text: "éz",
+    bytes: 3,
+    truncated: true,
+  });
+});
+
+it("preserves the encoding behavior of unpaired surrogates", () => {
+  expect(utf8TailExcerpt("\ud800", 3).text).toBe("\ud800");
+  expect(utf8TailExcerpt("prefix\ud800", 3).text).toBe("\ufffd");
+});

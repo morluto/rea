@@ -5,8 +5,14 @@ import {
   createProcessIdentifierLookup,
   normalizeProcessSamples,
   normalizeProcessText,
+  normalizeRetainedTerminalFrames,
 } from "./ProcessNormalization.js";
-import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import {
+  DEFAULT_PROCESS_OUTPUT_BYTES,
+  processScenarioSchema,
+} from "../../domain/process/processScenario.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 const rootPid = 41_010;
 const samples = Object.freeze(
@@ -721,4 +727,39 @@ it("preserves literal absence text while normalizing selected paths with and wit
       utf8Bytes: Buffer.byteLength(expected),
     });
   }
+});
+
+it("refuses a retained frame that no longer fits limits.output_bytes with details.limit", () => {
+  let thrown: unknown;
+  try {
+    normalizeRetainedTerminalFrames(
+      [{ sequence: 3, at_ms: 0, data: "pid 41010" }],
+      () => ({ state: "over_budget", reason: "retention" }),
+      64,
+    );
+  } catch (cause) {
+    thrown = cause;
+  }
+  if (!(thrown instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected the retained-output refusal");
+  const projected = projectAnalysisError(thrown);
+  expect(projected.details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "limits.output_bytes",
+    effective_value: 64,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
+    applies_at: "next_call",
+  });
+  expect(projected.details?.refusal).toEqual({
+    kind: "adjustable_budget",
+    operation: "capture_process_scenario",
+    control: "limits.output_bytes",
+    effective_value: 64,
+    unit: "bytes",
+    range: { minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    default_value: DEFAULT_PROCESS_OUTPUT_BYTES,
+  });
 });

@@ -76,7 +76,10 @@ const verifyProjection = async ({
   const viewOutputSchema: Record<string, unknown> = canonicalOutputSchema(
     viewDefinition.name,
   );
-  for (const collection of COLLECTIONS) {
+  // The type selection leaves no exported type rows to project.
+  for (const collection of COLLECTIONS.filter(
+    (name) => name !== "exported_types",
+  )) {
     const projectedReply = await client.callTool(
       {
         name: "inspect_analysis_view",
@@ -271,7 +274,9 @@ it("summarizes selected members and pages every original collection after the fi
         : report[collection];
     if (rows == null) throw new Error(`${collection} was not examined`);
     // Empty collections would compare equal even if a row schema dropped facts.
-    expect(rows.length, collection).toBeGreaterThan(0);
+    // The selection narrows exported types to selected names; none is exported.
+    if (collection !== "exported_types")
+      expect(rows.length, collection).toBeGreaterThan(0);
     expect(view.summary.reported_counts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
     for (let offset: number | null = 0; offset !== null;) {
@@ -327,8 +332,10 @@ it("keeps collections that member Evidence never examined unknown", async () => 
       })
     ).structuredContent,
   );
+  const { unresolved_definitions: _projection, ...historical } =
+    managedMemberInspectionSchema.parse(parent.normalized_result);
   const recorded = {
-    ...managedMemberInspectionSchema.parse(parent.normalized_result),
+    ...historical,
     exported_types: null,
     user_strings: null,
     selection: null,
@@ -361,10 +368,17 @@ it("keeps collections that member Evidence never examined unknown", async () => 
   expect(view.summary.reported_counts.exported_types).toBeNull();
   expect(view.summary.signature_resolution).toBeNull();
   expect(view.summary.reported_counts.user_strings).toBeNull();
+  expect(view.summary.reported_counts).not.toHaveProperty(
+    "unresolved_definitions",
+  );
   expect(view.summary.user_strings).toBeNull();
   expect(view.summary.selection).toBeNull();
   expect(view.unknowns.join(" ")).toContain("no recorded subject");
-  for (const collection of ["exported_types", "user_strings"] as const)
+  for (const collection of [
+    "exported_types",
+    "user_strings",
+    "unresolved_definitions",
+  ] as const)
     expect(
       await inspectAnalysisView({
         source: { kind: "inline", evidence: unexamined },

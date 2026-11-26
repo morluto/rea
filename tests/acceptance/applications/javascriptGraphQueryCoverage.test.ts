@@ -14,7 +14,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-graph-query-coverage-");
     await writeFile(
       join(root, "main.cjs"),
-      'const { EventEmitter } = require("node:events"); const bus = new EventEmitter(); bus.on("", function emptyListener() {}); function read() { return this.speed; }',
+      'const { EventEmitter } = require("node:events"); const bus = new EventEmitter(); bus.on("", function emptyListener() {}); bus.on("data", function dataListener() {}); function read() { return this.speed; }',
     );
     await writeFile(join(root, "other.js"), "export const answer = 42;");
     const response = await cli.run({
@@ -75,6 +75,14 @@ cliTest(
             }),
           ]),
         );
+        expect(
+          seedNodes
+            .map((node) => [node?.kind, node?.properties.event_name])
+            .sort(),
+        ).toEqual([
+          ["event", ""],
+          ["listener", ""],
+        ]);
       } else {
         expect(trace.summary.relevant_unknowns).toBeGreaterThan(0);
         expect(seedNodes).toContainEqual(

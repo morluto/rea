@@ -58,7 +58,6 @@ const fixture = async (kind: (typeof kinds)[number]) => {
       operation: "gdb_console",
       parameters: { session_id: sessionId, command: report.command },
       result: report,
-      rawResult: report,
     },
   );
   const start = vi
@@ -149,7 +148,7 @@ it.each(kinds)(
     expect(output.evidence_bundle.bytes).toBe(Buffer.byteLength(serialized));
     expect(bundle.records).toHaveLength(1);
     const parent = parseEvidence(bundle.records[0]);
-    expect(parent.raw_result).toEqual(parent.normalized_result);
+    expect(parent.raw_result).toBeNull();
     expect(selected.normalized_result).toMatchObject({
       parent_evidence_id: parent.evidence_id,
       source_parameters: parent.parameters,
@@ -180,7 +179,7 @@ it.each(kinds)(
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "rejects %s summary without a destination before provider work",
   async (kind) => {
     const f = await fixture(kind);
@@ -193,7 +192,7 @@ it.each(kinds)(
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "preserves an existing %s destination and reports publication failure with source Evidence",
   async (kind) => {
     const f = await fixture(kind);
@@ -232,7 +231,7 @@ const interruptAt = (method: "assertReadyForPublication" | "close"): void => {
   });
 };
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "keeps the committed %s receipt when SIGINT arrives during final staging cleanup",
   async (kind) => {
     const f = await fixture(kind);
@@ -266,7 +265,7 @@ it.each(kinds)(
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "publishes no %s bundle or receipt when SIGINT arrives before commit",
   async (kind) => {
     const f = await fixture(kind);

@@ -394,19 +394,11 @@ describe("parsePackageListOutput", () => {
     ]);
   });
 
-  it("keeps unrecognized lines for partial coverage reporting", () => {
-    const { packages, unparsedLines } = parsePackageListOutput(
-      "package:/data/app/x/base.apk=com.ok\n  garbage line  \n",
-    );
-    expect(packages).toHaveLength(1);
-    expect(unparsedLines).toEqual({ sample: ["  garbage line  "], total: 1 });
-  });
-
-  it("samples the first ten unrecognized lines and counts every one", () => {
-    const rows = Array.from(
-      { length: 11 },
-      (_, index) => `row ${String(index + 1)}`,
-    );
+  it("preserves the first ten raw unrecognized lines and counts every one", () => {
+    const rows = [
+      "  garbage line  ",
+      ...Array.from({ length: 10 }, (_, index) => `row ${String(index + 1)}`),
+    ];
     const { packages, unparsedLines } = parsePackageListOutput(
       ["package:/data/app/x/base.apk=com.ok", ...rows].join("\n"),
     );
