@@ -5,6 +5,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { EspNvsService } from "../application/binaryDiagnostics/EspNvsService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
@@ -310,4 +311,10 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfDependenciesService>,
+  espNvs: ((service, retention) => ({
+    inspect_esp_nvs: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<EspNvsService>,
 } as const;

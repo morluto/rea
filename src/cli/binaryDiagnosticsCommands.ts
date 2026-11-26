@@ -1,9 +1,14 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import {
+  withEvidenceCallerInputPath,
+  type Evidence,
+} from "../domain/evidence.js";
 import { BYTE_ENTROPY_PROVIDER } from "../domain/investigationProviders.js";
+import { ok } from "../domain/result.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDiagnosticsToolContracts.js";
+import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   callerTargetPath,
@@ -537,6 +542,65 @@ export const registerBinaryDiagnosticsCommands = (
       return result.ok
         ? withEvidenceCallerInputPath(result.value, callerTargetPath(context))
         : projectAnalysisError(result.error);
+    },
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_esp_nvs"),
+    {
+      description:
+        "Decode an ESP-IDF v1/v2 Non-Volatile Storage (NVS) partition or flash slice without executing it",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local NVS partition image or ESP flash dump" },
+        partition_offset: {
+          description: "4096-byte aligned NVS start offset inside path",
+        },
+        partition_bytes: {
+          description: "Optional 4096-byte multiple NVS slice length",
+        },
+        max_entries: {
+          description:
+            "Optional inline cap on decoded NVS entries; complete entries remain in --evidence_output",
+        },
+        max_file_bytes: { description: "Maximum input file size in bytes" },
+      },
+    },
+    async (input, context) => {
+      const { createEspNvsService } =
+        await import("../composition/binaryDiagnostics/espNvs.js");
+      const service = createEspNvsService();
+      const retainedSources: Evidence[] = [];
+      const retention =
+        context.delivery?.detail !== "summary" &&
+        context.delivery?.evidenceOutput !== undefined
+          ? {
+              recordEvidence: (evidence: Evidence) => {
+                retainedSources.push(evidence);
+                return ok("added" as const);
+              },
+              evidenceById: (id: string) =>
+                retainedSources.find((record) => record.evidence_id === id),
+            }
+          : undefined;
+      return deliverCliAnalysisEvidence({
+        callerInputPath: callerTargetPath(context),
+        run: () =>
+          service.inspect(input, { signal: context.signal }, retention),
+        service,
+        providerId: "rea-esp-nvs",
+        operation: context.operation,
+        signal: context.signal,
+        detail: context.delivery?.detail,
+        evidenceOutput: context.delivery?.evidenceOutput,
+        ...(context.delivery?.view === undefined
+          ? {}
+          : { view: context.delivery.view }),
+        sourceEvidence: retainedSources,
+      });
     },
   );
 };

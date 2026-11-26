@@ -444,6 +444,11 @@ export const documentationSections = [
         route: "/esp-flash-image",
       },
       {
+        text: "ESP-IDF NVS partitions",
+        source: "guides/firmware/esp-nvs.md",
+        route: "/esp-nvs",
+      },
+      {
         text: "ESP images",
         source: "esp-image.md",
         route: "/esp-image",

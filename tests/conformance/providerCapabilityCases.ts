@@ -81,6 +81,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   elfUnwindRanges: { cases: ["tests/acceptance/elfUnwindRangesCli.test.ts"] },
   erlangBeam: { cases: ["tests/acceptance/erlangBeamCli.test.ts"] },
+  espNvs: { cases: ["tests/boundary/mcp/espNvsMcpCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },
   firmwareAnalysis: { cases: ["tests/boundary/mcp/firmwareMcp.test.ts"] },
   uefiAnalysis: { cases: ["tests/acceptance/uefiFirmware.test.ts"] },
