@@ -100,6 +100,22 @@ const textField = (bytes: Buffer, start: number, end: number): string =>
     .replace(/[ \0]+$/u, "");
 
 /**
+ * The 34 bytes a descriptor reserves for its root record, as a record that
+ * fills them. The volume set identifier always follows, so a longer length
+ * byte, or a 2-byte UCS-2 root identifier in a Joliet descriptor, cannot
+ * extend the record. Mastering programs have written both, and Linux isofs,
+ * 7-Zip and pycdlib read the field this way.
+ */
+const rootRecordField = (sector: Buffer, joliet: boolean): Buffer => {
+  const field = Buffer.from(
+    sector.subarray(ROOT_RECORD_OFFSET, ROOT_RECORD_OFFSET + ROOT_RECORD_BYTES),
+  );
+  field[0] = ROOT_RECORD_BYTES;
+  if (joliet && field[32] === 2) field[32] = 1;
+  return field;
+};
+
+/**
  * The descriptor's 34-byte root record: a directory with the one-byte
  * identifier 0x00, in one extent, on the volume the descriptor declares.
  */
@@ -107,18 +123,20 @@ const rootRecord = (
   sector: Buffer,
   base: number,
   volume: Iso9660VolumeSetMember,
+  joliet: boolean,
 ): Iso9660DirectoryRecord => {
-  if (sector[ROOT_RECORD_OFFSET] !== ROOT_RECORD_BYTES)
+  const length = sector[ROOT_RECORD_OFFSET]!;
+  if (length < ROOT_RECORD_BYTES)
     throw iso9660Malformed(
-      "root directory record is not 34 bytes",
+      `root directory record length ${String(length)} is shorter than its 34-byte field`,
       base + ROOT_RECORD_OFFSET,
       "root_directory_record",
     );
   const root = iso9660DirectoryRecordAt(
-    sector,
-    ROOT_RECORD_OFFSET,
-    base,
-    ROOT_RECORD_OFFSET + ROOT_RECORD_BYTES,
+    rootRecordField(sector, joliet),
+    0,
+    base + ROOT_RECORD_OFFSET,
+    ROOT_RECORD_BYTES,
   );
   if (root.identifier[0] !== 0)
     throw iso9660Malformed(
@@ -218,7 +236,7 @@ const primaryVolume = (sector: Buffer, base: number): PrimaryVolume => {
     volumeSequenceNumber: set.sequence,
     logicalBlockSize: admitBlockSize(sector, base),
     pathTableSize: readBothEndian32(sector, 132, base, "path_table_size"),
-    primaryRoot: rootRecord(sector, base, set),
+    primaryRoot: rootRecord(sector, base, set, false),
     volumeSetIdentifier: textField(sector, 190, 318),
     publisherIdentifier: textField(sector, 318, 446),
     dataPreparerIdentifier: textField(sector, 446, 574),
@@ -344,7 +362,7 @@ const recordDescriptor = (
     volumeSpaceSize: readBothEndian32(sector, 80, base, "volume_space_size"),
     volumeSetSize: set.size,
     volumeSequenceNumber: set.sequence,
-    root: rootRecord(sector, base, set),
+    root: rootRecord(sector, base, set, true),
   };
 };
 
