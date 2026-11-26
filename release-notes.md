@@ -488,6 +488,7 @@
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
 * **views:** bound the evidence-json serialization cache ([#14588](https://github.com/morluto/rea/issues/14588)) ([62ae333](https://github.com/morluto/rea/commit/62ae33320a6a8d239be241cfd931ffe68a9ec2af))
+* **views:** validate retained web rows against their collection ([#14690](https://github.com/morluto/rea/issues/14690)) ([673e85f](https://github.com/morluto/rea/commit/673e85ffdb3481bda37805b1aa9227a431981425))
 * **wasm:** report observed WABT diagnostic bytes ([#13436](https://github.com/morluto/rea/issues/13436)) ([c60cf4e](https://github.com/morluto/rea/commit/c60cf4e3b8683e3209e51693e02826f85a7e7761))
 * **wasm:** state the accepted WABT release range from its owning constant ([#14205](https://github.com/morluto/rea/issues/14205)) ([af53dd9](https://github.com/morluto/rea/commit/af53dd9df125f6e7f2f2e374cbe5a28f8429bc08))
 * **web:** align scenario schema guidance with admitted inputs ([#13170](https://github.com/morluto/rea/issues/13170)) ([03b99c2](https://github.com/morluto/rea/commit/03b99c2bcf16463792ed9d096d57de8454ba5390))
