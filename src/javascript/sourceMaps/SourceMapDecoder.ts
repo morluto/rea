@@ -1,3 +1,4 @@
+import { QueuedProviderClose } from "../../providers/QueuedProviderClose.js";
 import {
   selectedSourceMapLimits,
   localSourceMapLimitsSchema,
@@ -35,8 +36,7 @@ const OPERATION = "trace_web_source_location";
 /** Integrate the pinned upstream codec through an independently bounded owned process. */
 export class SourceMapDecoder implements WebSourceMapPort {
   #tail: Promise<void> = Promise.resolve();
-  #closing = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #closeState = new QueuedProviderClose();
   #pendingCleanup: SourceMapCleanupOwner | undefined;
 
   constructor(readonly dependencies: SourceMapDecoderDependencies = {}) {}
@@ -45,7 +45,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
     input: Parameters<WebSourceMapPort["trace"]>[0],
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
-    if (this.#closing)
+    if (this.#closeState.requested)
       return err(
         new AnalysisCapabilityUnavailableError(
           "source-map-decoder",
@@ -66,7 +66,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
       return err(cancelledBy(OPERATION, ready));
     }
     try {
-      return this.#closing
+      return this.#closeState.requested
         ? err(
             new AnalysisCapabilityUnavailableError(
               "source-map-decoder",
@@ -150,17 +150,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    this.#closePromise ??= this.#tail
-      .then(async () => {
-        const failure = await this.#retryCleanup();
-        if (failure !== undefined) throw failure;
-      })
-      .catch((cause: unknown) => {
-        this.#closePromise = undefined;
-        throw cause;
-      });
-    return this.#closePromise;
+    return this.#closeState.closeAfter(this.#tail, () => this.#retryCleanup());
   }
 
   async #retryCleanup(): Promise<AnalysisError | undefined> {

@@ -1,6 +1,6 @@
 import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -76,12 +76,6 @@ const inventory = async (image: Buffer) => {
   return { reader, entries, omissions, coverage };
 };
 
-const readAll = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
 describe("UefiArtifactReader", () => {
   it("maps an erased lead-in, one volume, and its exact owned FFS bytes", async () => {
     const image = buildReaderImage();
@@ -113,7 +107,7 @@ describe("UefiArtifactReader", () => {
       reason: "integrity",
       integrityCheck: "foreign-entry",
     });
-    expect(await readAll(await reader.open(file))).toEqual(
+    expect(await buffer(await reader.open(file))).toEqual(
       image.subarray(0x1048, 0x1048 + 24 + 12),
     );
   });
@@ -276,7 +270,7 @@ it("retains the readable prefix of a truncated FFS body and reports unknown cove
   const retained = entries.find(({ kind }) => kind === "file");
   expect(retained).toMatchObject({ byteOffset: 72, declaredSize: 4024 });
   if (retained === undefined) throw new Error("readable FFS bytes were lost");
-  const bytes = await readAll(await reader.open(retained));
+  const bytes = await buffer(await reader.open(retained));
   expect(bytes.length).toBe(4024);
   expect(omissions).toEqual([retained.path]);
   expect(coverage).toEqual({

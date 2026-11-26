@@ -2,7 +2,7 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeImportsInputSchema,
   peImportsSchema,
@@ -10,7 +10,7 @@ import {
   type PeImports,
 } from "../../domain/native/peImports.js";
 import { peVa } from "../../domain/native/peAddressSpace.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
@@ -39,33 +39,11 @@ export class PeImportsService {
         toParameters: (input) => input,
         validateReport: (report, input) =>
           report.artifact.path === input.path && validReport(report, input),
-        buildEvidence: (value, identity, parameters) => {
-          const architecture = peSubjectArchitecture(
-            value.machine,
-            value.format,
-          );
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "pe",
-              sha256: value.artifact.sha256,
-              ...(architecture === undefined ? {} : { architecture }),
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [
-                { kind: "artifact-path" as const, path: value.artifact.path },
-                ...fileRange(value.import_directory),
-                ...fileRange(value.delay_import_directory),
-              ],
-            },
-          );
-        },
+        buildEvidence: (value, identity, parameters) =>
+          observedPeEvidence(value, identity, OPERATION, parameters, [
+            ...fileRange(value.import_directory),
+            ...fileRange(value.delay_import_directory),
+          ]),
       },
       rawInput,
       options,

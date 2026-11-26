@@ -21,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisUnsupportedTargetError,
   AnalysisTargetFailureError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -84,6 +83,9 @@ const relatedInputDetails = (
   ...(related?.operations === undefined || related.operations.length === 0
     ? {}
     : { related_operations: [...related.operations] }),
+  ...(related?.providers === undefined || related.providers.length === 0
+    ? {}
+    : { related_providers: [...related.providers] }),
 });
 
 /**
@@ -597,7 +599,9 @@ const projectError = (
     code !== "cleanup_incomplete"
       ? { retry: targetFailureRetry(error.failure) }
       : {}),
-    ...(error instanceof ArtifactOperationError && code === "artifact_changed"
+    // Every producer of a changed target, typed or not, takes the changed
+    // kind's retry hint.
+    ...(code === "artifact_changed"
       ? { retry: TARGET_FAILURE_PROJECTIONS.changed.retry }
       : {}),
     ...(recovery === undefined ? {} : { recovery }),
@@ -641,12 +645,6 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
-  if (error instanceof AnalysisUnsupportedTargetError)
-    return {
-      operation: error.operation,
-      path: error.path,
-      reason: error.reason,
-    };
   if (error instanceof AnalysisTargetFailureError)
     return {
       operation: error.operation,
@@ -763,9 +761,6 @@ const artifactStateErrorDetails = (
       ...(error.integrityCheck === undefined
         ? {}
         : { integrity_check: error.integrityCheck }),
-      ...(error.parseFailure === undefined
-        ? {}
-        : targetFailureDetails(error.parseFailure)),
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),

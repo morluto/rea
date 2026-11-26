@@ -14,7 +14,7 @@ import {
   stableArtifactInputRecovery,
   readerIntegrityFailure,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   readStableArtifact,
@@ -425,10 +425,7 @@ export const historicalCaptureFailure = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return cancelledBy(
-      OPERATION,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
+    return artifactFileCancellationError(OPERATION, cause);
   if (
     phase === "decoder" &&
     origin === "owned-or-classified" &&

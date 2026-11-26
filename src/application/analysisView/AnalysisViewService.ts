@@ -251,6 +251,7 @@ const projectResolvedAnalysisView = (
     limitations: parent.limitations,
     parameters: parent.parameters,
     artifact: viewArtifact(presentation),
+    evidence: parent,
   });
   if (!projected.ok) return projected;
   const identity = validateAnalysisViewSubject(
@@ -259,6 +260,29 @@ const projectResolvedAnalysisView = (
   );
   if (!identity.ok) return identity;
   return ok(createAnalysisViewEvidence(input, presentation, projected.value));
+};
+
+/**
+ * The summary an over-budget delivery returns in place of complete Evidence
+ * the caller can already reach. It is the same record `detail: "summary"`
+ * delivers, so its identity holds wherever a summary is accepted. An
+ * operation without a summary view fails here, and the caller keeps
+ * delivering its complete Evidence.
+ */
+export const summarizeOverBudgetEvidence = (
+  evidence: Evidence,
+): Result<Evidence, AnalysisError> => {
+  const view = { kind: "summary" } as const;
+  const source = {
+    kind: "retained-evidence" as const,
+    evidence_id: evidence.evidence_id,
+  };
+  return projectResolvedAnalysisView(
+    { source, view },
+    prepareAnalysisViewProjection(view),
+    evidence,
+    evidenceSubjectTarget(evidence.subject),
+  );
 };
 
 /**

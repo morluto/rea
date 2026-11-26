@@ -24,14 +24,11 @@ import type {
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
 import { peFailure, requirePeExtent } from "./peImageHeaders.js";
 import { peDirectorySizeAnomaly } from "../native/peHeaderAnomalies.js";
-import {
-  readPeResourceLayout,
-  readPeResourceLayoutAt,
-} from "./peResourceLayout.js";
+import { readPeResourceLayoutAt } from "./peResourceLayout.js";
 import type { PrefixedByteSource } from "../byteSource.js";
 import { bufferByteSource } from "../byteSource.js";
 
-type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
+type PeResourceLayout = Awaited<ReturnType<typeof readPeResourceLayoutAt>>;
 type PeResourceInventory = Omit<PeResources, "artifact">;
 
 type Range = { offset: number; bytes: number };
@@ -66,26 +63,6 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 };
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
-
-/** Attach the selected carrier identity for the public PE resource report. */
-export const parsePeResources = async (
-  bytes: Buffer,
-  artifact: PeResources["artifact"],
-  input: InspectPeResourcesInput,
-  signal?: AbortSignal,
-): Promise<PeResources> =>
-  boundedResourceResult(
-    {
-      artifact,
-      ...(await parsePeResourceInventory(
-        bufferByteSource(bytes),
-        input.max_entries,
-        signal,
-        readPeResourceLayout(bytes),
-      )),
-    },
-    signal,
-  );
 
 /**
  * Decode PE resources from a verified random-access source without buffering

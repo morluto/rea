@@ -87,9 +87,9 @@ it("classifies the complete diagnostic before shortening its displayed reason", 
   ).resolves.toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       path: localPath,
-      reason: `${stderr.slice(0, 512)}…`,
+      failure: { detail: `${stderr.slice(0, 512)}…` },
     },
   });
 });
@@ -432,9 +432,9 @@ it("keeps a completed adb refusal primary when post-exit cleanup fails or is can
   );
   if (cancelledResult.ok) throw new Error("Expected refusal");
   expect(primaryAnalysisError(cancelledResult.error)).toMatchObject({
-    _tag: "AnalysisUnsupportedTargetError",
+    _tag: "AnalysisTargetFailureError",
     path: "emulator-5554",
-    reason: "INSTALL_FAILED_INVALID_APK",
+    failure: { detail: "INSTALL_FAILED_INVALID_APK" },
   });
   expect(cancelledResult.error.secondaryFailures).toMatchObject([
     { _tag: "AnalysisCancelledError", cause: "late abort during sweep" },
@@ -473,9 +473,9 @@ it("keeps a completed adb refusal primary when post-exit cleanup fails or is can
   );
   if (cleanupResult.ok) throw new Error("Expected refusal with cleanup error");
   expect(primaryAnalysisError(cleanupResult.error)).toMatchObject({
-    _tag: "AnalysisUnsupportedTargetError",
+    _tag: "AnalysisTargetFailureError",
     path: "emulator-5554",
-    reason: "INSTALL_FAILED_INVALID_APK",
+    failure: { detail: "INSTALL_FAILED_INVALID_APK" },
   });
   expect(projectAnalysisError(cleanupResult.error)).toMatchObject({
     code: "cleanup_incomplete",

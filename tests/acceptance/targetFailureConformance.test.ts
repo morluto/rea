@@ -19,7 +19,7 @@ const fileIdentity = (path: string, bytes: Buffer) => ({
 // One generated suite for every registered reader: each case runs through
 // the CLI and the MCP adapter, and both must report the kind's contract and
 // the owner's facts.
-for (const { operation, cases } of await loadTargetFailureReaders()) {
+for (const { operation, session, cases } of await loadTargetFailureReaders()) {
   const command = operation.replaceAll("_", "-");
   for (const testCase of cases) {
     cliTest(
@@ -49,10 +49,21 @@ for (const { operation, cases } of await loadTargetFailureReaders()) {
         expect(result.json).toMatchObject(expected);
         expect(result.json).not.toHaveProperty("recovery");
         expect(result.json).not.toHaveProperty("details.issues");
-        expect(result.json).not.toHaveProperty("details.format_failure");
+        // The CLI names operations by command, never by MCP tool name.
+        expect(
+          (result.json as { remediation: { action: string } }).remediation
+            .action,
+        ).not.toContain(operation);
 
         const call = await cli.sharedMcpCall!();
-        const response = await call(operation, { path, ...testCase.mcp });
+        if (session === true) {
+          const opened = await call("open_binary", { path });
+          expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+        }
+        const response = await call(operation, {
+          ...(session === true ? {} : { path }),
+          ...testCase.mcp,
+        });
         // A target failure is an isError tool result carrying the projected
         // diagnostic as JSON text, never a JSON-RPC error. The transport
         // removes the private structured carrier before sending errors.

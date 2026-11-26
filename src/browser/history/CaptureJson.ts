@@ -4,7 +4,6 @@ import { captureBudgets } from "./CaptureBudgets.js";
 import { LosslessNumber } from "lossless-json";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 
 export type CaptureJsonFormat = "HAR" | "qlog" | "Playwright trace";
 
@@ -14,6 +13,8 @@ export type SelectiveCaptureJsonResult =
 
 export interface SelectiveCaptureJsonOptions {
   readonly maximumNodes?: number;
+  /** The caller's nesting control; omitted, the capture budget's depth applies. */
+  readonly maximumDepth?: number;
   readonly beforeMaterialize?: () => void;
 }
 
@@ -65,7 +66,6 @@ const setOwnProperty = (
 
 class StrictCaptureJsonParser {
   readonly #length: number;
-  readonly #fixedDepth: boolean;
   readonly #maximumDepth: number;
   readonly #nodeBudget: Budget | undefined;
   readonly #path: (string | number)[];
@@ -75,12 +75,10 @@ class StrictCaptureJsonParser {
     readonly text: string,
     readonly format: CaptureJsonFormat,
     readonly maximumNodes?: number,
+    maximumDepth?: number,
   ) {
     this.#length = text.length;
-    this.#fixedDepth = format === "Playwright trace";
-    this.#maximumDepth = this.#fixedDepth
-      ? WEB_NETWORK_CAPTURE_LIMITS.depth
-      : captureBudgets().depth;
+    this.#maximumDepth = maximumDepth ?? captureBudgets().depth;
     this.#nodeBudget =
       maximumNodes === undefined ? undefined : new Budget(maximumNodes);
     this.#path = new Array<string | number>(this.#maximumDepth);
@@ -124,7 +122,7 @@ class StrictCaptureJsonParser {
       }
       throw new CaptureFormatError(
         { name: "nesting-depth", maximum: this.#maximumDepth },
-        `${this.format} exceeds ${this.#fixedDepth ? "its fixed JSON nesting allowance" : "max_nesting_depth"} (${String(this.#maximumDepth)} levels).`,
+        `${this.format} exceeds ${this.format === "Playwright trace" ? "trace_limits.nesting_depth" : "max_nesting_depth"} (${String(this.#maximumDepth)} levels).`,
         pointer,
       );
     }
@@ -631,6 +629,7 @@ export const parseCaptureJsonForRetainedTypes = (
     text,
     format,
     options?.maximumNodes,
+    options?.maximumDepth,
   ).parseRootSelective(retainedTypes, options?.beforeMaterialize);
 
 /** UTF-8 JSON decoding skips one permitted BOM and rejects malformed bytes. */

@@ -184,7 +184,11 @@ it("names the default header admission budget and its setting when source select
   expect(wrapped.message).toBe(recovery);
   expect(wrapped.admission).toEqual(inventoryFailure.admission);
   const inventory = projectAnalysisError(
-    translateArtifactFailure("inventory_artifact", inventoryFailure),
+    translateArtifactFailure(
+      "inventory_artifact",
+      "/selected/artifact",
+      inventoryFailure,
+    ),
   );
   expect(inventory).toMatchObject({
     code: "partial",
@@ -214,8 +218,13 @@ it("names the default header admission budget and its setting when source select
     },
   });
   expect(
-    projectAnalysisError(translateArtifactFailure("inspect_artifact", wrapped))
-      .message,
+    projectAnalysisError(
+      translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        wrapped,
+      ),
+    ).message,
   ).toBe(recovery);
 
   const selected = await analyzeJavaScriptApplication({

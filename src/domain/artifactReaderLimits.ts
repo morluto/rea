@@ -93,6 +93,57 @@ export const iso9660ReaderLimitsSchema = z.strictObject({
 });
 export type Iso9660ReaderLimits = z.output<typeof iso9660ReaderLimitsSchema>;
 
+export const DEFAULT_DENO_READER_LIMITS = {
+  metadata_json_bytes: 8 * 1024 * 1024,
+  vfs_header_json_bytes: 32 * 1024 * 1024,
+  table_records: 100_000,
+  specifier_text_bytes: 8 * 1024 * 1024,
+  remote_body_bytes: 256 * 1024 * 1024,
+  vfs_entries: 100_000,
+  vfs_name_units: 32 * 1024 * 1024,
+  retained_bytes: 256 * 1024 * 1024,
+  path_parts: 256,
+  path_nodes: 250_000,
+};
+export const denoReaderLimitsSchema = z.strictObject({
+  metadata_json_bytes: representedBytes,
+  vfs_header_json_bytes: representedBytes,
+  table_records: count,
+  specifier_text_bytes: bytes,
+  remote_body_bytes: bytes,
+  vfs_entries: count,
+  vfs_name_units: count,
+  retained_bytes: bytes,
+  /**
+   * Indexed fallbacks live under a reserved top-level namespace directory
+   * (`deno-vfs/<index>`, `deno-remote/<index>`) that keeps them collision-free,
+   * so the smallest representable logical path has two parts.
+   */
+  path_parts: count.min(2),
+  path_nodes: count,
+});
+export type DenoReaderLimits = z.output<typeof denoReaderLimitsSchema>;
+
+export const DEFAULT_WXAPKG_READER_LIMITS = {
+  table_bytes: 16 * 1024 * 1024,
+  directory_bytes: 64 * 1024 * 1024,
+};
+export const wxapkgReaderLimitsSchema = z.strictObject({
+  table_bytes: bytes,
+  directory_bytes: bytes,
+});
+export type WxapkgReaderLimits = z.output<typeof wxapkgReaderLimitsSchema>;
+
+export const DEFAULT_TAR_READER_LIMITS = {
+  extended_header_bytes: 1024 * 1024,
+  metadata_bytes: 64 * 1024 * 1024,
+};
+export const tarReaderLimitsSchema = z.strictObject({
+  extended_header_bytes: representedBytes,
+  metadata_bytes: bytes,
+});
+export type TarReaderLimits = z.output<typeof tarReaderLimitsSchema>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -179,6 +230,50 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `ISO 9660 admission; omitted fields use ${JSON.stringify(DEFAULT_ISO9660_READER_LIMITS)}. Descriptor count bounds the volume descriptor set; directory depth, record count, directory bytes and path bytes bound directory-tree traversal.`,
     ),
+  deno: z
+    .strictObject({
+      metadata_json_bytes:
+        denoReaderLimitsSchema.shape.metadata_json_bytes.exactOptional(),
+      vfs_header_json_bytes:
+        denoReaderLimitsSchema.shape.vfs_header_json_bytes.exactOptional(),
+      table_records: denoReaderLimitsSchema.shape.table_records.exactOptional(),
+      specifier_text_bytes:
+        denoReaderLimitsSchema.shape.specifier_text_bytes.exactOptional(),
+      remote_body_bytes:
+        denoReaderLimitsSchema.shape.remote_body_bytes.exactOptional(),
+      vfs_entries: denoReaderLimitsSchema.shape.vfs_entries.exactOptional(),
+      vfs_name_units:
+        denoReaderLimitsSchema.shape.vfs_name_units.exactOptional(),
+      retained_bytes:
+        denoReaderLimitsSchema.shape.retained_bytes.exactOptional(),
+      path_parts: denoReaderLimitsSchema.shape.path_parts.exactOptional(),
+      path_nodes: denoReaderLimitsSchema.shape.path_nodes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Deno compile admission; omitted fields use ${JSON.stringify(DEFAULT_DENO_READER_LIMITS)}. Table records apply to each specifier, redirect and remote-module table; VFS name units are retained UTF-16 path units; path parts (at least 2, the depth of an indexed fallback path) also select indexed fallback paths.`,
+    ),
+  wxapkg: z
+    .strictObject({
+      table_bytes: wxapkgReaderLimitsSchema.shape.table_bytes.exactOptional(),
+      directory_bytes:
+        wxapkgReaderLimitsSchema.shape.directory_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `wxapkg admission; omitted fields use ${JSON.stringify(DEFAULT_WXAPKG_READER_LIMITS)}. Table bytes bound the member table read; directory bytes bound its retained representation.`,
+    ),
+  tar: z
+    .strictObject({
+      extended_header_bytes:
+        tarReaderLimitsSchema.shape.extended_header_bytes.exactOptional(),
+      metadata_bytes:
+        tarReaderLimitsSchema.shape.metadata_bytes.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `tar admission; omitted fields use ${JSON.stringify(DEFAULT_TAR_READER_LIMITS)}. Extended-header bytes bound one pax or GNU long-name record; metadata bytes bound retained member metadata.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -194,6 +289,9 @@ export const artifactReaderLimitsSchema = z.strictObject({
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
+  deno: denoReaderLimitsSchema,
+  wxapkg: wxapkgReaderLimitsSchema,
+  tar: tarReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
@@ -209,10 +307,35 @@ export const resolveArtifactReaderLimits = (
   node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
+  deno: { ...DEFAULT_DENO_READER_LIMITS, ...selected?.deno },
+  wxapkg: { ...DEFAULT_WXAPKG_READER_LIMITS, ...selected?.wxapkg },
+  tar: { ...DEFAULT_TAR_READER_LIMITS, ...selected?.tar },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),
 });
+
+/** Every group's resolved schema; the source of each field's supported range. */
+const READER_LIMIT_GROUPS = {
+  bun: bunReaderLimitsSchema,
+  dotnet_bundle: dotnetBundleReaderLimitsSchema,
+  node_sea: nodeSeaReaderLimitsSchema,
+  godot: godotReaderLimitsSchema,
+  iso9660: iso9660ReaderLimitsSchema,
+  deno: denoReaderLimitsSchema,
+  wxapkg: wxapkgReaderLimitsSchema,
+  tar: tarReaderLimitsSchema,
+} as const;
+type ReaderLimitGroup = keyof typeof READER_LIMIT_GROUPS;
+
+/** The exact contract field a reader admission names on refusal. */
+export type ArtifactReaderLimitParameter =
+  | {
+      [
+        Group in ReaderLimitGroup
+      ]: `artifact_limits.${Group}.${keyof z.output<(typeof READER_LIMIT_GROUPS)[Group]> & string}`;
+    }[ReaderLimitGroup]
+  | "artifact_limits.expanded_bytes";
 
 /** A per-call reader admission, independent of runtime-setting registry membership. */
 export interface ArtifactReaderLimitFact {
@@ -229,17 +352,25 @@ export interface ArtifactReaderLimitFact {
   readonly pending_restart: false;
 }
 
-/** Runtime representation ceilings differ from aggregate plaintext-work budgets. */
+/**
+ * The supported maximum of a reader admission, read from the schema the next
+ * call is validated against, so the reported range cannot drift from it.
+ */
 export const artifactReaderLimitMaximum = (
-  parameter: string,
-  unit: ArtifactReaderLimitFact["unit"],
-): number =>
-  unit === "count"
-    ? 0x7fffffff
-    : [
-          "artifact_limits.bun.representation_bytes",
-          "artifact_limits.dotnet_bundle.string_bytes",
-          "artifact_limits.godot.directory_bytes",
-        ].includes(parameter)
-      ? bufferConstants.MAX_STRING_LENGTH
-      : Number.MAX_SAFE_INTEGER;
+  parameter: ArtifactReaderLimitParameter,
+): number => {
+  const [, group, field] = parameter.split(".");
+  const schema =
+    field === undefined
+      ? bytes
+      : (
+          READER_LIMIT_GROUPS[group as ReaderLimitGroup].shape as Record<
+            string,
+            typeof bytes
+          >
+        )[field];
+  const maximum = schema?.maxValue;
+  if (maximum === undefined || maximum === null || !Number.isFinite(maximum))
+    throw new TypeError(`${parameter} names no bounded reader admission`);
+  return maximum;
+};

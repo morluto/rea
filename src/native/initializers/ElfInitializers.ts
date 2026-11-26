@@ -1,3 +1,4 @@
+import { lastAtOrBelow } from "../../domain/virtualFileMapping.js";
 import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import {
@@ -33,8 +34,9 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
-  BinaryResourceFailure,
   createFileMappingIndex,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  nativeStructureFailure,
   type ElfDynamicSegment,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
@@ -128,6 +130,8 @@ interface Source {
 }
 
 interface ElfScan {
+  /** `max_structure_bytes` for the dynamic directory. */
+  readonly structureBytes: number;
   readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly bits: 32 | 64;
@@ -168,16 +172,19 @@ const readDynamicTags = (
   if (segment === undefined) return tags;
   if (extra > 0)
     throw new BinaryFormatFailure("malformed", "multiple PT_DYNAMIC segments");
-  const table = admitElfDynamicDirectory(scan.bytes.length, segment, scan.bits);
+  const table = admitElfDynamicDirectory(
+    scan.bytes.length,
+    segment,
+    scan.bits,
+    scan.structureBytes,
+  );
   if (!table.ok) {
     if (table.error.kind === "malformed")
       throw new BinaryFormatFailure("malformed", table.error.message);
-    throw new BinaryResourceFailure(
-      "structure",
+    throw nativeStructureFailure(
+      "The ELF dynamic directory",
+      table.error.size,
       table.error.maximum,
-      table.error.message,
-      "structure",
-      "bytes",
     );
   }
   const { offset: start, size, width } = table.value;
@@ -591,26 +598,6 @@ interface WriteLoad {
 }
 
 /**
- * Index of the first slot whose word could overlap a write starting at
- * `address`, that is the first slot above `address - word`.
- */
-const firstOverlap = (
-  slots: readonly bigint[],
-  address: bigint,
-  word: number,
-): number => {
-  const from = address - BigInt(word);
-  let low = 0;
-  let high = slots.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if ((slots[mid] ?? address) <= from) low = mid + 1;
-    else high = mid;
-  }
-  return low;
-};
-
-/**
  * Drain the shared dynamic-relocation reader, keeping only writes that touch a
  * wanted slot. A slot is resolved by a write only when that write starts at the
  * slot with the pointer width and no other write overlaps the slot, which
@@ -635,7 +622,7 @@ const loadWrites = async (
   const consider = (write: ElfPointerWrite): void => {
     const end = write.address + BigInt(write.width);
     for (
-      let at = firstOverlap(slots, write.address, word);
+      let at = lastAtOrBelow(slots, write.address - BigInt(word)) + 1;
       at < slots.length;
       at += 1
     ) {
@@ -662,6 +649,7 @@ const loadWrites = async (
         dynamicSegments: image.elf.dynamicSegments,
         mappings: image.mappings,
         zeroFills: image.zero_fills,
+        structureBytes: scan.structureBytes,
       },
       { unsupported: "record", wholeExtents: true },
     );
@@ -984,20 +972,23 @@ export const readElfInitializers = async (
   bytes: Buffer,
   page: InitializerPage,
   signal?: AbortSignal,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
   const operation = "inspect_native_initializers";
   const directory =
     signal === undefined
-      ? readElfDirectoryFromBuffer(bytes, operation)
+      ? readElfDirectoryFromBuffer(bytes, operation, { structureBytes })
       : await readElfDirectoryFromBufferCooperative(
           bytes,
           () => yieldArtifactRead(signal),
           operation,
+          { structureBytes },
         );
   assertArtifactReadActive(signal);
   const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
+    structureBytes,
     bytes,
     reader: new BinaryReader(bytes, image.byte_order === "little", "elf"),
     bits: image.bits,

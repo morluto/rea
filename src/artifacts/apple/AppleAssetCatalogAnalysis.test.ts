@@ -894,10 +894,10 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
       retryable: false,
       details: {
         operation: "inspect_asset_catalog",
-        reason: "malformed",
+        path,
+        reason: expect.stringContaining(relativePath),
         failure_kind: "malformed",
         format: "asset-catalog",
-        detail: expect.stringContaining(relativePath),
         diagnostics: { catalog_path: relativePath },
         captured_output: {
           stdout: "partial metadata",

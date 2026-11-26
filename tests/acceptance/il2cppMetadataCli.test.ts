@@ -1103,24 +1103,24 @@ cliTest(
     tokenBeyondModule.writeUInt32LE(0x06000004, tokenAt(0));
     const pairConflict =
       (reason: string) =>
-      (path: string, binaryPath: string, binaryField: string) => ({
-        code: "invalid_request",
+      (
+        path: string,
+        binaryPath: string,
+        binaryField: string,
+        binaryRecoveryField: string,
+      ) => ({
+        code: "input_conflict",
+        remediation: {
+          action: expect.stringContaining(`(path, ${binaryRecoveryField})`),
+        },
         details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message: expect.stringContaining(
-                `Selected metadata ${path} does not link to the selected binary: ${reason}:`,
-              ),
-            },
-            {
-              path: [binaryField],
-              reason: "invalid_value",
-              message: expect.stringContaining(
-                `Selected binary ${binaryPath} does not link to the metadata: ${reason}:`,
-              ),
-            },
+          failure_kind: "conflict",
+          path,
+          reason: expect.stringContaining(`${reason}:`),
+          // Both inputs, each by this adapter's spelling of its field.
+          inputs: [
+            { field: "path", path },
+            { field: binaryField, path: binaryPath },
           ],
         },
       });
@@ -1201,7 +1201,7 @@ cliTest(
       });
       expect(result.exitCode, name).toBe(1);
       expect(result.json, name).toMatchObject(
-        expected(path, binaryPath, "binary"),
+        expected(path, binaryPath, "binary", "--binary"),
       );
       const response = await call("inspect_il2cpp_metadata", {
         path,
@@ -1209,7 +1209,7 @@ cliTest(
         ...(universal ? { binary_architecture: "arm64" } : {}),
       });
       expect(parseMcpToolError(response).error, name).toMatchObject(
-        expected(path, binaryPath, "binary_path"),
+        expected(path, binaryPath, "binary_path", "binary_path"),
       );
     }
     await client.ping();

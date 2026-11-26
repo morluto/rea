@@ -9,6 +9,7 @@ import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPol
 import {
   ArtifactReaderFailure,
   malformedArtifact,
+  truncatedArtifact,
 } from "../resources/index.js";
 import {
   PositionalArtifactReader,
@@ -74,8 +75,13 @@ export class UImageArtifactReader extends PositionalArtifactReader<UImageMetadat
     if (!fields.ok) throw parseFailure(fields.error);
     const header = fields.value;
     if (initial.size < UIMAGE_HEADER_SIZE + header.payloadSize)
-      throw formatFailure(
-        `uImage payload is truncated: header declares ${header.payloadSize} payload bytes but only ${initial.size - UIMAGE_HEADER_SIZE} follow the header`,
+      throw truncatedArtifact(
+        "uimage",
+        `uImage is malformed: uImage payload is truncated: header declares ${header.payloadSize} payload bytes but only ${initial.size - UIMAGE_HEADER_SIZE} follow the header`,
+        {
+          availableBytes: initial.size - UIMAGE_HEADER_SIZE,
+          requiredBytes: header.payloadSize,
+        },
       );
     // Admit the bounded size table first, then include those same bytes in the
     // native CRC stream. No payload byte needs to be read twice for verification.

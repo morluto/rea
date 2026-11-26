@@ -57,8 +57,8 @@ it("advertises and validates one ABI selector grammar with field correction guid
     "a",
     "abi\\label",
     "abi\nlabel",
-    "l".repeat(1010),
-    "😀".repeat(1010),
+    "l".repeat(65_521),
+    "😀".repeat(65_521),
   ]) {
     expect(accepts({ abi })).toBe(true);
     expect(abiSchema.safeParse(abi).success).toBe(true);
@@ -66,9 +66,9 @@ it("advertises and validates one ABI selector grammar with field correction guid
   for (const abi of [
     "",
     "lib/x86_64",
-    "l".repeat(1011),
-    "😀".repeat(1011),
-    "l".repeat(1010) + "\n",
+    "l".repeat(65_522),
+    "😀".repeat(65_522),
+    "l".repeat(65_521) + "\n",
   ]) {
     expect(accepts({ abi })).toBe(false);
     expect(abiSchema.safeParse(abi).success).toBe(false);
@@ -131,4 +131,45 @@ it("inspects the caller-selected nonstandard ABI through the public CLI", async 
     "--json",
   ]);
   expect(JSON.parse(invalid.stdout).code).toBe("VALIDATION_ERROR");
+});
+
+it("refuses at apk_limits.abi_count and recovers the same APK through the public CLI", async () => {
+  const path = await createFlutterApk("two-abis.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotFixtureImage("a".repeat(32)) },
+    { path: "lib/x86_64/libapp.so", bytes: aotFixtureImage("b".repeat(32)) },
+  ]);
+  const refused = await serveCli([
+    "identify-flutter-build",
+    path,
+    "--apk-limits",
+    '{"abi_count":1}',
+    "--json",
+  ]);
+  expect(JSON.parse(refused.stdout)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "apk_limits.abi_count",
+        effective_value: 1,
+        unit: "count",
+        minimum: 1,
+        maximum: 0x7fffffff,
+        default_value: 32,
+        applies_at: "next_call",
+      },
+    },
+  });
+  const recovered = await serveCli([
+    "identify-flutter-build",
+    path,
+    "--apk-limits",
+    '{"abi_count":2}',
+    "--json",
+  ]);
+  expect(recovered.exitCode, recovered.stdout).toBe(0);
+  expect(JSON.parse(recovered.stdout)).toMatchObject({
+    parameters: { path, apk_limits: { abi_count: 2 } },
+  });
 });

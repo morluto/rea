@@ -19,6 +19,7 @@ import {
   readArtifactFileChunks,
   abortIfNeeded,
   ArtifactFileSource,
+  unsupportedArtifact,
 } from "../resources/index.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import {
@@ -84,8 +85,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
             signal,
           ));
         if (header === undefined)
-          throw new ArtifactReaderFailure(
-            "unsupported",
+          throw unsupportedArtifact(
+            "dotnet-bundle",
             "Selected file has no .NET bundle header",
           );
         this.#bundle = await readDotnetBundle(

@@ -428,9 +428,13 @@ describe("FAT slice header identity and bounds", () => {
         throw new Error("an invalid range must not be probed");
       }),
     ).toEqual({
-      state: "malformed",
-      category: "malformed",
-      reason: "FAT architecture 0 has an invalid slice range",
+      state: "failed",
+      failure: {
+        kind: "malformed",
+        format: "macho",
+        detail: "FAT architecture 0 has an invalid slice range",
+        field: "fat_arch[0]",
+      },
     });
   });
 
@@ -451,9 +455,13 @@ describe("FAT slice header identity and bounds", () => {
     ).toEqual({ state: "needs-slice-header", offsets: [offset] });
     const prefix = bytes.subarray(0, offset + 4);
     expect(classifyFatContainerEvidence(header, prefix)).toEqual({
-      state: "malformed",
-      category: "malformed",
-      reason: "FAT architecture 0 has an invalid slice range",
+      state: "failed",
+      failure: {
+        kind: "malformed",
+        format: "macho",
+        detail: "FAT architecture 0 has an invalid slice range",
+        field: "fat_arch[0]",
+      },
     });
     expect(parseExecutableHeader(prefix, "arm64", bytes.length)).toEqual({
       ok: false,

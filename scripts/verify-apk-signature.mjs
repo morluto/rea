@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -28,6 +31,10 @@ import {
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const environment = Object.fromEntries(
@@ -208,10 +215,12 @@ const inspectCli = async (path) => {
       (
         await run(process.execPath, [
           entrypoint,
-          "inspect-apk-signature",
-          path,
-          "--format",
-          "json",
+          ...(await completeEvidenceCliArguments([
+            "inspect-apk-signature",
+            path,
+            "--format",
+            "json",
+          ])),
         ])
       ).stdout,
     );
@@ -227,7 +236,9 @@ const fixture = await VerifierFixture.open({
   prefix: "rea-apk-signature-verifier-",
 });
 const workspace = fixture.path;
-const client = new Client({ name: "apk-signature-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "apk-signature-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -270,13 +281,7 @@ try {
       { timeout: 120000, toolDefinition: advertised },
     );
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        reply.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, reply);
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_apk_signature"));
     const { caller_input_path: callerInputPath, ...cliShared } = cli;
     assert.equal(callerInputPath, path);

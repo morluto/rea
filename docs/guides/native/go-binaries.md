@@ -207,8 +207,8 @@ architecture table was cut short rather than corrupted: `details.failure_kind` i
 acquire the complete file again. A CAFEBABE file whose architecture count
 reads as a Java class-file version is not read as a truncated
 universal file. A FAT form outside REA's coverage, such as an
-alignment exponent above 52, is `unsupported_target` without
-`failure_kind`. The same rules apply to `inspect_rust_binary`,
+alignment exponent above 52, is `unsupported_target` with `details.failure_kind`
+`unsupported`. The same rules apply to `inspect_rust_binary`,
 `inspect_dwarf_units` and `inspect_native_initializers`.
 
 For ELF images without a named build-info section, discovery checks each
@@ -268,7 +268,9 @@ without restarting REA. The original complete artifact and its identity are
 preserved. An unchanged retry cannot increase a deterministic allowance.
 
 The shared native container reader separately bounds structural table decoding
-to 16 MiB. None of these Go controls changes that boundary. Inline strings must
+to 16 MiB, the default of `max_structure_bytes` on the static native readers.
+`inspect_go_binary` has no such control, and none of these Go controls changes
+that boundary. Inline strings must
 also fit their actual mapped source range. Identical search spans with the same
 virtual alignment are searched once; partially overlapping spans consume the
 cumulative search budget. Oversized complete reports fail without partial

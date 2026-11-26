@@ -38,7 +38,7 @@ cliTest.for([
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
-      details: { reason: "malformed" },
+      details: { path, failure_kind: "malformed", format: "unityfs" },
     });
   },
 );
