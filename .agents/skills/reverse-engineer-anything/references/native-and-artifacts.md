@@ -993,7 +993,7 @@ holds the cartridge header facts; members are `arm9.bin`, `arm7.bin`,
 unnamed `fat/<id>.bin` files. A CRC mismatch, a partial table, or a range past
 the file end leaves coverage `unknown`. Secure-area encryption, compressed
 overlays, and NitroARC archives are not decoded. See
-[Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/nds-roms.md).
+[Nintendo DS ROMs](https://github.com/morluto/rea/blob/main/docs/guides/firmware/nds-roms.md).
 
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,

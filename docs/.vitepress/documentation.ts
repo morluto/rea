@@ -515,7 +515,7 @@ export const documentationSections = [
       },
       {
         text: "Nintendo DS ROMs",
-        source: "nds-roms.md",
+        source: "guides/firmware/nds-roms.md",
         route: "/nds-roms",
       },
       {

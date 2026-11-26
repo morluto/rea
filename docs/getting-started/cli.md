@@ -461,7 +461,7 @@ rea inspect-artifact ./game.nds --detail summary --json
 rea extract-artifact ./game.nds --json
 ```
 
-See [Nintendo DS ROMs](../nds-roms.md) for header detection, member paths,
+See [Nintendo DS ROMs](../guides/firmware/nds-roms.md) for header detection, member paths,
 checksum and range limitations, and what is not decoded.
 
 Inspect local model declarations without loading weights:
