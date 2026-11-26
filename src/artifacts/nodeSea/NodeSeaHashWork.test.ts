@@ -87,7 +87,7 @@ it("rejects unequal blob lengths before hashing either copy", async () => {
   }) as typeof handle.read);
   try {
     await expect(locateNodeSea(handle, image.length)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
     });
     expect(payloadReads).toBe(0);
   } finally {

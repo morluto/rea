@@ -902,7 +902,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
 );
 
-it.each(["format", "process"])(
+it.each(["malformed", "process"])(
   "preserves the structured %s failure when runtime cleanup fails",
   async (kind) => {
     const root = await createTestTempDirectory("rea-historical-cleanup-");
@@ -914,12 +914,12 @@ it.each(["format", "process"])(
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
           command: async (_, runtimePath) => {
-            if (kind === "format")
+            if (kind === "malformed")
               await writeFile(
                 join(runtimePath, "reply.json"),
                 JSON.stringify({
                   ok: false,
-                  reason: "format",
+                  reason: "malformed",
                   message: "Malformed retained record",
                   pointer: "/metadata/capture-private",
                 }),
@@ -928,7 +928,7 @@ it.each(["format", "process"])(
               command: process.execPath,
               arguments: [
                 "-e",
-                kind === "format"
+                kind === "malformed"
                   ? "process.exit(0)"
                   : 'process.stderr.write("Specific provider fault"); process.exit(3)',
               ],
@@ -959,7 +959,7 @@ it.each(["format", "process"])(
     );
     if (result.ok) throw new Error("Cleanup failure required");
     expect(result.error.cleanupPrimary?._tag).toBe(
-      kind === "format" ? "AnalysisInputError" : "ProviderAdapterError",
+      kind === "malformed" ? "AnalysisInputError" : "ProviderAdapterError",
     );
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({
@@ -967,7 +967,7 @@ it.each(["format", "process"])(
       details: {
         diagnostics: {
           primary_error:
-            kind === "format"
+            kind === "malformed"
               ? {
                   category: "invalid_input",
                   details: {

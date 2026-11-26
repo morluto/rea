@@ -79,7 +79,7 @@ export const encodeNibArchiveFixture = (input: {
   return Buffer.concat([header, objects, encodedKeys, values, classes]);
 };
 
-const varint = (value: number): Buffer => {
+export const varint = (value: number): Buffer => {
   const bytes: number[] = [];
   let remaining = value;
   do {

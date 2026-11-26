@@ -4,8 +4,9 @@ import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { hashStableRootArtifact } from "./StableRootArtifact.js";
 
 /**
- * The `container-identity` failure for a selected target whose observed
- * digest no longer matches the one the session admitted.
+ * The session admitted a digest and will not replace it on a repeat of this
+ * request. Reopening the target is what observes the current bytes; a
+ * `changed` retry would fail the same comparison every time.
  */
 export const targetDigestChangedFailure = (
   subject: string,
@@ -15,7 +16,11 @@ export const targetDigestChangedFailure = (
   new ArtifactReaderFailure(
     "integrity",
     `Active ${subject} digest changed: expected ${expected}, observed ${observed}`,
-    { integrityCheck: "container-identity" },
+    {
+      integrityCheck: "admitted-identity",
+      userMessage:
+        "The selected file no longer matches the digest this session admitted. Reopen the selected artifact, then retry.",
+    },
   );
 
 /** Bind live resource reads to the target identity established by the session. */

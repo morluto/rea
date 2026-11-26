@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { afterEach, describe, expect, it, vi, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
@@ -1040,3 +1040,100 @@ it.each(["unchanged", "cancelled", "changed"] as const)(
     expect(result.error.cleanupResources).toEqual([]);
   },
 );
+
+describe("chunked signature copy", () => {
+  it("copies and verifies a multi-chunk target larger than 1 MiB and retries short writes", async () => {
+    const directory = await createTestTempDirectory("rea-signature-chunk-");
+    const path = join(directory, "large.bin");
+    const payload = Buffer.alloc(1024 * 1024 + 137, 0x3c);
+    for (let i = 0; i < payload.length; i += 4093) payload[i] = i & 0xff;
+    await writeFile(path, payload);
+    const target: BinaryTarget = {
+      path,
+      sha256: createHash("sha256").update(payload).digest("hex"),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    };
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    type WriteBuffer = (
+      buffer: Uint8Array,
+      offset?: number | null,
+      length?: number | null,
+      position?: number | null,
+    ) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
+    const originalWrite = prototype.write as unknown as WriteBuffer;
+    let shortWrites = 0;
+    const writeSpy = vi
+      .spyOn(prototype, "write")
+      .mockImplementation(async function (
+        this: FileHandle,
+        buffer: Uint8Array,
+        offset?: number | null,
+        length?: number | null,
+        position?: number | null,
+      ) {
+        if (
+          Buffer.isBuffer(buffer) &&
+          typeof length === "number" &&
+          length > 64 * 1024
+        ) {
+          shortWrites += 1;
+          return originalWrite.call(
+            this,
+            buffer,
+            offset ?? 0,
+            64 * 1024,
+            position ?? null,
+          );
+        }
+        return originalWrite.call(this, buffer, offset, length, position);
+      } as unknown as FileHandle["write"]);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      writeSpy.mockRestore();
+      await resources.close();
+    });
+    const result = await withSignatureTarget(
+      target,
+      resources,
+      async (binding) => {
+        const copied = await readFile(binding.snapshotPath);
+        expect(Buffer.compare(copied, payload)).toBe(0);
+        return ok(signatureInspectionFixture());
+      },
+      undefined,
+      createRoot,
+    );
+    expect(result.ok).toBe(true);
+    expect(shortWrites).toBeGreaterThan(1);
+  });
+
+  it("refuses a zero-byte snapshot write instead of looping forever", async () => {
+    const target = await createTarget("non-empty bytes");
+    const probe = await open(target.path, "r");
+    const prototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const writeSpy = vi.spyOn(prototype, "write").mockResolvedValue({
+      bytesWritten: 0,
+      buffer: Buffer.alloc(0),
+    } as never);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      writeSpy.mockRestore();
+      await resources.close();
+    });
+    const result = await withSignatureTarget(
+      target,
+      resources,
+      unusedInspection,
+      undefined,
+      createRoot,
+    );
+    if (result.ok) throw new Error("Expected snapshot write failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+  });
+});

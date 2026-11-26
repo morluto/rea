@@ -32,7 +32,7 @@ import {
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
-import type { KunaProject } from "./KunaProjectCache.js";
+import type { KunaProject } from "./KunaCacheManifest.js";
 import {
   decodeKunaProjectText,
   scanKunaAssembly,

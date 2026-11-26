@@ -119,6 +119,10 @@ const canonicalJson = (value: unknown): string => {
   return encoded;
 };
 
+/** Hash a generated catalog projection using its strict canonical JSON representation. */
+export const digestCatalogProjection = (value: unknown): string =>
+  sha256Hex(canonicalJson(value));
+
 /** Digests of the presented tool and prompt catalog. */
 const digestPresentedCatalogs = (
   catalog: ReturnType<typeof presentToolCatalog>,

@@ -1,3 +1,4 @@
+import { knownCoverage } from "../coverageAccumulator.js";
 import { semanticResourceLimitFacts } from "./javascriptSemanticResourceLimits.js";
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
@@ -103,7 +104,7 @@ export const semanticReturnCoverage = (
   retainedCount: number,
   parserPartial: boolean,
 ): JavaScriptSemanticReturnCoverage => ({
-  status: parserPartial ? "partial" : "complete",
+  status: knownCoverage(!parserPartial, "parser recovery was partial"),
   retainedCount,
   omittedCount: 0,
 });

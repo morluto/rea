@@ -63,6 +63,12 @@ import {
   DEFAULT_ZSTD_MAX_FRAMES,
   MINIMUM_ZSTD_MAX_FRAMES,
   MAXIMUM_ZSTD_MAX_FRAMES,
+  DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
+  MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+  MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+  MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+  MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
 } from "./analysisResourceLimits.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
@@ -70,6 +76,7 @@ import {
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
+import { AGENT_BUDGET_OPERATIONS } from "./agentBudgetOperations.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -648,6 +655,30 @@ export const ANALYSIS_SETTINGS = {
       "inspect_il2cpp_metadata",
       "inspect_android_jni_bindings",
     ],
+  },
+  "delivery.agent_result_budget_bytes": {
+    updateMode: "runtime",
+    environment: "REA_AGENT_RESULT_BUDGET_BYTES",
+    defaultValue: DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+    minimum: MINIMUM_AGENT_RESULT_BUDGET_BYTES,
+    maximum: MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-delivery",
+    operations: AGENT_BUDGET_OPERATIONS,
+  },
+  // One-shot CLI invocations read only the launch seed; MCP retains
+  // over-budget Evidence in its session instead.
+  "delivery.cli_retained_evidence_bytes": {
+    updateMode: "runtime",
+    environment: "REA_CLI_RETAINED_EVIDENCE_BYTES",
+    defaultValue: DEFAULT_CLI_RETAINED_EVIDENCE_BYTES,
+    minimum: MINIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+    maximum: MAXIMUM_CLI_RETAINED_EVIDENCE_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-delivery",
+    operations: AGENT_BUDGET_OPERATIONS,
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(

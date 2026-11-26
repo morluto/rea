@@ -15,7 +15,7 @@ import {
   ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
 } from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
@@ -38,7 +38,6 @@ import {
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  apktoolResultSchemas,
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
@@ -48,10 +47,9 @@ import { projectApktoolStringTables } from "./ApktoolStringTables.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
   OwnerCancellation,
-  carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -260,9 +258,10 @@ const apktoolCommandFailure = (
         exit.output?.truncated !== false
       )
         return unclassified({ userMessage, diagnostics });
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         targetPath,
+        "apk",
         ellipsisExcerpt(
           exit.output.snapshot.stderr.text.trim(),
           STDERR_EXCERPT_CHARACTERS,
@@ -704,14 +703,10 @@ export class ApktoolProvider {
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;
       result = ok(
-        createAnalysisExecution(
-          apktoolResultSchemas.decode_android_resources.parse(completedDecode),
-          provider,
-          {
-            subject: { path: input.path, sha256, format: "apk" },
-            limitations,
-          },
-        ),
+        createAnalysisExecution(completedDecode, provider, {
+          subject: { path: input.path, sha256, format: "apk" },
+          limitations,
+        }),
       );
     } catch (cause) {
       const { cause: physical, origin } = artifactFilePrimaryFacts(cause);
@@ -721,10 +716,7 @@ export class ApktoolProvider {
           : origin === "owned-or-classified" &&
               physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
-            ? cancelledBy(
-                operation,
-                carriedReason(artifactFileCancellationCause(physical)),
-              )
+            ? artifactFileCancellationError(operation, physical)
             : new AnalysisProtocolError("Apktool resource projection failed", {
                 cause: physical,
               });

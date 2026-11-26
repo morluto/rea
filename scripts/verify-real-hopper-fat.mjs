@@ -1,3 +1,4 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -30,6 +31,7 @@ import {
   relocateSingleFatSlice,
 } from "./lib/real-hopper-source-binding.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const verifierRun = createVerifierRun();
 // xcrun resolves clang and lipo before a workspace exists. A failed probe must
@@ -104,10 +106,6 @@ const workspace = await VerifierFixture.open({
   throw cause;
 });
 const directory = workspace.path;
-const retainWorkspace = (message, options) => {
-  workspace.retain(message);
-  return new Error(message, options);
-};
 const hostFatArchitecture = process.arch === "arm64" ? "arm64" : "x86_64";
 const source = fileURLToPath(
   new URL("../tests/conformance/c/fixture.c", import.meta.url),
@@ -123,7 +121,9 @@ let preparedImagePath;
 const before = (
   await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
 ).paths;
-const client = new Client({ name: "hopper-fat-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "hopper-fat-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
@@ -395,9 +395,7 @@ try {
       );
     }
     assert.equal(
-      createHash("sha256")
-        .update(await readFile(path))
-        .digest("hex"),
+      await sha256File(path),
       sourceHash,
       "native analysis modified source executable bytes",
     );
@@ -557,7 +555,7 @@ try {
   commandCleanupFailure = cause;
 }
 if (commandCleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Hopper FAT command cleanup failed; retained diagnostic workspace: ${directory}`,
     {
       cause:
@@ -573,7 +571,7 @@ const completedVerifierRun = await completeVerifierRun(verifierRun);
 try {
   assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${directory}`,
     {
       cause:
@@ -587,7 +585,7 @@ try {
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspace.retainedError(
     `Hopper FAT verification failed; retained workspace: ${directory}`,
     { cause: primaryFailure },
   );

@@ -39,7 +39,7 @@ it("admits a checked JSON input through its check only, and the rest through the
   const command = cliCommand(cli, "compare-checked-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
-    (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
+    command[key]!.parse(value);
   const run = (options: unknown) =>
     (Reflect.get(command, "run") as (value: unknown) => Promise<unknown>)({
       args: parse("args", { document: '{"records":[1,2,3]}' }),

@@ -5,6 +5,18 @@ export const uniqueSorted = <Value extends string>(
   values: readonly Value[],
 ): Value[] => [...new Set(values)].sort(compareUnicodeCodePoints);
 
+export const firstDuplicateIndex = (
+  values: readonly string[],
+): number | undefined => {
+  const seen = new Set<string>();
+  const index = values.findIndex((value) => {
+    if (seen.has(value)) return true;
+    seen.add(value);
+    return false;
+  });
+  return index < 0 ? undefined : index;
+};
+
 /** Retain the last value for each exact key, deriving keys once per input. */
 export const uniqueSortedBy = <Value>(
   values: readonly Value[],

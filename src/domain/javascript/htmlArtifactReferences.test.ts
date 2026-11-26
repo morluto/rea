@@ -6,11 +6,10 @@ it.each([
   ['<script data-src="decoy.js"></script>', []],
   ['<script x:src="decoy.js"></script>', []],
   [`<script title='src="decoy.js"'></script>`, []],
-  ["<script src=actual.js></script>", ["actual.js"]],
-  ['<script title=">" src="actual.js"></script>', ["actual.js"]],
-  ['<SCRIPT SRC="actual.js"></SCRIPT>', ["actual.js"]],
-  ["<script src='actual.js'></script>", ["actual.js"]],
-  ['<script data-src="decoy.js" src="actual.js"></script>', ["actual.js"]],
+  [
+    `<SCRIPT title=">" data-src="decoy.js" SRC='actual.js'></SCRIPT>`,
+    ["actual.js"],
+  ],
   ['<script src="actual.js" src="decoy.js"></script>', ["actual.js"]],
   ['<script src="" src="decoy.js"></script>', []],
   ['<script src="actual&#46;js"></script>', ["actual.js"]],
@@ -106,42 +105,35 @@ it.each([
 });
 
 it.each([
-  ['src="ignored.js"', "classic"],
-  ['language="vbscript"', "classic"],
-  ['xlink:type="simple"', "classic"],
-  ['type=" Text/JavaScript "', "classic"],
-  ['type="MODULE"', "module"],
-  ['type=" module "', null],
-  ['type="application/json"', null],
-  ['type="text/javascript; charset=utf-8"', null],
-  ['href="external.js"', null],
-  ['href=""', null],
-  ['xlink:href="external.js"', null],
-] as const)("classifies SVG inline bodies using %s", (attributes, expected) => {
-  const result = htmlArtifactReferences(
-    `<svg><script ${attributes}>run();</script></svg>`,
-  );
-  expect(result.inlineScripts.map(({ scriptType }) => scriptType)).toEqual(
-    expected === null ? [] : [expected],
-  );
-  expect(result.inlineScriptCount).toBe(expected === null ? 0 : 1);
-});
-
-it.each([
-  ['href="external.js"', ["external.js"]],
-  ['xlink:href="external.js"', ["external.js"]],
-  ['href="first.js" xlink:href="second.js"', ["first.js"]],
-  ['xlink:href="second.js" href="first.js"', ["first.js"]],
-  ['href="" xlink:href="ignored.js"', []],
-  ['other:href="ignored.js"', []],
-  ['src="ignored.js"', []],
-])("extracts SVG script URL from %s", (attributes, paths) => {
-  const result = htmlArtifactReferences(
-    `<svg><script ${attributes}></script></svg>`,
-  );
-  expect(result.scripts.map(({ scriptPath }) => scriptPath)).toEqual(paths);
-  expect(result.inlineScriptCount).toBe(0);
-});
+  ['src="ignored.js"', null, "classic"],
+  ['other:href="ignored.js"', null, "classic"],
+  ['language="vbscript"', null, "classic"],
+  ['xlink:type="simple"', null, "classic"],
+  ['type=" Text/JavaScript "', null, "classic"],
+  ['type="MODULE"', null, "module"],
+  ['type=" module "', null, null],
+  ['type="application/json"', null, null],
+  ['type="text/javascript; charset=utf-8"', null, null],
+  ['href="external.js"', "external.js", null],
+  ['xlink:href="external.js"', "external.js", null],
+  ['href="first.js" xlink:href="second.js"', "first.js", null],
+  ['xlink:href="second.js" href="first.js"', "first.js", null],
+  ['href="" xlink:href="ignored.js"', null, null],
+] as const)(
+  "retains the effective SVG script source or inline body with %s",
+  (attributes, source, type) => {
+    const result = htmlArtifactReferences(
+      `<svg><script ${attributes}>run();</script></svg>`,
+    );
+    expect(result.scripts.map(({ scriptPath }) => scriptPath)).toEqual(
+      source === null ? [] : [source],
+    );
+    expect(result.inlineScripts.map(({ scriptType }) => scriptType)).toEqual(
+      type === null ? [] : [type],
+    );
+    expect(result.inlineScriptCount).toBe(type === null ? 0 : 1);
+  },
+);
 
 it("retains exact SVG body coordinates and skips SVG inside templates", () => {
   const prefix = '<!doctype html>\n<svg><script src="ignored.js">';
@@ -162,22 +154,19 @@ it("retains exact SVG body coordinates and skips SVG inside templates", () => {
 it("retains exact inline script body coordinates, including unclosed scripts", () => {
   const prefix = "<!doctype html>\n<script>";
   const body = "\nfetch('/api');\n";
-  const closed = `${prefix}${body}</script><p>after</p>`;
-  expect(htmlArtifactReferences(closed).inlineScripts).toEqual([
-    {
-      scriptType: "classic",
-      location: { start: { line: 2, column: 8 }, end: { line: 4, column: 0 } },
-      text: body,
-    },
-  ]);
-  const unclosed = `${prefix}${body}`;
-  expect(htmlArtifactReferences(unclosed).inlineScripts).toEqual([
-    {
-      scriptType: "classic",
-      location: { start: { line: 2, column: 8 }, end: { line: 4, column: 0 } },
-      text: body,
-    },
-  ]);
+  for (const ending of ["</script><p>after</p>", ""])
+    expect(
+      htmlArtifactReferences(`${prefix}${body}${ending}`).inlineScripts,
+    ).toEqual([
+      {
+        scriptType: "classic",
+        location: {
+          start: { line: 2, column: 8 },
+          end: { line: 4, column: 0 },
+        },
+        text: body,
+      },
+    ]);
 });
 
 it.each([

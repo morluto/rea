@@ -1,6 +1,7 @@
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
@@ -233,6 +234,16 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (refused.ok) throw new Error("Expected input-budget refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: 13,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: 32 * 1024 * 1024,
+    applies_at: "next_call",
+  });
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",
   );

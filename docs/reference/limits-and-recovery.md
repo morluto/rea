@@ -77,8 +77,98 @@ report the resolved policy separately where needed. See the owning guides for
 [source maps](../guides/web/web-source-location.md),
 [historical captures](../guides/web/web-network-captures.md),
 [JavaScript precision](../guides/javascript/javascript-application-graph.md),
-[managed inspection](../guides/managed/managed-code-analysis.md), and
+[managed inspection](../guides/managed/managed-code-analysis.md),
+[ADB listings](../guides/android/adb-device-analysis.md),
+[Android class search](../guides/android/android-analysis.md), and
 [Frida capture](../guides/runtime/frida-instrumentation.md).
+
+ADB package, process, directory, feature, and service listings apply `limit`
+and `offset` after capturing the listing. The [ADB guide](../guides/android/adb-device-analysis.md#interpret-the-result)
+describes coverage and how to continue.
+
+Frida process discovery applies `limit` and `offset` after enumerating the
+selected device. It reports `total_processes` and `truncated`. Moving to another
+page runs a fresh discovery on that device.
+
+Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
+`get_call_graph` and `trace_call_path`).
+
+`inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
+`max_file_bytes`, a decoded section-name table above it, or more notes than
+`max_entries` with `details.limit` naming that field
+(`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
+accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
+index of `binary_path`; its refusal reports the same kind of limit. See
+[IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
+
+### Static reader read allowance
+
+`inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_native_exports` bound the bytes they read, not the file size.
+`max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
+headers, directory tables and the ranges they reference. Defaults are 64 MiB
+(256 MiB for exports), with a floor of 64 bytes and a maximum of 512 MiB. The
+one streaming pass that hashes the file for its identity is not counted.
+
+An exhausted allowance is a `capacity` refusal. `details.limit` has
+`control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
+value, the bounds, the default and `applies_at: "next_call"`, and
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
+PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
+exports. A file above it is a `file-size` refusal naming that fixed allowance,
+which `max_file_bytes` does not raise.
+
+### Producer limits
+
+Operations with an owned producer accept an optional
+`producer_limits` object (CLI `--producer-limits`, as JSON text). Each field is
+a positive safe integer that overrides one default for this call only; omitted
+fields keep their defaults, and no restart is needed. Tighter inherited OS
+limits still apply, and these fields do not raise parser, protocol or transport
+limits. Each operation accepts only the fields it enforces; any other key is
+rejected.
+
+| Field                 | Bounds                                                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `input_bytes`         | The selected input copied for the producer                                                                                           |
+| `output_bytes`        | Retained producer output: combined stdout and stderr where no `diagnostic_bytes` is offered; the reply file for pwntools and EVM     |
+| `diagnostic_bytes`    | Retained process diagnostics; for pwntools, stdout and stderr combined. A stdout overflow is raised here, not through `output_bytes` |
+| `command_timeout_ms`  | Wall-clock deadline for each owned command                                                                                           |
+| `address_space_bytes` | The producer's address-space ceiling                                                                                                 |
+| `file_bytes`          | The largest file the producer may write                                                                                              |
+| `cpu_seconds`         | The producer's CPU time                                                                                                              |
+
+| Operations                                                   | Fields and defaults                                                                                                                                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inspect_packet_capture`, `decode_signal_recording`          | `input_bytes` 32 MiB, `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                    |
+| `inspect_packet_fields`                                      | No `input_bytes`; `output_bytes` 32 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                       |
+| `inspect_signal_decoders`                                    | No `input_bytes`; `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                        |
+| `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
+| `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
+| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
+
+The pwntools and EVM operations take their wall-clock deadline from a separate
+argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
+Packet and signal results report the effective values as `limits`, where an
+inherited OS ceiling can appear as `0`. When packet, signal, pwntools, Rust or
+pcap work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
+`parameter: "producer_limits.<field>"`, `minimum: 1` and
+`applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
+the other producers name the field to raise in their remediation. A pwntools
+input refused by the runtime, launch or built-in `pwntools.max_input_bytes`
+ceiling keeps that setting's limit instead. If the caller set the ceiling
+through `producer_limits.input_bytes`, the parameter limit is used, and its
+`default_value` is the ceiling that applies when the field is omitted. When
+omitting it would fail configuration, no default exists and the setting limit
+is reported. A pwntools memory allocation failure carries no
+`details.limit`, whether it comes as a structured reply or as the bridge's
+reserved exit: an allocation failure does not prove that
+`producer_limits.address_space_bytes` was exhausted. Its message states the
+selected allowance, and its remediation names the producer limits to review.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
@@ -148,14 +238,11 @@ or `next_invocation` for a one-shot invocation. Both carry `effective_value`,
 `unit`, `minimum`, `maximum` and `default_value`. `update_analysis_settings`
 changes neither. A limit without `control_kind` is a registered setting.
 
-This output is breaking. Results and errors no longer carry the previous
-restart boolean or a single effect field, and there is no compatibility alias.
 Read `update_mode` to see whether the setter can change the active value, and
 `pending_restart` to see whether a configured value is waiting. A configuration
 error for a Windows ChangeTime setting carries `update_mode` on
 `details.settings`. Its rejected value does not establish an accepted pending
-configuration, so `pending_restart` is omitted. The removed field names
-are listed in the changelog.
+configuration, so `pending_restart` is omitted.
 
 An inspected setting whose launch value is invalid and which has no runtime
 override likewise omits `pending_restart`: it has no accepted configured value
@@ -209,6 +296,121 @@ same effective setting so readiness changes along with repair and reset.
 `REA_NATIVE_MATCHING_REPRESENTATION_BYTES` is validated the same way, by
 `match_native_functions` alone.
 
+## Agent result budget
+
+`delivery.agent_result_budget_bytes` is a delivery budget, not an admission
+limit. It defaults to 32,768 compact JSON bytes. Claude Code moves MCP
+results above 25,000 tokens out of context, and dense JSON (addresses,
+digests, identifiers) measured about 2.9 bytes per token there, so the
+default is about 11,000 tokens: under half the cap, with room for the
+delivery facts. Token figures in delivery facts use an estimate of 3 bytes
+per token, not a tokenizer measurement. The budget applies to tools with a
+`detail` selector when the caller omits `detail`, on MCP and the CLI; it is
+the only size that chooses between complete and summary delivery. An MCP
+session summarizes only when it retains Evidence and advertises
+`inspect_analysis_view`, which pages the summary; otherwise it delivers the
+complete Evidence. Its launch seed, `REA_AGENT_RESULT_BUDGET_BYTES`, also
+sets it for one-shot CLI invocations; an invalid seed leaves delivery
+unbudgeted (complete, as before) rather than falling back to the default,
+and settings inspection reports it. The stdio frame limit,
+`REA_MCP_MAX_RESPONSE_BYTES`, stays a separate transport safety net.
+
+When complete Evidence fits, it is delivered inline as before. When it does
+not, the work is never refused or truncated:
+
+- MCP retains the complete Evidence in the session and returns the
+  operation's summary view, the same record `detail: "summary"` returns, so
+  its identity holds wherever a summary is accepted. The delivery facts
+  travel beside it, in a second text block `{"delivery": …}` and in
+  `_meta["rea/agent-budget-delivery"]`: `budget_bytes`, `budget_source`, the
+  range, `complete_bytes`, `estimated_complete_tokens`, `evidence_id`,
+  `retained`, `next` (the exact `inspect_analysis_view` call that pages the
+  complete record) and a `note` with the recovery.
+- `inspect_analysis_view` with view
+  `{kind: "evidence-json", offset, limit}` pages the exact JSON text of the
+  retained record in UTF-16 code units. It is the recovery every client can
+  follow. Joining every page in offset order
+  reproduces it exactly, and no page splits a surrogate pair. With `limit`
+  omitted a page holds at most 24,576 bytes of escaped UTF-8 text, so with
+  its view Evidence it fits the default budget for any characters; an explicit `limit` counts code units,
+  up to 1,048,576. The producer's own views (`managed-members`, `inventory`
+  and so on) select facts more cheaply.
+- For clients that read MCP resources, the summary also carries a
+  `resource_link` to `rea://evidence/<evidence_id>`, named
+  `complete-evidence`, whose `size` is the complete record's UTF-8 JSON
+  bytes. `resources/read` returns the record's exact JSON in one read, the
+  same text the cursor pages. The `rea://evidence/{evidence_id}` template
+  appears in `resources/templates/list`, not `resources/list`, and reads any
+  record the session retains. An ID the session does not retain (unknown,
+  from another session, or cleared by `reset_investigation`) is refused with
+  `-32602`. A record whose escaped read is too large for one response on
+  the connection (`REA_MCP_MAX_RESPONSE_BYTES`, or REA's single-string
+  limit) gets no link, and a read of it is refused with `-32600` and
+  `data.next`, the cursor. The link and the read use the same check. Claude Code 2.1 shows the link
+  to the model as one line, about 70 tokens, and never reads it by itself;
+  when the model reads it, Claude Code saves a large read to a file and
+  shows a preview.
+- The CLI with `--evidence_output` prints
+  `{"summary", "evidence_bundle", "delivery"}`, whose `delivery.next` names
+  the bundle as an `evidence-file` source.
+- Without `--evidence_output`, the one-shot CLI keeps the complete Evidence
+  in its private retained-Evidence cache and prints the same three fields,
+  with `retained: "cache-file"`. `evidence_bundle` gives the bundle file's path
+  and size, and `record_sha256`, the digest of the complete record it holds
+  (the file is the bundle around that record, so its own digest differs). `delivery.next` pages it with
+  `rea inspect-analysis-view`, so the analysis never has to run again.
+  Composed commands keep the source records the bundle needs, as they do
+  for `--evidence_output`.
+  - **Location:** `rea/evidence` under the user cache directory
+    (`~/Library/Caches` on macOS, `XDG_CACHE_HOME` or `~/.cache` elsewhere).
+    The directory is created `0700` and must be a real directory the user
+    owns, never a symbolic link; files are created exclusively as `0600` by
+    the Evidence bundle writer.
+  - **Key and lifetime:** each file is named by the SHA-256 of the complete
+    record's exact JSON, so it covers every input and caller choice the
+    record holds, including caller paths the Evidence ID leaves out. A
+    repeat run reuses the file and never rewrites it. A repeat run, or a
+    `rea inspect-analysis-view` read of the file, renews its age. Each
+    retention removes records unused for 7 days, then the least recently
+    used until the cache fits `delivery.cli_retained_evidence_bytes`
+    (default 268,435,456 bytes, launch seed
+    `REA_CLI_RETAINED_EVIDENCE_BYTES`), skipping any record used since it
+    was listed. A record or bundle larger than the cache is not kept.
+  - **Opt out:** `--no-retain` for one run, or
+    `REA_CLI_RETAINED_EVIDENCE_BYTES=0` for every run that environment
+    reaches. An invalid seed also retains nothing, and settings inspection
+    reports it. The MCP server ignores this setting: its session retains
+    over-budget Evidence instead.
+  - **Fallback:** when nothing is kept (opted out, too large, a cache path
+    that holds a value marked sensitive, or the save failed), the CLI writes
+    nothing and prints `{"summary", "delivery"}`
+    with `retained: "not-retained"`. `delivery.retention_failure` says why a
+    save failed, and `delivery.rerun` gives the arguments to add to the
+    original command as argv arrays: `complete` (`["--detail", "complete"]`)
+    and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
+    analysis never fails because of retention. A save that published the
+    file but then failed (staging cleanup or cancellation) reports that
+    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
+    echoed, since they can carry access credentials; the note names both.
+
+A failure's own facts (code, `failure_kind`, retry, recovery and limits)
+are never budgeted. Its `details.partial_observation`, the complete Evidence
+of work that finished before the failure, gets the same decision with the
+budget the rest of the failure leaves. When it fits, it is delivered as
+before: inline, or on MCP as a `retained-evidence` reference when the
+session retained it. When it does not fit, it is replaced by its summary
+view, and `details.partial_observation_delivery` carries the same delivery
+facts as a successful result. On MCP the session retains the complete
+partial Evidence, `next` pages it, and a `resource_link` to it follows
+the error text when one read can deliver it. On the CLI, `--evidence_output`
+publishes it and `next` names the bundle. Without `--evidence_output`,
+nothing is written and `rerun` names the arguments to add.
+
+Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
+inline on one call, or raise the setting for the runtime with
+`update_analysis_settings`. An operation without a summary view, or with no
+retained session, keeps complete delivery.
+
 ## Keep a fixed ceiling honest
 
 A fixed ceiling is the exception. Keep one only for a stated format, protocol,
@@ -224,6 +426,23 @@ and raising a provider deadline cannot make the client wait longer.
 
 The failure names the limit and the effective value. Say this release has no
 runtime override, and name what does not raise it. Do not invent a setting.
+
+Every fixed ceiling a refusal declares (`fixedAllowanceOptions`,
+`fixedProducerInputAllowance`, `artifactFixedLimitFailure` or an inline
+`fixedAllowance`) is listed in
+[`fixed-ceiling-registry.json`](https://github.com/morluto/rea/blob/main/scripts/verify/fixed-ceiling-registry.json)
+under its file and allowance, with its class and reason: `format`,
+`protocol`, `representation`, `derived` (grows with the admitted input or
+another control), `forwarding` (relays a ceiling declared elsewhere), or
+`pending` with the issue that tracks giving it a control.
+`npm run lint` runs `scripts/verify/fixed-ceilings.mjs`, which fails on an
+unregistered declaration and on a stale entry. A resource or admission limit
+is not a fixed ceiling: give it a setting or per-call parameter and report
+`details.limit`. The same script counts refusals whose only recovery is an
+authored `remediationAction`, with no `limit`, `fixedAllowance` or
+`measuredExhaustion`, against `scripts/verify/untyped-budget-refusal-baseline.json`;
+that count may only shrink, and `--shrink-baselines` lowers it
+([#14234](https://github.com/morluto/rea/issues/14234)).
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):
@@ -385,16 +604,18 @@ editable setting or active worker telemetry.
 
 ## Artifact reader admission
 
-`inspect_artifact` and `extract_artifact` accept `dotnet_bundle`, `node_sea`
-and `godot` groups in `artifact_limits`. Their controls apply when recognition
+`inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
+`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg` and `tar` groups in
+`artifact_limits`. Their controls apply when recognition
 or inventory encounters that format; supplying
 a policy does not assert the format is present. Unsupported keys are rejected.
 Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
-[Bun standalone](../bun-standalone.md) for format semantics.
+[Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
+[wxapkg](../wxapkg.md) and [tar](../tar-archives.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA and PCK readers, including repeated readable logical occurrences. Omission
+SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
 retains each archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
 

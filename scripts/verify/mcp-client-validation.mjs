@@ -1,4 +1,5 @@
 import { tokenize } from "./source-tokens.mjs";
+import { completeEvidenceClient } from "../lib/complete-evidence.mjs";
 
 // CI runs the architecture guards before installing dependencies, so this
 // reads the call from scripts/verify/source-tokens.mjs tokens rather than a
@@ -84,7 +85,7 @@ const callNamesValidator = (source, tokens, open) => {
 };
 
 /**
- * Number of `new Client(...)` calls in `content` whose own arguments do not
+ * Number of `completeEvidenceClient(new Client(...))` calls in `content` whose own arguments do not
  * pass a `jsonSchemaValidator` property. The source is tokenized, so the
  * option is read from the second argument's own object literal. Comments,
  * client metadata and neighbouring calls cannot stand in for options.

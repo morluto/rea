@@ -22,7 +22,7 @@ import {
 } from "../../domain/evidence.js";
 import {
   byteEntropySchema,
-  computeBlockEntropy,
+  createBlockEntropyCalculator,
   entropyFromCounts,
   countByteValues,
   wholeFileByteCounts,
@@ -38,7 +38,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   artifactSelectedPathErrno,
   ArtifactReaderFailure,
 } from "../../resources/index.js";
@@ -190,6 +190,7 @@ export class ByteEntropyService {
     };
     try {
       const before = await this.files.stat(input.path, { bigint: true });
+      assertArtifactReadActive(options?.signal);
       if (!before.isFile()) throw invalid("path", "Expected a regular file.");
       admitted = true;
       // Only an admitted selected file may consult filesystem spelling. Do not
@@ -261,6 +262,7 @@ export class ByteEntropyService {
           // size divides this buffer, so only the window's final block is short.
           const buffer = Buffer.alloc(65_536);
           const counts = wholeFileByteCounts();
+          const computeBlockEntropy = createBlockEntropyCalculator(counts);
           const hash = createHash("sha256");
           let position = 0;
           while (position < size) {
@@ -283,8 +285,7 @@ export class ByteEntropyService {
             }
             const bytes = buffer.subarray(0, filled);
             hash.update(bytes);
-            countByteValues(bytes, counts);
-            if (selected)
+            if (selected) {
               for (
                 let offset = 0;
                 offset < filled;
@@ -297,6 +298,9 @@ export class ByteEntropyService {
                   entropy: computeBlockEntropy(block),
                 });
               }
+            } else {
+              countByteValues(bytes, counts);
+            }
             position += filled;
           }
           if (
@@ -355,9 +359,9 @@ export class ByteEntropyService {
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            outcome.cause,
             { cleanup: cause.cleanup },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
@@ -386,9 +390,9 @@ export class ByteEntropyService {
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = cancelledBy(
+          const cancelled = artifactFileCancellationError(
             OPERATION,
-            carriedReason(artifactFileCancellationCause(cause)),
+            cause,
             completion === undefined
               ? {}
               : {

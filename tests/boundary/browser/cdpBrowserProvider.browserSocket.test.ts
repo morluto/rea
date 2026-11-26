@@ -521,6 +521,28 @@ describe("CdpBrowserProvider: browser socket discovery deadline", () => {
   });
 });
 
+const startPeerObservation = (
+  provider: CdpBrowserProvider,
+  cdpEndpoint: string,
+) => {
+  const started = phaseArrival();
+  const controller = new AbortController();
+  const endpoint = { cdp_endpoint: cdpEndpoint };
+  const target = { ...endpoint, target_id: "allowed-page" };
+  const observing = provider.observeSession(
+    observeWebSessionInputSchema.parse({ ...target, observation_ms: 15_000 }),
+    {
+      signal: controller.signal,
+      progress: {
+        report: async (update) => {
+          if (update.completed === 1) started.arrive();
+        },
+      },
+    },
+  );
+  return { controller, endpoint, observing, started, target };
+};
+
 const observePeerDuringDetachFailure = async (refuseClose = false) => {
   const browser = await startFakeCdpBrowser({
     commandError: ({ method }) =>
@@ -536,21 +558,8 @@ const observePeerDuringDetachFailure = async (refuseClose = false) => {
     .mockImplementation(function (this: CdpConnection) {
       return cleanup.close(() => originalClose.call(this));
     });
-  const started = phaseArrival();
-  const controller = new AbortController();
-  const endpoint = { cdp_endpoint: browser.browserWebSocketUrl };
-  const target = { ...endpoint, target_id: "allowed-page" };
-  const observing = provider.observeSession(
-    observeWebSessionInputSchema.parse({ ...target, observation_ms: 15_000 }),
-    {
-      signal: controller.signal,
-      progress: {
-        report: async (update) => {
-          if (update.completed === 1) started.arrive();
-        },
-      },
-    },
-  );
+  const { controller, endpoint, observing, started, target } =
+    startPeerObservation(provider, browser.browserWebSocketUrl);
   onTestFinished(async () => {
     cleanup.allow();
     controller.abort();
@@ -583,6 +592,93 @@ const observePeerDuringDetachFailure = async (refuseClose = false) => {
 };
 
 describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () => {
+  it.each(["rejected", "cancelled", "timed out", "malformed"] as const)(
+    "retains a peer only when a failed page attachment is confirmed: %s",
+    async (outcome) => {
+      const controller = new AbortController();
+      let failAttach = false;
+      const browser = await startFakeCdpBrowser({
+        commandError: ({ method }) => {
+          if (!failAttach || method !== "Target.attachToTarget")
+            return undefined;
+          if (outcome === "cancelled") controller.abort();
+          return outcome === "rejected"
+            ? { code: -32602, message: "No target with given id found" }
+            : undefined;
+        },
+        commandDelayMs: ({ method }) =>
+          failAttach &&
+          method === "Target.attachToTarget" &&
+          outcome === "timed out"
+            ? 2000
+            : undefined,
+        commandResult: ({ method }) =>
+          failAttach &&
+          method === "Target.attachToTarget" &&
+          outcome === "malformed"
+            ? {}
+            : undefined,
+      });
+      trackBrowser(browser);
+      const provider = new CdpBrowserProvider();
+      const {
+        controller: peerController,
+        target,
+        started,
+        observing,
+      } = startPeerObservation(provider, browser.browserWebSocketUrl);
+      try {
+        await started.reached(observing, "peer session observation start");
+        const sessionId = browser.commands.find(
+          ({ method }) => method === "Performance.getMetrics",
+        )?.sessionId;
+        expect(sessionId).toBeDefined();
+        const inspect = inspectWebPageInputSchema.parse({
+          ...target,
+          observation_ms: 0,
+          ...(outcome === "timed out" ? { command_timeout_ms: 200 } : {}),
+        });
+        failAttach = true;
+        const failed = await provider.inspectPage(inspect, {
+          signal: controller.signal,
+        });
+        failAttach = false;
+        expect(failed).toMatchObject({
+          ok: false,
+          error:
+            outcome === "cancelled"
+              ? { _tag: "AnalysisCancelledError" }
+              : {
+                  reason:
+                    outcome === "timed out" ? "timeout" : "protocol_error",
+                },
+        });
+        browser.emitEvent({
+          method: "Inspector.targetCrashed",
+          sessionId,
+          params: {},
+        });
+        const peer = await observing;
+        if (!peer.ok) throw peer.error;
+        expect(peer.value.window.end_reason).toBe(
+          outcome === "rejected"
+            ? "target_terminated"
+            : "transport_disconnected",
+        );
+        const next = await provider.inspectPage(inspect);
+        if (!next.ok) throw next.error;
+        expect(browser.openedConnectionCount()).toBe(
+          outcome === "rejected" ? 1 : 2,
+        );
+      } finally {
+        peerController.abort();
+        await observing;
+        await provider.close();
+      }
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    },
+  );
+
   it("closes a shared browser socket immediately when detach fails alongside an active observation", async () => {
     const { browser, cleanup, inspect, observing } =
       await observePeerDuringDetachFailure();

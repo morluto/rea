@@ -1,9 +1,11 @@
+import {
+  maxFileBytesReadBudget,
+  PE_FILE_CEILING_BYTES,
+} from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
-  projectArtifactCloseFailure,
-  imageFileSizeRemediation,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  closeArtifactResources,
+  withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
@@ -25,57 +27,68 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  parsePeImports,
+  parsePeImportsFromHandle,
   PE_IMPORT_LIMITS,
   type PeImportLimit,
 } from "./PeImportParser.js";
 
 const OPERATION = "inspect_pe_imports";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable import-table reader over one bounded, identity-checked regular file. */
 export class PeImportsProvider implements PeImportsPort {
   readonly identity = PE_IMPORTS_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_IMPORTS_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_IMPORTS_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeImportsInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
-          input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const report = await parsePeImports(
-          snapshot.bytes,
+          PE_FILE_CEILING_BYTES,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            readBudget: maxFileBytesReadBudget(
+              input.max_file_bytes,
+              MAX_INSPECT_PE_IMPORT_FILE_BYTES,
+            ),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observed = identity;
+            },
           },
-          input,
-          options?.signal,
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const parsed = await parsePeImportsFromHandle(
+              handle,
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            );
+            assertArtifactReadActive(options?.signal);
+            return parsed;
+          },
         );
-        assertArtifactReadActive(options?.signal);
         return ok(report);
       });
     } catch (cause) {
-      return err(peImportsFailure(cause, input, snapshot));
+      return err(peImportsFailure(cause, input, observed));
     }
   }
 }
@@ -122,7 +135,7 @@ const limitRecovery = (
 const peImportsFailure = (
   cause: unknown,
   input: InspectPeImportsInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ): AnalysisError =>
   projectPeBinaryFailure<PeImportLimit>(
     cause,
@@ -130,13 +143,12 @@ const peImportsFailure = (
     {
       operation: OPERATION,
       providerId: PE_IMPORTS_PROVIDER.id,
-      fileSizeRemediation: () =>
-        imageFileSizeRemediation(
-          input.max_file_bytes,
-          MAX_INSPECT_PE_IMPORT_FILE_BYTES,
-        ),
+      fileCeiling: {
+        name: "The PE whole-file ceiling (32-bit file offsets)",
+        bytes: PE_FILE_CEILING_BYTES,
+      },
       limits: PE_IMPORT_LIMITS,
       limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },
-    snapshot,
+    observed,
   );

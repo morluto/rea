@@ -37,7 +37,6 @@ import {
   AnalysisOutputError,
   type AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { StreamableHttpListenError } from "../http/streamableHttpListenError.js";
 import { ok, type Result } from "../../domain/result.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
@@ -52,7 +51,11 @@ import {
   UNTRUSTED_CONTENT_INSTRUCTIONS,
 } from "../toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
-import { stateDataPlane, type RpcMethods } from "./environmentDataPlane.js";
+import {
+  stateDataPlane,
+  type RpcMethods,
+  type RpcOutcome,
+} from "./environmentDataPlane.js";
 import {
   DEFAULT_STATE_INTAKE,
   exactJsonReviver,
@@ -155,7 +158,7 @@ export const createEnvironmentMcpServer = (
 type RpcReply = {
   readonly jsonrpc: "2.0";
   readonly id: string | number | null;
-} & ({ readonly result: unknown } | { readonly error: RpcError });
+} & RpcOutcome;
 
 /** At most this many UTF-8 bytes of replies in one `/agentenv` response: twice the largest document `data/add` loads, so a `data/get` of a loaded state fits but a batch cannot multiply it. */
 export const MAX_RPC_RESPONSE_BYTES = 2 * STATE_INTAKE_LIMIT_BYTES;
@@ -207,61 +210,10 @@ const startRpc = (
   );
 };
 
-interface CachedStateReplySize {
-  readonly types: unknown;
-  readonly documents: unknown;
-  readonly bytes: number;
-}
-
-// Repeated `data/get` snapshots have fresh wrappers but share the installed
-// state's member arrays. The request-scoped cache avoids retaining stale sizes.
-const cachedStateReplyResultBytes = (
-  stateReplySizes: WeakMap<object, CachedStateReplySize>,
-  reply: RpcReply,
-): number | undefined => {
-  if (!("result" in reply) || !isRecord(reply.result)) return undefined;
-  const parts = reply.result.parts;
-  if (!Array.isArray(parts) || parts.length !== 1 || !isRecord(parts[0]))
-    return undefined;
-  const data = parts[0].data;
-  if (!isRecord(data) || !isRecord(data.rea_state)) return undefined;
-  const { types, entities, documents } = data.rea_state;
-  if (!Array.isArray(entities) || !Array.isArray(documents)) return undefined;
-  const cached = stateReplySizes.get(entities);
-  return cached !== undefined &&
-    cached.types === types &&
-    cached.documents === documents
-    ? cached.bytes
-    : undefined;
-};
-
-const rememberStateReplyResultBytes = (
-  stateReplySizes: WeakMap<object, CachedStateReplySize>,
-  reply: RpcReply,
-  replyBytes: number,
-): void => {
-  if (!("result" in reply) || !isRecord(reply.result)) return;
-  const parts = reply.result.parts;
-  if (!Array.isArray(parts) || parts.length !== 1 || !isRecord(parts[0]))
-    return;
-  const data = parts[0].data;
-  if (!isRecord(data) || !isRecord(data.rea_state)) return;
-  const { types, entities, documents } = data.rea_state;
-  if (!Array.isArray(entities) || !Array.isArray(documents)) return;
-  // A one-character string marks the result slot. Removing its compact JSON
-  // envelope yields the exact result size, independent of the RPC id.
-  const markerBytes = Buffer.byteLength(
-    JSON.stringify({ jsonrpc: "2.0", id: reply.id, result: "x" }),
-    "utf8",
-  );
-  const bytes = replyBytes - markerBytes + 3;
-  stateReplySizes.set(entities, { types, documents, bytes });
-};
-
-const replyBytesFor = (reply: RpcReply, resultBytes: number): number =>
+const replyBytesFor = (id: RpcReply["id"], resultBytes: number): number =>
   resultBytes +
   Buffer.byteLength(
-    JSON.stringify({ jsonrpc: "2.0", id: reply.id, result: "x" }),
+    JSON.stringify({ jsonrpc: "2.0", id, result: "x" }),
     "utf8",
   ) -
   3;
@@ -286,9 +238,9 @@ const refusalBytes = (message: unknown): number =>
 /**
  * Serialize a response's replies in order within its budget. Every reply still to come keeps room
  * for its budget error, and a batch keeps room for its brackets and commas, so a refusal always
- * fits and the body never passes the budget. Each reply is measured in bounded parts before it is
- * assembled, and parts past the budget are counted but not kept, so a reply that would pass it is
- * never built; it becomes an error stating it, unless that error is no smaller.
+ * fits and the body never passes the budget. Replies with a known size can be refused before
+ * serialization. Otherwise, count any parts past the budget without keeping them. A refusal states
+ * the exact reply size and replaces the reply only when it takes less space.
  */
 const replyEncoder = (
   messages: readonly unknown[],
@@ -297,20 +249,15 @@ const replyEncoder = (
   const refusals = messages.filter(expectsReply).map(refusalBytes);
   let reserved = refusals.reduce((sum, bytes) => sum + bytes, 0);
   let used = framed ? 2 + Math.max(0, refusals.length - 1) : 0;
-  const stateReplySizes = new WeakMap<object, CachedStateReplySize>();
   let index = 0;
-  return (reply) => {
+  return ({ resultBytes, ...reply }) => {
     reserved -= refusals[index] ?? 0;
     index += 1;
     const room = MAX_RPC_RESPONSE_BYTES - used - reserved;
-    const cachedResultBytes = cachedStateReplyResultBytes(
-      stateReplySizes,
-      reply,
-    );
     const knownBytes =
-      cachedResultBytes === undefined
+      resultBytes === undefined
         ? undefined
-        : replyBytesFor(reply, cachedResultBytes);
+        : replyBytesFor(reply.id, resultBytes);
     if (knownBytes !== undefined && knownBytes > room) {
       const refused = JSON.stringify({
         jsonrpc: "2.0",
@@ -328,13 +275,9 @@ const replyEncoder = (
       if (bytes <= room) parts.push(part);
     }
     if (bytes <= room) {
-      if (cachedResultBytes === undefined)
-        rememberStateReplyResultBytes(stateReplySizes, reply, bytes);
       used += bytes;
       return parts.join("");
     }
-    if (cachedResultBytes === undefined)
-      rememberStateReplyResultBytes(stateReplySizes, reply, bytes);
     const refused = JSON.stringify({
       jsonrpc: "2.0",
       id: reply.id,

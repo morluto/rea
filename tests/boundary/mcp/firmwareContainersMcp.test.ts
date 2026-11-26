@@ -1,8 +1,11 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  inspectInventorySummary,
+  inspectRetainedOccurrences,
+} from "../../fixtures/artifactInventoryMcp.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -53,18 +56,7 @@ it.each(["compact"] as const)(
     try {
       const opened = await call("open_binary", { path });
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-      const reply = await call("inspect_artifact", { detail: "summary" });
-      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-      const summary = z
-        .object({
-          parent_evidence_id: z.string(),
-          limitations: z.array(z.string()),
-          summary: z.object({
-            root_format_metadata: z.unknown(),
-            source_coverage: z.unknown(),
-          }),
-        })
-        .parse(parseEvidence(reply.structuredContent).normalized_result);
+      const summary = await inspectInventorySummary(call);
       expect(summary.summary.root_format_metadata).toMatchObject({
         kind: "uf2",
         family_count: 2,
@@ -79,22 +71,15 @@ it.each(["compact"] as const)(
           /1 block.*absent.*0xe48bff57.*2 numbered blocks.*1/iu,
         ),
       );
-      const retained = await call("inspect_analysis_view", {
-        source: {
-          kind: "retained-evidence",
-          evidence_id: summary.parent_evidence_id,
-        },
-        view: {
-          kind: "inventory",
-          collection: "occurrences",
+      const view = await inspectRetainedOccurrences(
+        call,
+        summary.parent_evidence_id,
+        {
           logical_paths: [REGION, ABSOLUTE_REGION],
           fields: ["logical_path", "format_metadata"],
         },
-      });
-      expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      expect(
-        parseEvidence(retained.structuredContent).normalized_result,
-      ).toMatchObject({
+      );
+      expect(view).toMatchObject({
         items: [
           { logical_path: REGION, format_metadata: { family_name: "RP2040" } },
           { logical_path: ABSOLUTE_REGION },

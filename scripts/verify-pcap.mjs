@@ -13,6 +13,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
@@ -42,7 +43,9 @@ Object.assign(environment, {
 });
 const entrypoint = resolve("scripts/rea.mjs");
 const execute = promisify(execFile);
-const client = new Client({ name: "pcap-real-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "pcap-real-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],

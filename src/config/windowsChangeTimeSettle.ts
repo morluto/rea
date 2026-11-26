@@ -155,10 +155,16 @@ const readBound = (
   return undefined;
 };
 
+/** A rejected ChangeTime admission budget, carried through descriptor cleanup. */
+export class WindowsChangeTimeConfigurationError extends ConfigurationError {}
+
 /** Resolve the settle budget from one environment. Invalid values are refused. */
 export const resolveWindowsChangeTimeSettle = (
   environment: Readonly<Record<string, string | undefined>>,
-): Result<WindowsChangeTimeSettleLimits, ConfigurationError> => {
+): Result<
+  WindowsChangeTimeSettleLimits,
+  WindowsChangeTimeConfigurationError
+> => {
   const failures: WindowsChangeTimeSettingFailure[] = [];
   const driftMs = readBound(
     WINDOWS_CHANGE_TIME_DRIFT_MS,
@@ -177,7 +183,7 @@ export const resolveWindowsChangeTimeSettle = (
   );
   if (failures.length > 0)
     return err(
-      new ConfigurationError(
+      new WindowsChangeTimeConfigurationError(
         failures.map(windowsChangeTimeSettingMessage).join(" "),
         {
           settings: failures.map((failure) => ({

@@ -138,17 +138,9 @@ const observeWindowsHeader = (
     relocationTableOffset: tableStart,
     relocationTableEnd: tableEnd,
   } = declarations ?? fixedDosMzDeclarations(reader);
-  if (
-    headerBytes !== 0 &&
-    relocationCount > 0 &&
-    tableStart < 64 &&
-    tableEnd > 60
-  )
-    return { state: "absent" };
   const offset = reader.u32(60);
-  if (offset === 0) return { state: "absent" };
   const inlineSignature =
-    offset < bytes.length
+    offset !== 0 && offset < bytes.length
       ? bytes.subarray(offset, Math.min(offset + 4, bytes.length))
       : undefined;
   const available =
@@ -156,6 +148,32 @@ const observeWindowsHeader = (
       ? signatureEvidence.bytes
       : inlineSignature;
   const signature = windowsHeaderSignature(available);
+  if (
+    headerBytes !== 0 &&
+    relocationCount > 0 &&
+    tableStart < 64 &&
+    tableEnd > 60
+  ) {
+    // A relocation table a DOS loader can honor owns dword60, even when those
+    // bytes point at planted PE data. A table that starts inside the fixed
+    // 28-byte header, or with invalid page fields, describes no DOS load
+    // module (corkami dllnullep.dll, nullEP.exe); the Windows loader then
+    // reads e_lfanew alone, so only a complete "PE\0\0" there declares a
+    // PE image, requested when the prefix does not hold it.
+    const dosOwnsPointer =
+      tableStart >= 28 &&
+      dosMzDeclaredImageByteLength(
+        declarations ?? fixedDosMzDeclarations(reader),
+      ).ok;
+    if (dosOwnsPointer || offset === 0) return { state: "absent" };
+    if (signature === "PE") return { state: "declared", offset, signature };
+    return signature === "unobserved" &&
+      signatureEvidence?.offset !== offset &&
+      fileSize - offset >= 4
+      ? { state: "signature-needed", offset }
+      : { state: "absent" };
+  }
+  if (offset === 0) return { state: "absent" };
   if (signature !== "other" && signature !== "unobserved")
     return { state: "declared", offset, signature };
   // A relocation table that ends inside a complete DOS header owns the rest of

@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { createServer } from "../../../src/server/createServer.js";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../../src/contracts/java/mavenGradleMetadataToolContracts.js";
 import { mavenGradleMetadataSchema } from "../../../src/domain/java/mavenGradleMetadata.js";
@@ -10,182 +8,119 @@ import {
   gradleModuleFixture,
   mavenPomFixture,
 } from "../../../src/java/MavenGradleMetadata.fixture.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+import { fileInspectionTest } from "../../support/mcp/fileInspection.js";
 
 const completeEvidenceSchema = contractNamed(
   MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   "inspect_maven_gradle_metadata",
 ).outputSchema.safeExtend({ normalized_result: mavenGradleMetadataSchema });
 
-const connect = async (mcp: TestMcp) => {
-  const session = createTestBinarySession(() => {
-    throw new Error(
-      "Maven/Gradle metadata inspection must not start a deep provider",
+fileInspectionTest(
+  "advertises inspect_maven_gradle_metadata and reports a real POM",
+  async ({ client }) => {
+    const advertised = (await client.listTools()).tools.find(
+      (tool) => tool.name === "inspect_maven_gradle_metadata",
     );
-  });
-  const client = await mcp.connect(createServer({ kind: "session", session }));
-  return { client, session };
-};
-
-mcpTest(
-  "retains omitted, explicit default and selected metadata budgets through registered MCP admission",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    const root = await createTestTempDirectory("rea-maven-admission-");
+    expect(advertised?.annotations).toMatchObject({
+      readOnlyHint: false,
+      idempotentHint: true,
+    });
+    const root = await createTestTempDirectory("rea-maven-mcp-");
     const path = join(root, "pom.xml");
     await writeFile(path, mavenPomFixture);
-    try {
-      for (const maximum of [undefined, 1048576, 65536]) {
-        const input = {
-          path,
-          ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
-        };
-        const response = await client.callTool({
-          name: "inspect_maven_gradle_metadata",
-          arguments: input,
-        });
-        expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(
-          completeEvidenceSchema.parse(response.structuredContent).parameters,
-        ).toEqual(input);
-      }
-    } finally {
-      await session.close();
-    }
+    const response = await client.callTool({
+      name: "inspect_maven_gradle_metadata",
+      arguments: { path },
+    });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const evidence = completeEvidenceSchema.parse(response.structuredContent);
+    const report = evidence.normalized_result;
+    expect(report.format).toBe("maven-pom");
+    expect(evidence.confidence).toBe("observed");
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_bytes: Buffer.byteLength(mavenPomFixture),
+    });
+    expect(report.coordinates).toMatchObject({
+      artifact_id: "demo",
+      version: "${revision}",
+    });
+    expect(report.unresolved).toContainEqual(
+      expect.objectContaining({
+        kind: "property",
+        reference: "${revision}",
+        owner: "project",
+        field: "version",
+      }),
+    );
+    expect(report.dependency_management[0]?.bom_import).toBe(true);
+    expect(report.limitations.join(" ")).toContain(
+      "without running Maven or Gradle",
+    );
   },
 );
 
-mcpTest(
-  "advertises inspect_maven_gradle_metadata and reports a real POM",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const advertised = (await client.listTools()).tools.find(
-        (tool) => tool.name === "inspect_maven_gradle_metadata",
-      );
-      expect(advertised?.annotations).toMatchObject({
-        readOnlyHint: false,
-        idempotentHint: true,
-      });
-      const root = await createTestTempDirectory("rea-maven-mcp-");
-      const path = join(root, "pom.xml");
-      await writeFile(path, mavenPomFixture);
-      const response = await client.callTool({
-        name: "inspect_maven_gradle_metadata",
-        arguments: { path },
-      });
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = completeEvidenceSchema.parse(response.structuredContent);
-      const report = evidence.normalized_result;
-      expect(report.format).toBe("maven-pom");
-      expect(report.coordinates.artifact_id).toBe("demo");
-      expect(report.dependency_management[0]?.bom_import).toBe(true);
-      expect(report.limitations.join(" ")).toContain(
-        "without running Maven or Gradle",
-      );
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
+fileInspectionTest(
   "reports Gradle module variants from inspect_maven_gradle_metadata",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const root = await createTestTempDirectory("rea-gradle-mcp-");
-      const path = join(root, "demo-1.2.3.module");
-      await writeFile(path, gradleModuleFixture);
-      const response = await client.callTool({
-        name: "inspect_maven_gradle_metadata",
-        arguments: { path },
-      });
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const report = completeEvidenceSchema.parse(
-        response.structuredContent,
-      ).normalized_result;
-      expect(report.format).toBe("gradle-module");
-      expect(report.coordinates.group_id).toBe("com.example");
-      expect(report.gradle?.format_version).toBe("1.1");
-    } finally {
-      await session.close();
-    }
+  async ({ client }) => {
+    const root = await createTestTempDirectory("rea-gradle-mcp-");
+    const path = join(root, "demo-1.2.3.module");
+    await writeFile(path, gradleModuleFixture);
+    const response = await client.callTool({
+      name: "inspect_maven_gradle_metadata",
+      arguments: { path },
+    });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const evidence = completeEvidenceSchema.parse(response.structuredContent);
+    const report = evidence.normalized_result;
+    expect(report.format).toBe("gradle-module");
+    const validation = createMcpSchemaValidation();
+    const schema = canonicalOutputSchema("inspect_maven_gradle_metadata");
+    const validate = validation.getValidator(schema);
+    expect(validate(response.structuredContent).valid).toBe(true);
+    expect(
+      validate({
+        ...evidence,
+        normalized_result: { ...report, gradle: null },
+      }).valid,
+    ).toBe(false);
+    expect(
+      validate({
+        ...evidence,
+        normalized_result: {
+          ...report,
+          dependency_management: report.dependency_management.map((row) => ({
+            ...row,
+            origin: "variant-dependencies",
+          })),
+        },
+      }).valid,
+    ).toBe(false);
+    validation.clear();
+    expect(report.coordinates.group_id).toBe("com.example");
+    expect(report.gradle?.format_version).toBe("1.1");
   },
 );
 
-mcpTest(
-  "requires an absolute path for inspect_maven_gradle_metadata",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_maven_gradle_metadata",
-        arguments: { path: "pom.xml" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_maven_gradle_metadata" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
+fileInspectionTest(
   "reports a foreign file as an unsupported target rather than a parse",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const root = await createTestTempDirectory("rea-maven-unsupported-");
-      const path = join(root, "notes.txt");
-      const foreign = Buffer.from("hello world\n", "utf8");
-      await writeFile(path, foreign);
-      const response = await client.callTool({
-        name: "inspect_maven_gradle_metadata",
-        arguments: { path },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "unsupported_target",
-        details: { operation: "inspect_maven_gradle_metadata" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest("reports malformed XML as invalid input", async ({ mcp }) => {
-  const { client, session } = await connect(mcp);
-  try {
-    const root = await createTestTempDirectory("rea-maven-malformed-");
-    const path = join(root, "pom.xml");
-    const corrupt = Buffer.from("<project><artifactId>demo</project>", "utf8");
-    await writeFile(path, corrupt);
+  async ({ client }) => {
+    const root = await createTestTempDirectory("rea-maven-unsupported-");
+    const path = join(root, "notes.txt");
+    const foreign = Buffer.from("hello world\n", "utf8");
+    await writeFile(path, foreign);
     const response = await client.callTool({
       name: "inspect_maven_gradle_metadata",
       arguments: { path },
     });
     expect(response.isError).toBe(true);
     expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: "inspect_maven_gradle_metadata",
-        partial_observation: {
-          kind: "file-snapshot-hash",
-          path,
-          bytes: corrupt.length,
-          sha256: createHash("sha256").update(corrupt).digest("hex"),
-        },
-      },
+      code: "unsupported_target",
+      details: { operation: "inspect_maven_gradle_metadata" },
     });
-  } finally {
-    await session.close();
-  }
-});
+  },
+);

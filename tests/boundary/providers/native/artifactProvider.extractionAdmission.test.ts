@@ -50,7 +50,7 @@ it("refuses an unsupported source without hashing its bytes", async () => {
           await client.execute("extract_artifact", { output_root: output }),
         ).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+          error: { _tag: "AnalysisTargetFailureError", path: source },
         });
         expect(hash).not.toHaveBeenCalled();
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -369,8 +369,9 @@ it("refuses an incomplete PyInstaller detection tail without reporting unsupport
           ok: false,
           error: {
             _tag: "ArtifactOperationError",
-            reason: "format",
-            detail: "CArchive tail is truncated",
+            // The file shrank after its size was admitted: a changed file.
+            reason: "integrity",
+            integrityCheck: "read-coverage",
           },
         });
         expect(detect).toHaveBeenCalledTimes(1);
@@ -419,7 +420,7 @@ it("keeps incidental rejected cookie signatures unsupported during native extrac
           await client.execute("extract_artifact", { output_root: output }),
         ).toMatchObject({
           ok: false,
-          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+          error: { _tag: "AnalysisTargetFailureError", path: source },
         });
         expect(hash).not.toHaveBeenCalled();
         await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });

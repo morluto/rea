@@ -11,6 +11,8 @@ const TIER_PROFILES = {
 };
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CANDIDATES = 5;
+const SUCCESSFUL_RUN_PAGE_SIZE = 100;
+const MAX_SUCCESSFUL_RUN_PAGES = 3;
 const COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const EMPTY_SELECTION = { runId: "", artifactName: "" };
 const positiveId = (value) =>
@@ -118,27 +120,32 @@ function findTimingRun({
       if (accepts(run, artifact)) return String(run.id);
     }
     if (candidates.length > MAX_CANDIDATES) {
-      // Failed workflow runs can still publish portable timings. One page of
-      // successes lets older artifacts compete without a request per run.
-      const { workflow_runs: runs } = api(
-        `repos/${repository}/actions/workflows/ci.yml/runs`,
-        "-f",
-        `branch=${branch}`,
-        "-f",
-        "status=success",
-        "-F",
-        "per_page=100",
-      );
-      if (!Array.isArray(runs))
-        throw new Error("Missing successful CI run inventory");
-      const byId = new Map(
-        runs
-          .filter((run) => positiveId(run?.id))
-          .map((run) => [run.id, normalizeWorkflowRun(run)]),
-      );
-      for (const artifact of candidates) {
-        const run = byId.get(artifact.workflow_run.id);
-        if (accepts(run, artifact)) return String(run.id);
+      // Fast successes can fill the first page while older full runs still
+      // have eligible timing artifacts. Keep the lookup within the same budget.
+      for (let page = 1; page <= MAX_SUCCESSFUL_RUN_PAGES; page += 1) {
+        const { workflow_runs: runs } = api(
+          `repos/${repository}/actions/workflows/ci.yml/runs`,
+          "-f",
+          `branch=${branch}`,
+          "-f",
+          "status=success",
+          "-F",
+          `per_page=${SUCCESSFUL_RUN_PAGE_SIZE}`,
+          "-F",
+          `page=${page}`,
+        );
+        if (!Array.isArray(runs))
+          throw new Error("Missing successful CI run inventory");
+        const byId = new Map(
+          runs
+            .filter((run) => positiveId(run?.id))
+            .map((run) => [run.id, normalizeWorkflowRun(run)]),
+        );
+        for (const artifact of candidates) {
+          const run = byId.get(artifact.workflow_run.id);
+          if (accepts(run, artifact)) return String(run.id);
+        }
+        if (runs.length < SUCCESSFUL_RUN_PAGE_SIZE) break;
       }
     }
     return "";

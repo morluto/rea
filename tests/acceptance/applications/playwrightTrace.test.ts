@@ -324,6 +324,96 @@ cliTest(
 );
 
 cliTest(
+  "preserves recorder order and exact totals for indexed selections and intersections",
+  async ({ cli }) => {
+    const fixture = await playwrightTraceFixture();
+    const complete = await cli.run({
+      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
+    });
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    const parent = parseEvidence(complete.json);
+    const report = playwrightTraceSchema.parse(parent.normalized_result);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    const ingest = await call("inspect_playwright_trace", {
+      path: fixture.path,
+    });
+    expect(ingest.isError, JSON.stringify(ingest.content)).not.toBe(true);
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: parent.evidence_id,
+    };
+    const controls = [
+      {
+        filter: { kinds: ["network"] },
+        matches: report.events.filter((row) => row.kind === "network"),
+        offset: 1,
+      },
+      {
+        filter: { kinds: ["network", "console", "network"] },
+        matches: report.events.filter(
+          (row) => row.kind === "network" || row.kind === "console",
+        ),
+        offset: 0,
+      },
+      {
+        filter: {
+          kinds: ["network"],
+          stream_ids: report.streams
+            .filter((row) => row.role === "trace")
+            .map((row) => row.stream_id),
+        },
+        matches: [],
+        offset: 0,
+      },
+      {
+        filter: { kinds: [] },
+        matches: [],
+        offset: 0,
+      },
+      {
+        filter: { kinds: ["network"] },
+        matches: report.events.filter((row) => row.kind === "network"),
+        offset: report.events.length + 1,
+      },
+    ];
+    expect(controls[0]?.matches.length).toBeGreaterThan(2);
+    for (const { filter, matches, offset } of controls) {
+      const page = await call("inspect_analysis_view", {
+        source,
+        view: {
+          kind: "playwright-trace",
+          collection: "events",
+          fields: [],
+          limit: 2,
+          offset,
+          ...filter,
+        },
+      });
+      expect(page.isError, JSON.stringify(page.content)).not.toBe(true);
+      const expected = matches.slice(offset, offset + 2);
+      const hasMore = offset + expected.length < matches.length;
+      expect(
+        parseEvidence(page.structuredContent).normalized_result,
+      ).toMatchObject({
+        items: expected.map(({ event_id, ordinal, source: location }) => ({
+          event_id,
+          ordinal,
+          source: location,
+        })),
+        coverage: {
+          total: matches.length,
+          examined: expected.length,
+          next_offset: hasMore ? offset + expected.length : null,
+          exhausted: !hasMore,
+        },
+      });
+    }
+  },
+);
+
+cliTest(
   "keeps console previews bounded and malformed siblings offline through public CLI/MCP",
   async ({ cli }) => {
     let requests = 0;
@@ -499,12 +589,21 @@ cliTest(
         detail: "complete",
       }),
     );
-    expect(failed.error.code).toBe("invalid_request");
-    const reference = failed.error.details?.partial_observation;
-    expect(reference).toEqual({
-      kind: "retained-evidence",
-      evidence_id: expect.any(String),
+    expect(failed.error).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retryable: false,
+      retry: "none",
+      details: {
+        failure_kind: "malformed",
+        format: "zip",
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: expect.any(String),
+        },
+      },
     });
+    const reference = failed.error.details?.partial_observation;
     const { evidence_id } = reference as { evidence_id: string };
     const page = await call("inspect_analysis_view", {
       source: { kind: "retained-evidence", evidence_id },
@@ -534,7 +633,12 @@ cliTest(
       kind: "playwright-trace",
       collection: "streams",
     });
-    for (const delivery of [[], ["--detail", "complete"]]) {
+    // An omitted --detail with a view selects summary delivery, which still
+    // needs a bundle; --detail complete cannot page a view at all.
+    for (const [delivery, path] of [
+      [[], "evidence_output"],
+      [["--detail", "complete"], "view"],
+    ] as const) {
       const result = await cli.run({
         arguments: [
           "inspect-playwright-trace",
@@ -548,7 +652,7 @@ cliTest(
       expect(result.exitCode).not.toBe(0);
       expect(result.json).toMatchObject({
         code: "invalid_request",
-        details: { issues: [{ path: ["view"], reason: "invalid_value" }] },
+        details: { issues: [{ path: [path], reason: "invalid_value" }] },
       });
     }
   },

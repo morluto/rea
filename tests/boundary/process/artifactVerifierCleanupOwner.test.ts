@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
-import { access, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";

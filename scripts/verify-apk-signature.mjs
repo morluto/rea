@@ -22,12 +22,16 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { computeApkContentDigest } from "../dist/domain/apkSignature/apkContentDigest.js";
 import {
-  locateApkSigningBlock,
-  parseZipTail,
+  locateApkSigningBlockFromReader,
+  parseZipTailFromReader,
 } from "../dist/domain/apkSignature/apkSigningBlock.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const execute = promisify(execFile);
 const environment = Object.fromEntries(
@@ -117,9 +121,16 @@ const nodeHash = (algorithm) => {
 /** Change one entry byte and replace every declared content digest in the block. */
 const forgeDeclaredDigests = async (original) => {
   const bytes = Buffer.from(original);
-  const tail = parseZipTail(bytes);
-  assert.ok(tail.ok);
-  const block = locateApkSigningBlock(bytes, tail.value);
+  const source = {
+    size: bytes.length,
+    prefix: bytes.subarray(0, 4),
+    readRange: async (offset, length) =>
+      bytes.subarray(offset, offset + length),
+  };
+  const tailRead = await parseZipTailFromReader(source);
+  assert.ok(tailRead.ok);
+  const { tail } = tailRead.value;
+  const block = await locateApkSigningBlockFromReader(source, tail);
   assert.ok(block.ok && block.value !== null);
   const { blockStart } = block.value;
   const digests = () =>
@@ -127,7 +138,7 @@ const forgeDeclaredDigests = async (original) => {
       Buffer.from(
         computeApkContentDigest(
           bytes,
-          { tail: tail.value, blockStart, algorithm },
+          { tail, blockStart, algorithm },
           nodeHash,
         ),
       ),
@@ -139,7 +150,7 @@ const forgeDeclaredDigests = async (original) => {
   for (const [index, old] of before.entries())
     for (
       let at = bytes.indexOf(old, blockStart);
-      at >= 0 && at < tail.value.centralDirectoryOffset;
+      at >= 0 && at < tail.centralDirectoryOffset;
       at = bytes.indexOf(old, at + old.length)
     ) {
       after[index].copy(bytes, at);
@@ -201,10 +212,12 @@ const inspectCli = async (path) => {
       (
         await run(process.execPath, [
           entrypoint,
-          "inspect-apk-signature",
-          path,
-          "--format",
-          "json",
+          ...(await completeEvidenceCliArguments([
+            "inspect-apk-signature",
+            path,
+            "--format",
+            "json",
+          ])),
         ])
       ).stdout,
     );
@@ -220,7 +233,9 @@ const fixture = await VerifierFixture.open({
   prefix: "rea-apk-signature-verifier-",
 });
 const workspace = fixture.path;
-const client = new Client({ name: "apk-signature-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "apk-signature-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
