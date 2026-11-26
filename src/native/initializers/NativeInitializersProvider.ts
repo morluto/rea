@@ -1,8 +1,4 @@
 import {
-  isParseLimit,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
-import {
   closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
@@ -24,7 +20,6 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   nativeInitializersFileLimit,
   type InspectNativeInitializersInput,
@@ -34,10 +29,6 @@ import {
 } from "../../domain/native/nativeInitializers.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  ELF_POINTER_RELOCATION_FORMAT,
-  ElfPointerRelocationFailure,
-} from "../../domain/native/elfPointerRelocations.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
@@ -192,21 +183,6 @@ const nativeInitializersFailure = (
       path: input.path,
       description: "image",
       recognise: (failure, origin) => {
-        if (
-          failure instanceof ElfPointerRelocationFailure &&
-          isParseLimit(failure, ELF_POINTER_RELOCATION_FORMAT)
-        )
-          return parseLimitConstraint(OPERATION, "capacity", failure, {
-            path: input.path,
-            ...fixedAllowanceOptions(
-              "The native initializer structural allowance",
-              "parser",
-              {
-                limit: failure.failure.limit.maximum,
-                ...(failure.unit === undefined ? {} : { unit: failure.unit }),
-              },
-            ),
-          });
         if (isNativeStructureFailure(failure))
           return nativeStructureConstraint(OPERATION, failure, input.path);
         if (
