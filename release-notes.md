@@ -7,6 +7,10 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **android:** the inspect_android_package summary no longer lists component declarations. Page them with view {kind: "android", facet: "components"}, or pass detail: "complete".
+* **android:** the inspect_android_class summary, delivered for detail summary or above the agent result budget, no longer lists methods, fields, inner classes or mapping symbols. Page them with the android-class view, or pass detail: "complete".
+* **android:** a trace_android_references call that omits detail on a trace above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
+* **apktool:** a decode_android_resources call that omits detail on a decode above the agent result budget now returns the retained summary. Pass detail: "complete" (--detail complete) for the previous shape.
 * **limits:** Rust dependency-parser refusals report details.limit for the binding parameter instead of a fixed_ceiling allowance.
 * **limits:** apktool and assetutil output refusals report details.limit for producer_limits.output_bytes instead of a fixed_ceiling refusal.
 * **native:** Go and Rust structural refusals and the WebAssembly section refusal report details.limit instead of a fixed_ceiling refusal.
@@ -77,6 +81,8 @@
 * **analysis-view:** count distinct retained JavaScript fact values ([e19dbcf](https://github.com/morluto/rea/commit/e19dbcf857e98f402b61b1ef793dd62d9929426a))
 * **analysis-view:** filter native exports and ELF dependencies by name prefix ([a148da5](https://github.com/morluto/rea/commit/a148da56ccfb370e7a638832c2a1290fb208ca63))
 * **analysis-view:** order inventory occurrences by size before paging ([386d294](https://github.com/morluto/rea/commit/386d294f90d1ebfc0d6d01374ead49fc5bc637e0))
+* **analysis-view:** page retained Android reference traces ([c0f1bc6](https://github.com/morluto/rea/commit/c0f1bc6a6d1dc6d5262690ed5234bfc133977c63))
+* **analysis-view:** page retained Apktool resource decodes ([8ce5c00](https://github.com/morluto/rea/commit/8ce5c00a6eb5c4634ee2e6e117a5e640b6e69419))
 * **analysis-view:** page retained observe_web_execution observations ([38536f9](https://github.com/morluto/rea/commit/38536f9fdb8a66ff44375b888c8fabe1a4bff3ba))
 * **analysis-view:** page retained UEFI extraction manifests ([5e8388a](https://github.com/morluto/rea/commit/5e8388a655e2eae83c31e6e21a611c2fc9910156))
 * **analysis-view:** page retained UEFI firmware maps ([fc4c453](https://github.com/morluto/rea/commit/fc4c453683213991d2338b25c6752f24236a3052))
@@ -84,7 +90,11 @@
 * **analysis-view:** select inventory occurrences by path glob ([dba72f1](https://github.com/morluto/rea/commit/dba72f1277534791a30cc26607c430b1a655b9ef))
 * **analysis-view:** select retained JavaScript facts by property value ([25e93a8](https://github.com/morluto/rea/commit/25e93a8139abf3ad398d0366d84c53c75fcd0d82))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
+* **android:** budget trace_android_references delivery ([3228011](https://github.com/morluto/rea/commit/32280113a72538b3663158dc0e3bfc9ac1875b72))
+* **android:** count class members in summaries and page them ([5257f40](https://github.com/morluto/rea/commit/5257f40ffbaa655f0d5f6a6308bc566257ce5815))
+* **android:** count components in package summaries ([e731ca7](https://github.com/morluto/rea/commit/e731ca7bbe4242ca76870f7beac160a420413dee))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
+* **apktool:** budget decode_android_resources delivery ([a16facb](https://github.com/morluto/rea/commit/a16facbd9f2b323f9bd575e251af6cba7b62e48f))
 * **artifacts:** back archive member counts with the artifact.member_count setting ([#14650](https://github.com/morluto/rea/issues/14650)) ([3129747](https://github.com/morluto/rea/commit/31297470ef829a404dc38c2acf327272e222c404))
 * **artifacts:** give Deno, wxapkg and tar readers artifact_limits controls ([#14620](https://github.com/morluto/rea/issues/14620)) ([3dae567](https://github.com/morluto/rea/commit/3dae567185ac08126d40ea38435d5cbe9aa64afe))
 * **artifacts:** inspect and compare directories by a content-addressed root digest ([#14270](https://github.com/morluto/rea/issues/14270)) ([56cf155](https://github.com/morluto/rea/commit/56cf15566ee1fee1cb0d3573bf0e23b1a682e635))
@@ -1042,6 +1052,8 @@
 ### Documentation
 
 * **analysis-view:** qualify javascript-fact-groups readback to scalar values ([1dc1c20](https://github.com/morluto/rea/commit/1dc1c20cd614d38a8bfe8ef23d0cea4e391fc561))
+* **android:** describe budgeted delivery and the class and reference views ([4027711](https://github.com/morluto/rea/commit/402771122c09cc6f412fe2bc0617446703b439fc))
+* **apktool:** describe decode delivery and resource views ([3ffbf5d](https://github.com/morluto/rea/commit/3ffbf5dea08eaebf3ab8faee7a9a88e1e214cbb8))
 * **artifacts:** explain the per-file verification cost of extraction ([#12745](https://github.com/morluto/rea/issues/12745)) ([6878c17](https://github.com/morluto/rea/commit/6878c17a833e6a595d4f80e47e98c256d60ca9c0))
 * **browser:** describe comparing retained captures ([b33b8e8](https://github.com/morluto/rea/commit/b33b8e8ce6189d5db36f0e1ca90f2ab0a3ea87a6))
 * **browser:** describe paging retained execution observations ([440edb5](https://github.com/morluto/rea/commit/440edb5ac050b6b746a8c24cd91bed2ec079fbdd))
