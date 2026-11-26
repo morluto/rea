@@ -12,10 +12,8 @@ import {
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import {
-  runtimeArtifactMemberCount,
-  runtimeAsarHeaderAdmission,
-} from "../config/runtimeAnalysisSettings.js";
+import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
+import { runtimeArtifactMemberCount } from "../config/artifactMemberCount.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
 import {
   bindArtifactFileCleanup,

@@ -77,7 +77,6 @@ import {
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
 import {
-  ARTIFACT_MEMBER_COUNT_ENVIRONMENT,
   DEFAULT_ARTIFACT_MEMBER_COUNT,
   MAXIMUM_ARTIFACT_READER_COUNT,
 } from "./artifactReaderLimits.js";
@@ -197,7 +196,7 @@ export const ANALYSIS_SETTINGS = {
   },
   "artifact.member_count": {
     updateMode: "runtime",
-    environment: ARTIFACT_MEMBER_COUNT_ENVIRONMENT,
+    environment: "REA_ARTIFACT_MEMBER_COUNT",
     defaultValue: DEFAULT_ARTIFACT_MEMBER_COUNT,
     minimum: 1,
     maximum: MAXIMUM_ARTIFACT_READER_COUNT,

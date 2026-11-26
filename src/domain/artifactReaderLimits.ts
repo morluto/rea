@@ -12,7 +12,6 @@ export const MAXIMUM_ARTIFACT_READER_COUNT = 0x7fffffff;
  * then the `REA_ARTIFACT_MEMBER_COUNT` launch seed, then this default.
  */
 export const ARTIFACT_MEMBER_COUNT_SETTING = "artifact.member_count" as const;
-export const ARTIFACT_MEMBER_COUNT_ENVIRONMENT = "REA_ARTIFACT_MEMBER_COUNT";
 export const DEFAULT_ARTIFACT_MEMBER_COUNT = 100_000;
 
 /** Where the session member count came from. */

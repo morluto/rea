@@ -4,11 +4,6 @@ import {
   currentAnalysisSettingOverride,
 } from "../domain/analysisOperationSnapshot.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import {
-  ARTIFACT_MEMBER_COUNT_SETTING,
-  type ArtifactMemberCount,
-} from "../domain/artifactReaderLimits.js";
-import { launchAnalysisSetting } from "./analysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
@@ -286,26 +281,3 @@ export const runtimeNativeMatchingAllowance =
       ? parseNativeMatchingAllowance(environment)
       : ok({ maximumBytes: override, source: "runtime" });
   };
-
-/**
- * The session member count one artifact operation applies: a runtime override,
- * then the launch seed, then the default. An invalid seed is refused rather
- * than replaced by the default.
- */
-export const runtimeArtifactMemberCount = (
-  environment: Readonly<Record<string, string | undefined>>,
-  read?: AnalysisSettingsReader,
-): ArtifactMemberCount => {
-  const override =
-    read?.().overrides[ARTIFACT_MEMBER_COUNT_SETTING] ??
-    currentAnalysisSettingOverride(ARTIFACT_MEMBER_COUNT_SETTING);
-  if (override !== undefined) return { value: override, source: "runtime" };
-  const launched = launchAnalysisSetting(
-    ARTIFACT_MEMBER_COUNT_SETTING,
-    environment,
-  );
-  if (!launched.ok) throw launched.error;
-  const { value, source } = launched.value;
-  if (value === null) throw new TypeError("artifact.member_count is bounded");
-  return { value, source };
-};
