@@ -271,11 +271,6 @@
     "\"The retained DWARF section bound\"": {
       "class": "derived",
       "reason": "Retained file-backed sections cannot exceed the admitted image size; the bound is the selected file and grows with it."
-    },
-    "DWARF_DECOMPRESSED_SECTION_ALLOWANCE": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     }
   },
   "src/native/elf/ElfDebugLinkProvider.ts": {
@@ -294,9 +289,8 @@
   },
   "src/native/elf/elfNoteLimitConstraint.ts": {
     "ELF_NOTE_TEXT_ALLOWANCE": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+      "class": "derived",
+      "reason": "The note text, hash and scan budget equals the admitted image length plus its decoded section names, so it grows with max_file_bytes and needs no control of its own."
     }
   },
   "src/native/elf/ElfUnwindRangesProvider.ts": {
