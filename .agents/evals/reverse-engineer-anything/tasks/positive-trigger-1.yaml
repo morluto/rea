@@ -1,0 +1,17 @@
+id: positive-trigger-001
+name: Positive Trigger 1
+description: Auto-generated positive-trigger task.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "Use reverse-engineer-anything to help me complete this task"
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: contains-keywords
+    config:
+      contains:
+        - "anything"
+        - "engineer"
+        - "reverse"
