@@ -283,25 +283,28 @@ that exact frame's reported security origin before selecting a seed. It does
 not infer the origin from a frame URL or serialized storage key. Unresolved
 frame identity or security origin fails initialization rather than silently
 running with an unknown initial state.
-In launch mode, declared non-cookie seeds are also installed with a synchronous
-browser-context init script for top-level documents. Playwright runs that
-script after a document is created and before the document's own scripts,
-including a popup opened later in the scenario-owned context, without waiting
-for an asynchronous round trip before writing storage. Third-party iframes are
-skipped by that init script and continue to be seeded by the CDP path keyed on
+In launch mode, declared non-cookie seeds are also installed with a single
+synchronous browser-context init script for top-level documents. Playwright
+runs that script after a document is created and before the document's own
+scripts, including a popup opened later in the scenario-owned context, without
+waiting for an asynchronous round trip before writing storage. Skip decisions
+and writes share that one ordered hook so page/context init-script ordering
+cannot re-seed after a reload. Third-party iframes are skipped by that init
+script and continue to be seeded by the CDP path keyed on
 `Storage.getStorageKey`, so a partitioned iframe at origin B does not block a
-later first-party popup at origin B. Once-per-area state stays in Node outside
-clearable local and session storage: the CDP seeder updates the context init
-script before resuming when a first-party local area is initialized, and each
-seeded popup notifies Node to install a per-page skip list for its initialized
-session origins so later reloads keep page updates and deletions. Captured
-storage inventories omit any legacy bookkeeping key. A storage write failure
-inside the init script marks popup seed coverage unknown. In connect mode, REA
-does not install a context-wide init script on the caller's shared browser
-context, so unrelated tabs are not mutated; if a popup is discovered when
-non-cookie seeds are declared, the capture retains completed observations and
-marks `storage` coverage missing, with equality ineligible, even when popup
-lifecycle events were not selected.
+later first-party popup at origin B. Once-per-area state stays outside
+clearable local and session storage: Node tracks first-party local origins and
+refreshes the context init payload before CDP resume when a first-party local
+area is initialized, and each seeded tab records durable per-tab once flags in
+`window.name` (including after CDP writes) so a reload after the application
+deletes seeded keys does not restore them. Captured storage inventories omit
+any legacy bookkeeping key. A storage write failure inside the init script, or
+a failure while refreshing the context seed hook, marks popup seed coverage
+unknown. In connect mode, REA does not install a context-wide init script on
+the caller's shared browser context, so unrelated tabs are not mutated; if a
+popup is discovered when non-cookie seeds are declared, the capture retains
+completed observations and marks `storage` coverage missing, with equality
+ineligible, even when popup lifecycle events were not selected.
 
 The result is Evidence with an initial state followed by one record per
 declared action. Each step reports action status, elapsed time, sanitized URLs,
