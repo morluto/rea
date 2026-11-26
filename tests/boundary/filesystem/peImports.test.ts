@@ -124,10 +124,10 @@ describe("PE import stable filesystem boundary", () => {
       max_file_bytes: 536870912,
       max_text_bytes: 64 * 1024 * 1024,
     });
-    expect(
-      raisedText.ok ||
-        !("limit" in raisedText.error) ||
-        raisedText.error.limit?.parameter !== "max_text_bytes",
-    ).toBe(true);
+    if (!raisedText.ok) throw raisedText.error;
+    const raisedReport = peImportsSchema.parse(
+      raisedText.value.normalized_result,
+    );
+    expect(raisedReport.imports[0]?.functions).toHaveLength(4097);
   });
 });
