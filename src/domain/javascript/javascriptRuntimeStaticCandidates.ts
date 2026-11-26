@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   isJavaScriptModuleUnit,
   isJavaScriptSourceModule,
@@ -181,10 +182,7 @@ const indexStaticPaths = (
     if (edge.relation !== "maps_to") continue;
     const target = nodes.get(edge.target_node_id);
     if (target === undefined) continue;
-    const related = relatedBySource.get(edge.source_node_id);
-    if (related === undefined)
-      relatedBySource.set(edge.source_node_id, [target]);
-    else related.push(target);
+    appendToMapList(relatedBySource, edge.source_node_id, target);
   }
   return new Map(
     graph.nodes.map((node) => [

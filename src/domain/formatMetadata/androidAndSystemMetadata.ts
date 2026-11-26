@@ -172,6 +172,51 @@ export type AndroidOtaPartitionMetadata = z.infer<
   typeof androidOtaPartitionMetadataSchema
 >;
 
+const androidSparseChunkCountsSchema = z.strictObject({
+  raw: uint32,
+  fill: uint32,
+  dont_care: uint32,
+  crc32: uint32,
+});
+
+/**
+ * Android sparse image header and chunk-table facts. The stored image checksum
+ * and CRC32 chunk values are recorded, not verified. Fill patterns list the
+ * first 16 distinct values and CRC32 chunks the first 16 chunks.
+ */
+export const androidSparseImageMetadataSchema = z.strictObject({
+  kind: z.literal("android-sparse-image"),
+  magic: z.literal("0xed26ff3a"),
+  major_version: z.literal(1),
+  minor_version: z.number().int().min(0).max(0xffff),
+  file_header_size: z.number().int().min(28).max(0xffff),
+  chunk_header_size: z.number().int().min(12).max(0xffff),
+  block_size: uint32,
+  total_blocks: uint32,
+  total_chunks: uint32,
+  expanded_size: offset,
+  image_checksum: uint32,
+  checksums_verified: z.literal(false),
+  chunk_counts: androidSparseChunkCountsSchema,
+  /** Expanded output bytes each chunk type covers; CRC32 chunks cover none. */
+  covered_bytes: z.strictObject({
+    raw: offset,
+    fill: offset,
+    dont_care: offset,
+  }),
+  fill_patterns: z.array(z.string().regex(/^[0-9a-f]{8}$/u)).max(16),
+  crc32_chunks: z
+    .array(z.strictObject({ file_offset: offset, value: uint32 }))
+    .max(16),
+  undecoded_file_header_bytes: uint32,
+  undecoded_file_header_hex: z.string().regex(/^[0-9a-f]*$/u),
+  undecoded_chunk_header_bytes: uint32,
+  trailing_bytes: offset,
+});
+export type AndroidSparseImageMetadata = z.infer<
+  typeof androidSparseImageMetadataSchema
+>;
+
 /**
  * Android boot and vendor_boot header facts. Addresses, names, and the
  * command line are declarations from the image. The digest, v4 signature,
@@ -271,3 +316,65 @@ export const androidBootImageEntryMetadataSchema = z.strictObject({
 export type AndroidBootImageEntryMetadata = z.infer<
   typeof androidBootImageEntryMetadataSchema
 >;
+
+/**
+ * ISO 9660 primary volume descriptor facts, with what the rest of the
+ * descriptor set declares. The identifiers, sizes, set and sequence numbers,
+ * dates, `root_directory_extent` and `boot_catalog_sector` are observed
+ * declarations from the image (dates that are unrecorded or not valid
+ * calendar times are null). `volume_descriptor_count`,
+ * `el_torito_boot_record`, `joliet_level`, `name_source`, `directory_count`
+ * and `file_count` are derived from the descriptors present and the walked
+ * tree. Rock Ridge, UDF and El Torito boot images are not decoded.
+ */
+export const iso9660MetadataSchema = z.strictObject({
+  kind: z.literal("iso9660"),
+  system_identifier: z.string(),
+  volume_identifier: z.string(),
+  volume_set_identifier: z.string(),
+  publisher_identifier: z.string(),
+  data_preparer_identifier: z.string(),
+  application_identifier: z.string(),
+  volume_space_size: uint32,
+  logical_block_size: z.literal(2048),
+  volume_set_size: uint32,
+  volume_sequence_number: uint32,
+  path_table_size: uint32,
+  root_directory_extent: uint32,
+  creation_date: z.string().nullable(),
+  modification_date: z.string().nullable(),
+  expiration_date: z.string().nullable(),
+  effective_date: z.string().nullable(),
+  volume_descriptor_count: uint32,
+  el_torito_boot_record: z.boolean(),
+  boot_catalog_sector: uint32.nullable(),
+  joliet_level: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable(),
+  name_source: z.enum(["primary", "joliet"]),
+  directory_count: uint32,
+  file_count: uint32,
+});
+export type Iso9660Metadata = z.infer<typeof iso9660MetadataSchema>;
+
+/**
+ * One ISO 9660 directory member, from its directory record or records.
+ * `identifier`, `extent_location`, `extended_attribute_length`, `file_flags`,
+ * `recording_date`, `file_unit_size` and `interleave_gap_size` are observed in
+ * the member's first record. `index`, `extent_count`, `extent_layout`,
+ * `hidden` and `associated` are derived.
+ */
+export const iso9660EntryMetadataSchema = z.strictObject({
+  kind: z.literal("iso9660-entry"),
+  index: uint32,
+  identifier: z.string(),
+  extent_location: uint32,
+  extended_attribute_length: uint32,
+  extent_count: uint32,
+  extent_layout: z.enum(["contiguous", "fragmented", "interleaved"]),
+  file_flags: uint32,
+  hidden: z.boolean(),
+  associated: z.boolean(),
+  recording_date: z.string().nullable(),
+  file_unit_size: uint32,
+  interleave_gap_size: uint32,
+});
+export type Iso9660EntryMetadata = z.infer<typeof iso9660EntryMetadataSchema>;

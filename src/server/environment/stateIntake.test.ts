@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -82,6 +83,9 @@ it("downloads with redirects refused, releases the reader and defaults to a 30 s
     signal: expect.any(AbortSignal),
     redirect: "error",
   });
+  const signal = fetched.mock.lastCall?.[1]?.signal;
+  if (!signal) throw new Error("Expected a download signal");
+  expect(getEventListeners(signal, "abort")).toHaveLength(0);
   expect(DEFAULT_STATE_INTAKE.timeoutMs).toBe(30_000);
 });
 

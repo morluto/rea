@@ -2,13 +2,13 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
   type PeCertificates,
 } from "../../domain/native/peCertificates.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
@@ -37,47 +37,24 @@ export class PeCertificatesService {
         toParameters: (input) => input,
         validateReport: (report, parameters) =>
           report.artifact.path === parameters.path &&
-          validReport(
-            report,
-            parameters.max_entries,
-            parameters.max_file_bytes,
-          ),
-        buildEvidence: (value, identity, parameters) => {
-          const architecture = peSubjectArchitecture(
-            value.machine,
-            value.format,
-          );
-          const locations = [
-            { kind: "artifact-path" as const, path: value.artifact.path },
-            ...(value.table === null
+          validReport(report, parameters.max_entries),
+        buildEvidence: (value, identity, parameters) =>
+          observedPeEvidence(
+            value,
+            identity,
+            OPERATION,
+            parameters,
+            value.table === null
               ? []
               : [
                   {
-                    kind: "file-offset-range" as const,
+                    kind: "file-offset-range",
                     start: value.table.location.offset,
                     end:
                       value.table.location.offset + value.table.location.bytes,
                   },
-                ]),
-          ];
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "pe",
-              sha256: value.artifact.sha256,
-              ...(architecture === undefined ? {} : { architecture }),
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations,
-            },
-          );
-        },
+                ],
+          ),
       },
       rawInput,
       options,
@@ -85,14 +62,9 @@ export class PeCertificatesService {
   }
 }
 
-const validReport = (
-  report: PeCertificates,
-  maxEntries: number,
-  maxBytes: number,
-): boolean => {
+const validReport = (report: PeCertificates, maxEntries: number): boolean => {
   const inside = insideArtifact(report.artifact.bytes);
   if (
-    report.artifact.bytes > maxBytes ||
     report.coverage.examined_entries > maxEntries ||
     report.coverage.examined_entries !== report.entries.length ||
     report.coverage.certificates !==

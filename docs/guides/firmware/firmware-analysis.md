@@ -4,7 +4,8 @@ REA accepts **Binwalk 3.1.x** for region inspection and **Unblob 26.6.x** for
 explicit extraction. The report parsers are verified with Binwalk 3.1.0 and
 Unblob 26.6.4. Another build on those lines is accepted, the observed version
 is reported, and a limitation records that the parser was not verified against
-that build. This first firmware milestone is verified on Linux x64.
+that build. Binwalk and Unblob operations run only on Linux; other hosts
+report the capability as unavailable. Verification covers Linux x64.
 No device, root privilege, mount, emulation or execution of extracted programs
 is needed. Arbitrary firmware bytes do not pass native executable admission;
 select a returned ELF separately for supported Ghidra analysis.
@@ -427,7 +428,8 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
   `--max-output-files`). Exceeding either selected staging budget returns a
-  nonretryable resource constraint naming the selected limit. Depth defaults to
+  nonretryable resource constraint whose `details.limit` names the field, its
+  effective value, range and default. Depth defaults to
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
@@ -540,6 +542,15 @@ verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
+
+## Expand Android sparse images
+
+`inspect-artifact` / `extract-artifact` recognize an Android sparse image
+(`0xED26FF3A`) by magic, record its header and chunk counts, and expand it to
+one `image.raw` child offline. RAW chunks are copied, FILL chunks repeated and
+DONT_CARE chunks written as zeros; stored checksums are not verified. The
+expanded child is classified again, so a sparse-wrapped boot image continues
+to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
 
 ## Inspect UF2 and DfuSe images
 

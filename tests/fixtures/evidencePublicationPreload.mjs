@@ -19,6 +19,8 @@ if (input.signal !== undefined) {
 }
 let cleanupFailures = input.cleanup_failures ?? 0;
 assert.ok(Number.isSafeInteger(cleanupFailures) && cleanupFailures >= 0);
+let rmFailures = input.rm_failures ?? 0;
+assert.ok(Number.isSafeInteger(rmFailures) && rmFailures >= 0);
 
 const require = createRequire(import.meta.url);
 const fs = require("node:fs/promises");
@@ -81,6 +83,19 @@ fs.rmdir = async (...arguments_) => {
     setImmediate(deliver);
   }
   return result;
+};
+
+const removeFile = fs.rm;
+fs.rm = async (...arguments_) => {
+  if (rmFailures > 0 && owned(arguments_[0])) {
+    if (rmFailures === input.rm_failures && input.signal === undefined)
+      writeFileSync(input.marker, JSON.stringify({ rm_failure: "EBUSY" }));
+    rmFailures -= 1;
+    throw Object.assign(new Error("injected removal failure"), {
+      code: "EBUSY",
+    });
+  }
+  return removeFile(...arguments_);
 };
 
 const stage = fs.mkdtemp;

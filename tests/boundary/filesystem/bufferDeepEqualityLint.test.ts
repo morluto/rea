@@ -1,12 +1,8 @@
-import { RuleTester } from "oxlint/plugins-dev";
-import { describe, it } from "vitest";
+import { createRuleTester } from "../../support/createRuleTester.js";
 
 import noBufferDeepEquality from "../../../scripts/lint/no-buffer-deep-equality.mjs";
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-
-new RuleTester({
+createRuleTester({
   languageOptions: { sourceType: "module", env: { node: true } },
 }).run("no-buffer-deep-equality", noBufferDeepEquality, {
   valid: [

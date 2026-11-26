@@ -1,5 +1,6 @@
+import { recordedJsonNumber } from "../../domain/exactJsonNumber.js";
 import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
-import { isSafeNumber, type LosslessNumber } from "lossless-json";
+import type { LosslessNumber } from "lossless-json";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { parseRecordedTransportUrl } from "../../domain/recordedTransportUrl.js";
 import {
@@ -89,7 +90,7 @@ export class CaptureRedaction {
     value: LosslessNumber,
     pointer: string,
   ): { reported: number | null; literal: string } | null {
-    const reported = isSafeNumber(value.value) ? Number(value.value) : null;
+    const reported = recordedJsonNumber(value.value);
     if (
       this.text(value.value, pointer) === null ||
       (reported !== null && this.text(String(reported), pointer) === null)

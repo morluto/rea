@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { nativeSymbolMetadataSchema } from "./nativeSymbol.js";
 import { analysisStringSchema } from "./nativeString.js";
-import { ok, type Result } from "../result.js";
+import { ok } from "../result.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
-import type { JsonValue } from "../jsonValue.js";
 import { invalidNativeOutput } from "./nativeProviderOutput.js";
 
 /** Canonical named native observations; same-address alternatives stay separate. */

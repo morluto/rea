@@ -16,6 +16,7 @@ import {
   requireMcpEvidenceResult,
   requireMcpLifecycleResult,
 } from "./mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 /** Prove actual MCP owner exit releases the demo singleton for subsequent CLI/MCP sessions. */
 export async function verifyLinuxHopperOwnerExit({
@@ -47,7 +48,9 @@ export async function verifyLinuxHopperOwnerExit({
       });
       // Drain launcher diagnostics even on the deliberately interrupted owner.
       transport.stderr?.resume();
-      const client = new Client({ name: "hopper-owner-exit", version: "1" });
+      const client = completeEvidenceClient(
+        new Client({ name: "hopper-owner-exit", version: "1" }),
+      );
       const options = { timeout: 180_000 };
       try {
         await client.connect(transport);
@@ -80,7 +83,7 @@ export async function verifyLinuxHopperOwnerExit({
         );
         const procedures = requireMcpEvidenceResult(
           await client.callTool(
-            { name: "list_procedures", arguments: {} },
+            { name: "list_procedures", arguments: { detail: "complete" } },
             options,
           ),
           "list_procedures",

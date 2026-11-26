@@ -790,7 +790,10 @@ it("refuses a padded PE compressed stream that cannot end within its read budget
   await expect(image.inspect()).rejects.toMatchObject({
     failure: {
       kind: "limit",
-      limit: { name: "compressed dependency bytes", maximum: 1024 * 1024 },
+      limit: {
+        name: "max_compressed_dependency_bytes",
+        maximum: 1024 * 1024,
+      },
     },
   });
   expect(image.largestRead()).toBeLessThanOrEqual(1024 * 1024);

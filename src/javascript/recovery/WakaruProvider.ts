@@ -1,3 +1,4 @@
+import { QueuedProviderClose } from "../../providers/QueuedProviderClose.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import {
   HOST_PLATFORM,
@@ -15,7 +16,7 @@ import {
   ArtifactResourceScope,
   AnalysisCleanupLease,
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
 } from "../../resources/index.js";
@@ -25,7 +26,6 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   javascriptRecoveryResultSchema,
@@ -63,8 +63,7 @@ interface PendingRecoveryCleanup {
 export class WakaruProvider implements JavaScriptRecoveryPort {
   readonly #resources = new ArtifactResourceScope();
   #tail: Promise<void> = Promise.resolve();
-  #closing = false;
-  #closePromise: Promise<void> | undefined;
+  readonly #closeState = new QueuedProviderClose();
   #pendingCleanup:
     | {
         readonly resources: PendingRecoveryCleanup;
@@ -86,9 +85,12 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     input: JavaScriptRecoveryInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (this.#closing) return Promise.resolve(err(this.#closedError()));
+    if (this.#closeState.requested)
+      return Promise.resolve(err(this.#closedError()));
     const operation = this.#tail.then(() =>
-      this.#closing ? err(this.#closedError()) : this.#recover(input, options),
+      this.#closeState.requested
+        ? err(this.#closedError())
+        : this.#recover(input, options),
     );
     this.#tail = operation.then(
       () => undefined,
@@ -180,18 +182,14 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled" &&
         primary.cleanup === undefined
-          ? cancelledBy(
-              OPERATION,
-              carriedReason(artifactFileCancellationCause(primary)),
-              {
-                ...(primary.partialObservation === undefined
-                  ? {}
-                  : { partialObservation: primary.partialObservation }),
-                ...(reportFailure === undefined
-                  ? {}
-                  : { capturedOutput: reportFailure.capturedOutput }),
-              },
-            )
+          ? artifactFileCancellationError(OPERATION, primary, {
+              ...(primary.partialObservation === undefined
+                ? {}
+                : { partialObservation: primary.partialObservation }),
+              ...(reportFailure === undefined
+                ? {}
+                : { capturedOutput: reportFailure.capturedOutput }),
+            })
           : primary;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];
@@ -361,17 +359,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    this.#closePromise ??= this.#tail
-      .then(async () => {
-        const failure = await this.#retire();
-        if (failure !== undefined) throw failure;
-      })
-      .catch((cause: unknown) => {
-        this.#closePromise = undefined;
-        throw cause;
-      });
-    return this.#closePromise;
+    return this.#closeState.closeAfter(this.#tail, () => this.#retire());
   }
 
   async #retire(): Promise<ProviderCleanupError | undefined> {

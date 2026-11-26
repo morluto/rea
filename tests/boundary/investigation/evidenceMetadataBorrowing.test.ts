@@ -1,11 +1,11 @@
-import * as canonicalizeModule from "canonicalize";
+import * as canonicalDigest from "../../../src/domain/canonicalDigest.js";
 import { expect, it, vi } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 
-vi.mock("canonicalize", { spy: true });
+vi.mock("../../../src/domain/canonicalDigest.js", { spy: true });
 
 it("borrows authenticated same-ID metadata variants without serializing their semantic payloads", () => {
   const observe = (path: string) =>
@@ -30,7 +30,7 @@ it("borrows authenticated same-ID metadata variants without serializing their se
   // Ingestion already authenticated and sealed both semantic identities. Any
   // canonicalization here recreates the removed payload-sized working strings.
   const serialization = vi
-    .spyOn(canonicalizeModule, "default")
+    .spyOn(canonicalDigest, "serializeCanonicalValue")
     .mockImplementation(() => {
       throw new Error(
         "Authenticated duplicate handling must borrow its payload",
