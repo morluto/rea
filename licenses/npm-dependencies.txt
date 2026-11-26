@@ -3680,11 +3680,11 @@ playwright-core@1.65.1 | runtime | Apache-2.0
   Package: https://www.npmjs.com/package/playwright-core/v/1.65.1
   Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.1.tgz
   Integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==
-plist@5.1.1 | runtime | MIT
+plist@5.1.2 | runtime | MIT
   Lockfile path: node_modules/plist
-  Package: https://www.npmjs.com/package/plist/v/5.1.1
-  Archive: https://registry.npmjs.org/plist/-/plist-5.1.1.tgz
-  Integrity: sha512-n55fGiwWNHf6zFdP9qvtr1x7P898lfJ/rbDvB3pYqVRcO+iG3sl5SSkGSLiIoAI9ZZc2F3Ga/5wPtM8EqhgSqA==
+  Package: https://www.npmjs.com/package/plist/v/5.1.2
+  Archive: https://registry.npmjs.org/plist/-/plist-5.1.2.tgz
+  Integrity: sha512-sAsRKAzFGIdewBCE1IptS7Ncvi0JTjTkFrhjwjT6dDS+R3PIrSLosErSJCfpfnpJ1v5lRh7ZLQnERZnEiUDj/A==
 possible-typed-array-names@1.1.0 | runtime | MIT
   Lockfile path: node_modules/possible-typed-array-names
   Package: https://www.npmjs.com/package/possible-typed-array-names/v/1.1.0
