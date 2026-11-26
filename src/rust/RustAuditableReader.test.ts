@@ -236,15 +236,26 @@ it("stops an inflate that exceeds the section ratio", async () => {
       failure: expect.objectContaining({
         kind: "limit",
         limit: {
-          name: "inflated dependency JSON bytes",
-          maximum: compressed.length * 64,
+          name: "max_dependency_inflate_ratio",
+          maximum: 64,
         },
       }),
     }),
   );
   await expect(
     readSection(Buffer.alloc(RUST_SECTION_BYTES + 1)),
-  ).rejects.toThrow(/1 MiB/);
+  ).rejects.toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "max_compressed_dependency_bytes",
+          maximum: RUST_SECTION_BYTES,
+          required: RUST_SECTION_BYTES + 1,
+        },
+      }),
+    }),
+  );
 });
 
 it("names the padded-storage basis when a padded section overflows inflate allocation", async () => {
@@ -267,18 +278,24 @@ it("names the padded-storage basis when a padded section overflows inflate alloc
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",
-        limit: expect.objectContaining({
-          name: "inflated dependency JSON bytes",
-          maximum: fileAlignment * 64,
-        }),
+        limit: {
+          name: "max_dependency_inflate_ratio",
+          maximum: 64,
+        },
       }),
       cause: expect.objectContaining({ code: "ERR_BUFFER_TOO_LARGE" }),
-      message: expect.stringContaining("padded section's storage size"),
     }),
   );
-  // Without padding the reported limit is still the plain size limit.
   await expect(readSection(compressed)).rejects.toThrow(
-    "Inflated dependency JSON exceeds the size limit",
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "max_dependency_inflate_ratio",
+          maximum: 64,
+        }),
+      }),
+    }),
   );
 });
 
@@ -302,13 +319,17 @@ it("names the fixed cap when it bounds a large padded section's inflate allocati
   expect(failure).toMatchObject({
     failure: expect.objectContaining({
       kind: "limit",
-      limit: expect.objectContaining({
-        name: "inflated dependency JSON bytes",
+      limit: {
+        name: "max_inflated_dependency_bytes",
         maximum: 8 * 1024 * 1024,
-      }),
+      },
     }),
   });
-  expect((failure as Error).message).not.toContain("storage size");
+  expect(failure).not.toMatchObject({
+    failure: {
+      limit: { name: "max_dependency_inflate_ratio" },
+    },
+  });
 });
 
 it.each([0, 4, 8, 0xffff_ffff])(

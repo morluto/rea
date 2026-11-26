@@ -381,11 +381,6 @@
       "issue": 14235,
       "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
     },
-    "\"This Rust dependency parser allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    },
     "\"This native container parser allowance\"": {
       "class": "pending",
       "issue": 14235,

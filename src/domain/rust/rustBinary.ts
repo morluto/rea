@@ -1,5 +1,6 @@
 import { appendToMapList } from "../appendToMapList.js";
 import { z } from "zod";
+import { rustDependencyBudgetFields } from "./rustDependencyBudget.js";
 import {
   RUST_PRODUCER_DEFAULTS,
   rustProducerLimitsField,
@@ -147,6 +148,7 @@ export const inspectRustBinaryInputSchema = z.strictObject({
     .describe(
       `Maximum distinct inferred compiler paths to retain (default ${String(DEFAULT_RUSTC_HASH_LIMIT)}). Omitted paths leave compiler coverage partial without discarding dependency facts. Raise this value on the next call to recover a larger prefix; complete-report byte admission still applies.`,
     ),
+  ...rustDependencyBudgetFields,
 });
 
 /**
