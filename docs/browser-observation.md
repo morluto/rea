@@ -8,7 +8,7 @@ exported script's native imports under an explicit URL/import-map context.
 
 REA can attach to a user-owned Chrome-family browser through the Chrome DevTools Protocol (CDP) and produce bounded Evidence about an existing page. This is a passive reverse-engineering capability, not a general browser automation or remote-control surface.
 
-**Note:** The observation enables the CDP `Debugger` domain without configuring it to skip pauses. A `debugger;` statement in the target page can therefore pause execution for the duration of the observation window.
+**Note:** `inspect_web_page` and `analyze_web_bundle` enable the CDP `Debugger` domain without configuring it to skip pauses. A `debugger;` statement in the target page can therefore pause execution until debugger cleanup or detachment, including during final capture after the requested observation window ends. `observe_web_session` does not enable the `Debugger` domain.
 
 ## Shipped surfaces
 

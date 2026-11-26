@@ -20,8 +20,10 @@ capture only when needed. Action, secret, and storage counts are not capped.
 Duration, action, and navigation
 timeouts are not capped by the provider (Playwright's default and navigation
 timeouts are set to 0, meaning no timeout). The request does not accept a
-caller-controlled `limits` object; liveness is governed by the overall
-scenario deadline and host process limits.
+caller-controlled `limits` object. Without `timeout_ms`, an action waits for
+completion or caller cancellation; a page that never finishes loading or a
+selector that never appears can wait indefinitely. Callers should set
+`timeout_ms` on individual actions when a bound is needed.
 
 ## Minimal launch example
 
