@@ -300,6 +300,7 @@
 * **electron:** preserve inspection frame identity and diagnostics ([#13232](https://github.com/morluto/rea/issues/13232)) ([04d399d](https://github.com/morluto/rea/commit/04d399d67539fa9fbf07a2ce6d93b058808c7101))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
+* **electron:** trace IPC channels and bridge keys spelled as exact templates ([#9538](https://github.com/morluto/rea/issues/9538)) ([7cf0f35](https://github.com/morluto/rea/commit/7cf0f35b4b9370ba246bbed7a8b4094b29175da8))
 * **elf:** bound COPY relocation symbol lookup by dynamic hash symbol count ([#14519](https://github.com/morluto/rea/issues/14519)) ([d23c9cc](https://github.com/morluto/rea/commit/d23c9cc362d8d501299dc47ec5fc234c41166cfa))
 * **elf:** bound dynamic version tables to mapped bytes ([#13446](https://github.com/morluto/rea/issues/13446)) ([2e1144b](https://github.com/morluto/rea/commit/2e1144b0ca63585bdbac189cd75b51c7c6d3f570))
 * **elf:** clear the ARM Thumb bit before naming unwind ranges ([#9692](https://github.com/morluto/rea/issues/9692)) ([ce3506e](https://github.com/morluto/rea/commit/ce3506e298e1a42d111a08613821ce8868f411cd))
