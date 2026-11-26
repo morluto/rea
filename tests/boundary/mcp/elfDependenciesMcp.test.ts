@@ -107,7 +107,9 @@ fileInspectionTest(
     expect(refused).toMatchObject({
       code: "resource_constraint",
       remediation: {
-        action: expect.stringContaining("Raise max_needed above 1"),
+        action: expect.stringContaining(
+          "Pass a larger max_needed on the next inspect_elf_dependencies call",
+        ),
       },
       details: {
         limit: {

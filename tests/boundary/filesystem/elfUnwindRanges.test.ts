@@ -2,6 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
 import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
@@ -127,14 +128,10 @@ describe("ELF unwind range budgets", () => {
           limit: 300,
           maximum_bytes: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
         },
-        limit: {
-          control_kind: "parameter",
-          parameter: "limit",
-          effective_value: 300,
-          minimum: 1,
-          maximum: 4096,
-          default_value: 256,
-          applies_at: "next_call",
+        fixedAllowance: {
+          name: "The ELF unwind symbol-name text allowance",
+          limit: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+          narrowing: expect.stringContaining("smaller limit than 300"),
         },
         cause: {
           failure: {
@@ -147,12 +144,9 @@ describe("ELF unwind range budgets", () => {
           },
         },
       });
-      const remediation =
-        "remediationAction" in result.error
-          ? result.error.remediationAction
-          : undefined;
+      const remediation = projectAnalysisError(result.error).remediation.action;
       expect(remediation).toContain("smaller limit than 300");
-      expect(remediation).not.toContain("Raise max_ranges");
+      expect(remediation).not.toContain("max_ranges budget");
       const smaller = await service.inspect({ path, limit: 200 });
       expect(smaller.ok).toBe(true);
     } finally {

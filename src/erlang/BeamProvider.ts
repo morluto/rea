@@ -11,16 +11,11 @@ import type { BeamPort } from "../ports/erlang/BeamPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  MAX_INSPECT_ERLANG_BEAM_ATOMS,
-  MAX_INSPECT_ERLANG_BEAM_CHUNKS,
-  MAX_INSPECT_ERLANG_BEAM_FILE_BYTES,
-  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   erlangBeamBudgetLimit,
   type ErlangBeam,
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { err, ok } from "../domain/result.js";
-import type { LimitRef } from "../domain/parseFailure.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -80,29 +75,6 @@ export class BeamProvider implements BeamPort {
   }
 }
 
-const fileBudgetRemediation = (maximum: number): string =>
-  maximum >= MAX_INSPECT_ERLANG_BEAM_FILE_BYTES
-    ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(maximum)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
-  switch (name) {
-    case "max_atoms":
-      return maximum >= MAX_INSPECT_ERLANG_BEAM_ATOMS
-        ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_ATOMS)}-atom ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_atoms above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected atom budget.`;
-    case "max_table_rows":
-      return maximum >= MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS
-        ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row table ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_table_rows above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected export, import and lambda row budget.`;
-    case "max_chunks":
-      return maximum >= MAX_INSPECT_ERLANG_BEAM_CHUNKS
-        ? `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_CHUNKS)}-chunk ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_chunks above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected chunk budget.`;
-  }
-  return undefined;
-};
-
 /** The per-call count budgets the parser names in its limit. */
 const BEAM_COUNT_BUDGETS = [
   "max_chunks",
@@ -137,15 +109,20 @@ const beamFailure = (
           const parameter = BEAM_COUNT_BUDGETS.find(
             (name) => name === limit.name,
           );
-          const remediationAction = parserBudgetRemediation(limit);
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             reportedLimitContext: reportedLimits,
             legacyMaximumKey: limit.name,
             retryable: false,
             ...(parameter === undefined
               ? {}
-              : { limit: erlangBeamBudgetLimit(parameter, limit.maximum) }),
-            ...(remediationAction === undefined ? {} : { remediationAction }),
+              : {
+                  limit: {
+                    ...erlangBeamBudgetLimit(parameter, limit.maximum),
+                    ...(typeof limit.required === "number"
+                      ? { required_value: limit.required }
+                      : {}),
+                  },
+                }),
           });
         }
         if (
@@ -165,9 +142,6 @@ const beamFailure = (
                     retryable: false,
                     limit: erlangBeamBudgetLimit(
                       "max_file_bytes",
-                      input.max_file_bytes,
-                    ),
-                    remediationAction: fileBudgetRemediation(
                       input.max_file_bytes,
                     ),
                   }

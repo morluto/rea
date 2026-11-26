@@ -20,7 +20,6 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
-  MAX_INSPECT_PE_DIRECTORY_ENTRIES,
   peResourceEntryLimit,
   MAX_INSPECT_PE_FILE_BYTES,
   type InspectPeResourcesInput,
@@ -108,11 +107,6 @@ export class PeResourcesProvider implements PeResourcesPort {
  * there is no value left to raise the bound to, so the advice names the
  * ceiling instead of an impossible raise.
  */
-const entryBudgetRemediation = (maximum: number): string =>
-  maximum >= MAX_INSPECT_PE_DIRECTORY_ENTRIES
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_DIRECTORY_ENTRIES)}-entry resource-directory ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_entries above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`;
-
 const peResourcesFailure = (
   cause: unknown,
   input: InspectPeResourcesInput,
@@ -178,7 +172,6 @@ const peResourcesFailure = (
               },
               retryable: false,
               limit: peResourceEntryLimit(limit.maximum),
-              remediationAction: entryBudgetRemediation(limit.maximum),
             });
         }
         if (

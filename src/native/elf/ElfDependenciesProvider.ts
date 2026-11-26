@@ -11,15 +11,12 @@ import {
   artifactFilePrimaryFacts,
   ArtifactResourceScope,
   assertArtifactReadActive,
-  imageFileSizeRemediation,
 } from "../../resources/index.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  ELF_DEPENDENCY_BUDGETS,
   elfDependencyBudgetLimit,
-  MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
   type ElfDependencies,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
@@ -125,7 +122,6 @@ const elfDependenciesFailure = (
               path: input.path,
               retryable: false,
               limit: elfDependencyBudgetLimit(parameter, limit.maximum),
-              remediationAction: `Raise ${parameter} above ${String(limit.maximum)}, up to ${String(ELF_DEPENDENCY_BUDGETS[parameter].maximum)}, or select a smaller artifact.`,
             });
           const text =
             limit.name === "scanned_text_bytes" ||
@@ -165,10 +161,6 @@ const elfDependenciesFailure = (
             limit: elfDependencyBudgetLimit(
               "max_file_bytes",
               input.max_file_bytes,
-            ),
-            remediationAction: imageFileSizeRemediation(
-              input.max_file_bytes,
-              MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
             ),
           },
         ),

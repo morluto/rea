@@ -83,14 +83,14 @@ mcpTest(
           ]),
           { max_atoms: 1 },
           { max_atoms: 1 },
-          expect.stringContaining("Raise max_atoms above 1"),
+          expect.stringContaining("Pass a larger max_atoms"),
         ],
         [
           "chunks",
           erlangBeamFixture(),
           { max_chunks: 1 },
           { max_chunks: 1 },
-          expect.stringContaining("Raise max_chunks above 1"),
+          expect.stringContaining("Pass a larger max_chunks"),
         ],
         [
           "single-table-rows",
@@ -98,7 +98,7 @@ mcpTest(
           {},
           { max_table_rows: rowLimit },
           expect.stringContaining(
-            `Raise max_table_rows above ${String(rowLimit)}`,
+            `Pass a larger max_table_rows on the next inspect_erlang_beam call (at least ${String(rowLimit + 1)}`,
           ),
         ],
         [
@@ -111,7 +111,7 @@ mcpTest(
           {},
           { max_table_rows: rowLimit },
           expect.stringContaining(
-            `Raise max_table_rows above ${String(rowLimit)}`,
+            `Pass a larger max_table_rows on the next inspect_erlang_beam call (at least ${String(rowLimit + 1)}`,
           ),
         ],
       ] as const) {
@@ -142,7 +142,10 @@ mcpTest(
             },
           },
         });
-        expect(error.details?.refusal, label).toBeUndefined();
+        expect(error.details?.refusal, label).toMatchObject({
+          kind: "adjustable_budget",
+          control: parameter,
+        });
       }
       const admitted = join(root, "raised-table-rows.beam");
       await writeFile(
