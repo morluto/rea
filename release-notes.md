@@ -295,6 +295,7 @@
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **doctor:** emit each check once and classify passing checks healthy ([#14251](https://github.com/morluto/rea/issues/14251)) ([f986b25](https://github.com/morluto/rea/commit/f986b25df9e8668491096245ce8b3e5acb3325ca))
 * **doctor:** report startup timeouts independently of launcher discovery ([#13420](https://github.com/morluto/rea/issues/13420)) ([255a585](https://github.com/morluto/rea/commit/255a585c0a06975d0855f169f5e80663b642658d))
+* **domain:** keep worker, SQLite, and sealing invariants owned ([#14770](https://github.com/morluto/rea/issues/14770)) ([9e3a2bb](https://github.com/morluto/rea/commit/9e3a2bbc09872eba06fc4bd09b0547762d385e06))
 * **domain:** make partial count switches exhaustive for typed lint ([#14048](https://github.com/morluto/rea/issues/14048)) ([4298507](https://github.com/morluto/rea/commit/42985076ac43814d3cf60a8b97687240980304d0))
 * **dwarf:** reject PE long section names when PointerToSymbolTable is zero ([#13889](https://github.com/morluto/rea/issues/13889)) ([a46bc22](https://github.com/morluto/rea/commit/a46bc22117928c04e2aefee04d629597b3393378))
 * **electron:** preserve inspection frame identity and diagnostics ([#13232](https://github.com/morluto/rea/issues/13232)) ([04d399d](https://github.com/morluto/rea/commit/04d399d67539fa9fbf07a2ce6d93b058808c7101))
