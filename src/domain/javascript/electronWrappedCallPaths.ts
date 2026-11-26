@@ -361,7 +361,13 @@ export function* collectElectronWrappedCallPathsSteps(
     const compare = (test: t.Expression, operator: "===" | "!==") => {
       // Dynamic case expressions can mutate the evaluated discriminant; do
       // not turn a second source evaluation into an invented predicate.
-      if (!t.isBigIntLiteral(test) && !readExactJavaScriptLiteral(test).found)
+      // A non-finite numeric literal such as 1e309 is still side-effect free,
+      // although the exact-literal reader does not price it.
+      if (
+        !t.isBigIntLiteral(test) &&
+        !t.isNumericLiteral(test) &&
+        !readExactJavaScriptLiteral(test).found
+      )
         return undefined;
       const label = text(test);
       return label === undefined

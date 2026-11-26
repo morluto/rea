@@ -184,6 +184,21 @@ it("does not invent a selection predicate for dynamic case expressions", () => {
   expect(result.parse_status).toBe("partial");
 });
 
+it("retains switch selection for a non-finite numeric case", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.argv.length) {
+      case 1e309:
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: "((process.argv.length) === (1e309))",
+    }),
+  ]);
+});
+
 it("retains switch selection for an exact template case", () => {
   const result = analyzeJavaScriptStaticSource(`
     const { contextBridge, ipcRenderer } = require("electron");
