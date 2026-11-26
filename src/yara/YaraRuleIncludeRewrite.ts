@@ -1,5 +1,7 @@
 import { posix, win32 } from "node:path";
 
+import { ArtifactReaderFailure } from "../resources/index.js";
+
 /** Upper bound on a single buffered `include "..."` path before passing it through verbatim. */
 const MAX_INCLUDE_PATH_BYTES = 64 * 1024;
 
@@ -84,6 +86,7 @@ const isAbsoluteIncludeBytes = (
 export const createYaraIncludeRewriter = (
   sourcePath: string,
   platform: NodeJS.Platform,
+  maxOutputBytes?: number,
 ): YaraIncludeRewriter => {
   const pathApi = platform === "win32" ? win32 : posix;
   const baseDir = pathApi.dirname(sourcePath);
@@ -108,35 +111,76 @@ export const createYaraIncludeRewriter = (
   let braceDepth = 0;
   let canStartRegex = true;
   let includePathBytes: number[] = [];
+  let emittedBytes = 0;
 
-  const rewritePath = (rawBytes: readonly number[]): Buffer => {
-    const rawBuffer = Buffer.from(rawBytes);
-    if (rawBytes.length === 0 || isAbsoluteIncludeBytes(rawBytes, platform))
-      return rawBuffer;
-    if (platform !== "win32") {
-      // Preserve raw filename bytes and POSIX `link/..` components by prefixing
-      // the rule file's parent directory directly without lexical normalization.
-      if (baseDirPrefixBytes === null) return rawBuffer;
-      return Buffer.concat([baseDirPrefixBytes, rawBuffer]);
-    }
-    const raw = rawBuffer.toString("utf8");
-    if (Buffer.from(raw, "utf8").equals(rawBuffer)) {
-      const resolved = win32.resolve(baseDir, raw);
-      if (resolved.includes('"') || /[\r\n]/u.test(resolved)) return rawBuffer;
-      return Buffer.from(resolved, "utf8");
-    }
-    if (baseDirPrefixBytes === null) return rawBuffer;
-    return Buffer.concat([baseDirPrefixBytes, rawBuffer]);
+  const reserveBytes = (count: number): void => {
+    const next = emittedBytes + count;
+    if (maxOutputBytes !== undefined && next > maxOutputBytes)
+      throw new ArtifactReaderFailure(
+        "limit",
+        `Staged rule file exceeds max_file_bytes (${String(maxOutputBytes)} bytes) after rewriting relative includes: ${sourcePath}`,
+        { boundary: "file-size" },
+      );
+    emittedBytes = next;
   };
 
   return {
     push(chunk: Buffer): Buffer {
       const out: number[] = [];
       const emit = (byte: number): void => {
+        reserveBytes(1);
         out.push(byte);
       };
       const emitBuffer = (bytes: Uint8Array | readonly number[]): void => {
+        if (bytes.length === 0) return;
+        reserveBytes(bytes.length);
         for (const byte of bytes) out.push(byte);
+      };
+      const emitPrefixed = (
+        prefix: Uint8Array,
+        rawBytes: readonly number[],
+      ): void => {
+        reserveBytes(prefix.length + rawBytes.length);
+        for (const byte of prefix) out.push(byte);
+        for (const byte of rawBytes) out.push(byte);
+      };
+      const emitRewrittenPath = (rawBytes: readonly number[]): void => {
+        if (
+          rawBytes.length === 0 ||
+          isAbsoluteIncludeBytes(rawBytes, platform)
+        ) {
+          emitBuffer(rawBytes);
+          return;
+        }
+        if (platform !== "win32") {
+          // Preserve raw filename bytes and POSIX `link/..` components by prefixing
+          // the rule file's parent directory directly without lexical normalization.
+          if (baseDirPrefixBytes === null) {
+            emitBuffer(rawBytes);
+            return;
+          }
+          emitPrefixed(baseDirPrefixBytes, rawBytes);
+          return;
+        }
+        const rawBuffer = Buffer.from(rawBytes);
+        const raw = rawBuffer.toString("utf8");
+        if (Buffer.from(raw, "utf8").equals(rawBuffer)) {
+          const resolved = win32.resolve(baseDir, raw);
+          if (resolved.includes('"') || /[\r\n]/u.test(resolved)) {
+            emitBuffer(rawBytes);
+            return;
+          }
+          const resolvedLength = Buffer.byteLength(resolved, "utf8");
+          reserveBytes(resolvedLength);
+          const resolvedBytes = Buffer.from(resolved, "utf8");
+          for (const byte of resolvedBytes) out.push(byte);
+          return;
+        }
+        if (baseDirPrefixBytes === null) {
+          emitBuffer(rawBytes);
+          return;
+        }
+        emitPrefixed(baseDirPrefixBytes, rawBytes);
       };
 
       const processCodeByte = (byte: number): void => {
@@ -261,7 +305,7 @@ export const createYaraIncludeRewriter = (
             break;
           case "include_path":
             if (byte === 0x22) {
-              emitBuffer(rewritePath(includePathBytes));
+              emitRewrittenPath(includePathBytes);
               emit(byte);
               includePathBytes = [];
               state = "code";
@@ -285,6 +329,7 @@ export const createYaraIncludeRewriter = (
 
     finish(): Buffer {
       if (state === "include_path" && includePathBytes.length > 0) {
+        reserveBytes(includePathBytes.length);
         const tail = Buffer.from(includePathBytes);
         includePathBytes = [];
         state = "code";

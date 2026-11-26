@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { createYaraIncludeRewriter } from "./YaraRuleIncludeRewrite.js";
 
 const rewrite = (
@@ -7,10 +8,15 @@ const rewrite = (
   sourcePath: string,
   platform: NodeJS.Platform = "linux",
   chunkSize?: number,
+  maxOutputBytes?: number,
 ): Buffer => {
   const input =
     typeof source === "string" ? Buffer.from(source, "utf8") : source;
-  const rewriter = createYaraIncludeRewriter(sourcePath, platform);
+  const rewriter = createYaraIncludeRewriter(
+    sourcePath,
+    platform,
+    maxOutputBytes,
+  );
   if (chunkSize === undefined) {
     return Buffer.concat([rewriter.push(input), rewriter.finish()]);
   }
@@ -185,5 +191,45 @@ describe("createYaraIncludeRewriter", () => {
     const streamed = rewrite(input, "/rules/main.yar", "linux", 1);
     expect(whole.equals(expected)).toBe(true);
     expect(streamed.equals(expected)).toBe(true);
+  });
+
+  it("stops before emitting rewritten bytes past maxOutputBytes on POSIX and Windows", () => {
+    const longDir = `/rules/${"nested/".repeat(20)}main.yar`;
+    const input = 'include "a.yar"\ninclude "b.yar"\n';
+    const expected = rewrite(input, longDir, "linux");
+    expect(expected.length).toBeGreaterThan(Buffer.byteLength(input));
+
+    expect(
+      rewrite(input, longDir, "linux", undefined, expected.length).equals(
+        expected,
+      ),
+    ).toBe(true);
+    expect(() =>
+      rewrite(input, longDir, "linux", undefined, expected.length - 1),
+    ).toThrow(ArtifactReaderFailure);
+    expect(() =>
+      rewrite(input, longDir, "linux", 1, expected.length - 1),
+    ).toThrow(
+      expect.objectContaining({
+        reason: "limit",
+        boundary: "file-size",
+      }),
+    );
+
+    const winLongPath = `C:\\rules\\${"nested\\".repeat(20)}main.yar`;
+    const winExpected = rewrite(input, winLongPath, "win32");
+    expect(winExpected.length).toBeGreaterThan(Buffer.byteLength(input));
+    expect(
+      rewrite(
+        input,
+        winLongPath,
+        "win32",
+        undefined,
+        winExpected.length,
+      ).equals(winExpected),
+    ).toBe(true);
+    expect(() =>
+      rewrite(input, winLongPath, "win32", undefined, winExpected.length - 1),
+    ).toThrow(ArtifactReaderFailure);
   });
 });

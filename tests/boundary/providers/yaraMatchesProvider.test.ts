@@ -694,6 +694,84 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     ]);
   });
 
+  it("preserves primary error and attaches caller cancellation when cancelled during snapshot directory removal", async () => {
+    const { command, sample, rule } = await fixture("compile");
+    const controller = new AbortController();
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "compile" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      createRuntime: async () => {
+        const real = await PrivateRuntimeRoot.create({ prefix: "rea-yara-" });
+        return {
+          path: real.path,
+          close: async () => {
+            controller.abort("cancelled during snapshot removal");
+            return real.close();
+          },
+        };
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.secondaryFailures).toEqual([
+      expect.objectContaining({ _tag: "AnalysisCancelledError" }),
+    ]);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        secondary_failures: [expect.objectContaining({ code: "cancelled" })],
+      },
+    });
+  });
+
+  it("preserves primary error, cleanup failure, and caller cancellation when snapshot removal fails while cancelled", async () => {
+    const { command, sample, rule } = await fixture("compile");
+    const controller = new AbortController();
+    let closeAttempts = 0;
+    const provider = new YaraMatchesProvider({
+      environment: { ...process.env, YARA_STUB_MODE: "compile" },
+      selectCommand: () => ok(command),
+      launcher: interpreterLauncher,
+      createRuntime: async () => {
+        const real = await PrivateRuntimeRoot.create({ prefix: "rea-yara-" });
+        return {
+          path: real.path,
+          close: async () => {
+            closeAttempts += 1;
+            if (closeAttempts === 1) {
+              controller.abort("cancelled during failing snapshot removal");
+              throw new Error("injected snapshot removal failure");
+            }
+            return real.close();
+          },
+        };
+      },
+    });
+    const service = new YaraMatchesService(provider, process.env);
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const primary = primaryAnalysisError(result.error);
+    expect(primary._tag).toBe("AnalysisInputError");
+    expect(primary.secondaryFailures).toEqual([
+      expect.objectContaining({ _tag: "AnalysisCancelledError" }),
+    ]);
+    await expect(service.close()).resolves.toBeUndefined();
+    expect(closeAttempts).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+
   it("retains completed Evidence when yara process cleanup fails and retries cleanup on close", async () => {
     const { command, sample, rule } = await fixture("match");
     let cleanupAttempts = 0;
@@ -1121,6 +1199,37 @@ describe("inspect_yara_matches with a yara stand-in", () => {
         });
       }
     }
+  });
+
+  it("refuses a rule file whose rewritten relative includes exceed max_file_bytes before launching yara", async () => {
+    const { root, sample, args, service } = await fixture("resolve");
+    const longDir = join(root, "nested-rule-directory".repeat(4));
+    await mkdir(longDir, { recursive: true });
+    const ruleText =
+      Array.from({ length: 8 }, (_, i) => `include "r${String(i)}.yar"`).join(
+        "\n",
+      ) + "\n";
+    const rulePath = join(longDir, "main.yar");
+    await writeFile(rulePath, ruleText);
+    const maxFileBytes = Buffer.byteLength(ruleText) + 32;
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [rulePath],
+      max_file_bytes: maxFileBytes,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      limit: expect.objectContaining({
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: maxFileBytes,
+      }),
+    });
+    expect(result.error.limit).not.toHaveProperty("required_value");
+    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses matches when the scanned file changes during the scan", async () => {

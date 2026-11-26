@@ -616,40 +616,47 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             };
           return { kind: "completed" };
         };
+        const composeSnapshotCleanup = (
+          primary: AnalysisError,
+          lease: AnalysisCleanupLease,
+          failure: { readonly reason: string; readonly cause?: unknown },
+        ): AnalysisError => {
+          const scanCleanup = new ProviderCleanupError(
+            PROVIDER_ID,
+            [snapshot.path],
+            { reason: failure.reason },
+            {
+              operation: OPERATION,
+              ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+            },
+          );
+          scanCleanup.bindCleanupResourceOwner(lease);
+          lease.bindCleanupError(scanCleanup);
+          return analysisErrorWithCleanupDependencies(
+            primary,
+            scanCleanup,
+            OPERATION,
+          );
+        };
         // Never remove the snapshot root while child handles or the child
         // process remain open; retain the ordered per-scan owner to retry
         // child cleanup first and root removal second.
         if (snapshot.hasPendingFiles) {
           this.#resources.retain(scanOwner);
+          const pendingReason = `Snapshot directory ${snapshot.path} remains owned until child handles close`;
           if (
             outcome.kind === "failed" &&
-            outcome.cause instanceof AnalysisError &&
-            outcome.cause.cleanupIncomplete
-          ) {
-            const scanCleanup = new ProviderCleanupError(
-              PROVIDER_ID,
-              [snapshot.path],
-              {
-                reason: `Snapshot directory ${snapshot.path} remains owned until child handles close`,
-              },
-              { operation: OPERATION },
-            );
-            scanCleanup.bindCleanupResourceOwner(scanLease);
-            scanLease.bindCleanupError(scanCleanup);
-            throw analysisErrorWithCleanupDependencies(
-              outcome.cause,
-              scanCleanup,
-              OPERATION,
-            );
-          }
+            outcome.cause instanceof AnalysisError
+          )
+            throw composeSnapshotCleanup(outcome.cause, scanLease, {
+              reason: pendingReason,
+            });
           throw this.#resources.cleanupFailure(
             cleanupOutcome(),
             [
               {
                 kind: "failed",
-                cause: new Error(
-                  `Snapshot directory ${snapshot.path} remains owned until child handles close`,
-                ),
+                cause: new Error(pendingReason),
                 owner: scanOwner,
                 lease: scanLease,
               },
@@ -658,12 +665,24 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           );
         }
         const release = await this.#resources.release(scanOwner);
-        if (release.kind === "failed")
+        if (release.kind === "failed") {
+          if (
+            outcome.kind === "failed" &&
+            outcome.cause instanceof AnalysisError
+          )
+            throw composeSnapshotCleanup(outcome.cause, release.lease, {
+              reason: ArtifactReaderFailure.cleanupObservation(
+                release.cause,
+                snapshot.path,
+              ).reason,
+              cause: release.cause,
+            });
           throw this.#resources.cleanupFailure(
             cleanupOutcome(),
             [release],
             completed,
           );
+        }
         if (outcome.kind === "failed") throw outcome.cause;
         if (signal?.aborted)
           throw cancelledBy(OPERATION, signal, {
@@ -672,8 +691,20 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         return ok(outcome.value);
       });
     } catch (cause: unknown) {
+      const failure = this.#failure(
+        cause,
+        input,
+        phase,
+        maxFileBytes,
+        completedFiles,
+      );
       return err(
-        this.#failure(cause, input, phase, maxFileBytes, completedFiles),
+        signal?.aborted
+          ? analysisErrorWithCancellation(
+              failure,
+              cancelledBy(OPERATION, signal),
+            )
+          : failure,
       );
     }
   }
@@ -752,12 +783,12 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             );
           },
         });
+        if (transform !== undefined) await writeChunk(transform.finish());
         onIdentity?.({
           path: sourcePath,
           sha256: streamed.sha256,
           bytes: streamed.size,
         });
-        if (transform !== undefined) await writeChunk(transform.finish());
         const state = await dest.stat({ bigint: true });
         return {
           callerPath: sourcePath,
@@ -802,7 +833,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           signal,
           snapshot,
           {
-            transform: createYaraIncludeRewriter(path, platform),
+            transform: createYaraIncludeRewriter(path, platform, maxFileBytes),
             onIdentity: (identity) => {
               completedFiles.rules.set(index, identity);
             },
