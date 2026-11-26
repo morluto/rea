@@ -2006,13 +2006,11 @@ const entropySeriesParent = (
 ): AnalysisViewParent => {
   const blockSize = options.blockSize ?? 256;
   const windowOffset = options.windowOffset ?? 16;
+  const lastLength = options.lastLength ?? blockSize;
   const thresholds = { high: 7.2, low: 1 };
   const blocks = entropies.map((entropy, index) => ({
     offset: windowOffset + index * blockSize,
-    length:
-      index === entropies.length - 1
-        ? (options.lastLength ?? blockSize)
-        : blockSize,
+    length: index === entropies.length - 1 ? lastLength : blockSize,
     entropy,
   }));
   const runs: {
@@ -2020,23 +2018,23 @@ const entropySeriesParent = (
     length: number;
     classification: "high" | "low";
   }[] = [];
-  for (const block of blocks) {
+  for (const b of blocks) {
     const classification =
-      block.entropy >= thresholds.high
+      b.entropy >= thresholds.high
         ? "high"
-        : block.entropy <= thresholds.low
+        : b.entropy <= thresholds.low
           ? "low"
           : undefined;
     if (classification === undefined) continue;
-    const previous = runs[runs.length - 1];
+    const prev = runs[runs.length - 1];
     if (
-      previous !== undefined &&
-      previous.classification === classification &&
-      previous.offset + previous.length === block.offset
+      prev !== undefined &&
+      prev.classification === classification &&
+      prev.offset + prev.length === b.offset
     ) {
-      previous.length += block.length;
+      prev.length += b.length;
     } else {
-      runs.push({ offset: block.offset, length: block.length, classification });
+      runs.push({ offset: b.offset, length: b.length, classification });
     }
   }
   const lastBlock = blocks[blocks.length - 1];
@@ -2131,10 +2129,8 @@ it("filters byte entropy blocks by inclusive thresholds and pages with filter co
 });
 
 it("filters byte entropy blocks at run boundaries including unclassified transitions and partial final blocks", () => {
-  const parent = entropySeriesParent(
-    [0, 0, 0, 4.5, 4.5, 4.5, 8, 8, 8, 0.2],
-    { lastLength: 33 },
-  );
+  const series = [0, 0, 0, 4.5, 4.5, 4.5, 8, 8, 8, 0.2];
+  const parent = entropySeriesParent(series, { lastLength: 33 });
   const boundaries = projectAnalysisView(parent, {
     kind: "byte-entropy",
     collection: "blocks",
@@ -2178,7 +2174,13 @@ it("filters byte entropy blocks at run boundaries including unclassified transit
       { offset: 16 + 6 * 256, entropy: 8 },
       { offset: 16 + 8 * 256, entropy: 8 },
     ],
-    coverage: { examined: 2, total: 2, examined_blocks: 10, matched_blocks: 2 },
+    coverage: {
+      status: "page",
+      examined: 2,
+      total: 2,
+      examined_blocks: 10,
+      matched_blocks: 2,
+    },
   });
 });
 
@@ -2236,7 +2238,8 @@ it("handles empty filtered matches, out-of-range offsets, invalid thresholds and
     ok: false,
     error: { _tag: "AnalysisInputError" },
   });
-  const ev = { kind: "retained-evidence", evidence_id: `ev_${"a".repeat(64)}` };
+  const id = `ev_${"a".repeat(64)}`;
+  const ev = { kind: "retained-evidence", evidence_id: id };
   for (const invalidView of [
     { kind: "byte-entropy", collection: "runs", min_entropy: 7.2 },
     { kind: "byte-entropy", collection: "runs", run_boundaries_only: true },
