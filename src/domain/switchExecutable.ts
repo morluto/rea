@@ -98,8 +98,10 @@ export interface NroAsset {
 export interface NroAssetSection {
   readonly offset: number;
   readonly version: number;
-  /** Declared assets with a non-zero size, in icon, NACP, RomFS order. */
+  /** Declared assets with safe ranges and a non-zero size, in icon, NACP, RomFS order. */
   readonly assets: readonly NroAsset[];
+  /** Messages for declared ranges that were skipped. */
+  readonly rejected: readonly string[];
 }
 
 const ascii = (bytes: Buffer, offset: number, magic: string): boolean =>
@@ -259,6 +261,7 @@ export const parseNroAssetSection = (
     );
   const reader = new BinaryReader(bytes, true, "nro");
   const assets: NroAsset[] = [];
+  const rejected: string[] = [];
   const names: readonly SwitchAssetName[] = ["icon", "nacp", "romfs"];
   for (const [index, name] of names.entries()) {
     const at = 0x08 + index * 0x10;
@@ -266,8 +269,10 @@ export const parseNroAssetSection = (
     const size = reader.word(at + 8, 64);
     if (size === 0n) continue;
     const absolute = BigInt(offset) + relative;
-    if (absolute + size > BigInt(Number.MAX_SAFE_INTEGER))
-      return failure(`NRO ${name} asset range exceeds a safe file offset`);
+    if (absolute + size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      rejected.push(`NRO ${name} asset range exceeds a safe file offset`);
+      continue;
+    }
     const fileOffset = Number(absolute);
     const assetSize = Number(size);
     assets.push({
@@ -277,5 +282,5 @@ export const parseNroAssetSection = (
       truncated: fileOffset + assetSize > fileSize,
     });
   }
-  return ok({ offset, version: reader.u32(0x04), assets });
+  return ok({ offset, version: reader.u32(0x04), assets, rejected });
 };

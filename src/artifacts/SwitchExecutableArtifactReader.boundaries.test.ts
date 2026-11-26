@@ -270,6 +270,35 @@ it("lists a truncated NRO asset with a limitation", async () => {
   }
 });
 
+it("lists valid NRO assets and reports a skipped unsafe range", async () => {
+  const bytes = buildNro({
+    assets: { icon: Buffer.from("jpeg"), nacp: Buffer.alloc(16, 1) },
+  });
+  const offset = bytes.readUInt32LE(0x18);
+  bytes.writeBigUInt64LE(BigInt(Number.MAX_SAFE_INTEGER), offset + 0x28);
+  bytes.writeBigUInt64LE(1n, offset + 0x30);
+  const reader = new SwitchExecutableArtifactReader(
+    await fixture(bytes),
+    "nro",
+  );
+  try {
+    const { entries, coverage } = await collect(reader);
+    expect(
+      entries
+        .map((entry) => entry.path)
+        .filter((path) => path.startsWith("assets/")),
+    ).toEqual(["assets/icon.jpg", "assets/control.nacp"]);
+    expect(coverage).toEqual({
+      status: "unknown",
+      limitations: [
+        "NRO romfs asset range exceeds a safe file offset; that asset is not listed.",
+      ],
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("reports uninterpreted bytes after an NRO without ASET", async () => {
   const reader = new SwitchExecutableArtifactReader(
     await fixture(buildNro({ trailing: Buffer.from("JUNKJUNK") })),

@@ -482,6 +482,8 @@ export class SwitchExecutableArtifactReader extends PositionalArtifactReader<
           );
       }
     }
+    for (const message of assets?.rejected ?? [])
+      limitations.push(`${message}; that asset is not listed.`);
     for (const asset of assets?.assets ?? [])
       add(
         asset.name,

@@ -106,6 +106,7 @@ it("parses an NRO header and its ASET section", () => {
     value: {
       offset: header.size,
       version: 0,
+      rejected: [],
       assets: [
         {
           name: "icon",
@@ -120,6 +121,27 @@ it("parses an NRO header and its ASET section", () => {
           truncated: false,
         },
       ],
+    },
+  });
+});
+
+it("keeps valid NRO assets when a declared range is unsafe", () => {
+  const bytes = buildNro({
+    assets: { icon: Buffer.from("jpeg"), nacp: Buffer.alloc(16, 1) },
+  });
+  const offset = bytes.readUInt32LE(0x18);
+  const aset = bytes.subarray(offset);
+  aset.writeBigUInt64LE(BigInt(Number.MAX_SAFE_INTEGER) - BigInt(offset), 0x28);
+  aset.writeBigUInt64LE(1n, 0x30);
+
+  expect(parseNroAssetSection(aset, offset, bytes.length)).toMatchObject({
+    ok: true,
+    value: {
+      assets: [
+        { name: "icon", truncated: false },
+        { name: "nacp", truncated: false },
+      ],
+      rejected: ["NRO romfs asset range exceeds a safe file offset"],
     },
   });
 });
