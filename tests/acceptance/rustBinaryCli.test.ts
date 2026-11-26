@@ -690,9 +690,8 @@ cliTest(
         refusal,
       },
     });
-    const cliRecovery = (
-      result.json as { remediation?: { action?: string } }
-    ).remediation?.action;
+    const cliRecovery = (result.json as { remediation?: { action?: string } })
+      .remediation?.action;
     expect(cliRecovery).toContain("--max-wasm-sections");
     expect(cliRecovery).toContain("rea inspect-rust-binary");
     const admitted = await cli.run({
