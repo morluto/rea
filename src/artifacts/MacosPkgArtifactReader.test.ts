@@ -12,7 +12,10 @@ import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInv
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { compareArtifacts } from "../domain/artifactComparison.js";
 import { createEvidence } from "../domain/evidence.js";
-import { MACOS_PKG_MAX_TOC_PATH_BYTES } from "../domain/macosPkgFormat.js";
+import {
+  MACOS_PKG_MAX_CPIO_MEMBERS,
+  MACOS_PKG_MAX_TOC_PATH_BYTES,
+} from "../domain/macosPkgFormat.js";
 import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
 import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import { parseXarHeader } from "./macosPkg/XarHeader.js";
@@ -1246,4 +1249,214 @@ it("populates linkTarget for XAR and cpio symlinks, keeps raw cpio target bytes,
     classification: "changed",
     dimensions: expect.arrayContaining(["content"]),
   });
+});
+
+it("enforces a package-wide cpio member cap across multiple Payload archives", async () => {
+  const emptyMembers = (prefix: string, count: number) =>
+    gzipSync(
+      buildCpioOdc(
+        Array.from({ length: count }, (_, index) => ({
+          name: `${prefix}${String(index)}`,
+          mode: 0o100644,
+        })),
+      ),
+    );
+  const { reader, entries, coverage } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "A.pkg", type: "directory" },
+        { path: "A.pkg/Payload", bytes: emptyMembers("a", 2500) },
+        { path: "B.pkg", type: "directory" },
+        { path: "B.pkg/Payload", bytes: emptyMembers("b", 2500) },
+        { path: "C.pkg", type: "directory" },
+        { path: "C.pkg/Payload", bytes: emptyMembers("c", 10) },
+      ],
+    }),
+    "multi-archive-cpio-cap.pkg",
+  );
+  try {
+    const expandedPayloadEntries = entries.filter(
+      (entry) =>
+        entry.formatMetadata?.kind === "macos-pkg-entry" &&
+        entry.formatMetadata.role === "payload-member",
+    );
+    expect(expandedPayloadEntries).toHaveLength(MACOS_PKG_MAX_CPIO_MEMBERS);
+    expect(reader.formatMetadata()?.payload.members).toHaveLength(
+      MACOS_PKG_MAX_CPIO_MEMBERS,
+    );
+    expect(reader.formatMetadata()?.refusals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "oversize", path: "B.pkg/Payload" }),
+        expect.objectContaining({ code: "oversize", path: "C.pkg/Payload" }),
+      ]),
+    );
+    const paths = entries.map((entry) => entry.path);
+    expect(paths).toContain("C.pkg/Payload");
+    expect(paths.some((path) => path.startsWith("C.pkg/Payload/"))).toBe(false);
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses non-UTF-8 cpio member names strictly without lossy replacement collisions", async () => {
+  const nameFf = Buffer.from([0x66, 0x6f, 0x6f, 0xff]);
+  const nameFe = Buffer.from([0x66, 0x6f, 0x6f, 0xfe]);
+  const rawCpio = buildCpioOdc([
+    { name: "good.txt", mode: 0o100644, data: Buffer.from("ok\n") },
+    { name: "", nameBytes: nameFf, mode: 0o100644, data: Buffer.from("1") },
+    { name: "", nameBytes: nameFe, mode: 0o100644, data: Buffer.from("2") },
+  ]);
+  const direct = parseCpioOdc(rawCpio);
+  expect(direct.ok).toBe(false);
+  if (!direct.ok) {
+    expect(direct.error).toMatchObject({
+      kind: "malformed",
+      failure: { field: "name" },
+    });
+  }
+
+  const { reader, entries, coverage } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "PackageInfo", bytes: Buffer.from("<pkg-info/>") },
+        { path: "Payload", bytes: gzipSync(rawCpio) },
+      ],
+    }),
+    "non-utf8-cpio-name.pkg",
+  );
+  try {
+    expect(entries.map((entry) => entry.path)).toContain("Payload/good.txt");
+    expect(
+      entries.some(
+        (entry) =>
+          entry.path.includes("\ufffd") ||
+          (entry.sourcePath?.includes("\ufffd") ?? false),
+      ),
+    ).toBe(false);
+    expect(
+      reader
+        .formatMetadata()
+        ?.payload.members.some((member) => member.name.includes("\ufffd")),
+    ).toBe(false);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "cpio-malformed",
+        path: "Payload",
+      }),
+    ]);
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("selects only the root Distribution document even when Resources/Distribution precedes it", async () => {
+  const decoyDistribution = Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<installer-gui-script minSpecVersion="2"><title>Decoy Resource</title></installer-gui-script>\n`,
+  );
+  const realDistribution = Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<installer-gui-script minSpecVersion="2"><title>Real Product</title><choices-outline><line choice="main"/></choices-outline><choice id="main"/></installer-gui-script>\n`,
+  );
+  const { reader } = await entriesOf(
+    buildXar({
+      preserveOrder: true,
+      files: [
+        { path: "Resources", type: "directory" },
+        { path: "Resources/Distribution", bytes: decoyDistribution },
+        { path: "Distribution", bytes: realDistribution },
+      ],
+    }),
+    "nested-distribution.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()).toMatchObject({
+      archive_kind: "product",
+      distribution: {
+        title: "Real Product",
+        choices: ["main"],
+      },
+    });
+  } finally {
+    await reader.close();
+  }
+
+  const nestedOnly = await entriesOf(
+    buildXar({
+      preserveOrder: true,
+      files: [
+        { path: "Resources", type: "directory" },
+        { path: "Resources/Distribution", bytes: decoyDistribution },
+        {
+          path: "PackageInfo",
+          bytes: Buffer.from(
+            `<?xml version="1.0" encoding="UTF-8"?>\n<pkg-info identifier="com.rea.component" version="1.0.0"/>\n`,
+          ),
+        },
+      ],
+    }),
+    "nested-only-distribution.pkg",
+  );
+  try {
+    expect(nestedOnly.reader.formatMetadata()).toMatchObject({
+      archive_kind: "component",
+      distribution: null,
+    });
+  } finally {
+    await nestedOnly.reader.close();
+  }
+});
+
+it("refuses an ordinary stored XAR member whose TOC size disagrees with its archived length", async () => {
+  const pkgBytes = buildXar({
+    files: [
+      { path: "Resources", type: "directory" },
+      {
+        path: "Resources/note.txt",
+        bytes: Buffer.from("abcd"),
+        encoding: "application/octet-stream",
+        extractedSize: 1,
+      },
+    ],
+  });
+  const { reader, entries, coverage, path } = await entriesOf(
+    pkgBytes,
+    "stored-size-mismatch.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "extracted-size-mismatch",
+        path: "Resources/note.txt",
+      }),
+    ]);
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+    const note = entries.find((entry) => entry.path === "Resources/note.txt");
+    expect(note).toBeDefined();
+    await expect(reader.open(note!)).rejects.toBeInstanceOf(
+      ArtifactEntryContentUnavailable,
+    );
+  } finally {
+    await reader.close();
+  }
+
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(inventory.coverage.status).toBe("unknown");
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "macos-pkg",
+    refusals: [
+      expect.objectContaining({
+        code: "extracted-size-mismatch",
+        path: "Resources/note.txt",
+      }),
+    ],
+  });
+  expect(
+    inventory.occurrences.find(
+      (row) => row.logical_path === "Resources/note.txt",
+    ),
+  ).toMatchObject({ hash_status: "unavailable" });
 });

@@ -42,6 +42,8 @@ const octal = (value: number, width: number): string =>
 
 export interface CpioFixtureMember {
   readonly name: string;
+  /** Raw non-NUL-terminated name bytes; overrides `name` when provided. */
+  readonly nameBytes?: Buffer;
   readonly mode: number;
   readonly uid?: number;
   readonly gid?: number;
@@ -57,7 +59,10 @@ export const buildCpioOdc = (members: readonly CpioFixtureMember[]): Buffer => {
   const parts: Buffer[] = [];
   for (const member of records) {
     const data = member.data ?? Buffer.alloc(0);
-    const name = Buffer.from(`${member.name}\0`, "utf8");
+    const name =
+      member.nameBytes !== undefined
+        ? Buffer.concat([member.nameBytes, Buffer.from([0])])
+        : Buffer.from(`${member.name}\0`, "utf8");
     const header = Buffer.from(
       CPIO_ODC_MAGIC +
         octal(0, 6) +
@@ -158,14 +163,14 @@ const renderFiles = (
   heap: readonly HeapFile[],
   parent: string,
   nextId: { value: number },
+  preserveOrder = false,
 ): string => {
-  const children = [...nodes.keys()]
-    .filter((path) => {
-      const slash = path.lastIndexOf("/");
-      const parentPath = slash === -1 ? "" : path.slice(0, slash);
-      return parentPath === parent;
-    })
-    .sort((left, right) => left.localeCompare(right));
+  const children = [...nodes.keys()].filter((path) => {
+    const slash = path.lastIndexOf("/");
+    const parentPath = slash === -1 ? "" : path.slice(0, slash);
+    return parentPath === parent;
+  });
+  if (!preserveOrder) children.sort((left, right) => left.localeCompare(right));
   let xml = "";
   for (const path of children) {
     const node = nodes.get(path);
@@ -190,7 +195,7 @@ const renderFiles = (
         xml += `<data><offset>${String(stored.offset)}</offset><size>${String(stored.extractedSize)}</size><length>${String(stored.archived.length)}</length><encoding style="${xmlEscape(stored.encoding)}"/><extracted-checksum style="sha1">${extracted}</extracted-checksum><archived-checksum style="sha1">${archived}</archived-checksum></data>`;
       }
     }
-    xml += renderFiles(nodes, heap, path, nextId);
+    xml += renderFiles(nodes, heap, path, nextId, preserveOrder);
     xml += `</file>`;
   }
   return xml;
@@ -202,6 +207,7 @@ export const buildXar = (options: {
   readonly version?: number;
   readonly headerSize?: number;
   readonly signature?: XarFixtureSignature;
+  readonly preserveOrder?: boolean;
 }): Buffer => {
   const checksumSize = 20;
   let offset = checksumSize;
@@ -245,7 +251,7 @@ export const buildXar = (options: {
     offset += blob.length;
   }
   const nodes = treeNodes(options.files);
-  const toc = `<?xml version="1.0" encoding="UTF-8"?><xar><toc><checksum style="sha1"><offset>0</offset><size>${String(checksumSize)}</size></checksum>${signatureXml}${renderFiles(nodes, heapFiles, "", { value: 1 })}</toc></xar>`;
+  const toc = `<?xml version="1.0" encoding="UTF-8"?><xar><toc><checksum style="sha1"><offset>0</offset><size>${String(checksumSize)}</size></checksum>${signatureXml}${renderFiles(nodes, heapFiles, "", { value: 1 }, options.preserveOrder ?? false)}</toc></xar>`;
   const uncompressedToc = Buffer.from(toc, "utf8");
   const compressedToc = deflateSync(uncompressedToc);
   const checksum = createHash("sha1").update(compressedToc).digest();

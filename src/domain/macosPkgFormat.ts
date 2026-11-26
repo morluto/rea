@@ -19,7 +19,7 @@ export const MACOS_PKG_MAX_TOC_FILES = 4096;
 export const MACOS_PKG_MAX_TOC_PATH_BYTES = 4 * 1024 * 1024;
 /** Resource policy: TOC XML nodes counted before the DOM is built, 256 per admitted file. */
 export const MACOS_PKG_MAX_TOC_XML_NODES = MACOS_PKG_MAX_TOC_FILES * 256;
-/** Resource policy: gzip-cpio members from one Scripts or Payload archive. */
+/** Resource policy: total expanded cpio members retained across all Scripts and Payload archives in a package. */
 export const MACOS_PKG_MAX_CPIO_MEMBERS = 4096;
 /** Resource policy: one cpio member name, including the trailing NUL. */
 export const MACOS_PKG_MAX_CPIO_NAME_BYTES = 4096;

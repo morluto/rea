@@ -15,6 +15,7 @@ import {
   unsupportedInput,
 } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import { isZlibOutputLimitError } from "./XarInflate.js";
 
@@ -108,7 +109,12 @@ export const isInstallScriptName = (name: string): boolean => {
 const parseCpioOdcInto = (
   bytes: Buffer,
   members: CpioMember[],
+  maxMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
 ): Result<readonly CpioMember[], MacosPkgParseError> => {
+  const memberLimit = Math.max(
+    0,
+    Math.min(maxMembers, MACOS_PKG_MAX_CPIO_MEMBERS),
+  );
   let cursor = 0;
   for (;;) {
     if (cursor + CPIO_ODC_HEADER_BYTES > bytes.length)
@@ -151,6 +157,7 @@ const parseCpioOdcInto = (
         ),
       );
     cursor += CPIO_ODC_HEADER_BYTES;
+    const nameOffset = cursor;
     if (cursor + namesize.value > bytes.length)
       return err(
         truncatedInput(MACOS_PKG_FORMAT, "cpio odc name is truncated", {
@@ -161,9 +168,22 @@ const parseCpioOdcInto = (
     const nameBytes = bytes.subarray(cursor, cursor + namesize.value);
     cursor += namesize.value;
     const nul = nameBytes.indexOf(0);
-    const name = nameBytes
-      .subarray(0, nul === -1 ? nameBytes.length : nul)
-      .toString("utf8");
+    const rawNameBytes = nameBytes.subarray(
+      0,
+      nul === -1 ? nameBytes.length : nul,
+    );
+    let name: string;
+    try {
+      name = decodeStrictUtf8(rawNameBytes, "preserve");
+    } catch (cause: unknown) {
+      return err(
+        malformedInput(
+          MACOS_PKG_FORMAT,
+          `cpio odc member name at offset ${String(nameOffset)} is not valid UTF-8`,
+          { field: "name", offset: nameOffset, cause },
+        ),
+      );
+    }
     if (name === TRAILER) return ok(members);
     if (cursor + filesize.value > bytes.length)
       return err(
@@ -173,14 +193,17 @@ const parseCpioOdcInto = (
           { field: "filesize", offset: cursor },
         ),
       );
-    if (members.length >= MACOS_PKG_MAX_CPIO_MEMBERS)
+    if (members.length >= memberLimit)
       return err(
         macosPkgLimitFailure(
-          `cpio odc archive declares more than ${String(MACOS_PKG_MAX_CPIO_MEMBERS)} members`,
+          memberLimit < MACOS_PKG_MAX_CPIO_MEMBERS
+            ? `cpio odc archives exceed the ${String(MACOS_PKG_MAX_CPIO_MEMBERS)}-member package allowance`
+            : `cpio odc archive declares more than ${String(MACOS_PKG_MAX_CPIO_MEMBERS)} members`,
           {
             name: "macos_pkg_cpio_members",
             maximum: MACOS_PKG_MAX_CPIO_MEMBERS,
-            required: members.length + 1,
+            required:
+              MACOS_PKG_MAX_CPIO_MEMBERS - memberLimit + members.length + 1,
           },
           "cpio",
         ),
@@ -230,9 +253,12 @@ export interface CpioOdcPrefix {
  * Parse an uncompressed odc (`070707`) cpio archive, keeping every member read
  * before a damaged or missing tail alongside the reason parsing stopped.
  */
-export const parseCpioOdcPrefix = (bytes: Buffer): CpioOdcPrefix => {
+export const parseCpioOdcPrefix = (
+  bytes: Buffer,
+  maxMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+): CpioOdcPrefix => {
   const members: CpioMember[] = [];
-  const parsed = parseCpioOdcInto(bytes, members);
+  const parsed = parseCpioOdcInto(bytes, members, maxMembers);
   return { members, failure: parsed.ok ? null : parsed.error };
 };
 
@@ -320,6 +346,7 @@ const inventoryParsedArchive = (
 export const inventoryCompressedArchive = (
   bytes: Buffer,
   maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
+  maxMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
 ): Result<ArchiveInventory, MacosPkgParseError> => {
   const compression = detectPayloadCompression(bytes);
   if (compression === "pbzx")
@@ -342,7 +369,7 @@ export const inventoryCompressedArchive = (
     if (!inflated.ok) return inflated;
     return inventoryParsedArchive(
       compression,
-      parseCpioOdcPrefix(inflated.value),
+      parseCpioOdcPrefix(inflated.value, maxMembers),
       inflated.value.length,
     );
   }
@@ -352,7 +379,7 @@ export const inventoryCompressedArchive = (
     );
   return inventoryParsedArchive(
     compression,
-    parseCpioOdcPrefix(bytes),
+    parseCpioOdcPrefix(bytes, maxMembers),
     bytes.length,
   );
 };

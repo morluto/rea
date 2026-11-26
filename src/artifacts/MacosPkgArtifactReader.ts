@@ -11,6 +11,7 @@ import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.
 import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
+  MACOS_PKG_MAX_CPIO_MEMBERS,
   MACOS_PKG_MAX_METADATA_XML_BYTES,
   MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
@@ -584,7 +585,25 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       }
       if (file.type === "directory" || file.data === null)
         this.#addXarDeclaration(file, index);
-      else this.#addXarFile(file, index, header.heapOffset);
+      else {
+        const adapterKey = this.#addXarFile(file, index, header.heapOffset);
+        if (
+          adapterKey !== undefined &&
+          isXarStoredEncoding(file.data.encoding) &&
+          file.data.size !== file.data.length
+        ) {
+          const refusal = refusalFromParse(
+            extractedSizeMismatchError(
+              file.path,
+              file.data.size,
+              file.data.length,
+            ),
+            file.path,
+          );
+          metadata.refusals.push(refusal);
+          this.#refusedContent.set(adapterKey, refusal.message);
+        }
+      }
     }
     let chargedXarBytes = 0;
     for (const entry of this.#entries.values()) {
@@ -621,9 +640,13 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     };
   }
 
-  #addXarFile(file: XarTocFile, tocIndex: number, heapStart: number): void {
+  #addXarFile(
+    file: XarTocFile,
+    tocIndex: number,
+    heapStart: number,
+  ): string | undefined {
     const data = file.data;
-    if (data === null) return;
+    if (data === null) return undefined;
     const role = "xar-file" as const;
     // Key by TOC occurrence: a later record at the same path is a distinct
     // occurrence, not a replacement of the earlier one.
@@ -670,6 +693,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         encoding: data.encoding,
       },
     });
+    return adapterKey;
   }
 
   /**
@@ -745,7 +769,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         entry.formatMetadata.role === "xar-file" && entry.origin.kind === "xar",
     );
     const distribution = xarEntries.find(
-      (entry) => basename(entry.path) === "Distribution",
+      (entry) => entry.path === "Distribution",
     );
     const packageInfos = xarEntries.filter(
       (entry) => basename(entry.path) === "PackageInfo",
@@ -838,6 +862,10 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           ? "component"
           : "unknown";
     let used = chargedXarBytes;
+    const expansionState = {
+      retainedMembers: 0,
+      retainedPathBytes: 0,
+    };
     const skipped: string[] = [];
     const expandListed = async (
       listed: readonly StoredEntry[],
@@ -845,6 +873,22 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     ): Promise<void> => {
       for (const archive of listed) {
         if (this.#refusedContent.has(archive.adapterKey)) continue;
+        if (expansionState.retainedMembers >= MACOS_PKG_MAX_CPIO_MEMBERS) {
+          metadata.refusals.push({
+            code: "oversize",
+            message: `${archive.path} exceeds the ${String(MACOS_PKG_MAX_CPIO_MEMBERS)}-member package cpio allowance`,
+            path: archive.path,
+          });
+          continue;
+        }
+        if (expansionState.retainedPathBytes >= MACOS_PKG_MAX_TOC_PATH_BYTES) {
+          metadata.refusals.push({
+            code: "oversize",
+            message: `${archive.path} expanded member paths exceed the ${String(MACOS_PKG_MAX_TOC_PATH_BYTES)}-byte allowance`,
+            path: archive.path,
+          });
+          continue;
+        }
         const declared = archive.declaredSize ?? 0;
         // Reuse this archive's XAR charge when budgeting its cpio decode.
         const prepaid = xarExpansionCharge(archive);
@@ -859,6 +903,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           role,
           metadata,
           remaining,
+          expansionState,
           signal,
         );
         if (charged === "over-budget") {
@@ -894,6 +939,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     role: "scripts" | "payload",
     metadata: MacosPkgMetadata,
     remainingBudget: number,
+    expansionState: { retainedMembers: number; retainedPathBytes: number },
     signal?: AbortSignal,
   ): Promise<number | "over-budget"> {
     if (entry === undefined) return 0;
@@ -906,10 +952,15 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     );
     if (bytes === undefined) return 0;
     const compression = detectPayloadCompression(bytes);
-    // Decoded cpio bytes are retained as member contents, so the decode is
-    // capped by what remains of the shared expansion budget, not only by the
-    // per-archive allowance.
-    const parsed = inventoryCompressedArchive(bytes, remainingBudget);
+    const remainingMembers =
+      MACOS_PKG_MAX_CPIO_MEMBERS - expansionState.retainedMembers;
+    // Decoded cpio bytes and retained member counts are capped by what remains
+    // of the package-wide expansion allowances before allocating entries.
+    const parsed = inventoryCompressedArchive(
+      bytes,
+      remainingBudget,
+      remainingMembers,
+    );
     if (!parsed.ok && stoppedBySharedBudget(parsed.error, remainingBudget))
       return "over-budget";
     if (!parsed.ok) {
@@ -937,31 +988,20 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       metadata.refusals.push(
         refusalFromParse(parsed.value.partialFailure, entry.path),
       );
-    const members = parsed.value.members;
-    const names = members.map((member) => basename(member.name));
-    this.#keepStoredArchive(entry, parsed.value.compression);
-    if (role === "scripts")
-      this.#mergeScripts(metadata, {
-        present: true,
-        compression: parsed.value.compression,
-        preinstall: names.includes("preinstall"),
-        postinstall: names.includes("postinstall"),
-        members: cpioMetadataMembers(members),
-      });
-    else
-      this.#mergePayload(metadata, {
-        present: true,
-        compression: parsed.value.compression,
-        members: cpioMetadataMembers(members),
-      });
     const entryPathBytes = Buffer.byteLength(entry.path, "utf8");
-    let archivePathBytes = 0;
-    for (const [index, member] of members.entries()) {
-      if (member.name === "." || member.name === "./") continue;
+    const admittedMembers: CpioMember[] = [];
+    for (const member of parsed.value.members) {
+      if (member.name === "." || member.name === "./") {
+        admittedMembers.push(member);
+        continue;
+      }
       const stripped = member.name.replace(/^\.\//u, "");
       const logicalBytes =
         entryPathBytes + 1 + Buffer.byteLength(stripped, "utf8");
-      if (archivePathBytes + logicalBytes > MACOS_PKG_MAX_TOC_PATH_BYTES) {
+      if (
+        expansionState.retainedPathBytes + logicalBytes >
+        MACOS_PKG_MAX_TOC_PATH_BYTES
+      ) {
         metadata.refusals.push({
           code: "oversize",
           message: `${entry.path} expanded member paths exceed the ${String(MACOS_PKG_MAX_TOC_PATH_BYTES)}-byte allowance`,
@@ -969,7 +1009,29 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         });
         break;
       }
-      archivePathBytes += logicalBytes;
+      expansionState.retainedPathBytes += logicalBytes;
+      admittedMembers.push(member);
+    }
+    expansionState.retainedMembers += admittedMembers.length;
+    const names = admittedMembers.map((member) => basename(member.name));
+    this.#keepStoredArchive(entry, parsed.value.compression);
+    if (role === "scripts")
+      this.#mergeScripts(metadata, {
+        present: true,
+        compression: parsed.value.compression,
+        preinstall: names.includes("preinstall"),
+        postinstall: names.includes("postinstall"),
+        members: cpioMetadataMembers(admittedMembers),
+      });
+    else
+      this.#mergePayload(metadata, {
+        present: true,
+        compression: parsed.value.compression,
+        members: cpioMetadataMembers(admittedMembers),
+      });
+    for (const [index, member] of admittedMembers.entries()) {
+      if (member.name === "." || member.name === "./") continue;
+      const stripped = member.name.replace(/^\.\//u, "");
       const logical = `${entry.path}/${stripped}`;
       const adapterKey = `${entry.adapterKey}:${role}:${String(index)}:${logical}`;
       // FIFOs, devices and sockets have no file contents; they stay as
@@ -1161,9 +1223,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     const expected =
       entry.origin.kind === "memory"
         ? entry.origin.bytes.length
-        : isXarStoredEncoding(entry.origin.encoding)
-          ? entry.origin.archivedLength
-          : entry.declaredSize;
+        : entry.declaredSize;
     const mismatch = (): ArtifactReaderFailure =>
       malformedArtifact(
         MACOS_PKG_FORMAT,
