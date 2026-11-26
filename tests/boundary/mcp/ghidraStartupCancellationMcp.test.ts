@@ -104,7 +104,7 @@ it.each([0, 1])(
         calls.push(
           mcp
             .callTool(
-              { name: "list_strings", arguments: { detail: "complete" } },
+              { name: "list_strings", arguments: {} },
               { signal: controller.signal },
             )
             .then(
@@ -133,10 +133,7 @@ it.each([0, 1])(
       expect(staying.value.isError).not.toBe(true);
       expect(startResults[1 - cancelledIndex]).toMatchObject({ ok: true });
       expect(controllers[1 - cancelledIndex]?.signal.aborted).toBe(false);
-      const warm = await mcp.callTool({
-        name: "list_strings",
-        arguments: { detail: "complete" },
-      });
+      const warm = await mcp.callTool({ name: "list_strings", arguments: {} });
       expect(warm.isError).not.toBe(true);
       expect(startCount).toBe(3);
       expect(queryCount).toBe(2);

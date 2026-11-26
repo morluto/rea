@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   commandObservationSchema,
   gdbCommandResultSchema,
+  isGdbStreamRecord,
 } from "../commandObservation.js";
 import { digestSchema } from "../digests.js";
 import { providerSchema, evidenceSubjectTarget } from "../evidence.js";
@@ -31,15 +32,39 @@ export const commandSummaryContext = {
   source_parameters: jsonValueSchema,
 };
 
-/** Keep every ordered record, including asynchronous and unrecognized records. */
+/**
+ * Keep every ordered result, asynchronous and unrecognized record. Stream
+ * records carry the console, target and log text, which the summary reports
+ * only by size; the retained parent keeps them.
+ */
 export const gdbCommandSummarySchema = gdbCommandResultSchema
   .omit({ console: true, target: true, log: true })
   .extend({
+    records: z
+      .array(z.string())
+      .describe(
+        "Ordered MI records other than console, target and log stream records.",
+      ),
     available_counts: z.strictObject({
       records: z.number().int().nonnegative(),
+      stream_records: z.number().int().nonnegative(),
       console_utf16_units: z.number().int().nonnegative(),
       target_utf16_units: z.number().int().nonnegative(),
       log_utf16_units: z.number().int().nonnegative(),
+    }),
+  });
+
+/**
+ * Keep every completion fact and replace the opaque output text with its
+ * size: a whole-binary disassembly can be megabytes. The complete text stays
+ * in the retained parent.
+ */
+export const objdumpCommandSummarySchema = commandObservationSchema
+  .omit({ stdout: true, stderr: true })
+  .extend({
+    available_counts: z.strictObject({
+      stdout_utf16_units: z.number().int().nonnegative(),
+      stderr_utf16_units: z.number().int().nonnegative(),
     }),
   });
 
@@ -136,14 +161,17 @@ export const projectCommandObservationView = (
           },
         ]),
       );
-    const { console, target, log, ...records } = parsed.value;
+    const { console, target, log, records, ...facts } = parsed.value;
+    const retained = records.filter((record) => !isGdbStreamRecord(record));
     return ok({
       ...shared,
       parent_operation: "gdb_console" as const,
       summary: {
-        ...records,
+        ...facts,
+        records: retained,
         available_counts: {
-          records: records.records.length,
+          records: records.length,
+          stream_records: records.length - retained.length,
           console_utf16_units: console.length,
           target_utf16_units: target.length,
           log_utf16_units: log.length,
@@ -171,9 +199,16 @@ export const projectCommandObservationView = (
         },
       ]),
     );
+  const { stdout, stderr, ...facts } = report;
   return ok({
     ...shared,
     parent_operation: "inspect_with_objdump" as const,
-    summary: report,
+    summary: {
+      ...facts,
+      available_counts: {
+        stdout_utf16_units: stdout.length,
+        stderr_utf16_units: stderr.length,
+      },
+    },
   });
 };

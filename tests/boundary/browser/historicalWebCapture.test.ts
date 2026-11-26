@@ -24,7 +24,6 @@ const cli = async (
       [
         entrypoint,
         "inspect-web-network-capture",
-        ...COMPLETE_DETAIL,
         path,
         format,
         "--json",
@@ -47,7 +46,6 @@ import {
   historicalHar,
   harWithContainerLookalikes,
 } from "../../fixtures/historicalHar.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 it("preserves opaque HAR container fields through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-har-container-fields-");
@@ -66,7 +64,6 @@ it("preserves opaque HAR container fields through CLI and MCP", async () => {
     expect(fromCli.ok, fromCli.stdout).toBe(true);
     const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       sensitive_values: sensitive,
@@ -182,7 +179,6 @@ it("retains Playwright IPv6 spelling through public CLI and MCP workflows", asyn
   expect(fromCli.ok, fromCli.stdout).toBe(true);
   const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
   const response = await call("inspect_web_network_capture", {
-    detail: "complete",
     capture_path: path,
     format: "har",
   });
@@ -447,7 +443,6 @@ it("counts credential-named HAR members by pointer, excluding values the decoder
     expect(fromCli.ok, fromCli.stdout).toBe(true);
     const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
     const response = await call("inspect_web_network_capture", {
-      detail: "complete",
       capture_path: path,
       format: "har",
       sensitive_values: sensitive,

@@ -213,51 +213,59 @@ it.each(["close", "cancel"] as const)(
 );
 
 it.each([
-  { field: "entry_count", maximum: 1, required: 2 },
-  { field: "string_bytes", maximum: 13, required: 14 },
-  { field: "member_bytes", maximum: 7, required: 8 },
-  { field: "expanded_bytes", maximum: 15, required: 16 },
-  { field: "path_parts", maximum: 1, required: 2 },
-  { field: "path_nodes", maximum: 2, required: 3 },
-  { field: "metadata_bytes", maximum: null, required: null },
+  { field: "entry_count", maximum: 1, retryAt: 2 },
+  { field: "string_bytes", maximum: 13, retryAt: 14 },
+  { field: "member_bytes", maximum: 7, retryAt: 8 },
+  { field: "expanded_bytes", maximum: 15, retryAt: 16 },
+  { field: "path_parts", maximum: 1, retryAt: 2 },
+  { field: "path_nodes", maximum: 2, retryAt: 3 },
+  { field: "metadata_bytes", maximum: null, retryAt: null },
 ] as const)(
   "recovers the same complete bundle after raising $field",
-  async ({ field, maximum, required }) => {
+  async ({ field, maximum, retryAt }) => {
     const root = await createTestTempDirectory("rea-dotnet-reader-admission-");
     const path = join(root, "host.exe");
     const fixture = dotnetBundleFixture([
       { path: "dir/first.txt", bytes: Buffer.from("aaaaaaaa") },
       { path: "dir/second.txt", bytes: Buffer.from("bbbbbbbb") },
     ]);
-    const needed = required ?? fixture.bytes.length - fixture.headerOffset;
+    const needed = retryAt ?? fixture.bytes.length - fixture.headerOffset;
     const selected = maximum ?? needed - 1;
     await writeFile(path, fixture.bytes);
     const handle = await open(path, "r");
     try {
-      await expect(
-        readDotnetBundle(
-          handle,
-          fixture.bytes.length,
-          fixture.headerOffset,
-          undefined,
-          {
-            ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
-            [field]: selected,
-          },
-        ),
-      ).rejects.toMatchObject({
+      const limited = readDotnetBundle(
+        handle,
+        fixture.bytes.length,
+        fixture.headerOffset,
+        undefined,
+        {
+          ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+          [field]: selected,
+        },
+      );
+      await expect(limited).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
         readerLimit: {
           parameter: `artifact_limits.dotnet_bundle.${field}`,
           effective_value: selected,
-          required_value: needed,
           applies_at: "next_operation",
           agent_editable: true,
           update_mode: "parameter",
           pending_restart: false,
         },
       });
+      if (field === "path_parts" || field === "path_nodes") {
+        await expect(limited).rejects.not.toHaveProperty(
+          "readerLimit.required_value",
+        );
+      } else {
+        await expect(limited).rejects.toHaveProperty(
+          "readerLimit.required_value",
+          needed,
+        );
+      }
       const recovered = await readDotnetBundle(
         handle,
         fixture.bytes.length,

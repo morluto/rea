@@ -253,7 +253,9 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         : withAndroidOtaPayloadSignature(payload.value, payloadSignature);
     if (parsed.ok) {
       this.#payload = parsed.value;
-      this.#coverageStatus = "complete";
+      this.#coverageStatus = parsed.value.blobTruncated
+        ? "unknown"
+        : "complete";
       this.#limitations = [...parsed.value.limitations];
     } else {
       if (parsed.error.kind === "limit") throw parseFailure(parsed.error);

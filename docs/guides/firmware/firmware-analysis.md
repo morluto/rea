@@ -428,7 +428,8 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
   `--max-output-files`). Exceeding either selected staging budget returns a
-  nonretryable resource constraint naming the selected limit. Depth defaults to
+  nonretryable resource constraint whose `details.limit` names the field, its
+  effective value, range and default. Depth defaults to
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
@@ -541,6 +542,15 @@ verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
+
+## Expand Android sparse images
+
+`inspect-artifact` / `extract-artifact` recognize an Android sparse image
+(`0xED26FF3A`) by magic, record its header and chunk counts, and expand it to
+one `image.raw` child offline. RAW chunks are copied, FILL chunks repeated and
+DONT_CARE chunks written as zeros; stored checksums are not verified. The
+expanded child is classified again, so a sparse-wrapped boot image continues
+to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
 
 ## Inspect UF2 and DfuSe images
 

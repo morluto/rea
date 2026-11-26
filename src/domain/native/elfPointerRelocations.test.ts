@@ -310,7 +310,7 @@ const symbolicImage = (
     ...(layout.symbolTags ?? [
       [6n, 0x200n],
       [11n, 24n],
-      ...(layout.definition === undefined || layout.hash === "none"
+      ...(layout.hash === "none"
         ? []
         : [
             [layout.hash === "gnu" ? 0x6ffffef5n : 4n, 0x280n] as [
@@ -338,6 +338,8 @@ const symbolicImage = (
     bytes[0x200 + 24 + 4] = 0x10 | (layout.definition.type ?? 1);
     bytes.writeUInt16LE(layout.definition.section ?? 1, 0x200 + 24 + 6);
     bytes.writeBigUInt64LE(layout.definition.value, 0x200 + 24 + 8);
+  }
+  if (layout.hash !== "none") {
     const words =
       layout.hash === "gnu" ? [1, 1, 1, 0, 0, 0, 1, 1] : [1, 2, 1, 0, 0];
     words.forEach((value, index) =>
@@ -356,6 +358,7 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
     [19, 8],
     [6, 0x200],
     [11, 16],
+    [4, 0x280],
     [0, 0],
   ] as const;
   dynamic.forEach(([tag, value], index) => {
@@ -365,6 +368,9 @@ const symbolicImage32 = (kind: number, symbolSize: number): Buffer => {
   bytes.writeUInt32LE(0x300, 0x100);
   bytes.writeUInt32LE((1 << 8) | kind, 0x104);
   bytes.writeUInt32LE(symbolSize, 0x200 + 16 + 8);
+  [1, 2, 1, 0, 0].forEach((value, index) =>
+    bytes.writeUInt32LE(value, 0x280 + index * 4),
+  );
   return bytes;
 };
 
@@ -619,13 +625,22 @@ it("writes nothing for a COPY of a zero-size symbol", () => {
 });
 
 it.each([
-  ["no DT_SYMTAB", symbolicImage(5n, 8n, { symbolTags: [[11n, 24n]] })],
+  [
+    "no DT_SYMTAB",
+    symbolicImage(5n, 8n, {
+      symbolTags: [
+        [11n, 24n],
+        [4n, 0x280n],
+      ],
+    }),
+  ],
   [
     "a nonstandard DT_SYMENT",
     symbolicImage(5n, 8n, {
       symbolTags: [
         [6n, 0x200n],
         [11n, 16n],
+        [4n, 0x280n],
       ],
     }),
   ],
@@ -636,6 +651,7 @@ it.each([
         [6n, 0x200n],
         [6n, 0x200n],
         [11n, 24n],
+        [4n, 0x280n],
       ],
     }),
   ],
@@ -645,8 +661,30 @@ it.each([
       symbolTags: [
         [6n, 0x10000n],
         [11n, 24n],
+        [4n, 0x280n],
       ],
     }),
+  ],
+  ["no hash table", symbolicImage(5n, 8n, { hash: "none" })],
+  [
+    "a symbol index past DT_HASH nchain (nonzero mapped bytes)",
+    (() => {
+      const bytes = symbolicImage(5n, 8n, { symbolIndex: 2 });
+      bytes.writeBigUInt64LE(0x99n, 0x200 + 48 + 16);
+      return bytes;
+    })(),
+  ],
+  [
+    "a symbol index past DT_HASH nchain (zero mapped bytes)",
+    symbolicImage(5n, 8n, { symbolIndex: 2 }),
+  ],
+  [
+    "a symbol index past DT_GNU_HASH",
+    (() => {
+      const bytes = symbolicImage(5n, 8n, { hash: "gnu", symbolIndex: 2 });
+      bytes.writeBigUInt64LE(0x40n, 0x200 + 48 + 16);
+      return bytes;
+    })(),
   ],
   ["symbol index 0", symbolicImage(5n, 8n, { symbolIndex: 0 })],
   [
@@ -661,6 +699,14 @@ it.each([
     pointer_coverage_known: false,
   });
   expect(() => walk(bytes)).toThrow(ElfPointerRelocationFailure);
+});
+
+it("sizes a COPY write when bounded by DT_GNU_HASH", () => {
+  const { writes, result } = walk(symbolicImage(5n, 0x18n, { hash: "gnu" }));
+  expect(writes).toMatchObject([
+    { address: 0x300n, width: 0x18, value: null, symbol_index: 1 },
+  ]);
+  expect(result).toMatchObject({ issues: [], pointer_coverage_known: true });
 });
 
 it("stops sizing COPY writes once they cover more than the file byte count", () => {
@@ -801,11 +847,6 @@ const riscvSymbolicImage32 = (kind: number, symbol = 1): Buffer => {
   bytes.writeUInt32LE(0x4000, 0x214);
   bytes[0x21c] = 0x11;
   bytes.writeUInt16LE(1, 0x21e);
-  bytes.writeInt32LE(4, 40);
-  bytes.writeUInt32LE(0x280, 44);
-  [1, 2, 1, 0, 0].forEach((value, index) =>
-    bytes.writeUInt32LE(value, 0x280 + index * 4),
-  );
   return bytes;
 };
 

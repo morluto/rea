@@ -132,20 +132,24 @@ export const registerRetainedEvidenceResource = (
 
 /**
  * The link to a retained complete record a summary replaced. `size` is the
- * record's exact UTF-8 JSON bytes, so a client can decide before reading.
+ * record's exact UTF-8 JSON bytes. Offer the link only when one read fits.
  * The name is a fixed label: Claude Code renders a link to the model as
  * `[Resource link: <name>] <uri>`, and the URI already carries the ID, whose
  * digest would cost about 40 more tokens per result.
  */
-export const retainedEvidenceLink = (input: {
-  readonly evidenceId: string;
-  readonly operation: string;
-  readonly completeBytes: number;
-}): ResourceLink => ({
-  type: "resource_link",
-  uri: retainedEvidenceUri(input.evidenceId),
-  name: "complete-evidence",
-  title: `Complete ${input.operation} Evidence (${String(input.completeBytes)} bytes)`,
-  mimeType: MIME_TYPE,
-  size: input.completeBytes,
-});
+export const retainedEvidenceLink = (
+  evidence: Evidence,
+  completeBytes: number,
+  budgetBytes: number,
+): ResourceLink | undefined =>
+  completeBytes <= budgetBytes &&
+  retainedEvidenceReadFits(evidence, budgetBytes)
+    ? {
+        type: "resource_link",
+        uri: retainedEvidenceUri(evidence.evidence_id),
+        name: "complete-evidence",
+        title: `Complete ${evidence.operation} Evidence (${String(completeBytes)} bytes)`,
+        mimeType: MIME_TYPE,
+        size: completeBytes,
+      }
+    : undefined;

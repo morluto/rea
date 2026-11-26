@@ -45,6 +45,29 @@ it.each([
   });
 });
 
+it("reports the path count that admits every oversized selection field", async () => {
+  const service = new WasmArtifactService({
+    close: () => Promise.resolve(),
+    inspect: () => {
+      throw new Error("Must not execute");
+    },
+  });
+  expect(
+    await service.inspect({
+      path: "/module",
+      glue_paths: ["/a.js", "/b.js"],
+      candidate_paths: ["/a.wasm", "/b.wasm", "/c.wasm"],
+      max_artifact_paths: 1,
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      limit: { parameter: "max_artifact_paths", required_value: 3 },
+    },
+  });
+});
+
 it("preserves the selected command budget in provider input and Evidence", async () => {
   const value = wasmArtifactFixture();
   value.tool_profile.timeout_ms = 42_000;

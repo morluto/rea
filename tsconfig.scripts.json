@@ -21,6 +21,7 @@
     "scripts/lib/verifier-run.mjs",
     "scripts/lib/verifier-source-loader.mjs",
     "scripts/verify-package-evidence.mjs",
+    "scripts/verify/bounded-file-reads.mjs",
     "scripts/verify/completeness-ternary-guard.mjs",
     "scripts/verify/javascript/digests.mjs",
     "scripts/verify/javascript/output.mjs",

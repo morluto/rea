@@ -15,6 +15,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { callerAnalysisParameters } from "../application/AnalysisInput.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProjectedErrorEncoding } from "./ToolResultDelivery.js";
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
 
@@ -39,10 +40,13 @@ export class McpToolRequest {
    * the agent result budget; without a capture nothing is known about it.
    * `pageable` records whether the session advertises the view tool that
    * pages a summary, without which the budget never replaces Evidence.
+   * `record` is the session's Evidence writer, which retains a failure's
+   * over-budget partial observation before its summary replaces it.
    */
   deliverySelection?: {
     readonly detail: unknown;
     readonly pageable: boolean;
+    readonly record?: EvidenceWriter["recordEvidence"] | undefined;
   };
   #handlerStarted = false;
   #finishHandler: () => void = () => undefined;

@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../../kernel/reportedSystemCode.js";
 import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 
@@ -100,11 +101,6 @@ const inputError = (
 ): AnalysisInputError =>
   new AnalysisInputError(operation, { userMessage }, [issue]);
 
-const systemCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
-
 /** Recovery for a host write failure that may leave partial output behind. */
 const hostWriteFailure = (directory: string) => ({
   userMessage: `Writing the environment bundle to ${directory} failed on the host; the details name the cause and, when it failed on one bundle file, that file.`,
@@ -124,7 +120,7 @@ const hostSystemError = (cause: Error): Error | undefined => {
   const seen = new Set<unknown>([cause]);
   let current = cause.cause;
   while (current instanceof Error && !seen.has(current)) {
-    if (systemCode(current) !== undefined) return current;
+    if (systemCodeFromError(current) !== undefined) return current;
     seen.add(current);
     current = current.cause;
   }
@@ -144,7 +140,7 @@ const accessDeniedError = (
     seen.add(current);
     if (current instanceof BundleFileHostFailure)
       access = current.operation === "reading" ? "read" : "write";
-    const code = systemCode(current);
+    const code = systemCodeFromError(current);
     if (code === "EACCES" || code === "EPERM") {
       const options = {
         cause,
@@ -193,7 +189,7 @@ const hostFailurePath = (cause: unknown): string | undefined => {
     seen.add(current);
     if (current instanceof BundleFileHostFailure) return current.path;
     const path = Reflect.get(current, "path");
-    if (systemCode(current) !== undefined && typeof path === "string")
+    if (systemCodeFromError(current) !== undefined && typeof path === "string")
       return isAbsolute(path) ? path : undefined;
     current = current.cause;
   }
@@ -348,7 +344,7 @@ export const readEnvironmentExportFile = async (
           `${path} changed while being read; retry with stable input files.`,
         ),
       );
-    if (NOT_A_FILE_CODES.has(systemCode(cause) ?? ""))
+    if (NOT_A_FILE_CODES.has(systemCodeFromError(cause) ?? ""))
       return err(
         inputError(
           operation,
@@ -442,7 +438,7 @@ export const packageTarballBytes = async (
       return err(readerFailureError(cause, undefined));
     if (cause instanceof BundleFileHostFailure)
       return err(packageTarballRefusal(path, cause));
-    if (systemCode(cause) !== undefined)
+    if (systemCodeFromError(cause) !== undefined)
       return err(packageTarballRefusal(path, cause));
     throw cause;
   }
@@ -486,7 +482,7 @@ export const exportEnvironmentBundle = async (
       return err(readerFailureError(cause, input.directory));
     if (
       cause instanceof BundleFileHostFailure ||
-      (cause instanceof Error && systemCode(cause) !== undefined)
+      (cause instanceof Error && systemCodeFromError(cause) !== undefined)
     )
       return err(
         new AnalysisOutputError(ENVIRONMENT_EXPORT_OPERATION, cause.message, {
