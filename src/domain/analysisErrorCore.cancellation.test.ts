@@ -85,6 +85,10 @@ it("keeps a caller abort the platform AbortError shape that names its adapter", 
   }
   expect(interrupt.kind).toBe("interrupt");
   expect(CallerAbort.forProcessSignal("SIGTERM").kind).toBe("terminate");
+  expect(CallerAbort.forProcessSignal("SIGBREAK").kind).toBe("break");
+  expect(CallerAbort.forProcessSignal("SIGBREAK").message).toBe(
+    "The caller interrupted this operation (SIGBREAK)",
+  );
   expect(cancelled.clientReason).toBe("user stopped");
   expect(OwnerCancellation.startupOwnerClosed).not.toBe(
     OwnerCancellation.ownerClosed,
