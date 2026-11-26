@@ -3,25 +3,20 @@ import type { Readable } from "node:stream";
 import { z } from "zod";
 
 import { digestSchema } from "../domain/digests.js";
-import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
+import { LZMA_WORKER_LIMITS } from "../domain/compression/lzmaWorkerLimits.js";
+import { LzmaByteQueue } from "./LzmaByteQueue.js";
 
 const decodeFailureReasonSchema = z.enum([
   "malformed",
   "decoder",
   "output-limit",
 ]);
-export type UefiDecodeFailureReason = z.infer<typeof decodeFailureReasonSchema>;
 
 export const LZMA_FRAME_HEADER_BYTES = 8;
 
 export const lzmaStreamRequestSchema = z.strictObject({
   format: z.enum(["lzma", "lzmaf86"]),
-  max_output_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
+  max_output_bytes: z.number().int().min(1).max(LZMA_WORKER_LIMITS.outputBytes),
 });
 
 export const lzmaReplySchema = z.discriminatedUnion("ok", [
@@ -32,7 +27,7 @@ export const lzmaReplySchema = z.discriminatedUnion("ok", [
       .number()
       .int()
       .min(1)
-      .max(UEFI_FIRMWARE_LIMITS.inputBytes),
+      .max(LZMA_WORKER_LIMITS.inputBytes),
     output: z.strictObject({
       sha256: digestSchema,
       bytes: z.number().int().min(0),
@@ -42,10 +37,22 @@ export const lzmaReplySchema = z.discriminatedUnion("ok", [
     ok: z.literal(false),
     reason: decodeFailureReasonSchema,
     message: z.string(),
+    limit: z
+      .strictObject({
+        boundary: z.string(),
+        maximum: z.number().int().nonnegative(),
+        required: z
+          .union([
+            z.number().int().nonnegative(),
+            z.string().regex(/^[0-9]+$/u),
+          ])
+          .optional(),
+      })
+      .optional(),
   }),
 ]);
 
-export type UefiLzmaReply = z.infer<typeof lzmaReplySchema>;
+export type LzmaReply = z.infer<typeof lzmaReplySchema>;
 
 /**
  * Encode `[u32BE jsonBytes][u32BE bodyBytes][jsonUtf8]` for framed stdio IPC.
@@ -76,11 +83,11 @@ export interface LzmaFrameReadOptions {
 }
 
 /**
- * Framed byte-stream reader shared by the UEFI LZMA host session and stdio
+ * Framed byte-stream reader shared by the LZMA host session and stdio
  * worker, with high-water stream pause/resume backpressure.
  */
 export class LzmaFrameReader {
-  readonly #queue = new UefiLzmaByteQueue();
+  readonly #queue = new LzmaByteQueue();
   #ended = false;
   #error: unknown;
   #waiter: (() => void) | undefined;
@@ -185,3 +192,15 @@ export class LzmaFrameReader {
     return result;
   }
 }
+
+/** One bounded stream decoded by the shared subprocess. */
+export type LzmaDecodeResult =
+  | {
+      readonly ok: true;
+      readonly outcome: {
+        readonly bytes: Buffer;
+        readonly decoderVersion: string;
+        readonly consumedBytes: number;
+      };
+    }
+  | Extract<LzmaReply, { readonly ok: false }>;

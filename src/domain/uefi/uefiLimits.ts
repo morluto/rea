@@ -1,3 +1,5 @@
+import { LZMA_WORKER_LIMITS } from "../compression/lzmaWorkerLimits.js";
+
 /** Budgets for the pure TypeScript UEFI firmware parser; every bound is explicit. */
 export const UEFI_FIRMWARE_LIMITS = {
   /** Largest accepted firmware image; Gigabyte AMI images are 16 MiB. */
@@ -21,7 +23,7 @@ export const UEFI_FIRMWARE_LIMITS = {
   /** Whole-operation deadline for parser and worker runs. */
   timeoutMs: 60_000,
   /** Per-stream decompressed output ceiling for both decoders. */
-  lzmaOutputBytes: 64 * 1024 * 1024,
+  lzmaOutputBytes: LZMA_WORKER_LIMITS.outputBytes,
   /** Shared structural record ceiling per inspection or extraction. */
   scanRecords: 100_000,
   /** Limit retained and traversed decoded data across all streams in an operation. */

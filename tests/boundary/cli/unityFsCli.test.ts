@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { artifactComparisonResultSchema } from "../../../src/domain/artifactComparison.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -252,6 +253,81 @@ cliTest(
             expect.objectContaining({ offset: 0, bytes: 64 }),
             expect.objectContaining({ offset: 64, bytes: 2_016 }),
           ]),
+        }),
+      ]),
+    });
+  },
+);
+
+cliTest(
+  "compares decoded UnityFS LZMA members against an LZ4 bundle without unknown hashes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-unity-lzma-compare-");
+    const leftPath = join(root, "left.bundle");
+    const rightPath = join(root, "right.bundle");
+    await writeFile(
+      leftPath,
+      buildUnityFs(
+        [
+          { path: "same.bin", data: "unchanged" },
+          { path: "changed.bin", data: "old payload" },
+        ],
+        { blockCompression: 1 },
+      ),
+    );
+    await writeFile(
+      rightPath,
+      buildUnityFs(
+        [
+          { path: "same.bin", data: "unchanged" },
+          { path: "changed.bin", data: "new payload" },
+        ],
+        { blockCompression: 3 },
+      ),
+    );
+    const left = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        leftPath,
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    const right = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        rightPath,
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(left.exitCode, left.stderr).toBe(0);
+    expect(right.exitCode, right.stderr).toBe(0);
+    const request = join(root, "compare.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        left: parseEvidence(left.json),
+        right: parseEvidence(right.json),
+      }),
+    );
+    const compared = await cli.run({
+      arguments: ["compare-artifacts", request, "--json"],
+    });
+    expect(compared.exitCode, compared.stderr).toBe(0);
+    expect(
+      artifactComparisonResultSchema.parse(
+        parseEvidence(compared.json).normalized_result,
+      ),
+    ).toMatchObject({
+      status: "changed",
+      summary: { unknown: 0, unchanged: 1, changed: 2 },
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          classification: "changed",
+          logical_path: "changed.bin",
         }),
       ]),
     });

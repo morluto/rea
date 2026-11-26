@@ -10,7 +10,7 @@ import type {
   UefiUnknownRegion,
   UefiVolumeRecord,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import type { UefiDecodeFailureReason } from "./UefiLzmaProtocol.js";
+import type { LzmaDecodeResult } from "../providers/LzmaProtocol.js";
 import {
   AMD_ZLIB_HEADER_LENGTH,
   peelAmdZlibPayload,
@@ -24,13 +24,6 @@ import {
 } from "./UefiBytes.js";
 import type { PspCandidateRecord, PspTableRecord } from "./UefiPspDirectory.js";
 
-/** Successful external LZMA decode handed back to the scan. */
-export interface UefiLzmaDecodeOutcome {
-  readonly bytes: Buffer;
-  readonly decoderVersion: string;
-  readonly consumedBytes: number;
-}
-
 /** One decodable stream submitted to the injected decode lane. */
 export interface UefiLzmaDecodeRequest {
   readonly payload: Buffer;
@@ -42,13 +35,7 @@ export interface UefiLzmaDecodeRequest {
  * The decoder reports recoverable format and output failures as result data.
  * The scan retains the carrier and diagnostic for extraction.
  */
-export type UefiDecodeResult =
-  | { readonly ok: true; readonly outcome: UefiLzmaDecodeOutcome }
-  | {
-      readonly ok: false;
-      readonly reason: UefiDecodeFailureReason;
-      readonly message: string;
-    };
+export type UefiDecodeResult = LzmaDecodeResult;
 
 export type UefiLzmaDecoder = (
   request: UefiLzmaDecodeRequest,

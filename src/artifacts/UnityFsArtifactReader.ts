@@ -67,7 +67,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
   #cachedBlock: { readonly index: number; readonly bytes: Buffer } | undefined;
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    private readonly lzmaWorkerModulePath?: string,
+  ) {
     this.#source = new ArtifactFileSource(path, "UnityFS bundle", admitted);
   }
 
@@ -401,8 +405,11 @@ export class UnityFsArtifactReader implements ArtifactReader {
       block.compression,
       encoded,
       block.uncompressedSize,
-      this.#scope,
-      signal,
+      {
+        resources: this.#scope,
+        signal,
+        workerModulePath: this.lzmaWorkerModulePath,
+      },
     );
     this.#assertOpen(signal);
     this.#cachedBlock = { index, bytes };

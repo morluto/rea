@@ -32,8 +32,11 @@ streams before releasing its descriptor.
 
 Data blocks compressed with none, LZ4, LZ4HC or LZMA are supported. LZMA data
 blocks use the output length declared in the block table and a cancellable,
-bounded decoder. The reader joins the worker and retains failed termination
-for cleanup retry through its artifact resource scope. LZMA-compressed blocks-info tables remain unsupported; their
+bounded decoder. Data blocks use the same framed LZMA subprocess, admission,
+process supervisor and cleanup lease as the UEFI decoder. Each admitted
+concurrent block owns its session so requests cannot interleave. The reader
+joins the subprocess and retains failed cleanup for retry through its artifact
+resource scope. LZMA-compressed blocks-info tables remain unsupported; their
 header facts are retained with unknown directory coverage
 ([#14176](https://github.com/morluto/rea/issues/14176)).
 
@@ -85,10 +88,13 @@ Detection is byte-based on the `UnityFS\0` signature, so `.bundle`, `.ab`,
 `assets_*` YooAsset bundles and extensionless files all classify as `unityfs`
 containers.
 
-LZMA workers request a fixed 256 MiB V8 old-generation heap, matching the UEFI
-LZMA worker budget. The encoded input, dictionary and decoded output have
-separate byte admission; the heap request is not an aggregate process memory
-limit and Node launch heap flags can override it.
+The shared LZMA subprocess uses the existing fixed 256 MiB V8 old-generation
+heap setting. Encoded input, dictionary and decoded output have separate byte
+admission; this setting is not an aggregate process memory limit. The
+subprocess is supervised through the existing owned-process lifecycle.
+Its framed input and diagnostics retain the existing 128 MiB and 8 MiB
+protocol budgets respectively; UnityFS's smaller encoded-block admission
+still applies before constructing a frame.
 
 ## Verification scope
 

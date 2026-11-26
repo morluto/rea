@@ -150,7 +150,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
   constructor(
     workerModulePath: string = fileURLToPath(
-      new URL("./UefiLzmaWorker.js", import.meta.url),
+      new URL("../providers/LzmaWorker.js", import.meta.url),
     ),
   ) {
     this.#workerModulePath = workerModulePath;

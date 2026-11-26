@@ -1,8 +1,7 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { buffer, text } from "node:stream/consumers";
-import { Worker } from "node:worker_threads";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -11,9 +10,7 @@ import {
 } from "../../tests/fixtures/unityfs.js";
 
 import type { ArtifactEntry } from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/index.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
-import { decodeUnityFsBlock } from "./UnityFsStructures.js";
 
 const withReader = async <T>(
   bytes: Buffer,
@@ -119,9 +116,6 @@ describe("UnityFS payloads and malformed declarations", () => {
       { blocksInfoCompression: 0, blockCompression: 0 },
     ],
     ["uncompressed blocks", { blockCompression: 0 }],
-    ["LZMA blocks", { blockCompression: 1 }],
-    ["LZMA format 6", { blockCompression: 1, formatVersion: 6 }],
-    ["LZMA format 7", { blockCompression: 1, formatVersion: 7 }],
     ["blocks-info at the end", { blocksInfoAtEnd: true }],
     ["aligned header without data padding", { flags: 0x43 }],
     ["format 6 without padding alignment", { formatVersion: 6, flags: 3 }],
@@ -144,152 +138,6 @@ describe("UnityFS payloads and malformed declarations", () => {
       expect(contents).toEqual(members.map(({ data }) => data));
     });
   });
-
-  it("reads independent LZMA fixture bytes across blocks", async () => {
-    // Produced by Python/liblzma in FORMAT_RAW, LZMA1, dict_size=4096,
-    // lc=3, lp=0, pb=2; the five property bytes are prepended explicitly.
-    const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
-    await withReader(
-      buildUnityFs([{ path: "payload", data: "abcabc" }], {
-        blockCompression: 1,
-        blockSize: 3,
-        encodeBlock: () => raw,
-      }),
-      async (reader) => {
-        const [entry] = await collectEntries(reader);
-        expect(await text(await reader.open(entry!))).toBe("abcabc");
-      },
-    );
-  });
-
-  it("rejects malformed LZMA properties and oversized dictionaries before decoding", async () => {
-    const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
-    const invalid = Buffer.from(raw);
-    invalid[0] = 255;
-    const oversized = Buffer.from(raw);
-    oversized.writeUInt32LE(128 * 1024 * 1024, 1);
-    const resources = new ArtifactResourceScope();
-    try {
-      await expect(
-        decodeUnityFsBlock(1, invalid, 3, resources),
-      ).rejects.toMatchObject({
-        reason: "malformed",
-      });
-      await expect(
-        decodeUnityFsBlock(1, oversized, 3, resources),
-      ).rejects.toMatchObject({
-        reason: "limit",
-        boundary: "memory",
-      });
-      await expect(
-        decodeUnityFsBlock(1, raw, 64 * 1024 * 1024 + 1, resources),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "memory" });
-      await expect(
-        decodeUnityFsBlock(1, raw.subarray(0, 10), 3, resources),
-      ).rejects.toMatchObject({ reason: "malformed" });
-      await expect(
-        decodeUnityFsBlock(4, raw, 3, resources),
-      ).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-    } finally {
-      await resources.close();
-    }
-  });
-
-  it("joins the LZMA decoder on cancellation", async () => {
-    const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
-    const resources = new ArtifactResourceScope();
-    const controller = new AbortController();
-    try {
-      const result = decodeUnityFsBlock(
-        1,
-        raw,
-        3,
-        resources,
-        controller.signal,
-      );
-      controller.abort();
-      await expect(result).rejects.toMatchObject({ reason: "cancelled" });
-      expect(
-        (await decodeUnityFsBlock(1, raw, 3, resources)).equals(
-          Buffer.from("abc"),
-        ),
-      ).toBe(true);
-    } finally {
-      await resources.close();
-    }
-  });
-
-  it.each(["cancelled", "malformed"] as const)(
-    "preserves %s and retries the same worker after failed cleanup",
-    async (primary) => {
-      const raw = Buffer.from("5d0010000000309888a44a8e9ffff6638000", "hex");
-      const resources = new ArtifactResourceScope();
-      const controller = new AbortController();
-      const reason = new Error("cancel after codec entry acknowledgement");
-      let started = false;
-      const nativeEmit = Worker.prototype.emit;
-      const emit = vi
-        .spyOn(Worker.prototype, "emit")
-        .mockImplementation(function (
-          this: Worker,
-          event: string | symbol,
-          ...args: unknown[]
-        ) {
-          if (event === "message" && args[0] === "started") {
-            started = true;
-            if (primary === "cancelled") controller.abort(reason);
-          }
-          return Reflect.apply(nativeEmit, this, [event, ...args]);
-        });
-      const termination = vi
-        .spyOn(Worker.prototype, "terminate")
-        .mockRejectedValueOnce(new Error("worker cleanup failed"))
-        .mockRejectedValueOnce(new Error("worker cleanup retry failed"));
-      try {
-        const input = primary === "malformed" ? raw.subarray(0, 10) : raw;
-        await expect(
-          decodeUnityFsBlock(1, input, 3, resources, controller.signal),
-        ).rejects.toMatchObject({
-          reason: primary,
-          ...(primary === "cancelled" ? { cancellation: { reason } } : {}),
-          cleanup: {
-            reason: expect.stringContaining("worker cleanup failed"),
-            resources: [expect.stringMatching(/^UnityFS LZMA worker /)],
-          },
-        });
-        expect(started).toBe(true);
-        expect(resources.hasPending).toBe(true);
-        expect(termination).toHaveBeenCalledTimes(1);
-        const exactWorker = termination.mock.contexts[0];
-        await expect(resources.retryCleanup()).rejects.toMatchObject({
-          reason: "unavailable",
-          cleanup: {
-            reason: expect.stringContaining("worker cleanup retry failed"),
-          },
-        });
-        expect(resources.hasPending).toBe(true);
-        expect(termination.mock.contexts[1]).toBe(exactWorker);
-        await resources.retryCleanup();
-        expect(termination).toHaveBeenCalledTimes(3);
-        expect(termination.mock.contexts[2]).toBe(exactWorker);
-        expect(resources.hasPending).toBe(false);
-        expect(
-          (await decodeUnityFsBlock(1, raw, 3, resources)).equals(
-            Buffer.from("abc"),
-          ),
-        ).toBe(true);
-      } finally {
-        try {
-          await resources.close();
-        } finally {
-          termination.mockRestore();
-          emit.mockRestore();
-        }
-      }
-    },
-  );
 
   it("reads a member spanning multiple compressed blocks", async () => {
     const big = Buffer.alloc(131072 * 2 + 500, 0x61);

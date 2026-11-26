@@ -11,6 +11,7 @@ import {
   ArtifactResourceScope,
 } from "./ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { expect, it } from "vitest";
 
 import { err, ok } from "../domain/result.js";
@@ -789,6 +790,33 @@ it("joins diagnostic work admitted while a cleanup retry releases an earlier own
     earlierRelease.release();
     tracked.release();
     await Promise.allSettled(sample === undefined ? [retry] : [retry, sample]);
+    await scope.close();
+  }
+});
+
+it("preserves all resource identities of an initial failed cleanup lease", async () => {
+  const scope = new ArtifactResourceScope();
+  let denied = true;
+  const labels = ["owned process", "owned workspace"];
+  const lease = new AnalysisCleanupLease(async () => {
+    if (denied) throw new Error("owned cleanup denied");
+  }, labels);
+  const owner = { kind: "lease", resource: "owned workspace", lease } as const;
+  try {
+    const attempt = await scope.release(owner);
+    if (attempt.kind !== "failed")
+      throw new Error("Expected owned cleanup refusal");
+    const initial = scope.cleanupFailure({ kind: "completed" }, [attempt]);
+    expect(initial.cleanup?.resources).toEqual(labels);
+    expect(initial.cleanupLeases).toEqual([lease]);
+    await expect(scope.retryCleanup()).rejects.toMatchObject({
+      cleanup: { resources: labels },
+    });
+    denied = false;
+    await scope.close();
+    expect(lease.released).toBe(true);
+  } finally {
+    denied = false;
     await scope.close();
   }
 });

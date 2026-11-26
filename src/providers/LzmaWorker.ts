@@ -10,9 +10,10 @@ import {
   decodeLimit,
   malformedInput,
   parseFailureFromCause,
+  reportedParseLimit,
   truncatedInput,
 } from "../domain/parseFailure.js";
-import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import { LZMA_WORKER_LIMITS } from "../domain/compression/lzmaWorkerLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
@@ -20,9 +21,9 @@ import {
   LZMA_FRAME_HEADER_BYTES,
   LzmaFrameReader,
   lzmaStreamRequestSchema,
-  type UefiLzmaReply,
-} from "./UefiLzmaProtocol.js";
-import { undoUefiX86BranchFilter } from "./UefiX86BranchFilter.js";
+  type LzmaReply,
+} from "./LzmaProtocol.js";
+import { undoUefiX86BranchFilter } from "./LzmaX86BranchFilter.js";
 
 const LZMA_ALONE_HEADER_BYTES = 13;
 const LZMA_DICTIONARY_OFFSET = 1;
@@ -83,14 +84,16 @@ const prepareLzmaInput = (payload: Buffer, maxOutputBytes: number) => {
   if (payload.length < LZMA_ALONE_HEADER_BYTES)
     throw truncatedInput("LZMA-Alone", "Incomplete LZMA stream header.");
   const reader = new BinaryReader(payload, true, "LZMA-Alone");
+  if (reader.u8(0) >= 225)
+    throw malformedInput("LZMA-Alone", "Invalid LZMA properties byte.");
   const dictionaryBytes = reader.u32(LZMA_DICTIONARY_OFFSET);
-  if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
+  if (dictionaryBytes > LZMA_WORKER_LIMITS.outputBytes) {
     throw decodeLimit(
       "LZMA",
       "LZMA dictionary exceeds the worker memory budget.",
       {
         name: "dictionary_bytes",
-        maximum: UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+        maximum: LZMA_WORKER_LIMITS.outputBytes,
         required: dictionaryBytes,
       },
     );
@@ -143,7 +146,7 @@ const decodeStreamPayload = (
   payload: Buffer,
   format: "lzma" | "lzmaf86",
   maxOutputBytes: number,
-): { readonly reply: UefiLzmaReply; readonly decoded?: Buffer } => {
+): { readonly reply: LzmaReply; readonly decoded?: Buffer } => {
   try {
     const { declaredOutput } = prepareLzmaInput(payload, maxOutputBytes);
     const output = new BoundedLzmaOutput(maxOutputBytes);
@@ -196,21 +199,25 @@ const decodeStreamPayload = (
               ? "output-limit"
               : "malformed",
         message: errorMessage(cause),
+        ...(failure?.failure.kind === "limit"
+          ? { limit: reportedParseLimit(failure.failure.limit) }
+          : {}),
       },
     };
   }
 };
 
 const serializeReply = (
-  reply: UefiLzmaReply,
+  reply: LzmaReply,
 ): { readonly text: string; readonly ok: boolean } => {
   const encoded = JSON.stringify(reply);
-  if (Buffer.byteLength(encoded) <= UEFI_FIRMWARE_LIMITS.diagnosticBytes) {
+  if (Buffer.byteLength(encoded) <= LZMA_WORKER_LIMITS.diagnosticBytes) {
     return { text: encoded, ok: reply.ok };
   }
-  const bounded: UefiLzmaReply = {
+  const bounded: LzmaReply = {
     ok: false,
     reason: reply.ok ? "decoder" : reply.reason,
+    ...(!reply.ok && reply.limit !== undefined ? { limit: reply.limit } : {}),
     message: "LZMA reply exceeds the diagnostic budget.",
   };
   return { text: JSON.stringify(bounded), ok: false };
@@ -235,8 +242,8 @@ const runStdioWorker = async (): Promise<void> => {
     const payloadBytes = headerReader.u32(4);
     if (
       jsonBytes === 0 ||
-      jsonBytes > UEFI_FIRMWARE_LIMITS.diagnosticBytes ||
-      payloadBytes > UEFI_FIRMWARE_LIMITS.inputBytes
+      jsonBytes > LZMA_WORKER_LIMITS.diagnosticBytes ||
+      payloadBytes > LZMA_WORKER_LIMITS.inputBytes
     ) {
       throw new Error("LZMA worker request frame exceeds protocol bounds.");
     }

@@ -235,8 +235,11 @@ export class ArtifactResourceScope {
     ],
     partialObservation?: AnalysisPartialObservation,
   ): ArtifactReaderFailure {
-    const observations = failures.map(({ cause, owner }) =>
-      ArtifactReaderFailure.cleanupObservation(cause, owner.resource),
+    const observations = failures.map(({ cause, owner, lease }) =>
+      ArtifactReaderFailure.cleanupObservation(
+        cause,
+        lease.cleanupResources ?? owner.resource,
+      ),
     );
     const primary =
       outcome.kind === "failed" ? outcome.cause : failures[0].cause;

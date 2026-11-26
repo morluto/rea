@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-export class UefiLzmaByteQueue {
+export class LzmaByteQueue {
   readonly #chunks: (Buffer | undefined)[] = [];
   #head = 0;
   #available = 0;

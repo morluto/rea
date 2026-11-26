@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { expect, it } from "vitest";
-import { LzmaFrameReader } from "./UefiLzmaProtocol.js";
+import { LzmaFrameReader } from "../providers/LzmaProtocol.js";
 
 const MIB = 1024 * 1024;
 

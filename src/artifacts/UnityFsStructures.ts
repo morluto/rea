@@ -9,7 +9,7 @@ import {
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "../compression/Lz4Block.js";
-import { decodeLzmaBlock } from "../compression/LzmaBlock.js";
+import { decodeUnityFsLzma, type UnityFsDecodeContext } from "./UnityFsLzma.js";
 import {
   BinaryReader,
   BinaryFormatFailure,
@@ -225,8 +225,7 @@ const decodeBlocksInfoTable = async (
       compression,
       compressed,
       header.uncompressedBlocksInfoSize,
-      resources,
-      signal,
+      { resources, signal },
     );
   throw new ArtifactReaderFailure(
     "unavailable",
@@ -239,8 +238,7 @@ export const decodeUnityFsBlock = async (
   compression: number,
   encoded: Buffer,
   expected: number,
-  resources: ArtifactResourceScope,
-  signal?: AbortSignal,
+  context: UnityFsDecodeContext,
 ): Promise<Buffer> => {
   const lzma = compression === UNITYFS_COMPRESSION_LZMA;
   const codec = lzma ? "LZMA" : "LZ4";
@@ -255,18 +253,17 @@ export const decodeUnityFsBlock = async (
     );
   try {
     return lzma
-      ? await decodeLzmaBlock(
+      ? await decodeUnityFsLzma(
           encoded,
           expected,
           MAX_BLOCK_UNCOMPRESSED_BYTES,
-          resources,
-          signal,
+          context,
         )
       : await decodeLz4Block(
           encoded,
           expected,
           MAX_BLOCK_UNCOMPRESSED_BYTES,
-          signal,
+          context.signal,
         );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;

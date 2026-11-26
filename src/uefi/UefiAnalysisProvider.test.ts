@@ -36,7 +36,7 @@ import {
 
 /** Compiled worker lane; the unit tests without dist skip real decodes. */
 const distUefiLzmaWorker = fileURLToPath(
-  new URL("../../dist/uefi/UefiLzmaWorker.js", import.meta.url),
+  new URL("../../dist/providers/LzmaWorker.js", import.meta.url),
 );
 const lzmaPurescript = createRequire(import.meta.url)(
   "lzma-purejs",
