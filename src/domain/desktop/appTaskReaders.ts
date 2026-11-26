@@ -203,9 +203,11 @@ def main(arguments: dict) -> int:
         with open(work + ".owner", "x", encoding="ascii") as owner:
             owner.write(lease["token"])
         return _say(_run(arguments, source, work))
-    # A caller that names a work folder removes it itself, even when this runner is killed.
-    # Short private names leave room for the command's temporary Unix sockets.
-    work = os.path.realpath(tempfile.mkdtemp(prefix="", dir=arguments.get("work")))
+    # A caller that names a work folder owns it and removes it, even when this runner is killed.
+    # Working in it directly keeps paths short enough for the command's temporary Unix sockets.
+    if "work" in arguments:
+        return _say(_run(arguments, source, os.path.realpath(arguments["work"])))
+    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-"))
     try:
         return _say(_run(arguments, source, work))
     finally:

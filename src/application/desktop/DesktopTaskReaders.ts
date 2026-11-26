@@ -75,7 +75,8 @@ export const readerViewsOfBytes = async (
       views.set(reader.id, { format: null, view: null, error: file.error });
       continue;
     }
-    // The runner nests below this owner; leave room for temporary Unix sockets.
+    // The runner works in this owner directly; a short name leaves room for
+    // the command's temporary Unix sockets.
     const folder = await mkdtemp(join(tmpdir(), "rea-")).catch(
       (cause: unknown) => {
         throw readerFailure(cause, { views, absent });
@@ -83,7 +84,8 @@ export const readerViewsOfBytes = async (
     );
     let failure: { readonly cause: unknown } | undefined;
     try {
-      const path = join(folder, reader.file.split("/").at(-1) ?? "file");
+      // A fixed name stays clear of the runner's file, home and t folders.
+      const path = join(folder, "source");
       await writeFile(path, file.bytes);
       // The runner works inside this folder, so removing it cleans up after a runner that was killed.
       const result = await run(

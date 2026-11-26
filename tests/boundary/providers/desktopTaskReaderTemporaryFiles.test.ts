@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -98,7 +105,9 @@ it.skipIf(process.platform === "win32")(
     await prepareOwnedCommand();
     vi.stubEnv("TMPDIR", "/tmp");
     try {
-      const root = await createTestTempDirectory("ipc-");
+      // The runner resolves its folder, so budget the socket path from the
+      // canonical root (macOS /tmp is /private/tmp).
+      const root = await realpath(await createTestTempDirectory("ipc-"));
       const length = process.platform === "darwin" ? 49 : 52;
       const inherited = join(
         root,
@@ -188,16 +197,17 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "removes normal local scratch files with the reader folder after success",
+  "keeps normal local scratch files in the caller's work folder for its cleanup",
   async () => {
     const { source, inherited, work, env } = await fixture();
     const [python = "", ...argv] = readerCommand(reader, source, work);
     const { stdout } = await execute(python, argv, { env });
     const report = reportOf(stdout);
-    const owned = dirname(dirname(report.copy));
+    // The runner works in the named folder itself; its caller removes it.
+    const owned = await realpath(work);
+    expect(dirname(dirname(report.copy))).toBe(owned);
     expectOwnedTemporary(report, owned);
-    await expect(access(report.scratch)).rejects.toThrow();
-    await expect(access(owned)).rejects.toThrow();
+    expect(await readFile(report.scratch, "utf8")).toBe("original document");
     expect(await readdir(inherited)).toEqual([]);
     expect(await readFile(source, "utf8")).toBe("original document");
   },
