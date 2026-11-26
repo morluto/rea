@@ -5,6 +5,7 @@ import { SQLITE_TOOL_CONTRACTS } from "../contracts/sqlite/sqliteToolContracts.j
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { inspectWithService } from "./contractCommandRunners.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
@@ -28,8 +29,10 @@ export const registerSqliteCommands = (
       positionals: ["path"],
       callerPaths: ["path"],
       crossFieldRules: "argv",
+      jsonText: ["producer_limits"],
       fields: {
         path: { description: "Local SQLite database snapshot" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
         table: { description: "Exact ordinary table name to read" },
         columns: {
           name: "column",

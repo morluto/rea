@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import {
+  assertCanonicalOutput,
+  canonicalOutputSchema,
+} from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -135,13 +138,7 @@ await withVerifierFixture(root, async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "decode_signal_recording"),
     );
@@ -254,13 +251,7 @@ await withVerifierFixture(root, async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(advertised.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, advertised, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "decode_signal_recording"),
     );
@@ -387,13 +378,7 @@ await withVerifierFixture(root, async () => {
       name: discoveryTool.name,
       arguments: input,
     });
-    assert.ok(
-      ajv.validate(
-        canonicalOutputSchema(discoveryTool.name),
-        response.structuredContent,
-      ),
-      JSON.stringify(ajv.errors),
-    );
+    assertCanonicalOutput(ajv, discoveryTool, response);
     const evidence = parseEvidence(
       requireMcpOutput(response, "inspect_signal_decoders"),
     );

@@ -187,106 +187,59 @@ const cancellationSignals =
 interface CliCancellationCommand {
   readonly command: string;
   readonly operation: string;
-  readonly buildArgs: (endpoint: string) => readonly string[];
+  readonly arguments: readonly string[];
 }
 
 const cancellationCommands: readonly CliCancellationCommand[] = [
   {
     command: "observe-web-execution",
     operation: "observe_web_execution",
-    buildArgs: (endpoint) => [
-      "observe-web-execution",
-      endpoint,
-      "page-fixture",
-      "--observation-ms",
-      "30000",
-      "--json",
-    ],
+    arguments: ["page-fixture", "--observation-ms", "30000"],
   },
   {
     command: "inspect-web-event-listeners",
     operation: "inspect_web_event_listeners",
-    buildArgs: (endpoint) => [
-      "inspect-web-event-listeners",
-      endpoint,
-      "page-fixture",
-      "body",
-      "--json",
-    ],
+    arguments: ["page-fixture", "body"],
   },
   {
     command: "list-browser-targets",
     operation: "list_browser_targets",
-    buildArgs: (endpoint) => ["list-browser-targets", endpoint, "--json"],
+    arguments: [],
   },
   {
     command: "inspect-web-page",
     operation: "inspect_web_page",
-    buildArgs: (endpoint) => [
-      "inspect-web-page",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "analyze-web-bundle",
     operation: "analyze_web_bundle",
-    buildArgs: (endpoint) => [
-      "analyze-web-bundle",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "observe-web-session",
     operation: "observe_web_session",
-    buildArgs: (endpoint) => [
-      "observe-web-session",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "discover-webmcp-tools",
     operation: "discover_webmcp_tools",
-    buildArgs: (endpoint) => [
-      "discover-webmcp-tools",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "capture-web-screenshot",
     operation: "capture_web_screenshot",
-    buildArgs: (endpoint) => [
-      "capture-web-screenshot",
-      endpoint,
-      "page-fixture",
-      "--json",
-    ],
+    arguments: ["page-fixture"],
   },
   {
     command: "list-javascript-runtime-targets",
     operation: "list_javascript_runtime_targets",
-    buildArgs: (endpoint) => [
-      "list-javascript-runtime-targets",
-      endpoint,
-      "--json",
-    ],
+    arguments: [],
   },
   {
     command: "observe-javascript-runtime",
     operation: "observe_javascript_runtime",
-    buildArgs: (endpoint) => [
-      "observe-javascript-runtime",
-      endpoint,
-      "target-fixture",
-      "--json",
-    ],
+    arguments: ["target-fixture"],
   },
 ];
 
@@ -300,7 +253,7 @@ const cancellationCases = cancellationCommands.flatMap((command) =>
 
 it.each(cancellationCases)(
   "$command preserves $signal status and awaited cleanup during CDP discovery",
-  async ({ operation, buildArgs, signal, expectedExitCode }) => {
+  async ({ command, operation, arguments: args, signal, expectedExitCode }) => {
     const sockets = new Set<Socket>();
     const server = createServer(() => undefined);
     server.on("connection", (socket) => {
@@ -317,7 +270,7 @@ it.each(cancellationCases)(
 
     const child = spawn(
       process.execPath,
-      [entrypoint, ...buildArgs(endpoint)],
+      [entrypoint, command, endpoint, ...args, "--json"],
       {
         env: environment(),
         stdio: ["ignore", "pipe", "pipe"],
