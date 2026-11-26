@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { coverageStatusSchema } from "../coverage.js";
@@ -36,6 +42,58 @@ export const DEB_PACKAGE_LIMIT_DEFAULTS = {
   max_control_bytes: 1 * 1024 * 1024,
   max_data_bytes: 32 * 1024 * 1024,
 } as const;
+
+export const DEB_PACKAGE_BUDGETS = {
+  max_file_bytes: {
+    minimum: 16,
+    maximum: DEB_PACKAGE_LIMIT_MAXIMA.max_file_bytes,
+    default_value: DEB_PACKAGE_LIMIT_DEFAULTS.max_file_bytes,
+    unit: "bytes",
+  },
+  max_ar_members: {
+    minimum: 1,
+    maximum: DEB_PACKAGE_LIMIT_MAXIMA.max_ar_members,
+    default_value: DEB_PACKAGE_LIMIT_DEFAULTS.max_ar_members,
+    unit: "count",
+  },
+  max_control_entries: {
+    minimum: 1,
+    maximum: DEB_PACKAGE_LIMIT_MAXIMA.max_control_entries,
+    default_value: DEB_PACKAGE_LIMIT_DEFAULTS.max_control_entries,
+    unit: "count",
+  },
+  max_data_entries: {
+    minimum: 1,
+    maximum: DEB_PACKAGE_LIMIT_MAXIMA.max_data_entries,
+    default_value: DEB_PACKAGE_LIMIT_DEFAULTS.max_data_entries,
+    unit: "count",
+  },
+  max_control_bytes: {
+    minimum: 1,
+    maximum: DEB_PACKAGE_LIMIT_MAXIMA.max_control_bytes,
+    default_value: DEB_PACKAGE_LIMIT_DEFAULTS.max_control_bytes,
+    unit: "bytes",
+  },
+  max_data_bytes: {
+    minimum: 1,
+    maximum: DEB_PACKAGE_LIMIT_MAXIMA.max_data_bytes,
+    default_value: DEB_PACKAGE_LIMIT_DEFAULTS.max_data_bytes,
+    unit: "bytes",
+  },
+} as const satisfies Record<
+  keyof typeof DEB_PACKAGE_LIMIT_MAXIMA,
+  ParameterBudget
+>;
+
+export const debPackageBudgetLimit = (
+  parameter: keyof typeof DEB_PACKAGE_BUDGETS,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    parameter,
+    DEB_PACKAGE_BUDGETS[parameter],
+    effectiveValue,
+  );
 
 /** Debian relationship operators recorded from control text. */
 export const DEB_VERSION_OPERATORS = ["<<", "<=", "=", ">=", ">>"] as const;
@@ -266,48 +324,24 @@ export const inspectDebPackageInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a Debian .deb package",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(MAX_INSPECT_DEB_PACKAGE_FILE_BYTES)
-    .default(DEB_PACKAGE_LIMIT_DEFAULTS.max_file_bytes)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_ar_members: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_DEB_PACKAGE_AR_MEMBERS)
-    .default(DEB_PACKAGE_LIMIT_DEFAULTS.max_ar_members)
-    .describe("Maximum ar members to inventory (default 32)"),
-  max_control_entries: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_DEB_PACKAGE_CONTROL_ENTRIES)
-    .default(DEB_PACKAGE_LIMIT_DEFAULTS.max_control_entries)
-    .describe("Maximum control.tar entries to inventory (default 4096)"),
-  max_data_entries: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_DEB_PACKAGE_DATA_ENTRIES)
-    .default(DEB_PACKAGE_LIMIT_DEFAULTS.max_data_entries)
-    .describe("Maximum data.tar entries to inventory (default 4096)"),
-  max_control_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_DEB_PACKAGE_CONTROL_BYTES)
-    .default(DEB_PACKAGE_LIMIT_DEFAULTS.max_control_bytes)
-    .describe("Maximum decompressed control.tar bytes (default 1 MiB)"),
-  max_data_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_DEB_PACKAGE_DATA_BYTES)
-    .default(DEB_PACKAGE_LIMIT_DEFAULTS.max_data_bytes)
-    .describe("Maximum decompressed data.tar bytes (default 32 MiB)"),
+  max_file_bytes: parameterBudgetSchema(
+    DEB_PACKAGE_BUDGETS.max_file_bytes,
+  ).describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_ar_members: parameterBudgetSchema(
+    DEB_PACKAGE_BUDGETS.max_ar_members,
+  ).describe("Maximum ar members to inventory (default 32)"),
+  max_control_entries: parameterBudgetSchema(
+    DEB_PACKAGE_BUDGETS.max_control_entries,
+  ).describe("Maximum control.tar entries to inventory (default 4096)"),
+  max_data_entries: parameterBudgetSchema(
+    DEB_PACKAGE_BUDGETS.max_data_entries,
+  ).describe("Maximum data.tar entries to inventory (default 4096)"),
+  max_control_bytes: parameterBudgetSchema(
+    DEB_PACKAGE_BUDGETS.max_control_bytes,
+  ).describe("Maximum decompressed control.tar bytes (default 1 MiB)"),
+  max_data_bytes: parameterBudgetSchema(
+    DEB_PACKAGE_BUDGETS.max_data_bytes,
+  ).describe("Maximum decompressed data.tar bytes (default 32 MiB)"),
 });
 
 const nullableText = z.string().min(1).nullable();

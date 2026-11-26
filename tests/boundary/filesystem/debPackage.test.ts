@@ -64,16 +64,47 @@ it("returns typed resource and cancellation failures", async () => {
   const tooSmall = await service.inspect({ path, max_file_bytes: 16 });
   if (tooSmall.ok) throw new Error("Expected resource budget failure");
   expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+  const fileSizeError = projectAnalysisError(tooSmall.error);
+  expect(fileSizeError).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: 16,
+        minimum: 16,
+        maximum: 536870912,
+        default_value: 67108864,
+        unit: "bytes",
+      },
+      refusal: { kind: "adjustable_budget" },
+    },
+    remediation: { action: expect.stringContaining("max_file_bytes") },
+  });
+  expect(fileSizeError.remediation?.action).not.toContain("--max-file-bytes");
   const oversize = await service.inspect({ path, max_data_entries: 1 });
   if (oversize.ok) throw new Error("Expected data-entry budget failure");
   expect(oversize.error._tag).toBe("AnalysisResourceConstraintError");
-  expect(projectAnalysisError(oversize.error)).toMatchObject({
+  const entryError = projectAnalysisError(oversize.error);
+  expect(entryError).toMatchObject({
     code: "resource_constraint",
     retryable: false,
-    remediation: {
-      action: expect.stringContaining("max_data_entries (--max-data-entries)"),
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_data_entries",
+        effective_value: 1,
+        minimum: 1,
+        maximum: 65536,
+        default_value: 4096,
+        unit: "count",
+      },
+      refusal: { kind: "adjustable_budget" },
     },
+    remediation: { action: expect.stringContaining("max_data_entries") },
   });
+  expect(entryError.remediation?.action).not.toContain("--max-data-entries");
   const cancelled = await service.inspect(
     { path },
     { signal: AbortSignal.abort() },

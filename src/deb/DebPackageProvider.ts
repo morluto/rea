@@ -10,7 +10,7 @@ import {
 import type { DebPackagePort } from "../ports/deb/DebPackagePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
-  DEB_PACKAGE_LIMIT_MAXIMA,
+  debPackageBudgetLimit,
   type InspectDebPackageInput,
 } from "../domain/deb/debPackage.js";
 import {
@@ -36,22 +36,6 @@ import { parseDebPackage } from "./DebPackageParser.js";
 
 const OPERATION = "inspect_deb_package";
 
-const parserLimitRecovery = (
-  resource: keyof typeof DEB_PACKAGE_LIMIT_MAXIMA,
-  selected: number,
-) => {
-  const maximum = DEB_PACKAGE_LIMIT_MAXIMA[resource];
-  const option = `--${resource.replaceAll("_", "-")}`;
-  const action =
-    selected < maximum
-      ? `Raise ${resource} (${option}) above ${String(selected)}, up to ${String(maximum)}, on the next call.`
-      : `${resource} (${option}) is at this operation's maximum of ${String(maximum)}; select a complete artifact within that bound.`;
-  return {
-    retryable: false as const,
-    remediationAction: `${action} Repeating the unchanged request fails the same way; waiting or adding host memory does not raise these parser limits.`,
-  };
-};
-
 const partialDiagnostics = (cause: unknown) => {
   if (
     !(cause instanceof DebPackageFormatFailure) &&
@@ -67,11 +51,6 @@ const partialDiagnostics = (cause: unknown) => {
   return { diagnostics: { partial: partial satisfies JsonValue } };
 };
 
-/**
- * The refusal for a Debian limit: the file-size budget, or a parser capacity
- * such as member count or expanded tar bytes. The limit's name and maximum
- * come from the failure's LimitRef; the recovery names the request option.
- */
 const capacityConstraint = (
   cause: DebPackageCapacityFailure,
   details: Omit<AnalysisErrorOptions, "cause">,
@@ -82,7 +61,8 @@ const capacityConstraint = (
     cause,
     {
       ...details,
-      ...parserLimitRecovery(cause.resource, cause.maximum),
+      retryable: false,
+      limit: debPackageBudgetLimit(cause.resource, cause.maximum),
       ...partialDiagnostics(cause),
     },
   );
