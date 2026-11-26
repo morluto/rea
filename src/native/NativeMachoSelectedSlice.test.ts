@@ -82,6 +82,17 @@ it("binds the lipo row to one FAT entry and its selected thin header", async () 
       2,
     ),
   ).rejects.toThrow("CPU identity is unavailable");
+  // A file that ends inside the table it declares is cut short, measured
+  // against the file's own size.
+  await expect(
+    resolveSelectedMachoSlice({ ...source, bytes: 40 }, selected, 2),
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "truncated",
+      format: "macho",
+      extent: { availableBytes: 40, requiredBytes: 48 },
+    },
+  });
   bytes.writeUInt32BE(0, 12);
   await expect(
     resolveSelectedMachoSlice(source, missingRange, 2),

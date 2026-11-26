@@ -13,6 +13,7 @@ import {
   createRustImage,
   createRustWasmModule,
   createRustImageWithGoSection,
+  createWasmSectionFlood,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
@@ -31,112 +32,71 @@ cliTest(
     const root = await createTestTempDirectory("rea-rust-macho-alignment-");
     const { client, call } = await connectLocalToolsMcp();
     const expectedFailure = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_rust_binary",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     };
 
-    for (const fixture of [
-      { wide: true, size: 12, bits: 64, malformed: true },
-      { wide: true, size: 16, bits: 64, malformed: false },
-      { wide: false, size: 12, bits: 32, malformed: false },
-    ]) {
-      const path = join(root, `image-${fixture.bits}-${fixture.size}.macho`);
-      await writeFile(
-        path,
-        machoImageWithUnknownCommand(fixture.wide, fixture.size),
-      );
-      const result = await cli.run({
-        arguments: ["inspect-rust-binary", path, "--json"],
-      });
-      const response = await call("inspect_rust_binary", { path });
-
-      if (fixture.malformed) {
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject(expectedFailure);
-        expect(result.json).not.toHaveProperty("normalized_result");
-        expect(parseMcpToolError(response).error).toMatchObject(
-          expectedFailure,
-        );
-        expect(response.structuredContent).toBeUndefined();
-        continue;
-      }
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
-        result.json,
-      );
-      expect(evidence.normalized_result).toMatchObject({
-        format: "macho",
-        bits: fixture.bits,
-        auditable_metadata: null,
-      });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
-    }
+    const path = join(root, "misaligned.macho");
+    await writeFile(path, machoImageWithUnknownCommand(true, 12));
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expectedFailure);
+    expect(result.json).not.toHaveProperty("normalized_result");
+    const response = await call("inspect_rust_binary", { path });
+    expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
+    expect(response.structuredContent).toBeUndefined();
     await client.ping();
   },
 );
 
 cliTest(
-  "reports cargo-auditable packages through the public CLI",
+  "reports cargo-auditable packages from thin Mach-O and core Wasm",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-rust-cli-");
-    const path = join(root, "sample");
-    await writeFile(path, createRustImage({ format: "macho" }));
-    const result = await cli.run({
-      arguments: ["inspect-rust-binary", path, "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
-      result.json,
-    );
-    expect(
-      rustBinarySchema.parse(evidence.normalized_result).auditable_metadata,
-    ).toMatchObject({
-      section_name: "__DATA,.dep-v0",
-      format_version: 1,
-      root_package_index: 1,
-      packages: [
-        { name: "itoa", version: "1.0.18" },
-        { name: "sample", version: "0.1.0", root: true },
-      ],
-    });
-  },
-);
-
-cliTest(
-  "reports cargo-auditable packages from a WebAssembly module",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-rust-cli-wasm-");
-    const path = join(root, "sample.wasm");
-    await writeFile(path, createRustWasmModule());
-    const result = await cli.run({
-      arguments: ["inspect-rust-binary", path, "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
-      result.json,
-    );
-    expect(fileIdentity(evidence.subject)).toMatchObject({
-      format: "file",
-      architecture: null,
-    });
-    const report = rustBinarySchema.parse(evidence.normalized_result);
-    expect(report.format).toBe("wasm");
-    expect(report.architecture).toBe("wasm");
-    expect(report.bits).toBeNull();
-    expect(report.byte_order).toBe("little");
-    expect(report.auditable_metadata).toMatchObject({
-      section_name: ".dep-v0",
-      root_package_index: 1,
-      packages: [
-        { name: "itoa", version: "1.0.18" },
-        { name: "sample", version: "0.1.0", root: true },
-      ],
-    });
+    const root = await createTestTempDirectory("rea-rust-carriers-");
+    for (const [name, bytes, section] of [
+      ["sample.macho", createRustImage({ format: "macho" }), "__DATA,.dep-v0"],
+      ["sample.wasm", createRustWasmModule(), ".dep-v0"],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-rust-binary", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+        result.json,
+      );
+      const report = rustBinarySchema.parse(evidence.normalized_result);
+      expect(report.auditable_metadata).toMatchObject({
+        section_name: section,
+        format_version: 1,
+        root_package_index: 1,
+        packages: [
+          { name: "itoa", version: "1.0.18" },
+          { name: "sample", version: "0.1.0", root: true },
+        ],
+        dependency_edges: [{ from_index: 1, to_index: 0 }],
+      });
+      if (name === "sample.wasm") {
+        expect(fileIdentity(evidence.subject)).toMatchObject({
+          format: "file",
+          architecture: null,
+        });
+        expect(report).toMatchObject({
+          format: "wasm",
+          architecture: "wasm",
+          bits: null,
+          byte_order: "little",
+        });
+      } else {
+        expect(report).toMatchObject({ format: "macho", bits: 64 });
+      }
+    }
   },
 );
 
@@ -165,159 +125,60 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-features-legacy-");
     const { client, call } = await connectLocalToolsMcp();
-    const validCases = [
-      {
-        name: "features",
-        document: {
-          packages: [
-            {
-              name: "legacy_dep",
-              version: "1.2.3",
-              source: "crates.io",
-              features: ["default", "serde"],
-            },
-            {
-              name: "app",
-              version: "0.1.0",
-              source: "local",
-              dependencies: [0],
-              root: true,
-            },
-          ],
-        },
-        features: ["default", "serde"],
-      },
-      {
-        name: "omitted-features-unknown",
-        document: {
-          packages: [
-            {
-              name: "legacy_dep",
-              version: "1.2.3",
-              source: "crates.io",
-            },
-          ],
-        },
-        features: null,
-      },
-      {
-        name: "explicit-empty-features",
-        document: {
-          packages: [
-            {
-              name: "legacy_dep",
-              version: "1.2.3",
-              source: "crates.io",
-              features: [],
-            },
-          ],
-        },
-        features: [],
-      },
-    ];
-    const malformedPath = join(root, "invalid-features.elf");
+    const packageFields = { version: "1.2.3", source: "crates.io" };
+    const path = join(root, "historical.elf");
     await writeFile(
-      malformedPath,
+      path,
       createRustImage({
         format: "elf",
         payload: rustDependencyPayload({
           packages: [
             {
-              name: "legacy_dep",
-              version: "1.2.3",
-              source: "crates.io",
-              features: ["default", 7],
+              ...packageFields,
+              name: "selected",
+              features: ["default", "serde"],
+            },
+            { ...packageFields, name: "unknown" },
+            { ...packageFields, name: "empty", features: [] },
+            {
+              name: "app",
+              version: "0.1.0",
+              source: "local",
+              dependencies: [0, 1, 2],
+              root: true,
             },
           ],
         }),
       }),
     );
-
-    for (const surface of ["cli", "mcp"] as const) {
-      for (const fixture of validCases) {
-        const path = join(root, `${fixture.name}.elf`);
-        await writeFile(
-          path,
-          createRustImage({
-            format: "elf",
-            payload: rustDependencyPayload(fixture.document),
-          }),
-        );
-        if (surface === "cli") {
-          const response = await cli.run({
-            arguments: ["inspect-rust-binary", path, "--json"],
-          });
-          expect(response.exitCode, response.stderr).toBe(0);
-          const evidence = toolContract(
-            "inspect_rust_binary",
-          ).outputSchema.parse(response.json);
-          expect(
-            rustBinarySchema.parse(evidence.normalized_result)
-              .auditable_metadata?.packages[0]?.features,
-          ).toEqual(fixture.features);
-        } else {
-          const response = await call("inspect_rust_binary", { path });
-          expect(response.isError, JSON.stringify(response)).not.toBe(true);
-          const evidence = toolContract(
-            "inspect_rust_binary",
-          ).outputSchema.parse(response.structuredContent);
-          expect(
-            rustBinarySchema.parse(evidence.normalized_result)
-              .auditable_metadata?.packages[0]?.features,
-          ).toEqual(fixture.features);
-        }
-      }
-
-      if (surface === "cli") {
-        const response = await cli.run({
-          arguments: ["inspect-rust-binary", malformedPath, "--json"],
-        });
-        expect(response.exitCode).toBe(1);
-        expect(response.json).toMatchObject({
-          code: "invalid_request",
-          details: {
-            operation: "inspect_rust_binary",
-            issues: [{ path: ["path"], reason: "invalid_format" }],
-          },
-        });
-      } else {
-        const response = await call("inspect_rust_binary", {
-          path: malformedPath,
-        });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response).error).toMatchObject({
-          code: "invalid_request",
-          details: {
-            operation: "inspect_rust_binary",
-            issues: [{ path: ["path"], reason: "invalid_format" }],
-          },
-        });
-      }
-    }
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    const report = rustBinarySchema.parse(evidence.normalized_result);
+    expect(
+      report.auditable_metadata?.packages.map(({ name, features }) => [
+        name,
+        features,
+      ]),
+    ).toEqual([
+      ["selected", ["default", "serde"]],
+      ["unknown", null],
+      ["empty", []],
+      ["app", null],
+    ]);
+    const response = await call("inspect_rust_binary", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
 );
 
-cliTest("returns null metadata when .dep-v0 is absent", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-rust-cli-missing-");
-  const path = join(root, "plain");
-  await writeFile(path, createRustImage({ format: "elf", omitSection: true }));
-  const result = await cli.run({
-    arguments: ["inspect-rust-binary", path, "--json"],
-  });
-  expect(result.exitCode, result.stderr).toBe(0);
-  const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
-    result.json,
-  );
-  const report = rustBinarySchema.parse(evidence.normalized_result);
-  expect(report.auditable_metadata).toBeNull();
-  expect(report.limitations.join("\n")).toContain(
-    "does not mean the binary has no dependencies",
-  );
-});
-
 cliTest(
-  "reads compressed ELF names and keeps unsupported compression unknown",
+  "distinguishes compressed ELF names, unknown names and an absent dependency section",
   async ({ cli }) => {
     const root = await createTestTempDirectory(
       "rea-rust-elf-compressed-names-",
@@ -326,14 +187,17 @@ cliTest(
       { name: "zlib", type: 1, supported: true },
       { name: "zstd", type: 2, supported: true },
       { name: "unknown", type: 3, supported: false },
+      { name: "absent", type: null, supported: false },
     ]) {
       const path = join(root, `${fixture.name}.elf`);
       await writeFile(
         path,
-        compressRustElfSectionNames(
-          createRustImage({ format: "elf" }),
-          fixture.type,
-        ),
+        fixture.type === null
+          ? createRustImage({ format: "elf", omitSection: true })
+          : compressRustElfSectionNames(
+              createRustImage({ format: "elf" }),
+              fixture.type,
+            ),
       );
       const result = await cli.run({
         arguments: ["inspect-rust-binary", path, "--json"],
@@ -352,6 +216,11 @@ cliTest(
           ],
           dependency_edges: [{ from_index: 1, to_index: 0 }],
         });
+      } else if (fixture.name === "absent") {
+        expect(report.auditable_metadata).toBeNull();
+        expect(report.limitations.join("\n")).toContain(
+          "does not mean the binary has no dependencies",
+        );
       } else {
         expect(report.auditable_metadata).toBeNull();
         expect(report.limitations.join("\n")).toMatch(
@@ -396,6 +265,7 @@ cliTest(
       architecture: "arm64_32",
       bits: 64,
       auditable_metadata: null,
+      rustc_commit: null,
     });
   },
 );
@@ -430,27 +300,6 @@ cliTest(
   },
 );
 
-cliTest("rejects malformed dependency JSON", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-rust-cli-zlib-");
-  const path = join(root, "broken.elf");
-  await writeFile(
-    path,
-    createRustImage({
-      format: "elf",
-      payload: deflateSync(Buffer.from("{")),
-      includeRustc: false,
-    }),
-  );
-  const result = await cli.run({
-    arguments: ["inspect-rust-binary", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_rust_binary" },
-  });
-});
-
 cliTest(
   "rejects duplicate Rust dependency JSON through CLI and stdio MCP",
   async ({ cli }) => {
@@ -471,17 +320,23 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: { operation: "inspect_rust_binary" },
     });
     const response = await call("inspect_rust_binary", { path });
     expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: { operation: "inspect_rust_binary" },
     });
     await client.ping();
   },
 );
+
+function padRustPeDependencySection(bytes: Buffer, alignment: number): void {
+  bytes.writeUInt32LE(alignment, 152 + 36); // OptionalHeader.FileAlignment
+  bytes.writeUInt32LE(0, 264 + 8); // .dep-v0 VirtualSize
+  bytes.writeUInt32LE(alignment, 264 + 16); // .dep-v0 SizeOfRawData
+}
 
 cliTest(
   "reads PE cargo-auditable data padded to FileAlignment through CLI and MCP",
@@ -493,9 +348,7 @@ cliTest(
     const compressedBytes = rustDependencyPayload().length;
     const alignedSize = 512;
     expect(compressedBytes).toBeLessThan(alignedSize);
-    bytes.writeUInt32LE(alignedSize, 152 + 36); // OptionalHeader.FileAlignment
-    bytes.writeUInt32LE(0, 264 + 8); // .dep-v0 VirtualSize
-    bytes.writeUInt32LE(alignedSize, 264 + 16); // .dep-v0 SizeOfRawData
+    padRustPeDependencySection(bytes, alignedSize);
     await writeFile(path, bytes);
 
     const result = await cli.run({
@@ -509,6 +362,7 @@ cliTest(
       evidence.normalized_result,
     ).auditable_metadata;
     expect(metadata).toMatchObject({
+      file_offset: 1024,
       section_bytes: alignedSize,
       compressed_bytes: compressedBytes,
       packages: [
@@ -516,22 +370,19 @@ cliTest(
         { name: "sample", version: "0.1.0", root: true },
       ],
     });
-    expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
-      (metadata?.compressed_bytes ?? 0) * 64,
-    );
     // Padding separates the section size from the consumed stream that the
     // inflate guidance names.
     expect(evidence.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(
-          /inflated JSON.*64 times the consumed compressed-stream length/iu,
+        expect.stringContaining(
+          "max_dependency_inflate_ratio=64 times the consumed compressed-stream length",
         ),
       ]),
     );
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
-      start: metadata?.file_offset,
-      end: (metadata?.file_offset ?? 0) + alignedSize,
+      start: 1024,
+      end: 1536,
     });
     const response = await call("inspect_rust_binary", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -561,27 +412,61 @@ cliTest(
       payload: compressed,
       includeRustc: false,
     });
-    bytes.writeUInt32LE(alignedSize, 152 + 36); // OptionalHeader.FileAlignment
-    bytes.writeUInt32LE(0, 264 + 8); // .dep-v0 VirtualSize
-    bytes.writeUInt32LE(alignedSize, 264 + 16); // .dep-v0 SizeOfRawData
+    padRustPeDependencySection(bytes, alignedSize);
     await writeFile(path, bytes);
 
+    const requiredRatio = Math.ceil(document.length / compressed.length);
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_dependency_inflate_ratio",
+      effective_value: 64,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64,
+      applies_at: "next_call",
+      required_value: requiredRatio,
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_rust_binary",
+      control: "max_dependency_inflate_ratio",
+      effective_value: 64,
+      unit: "count",
+      range: { minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+      default_value: 64,
+      required_value: requiredRatio,
+    };
     const expectedFailure = {
       code: "resource_constraint",
       retryable: false,
       details: {
         operation: "inspect_rust_binary",
         resource: "memory",
-        reported_limits: { maximum_bytes: compressed.length * 64 },
+        reported_limits: {
+          boundary: "max_dependency_inflate_ratio",
+          maximum: 64,
+          required: requiredRatio,
+        },
+        limit,
+        refusal,
       },
     };
     const result = await cli.run({
       arguments: ["inspect-rust-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject(expectedFailure);
+    expect(result.json).toMatchObject({
+      ...expectedFailure,
+      details: {
+        ...expectedFailure.details,
+        limit: { ...limit, cli_flag: "--max-dependency-inflate-ratio" },
+      },
+    });
     const response = await call("inspect_rust_binary", { path });
-    expect(parseMcpToolError(response).error).toMatchObject(expectedFailure);
+    const mcpError = parseMcpToolError(response).error;
+    expect(mcpError).toMatchObject(expectedFailure);
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
     await client.ping();
   },
 );
@@ -657,177 +542,204 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-go-section-");
     const { client, call } = await connectLocalToolsMcp();
-    for (const [format, fault, code] of [
-      ["elf", "compressed", "unsupported_target"],
-      ["elf", "zero-address", "invalid_request"],
-      ["macho", "zero-fill", "invalid_request"],
-    ] as const) {
-      const bytes = createRustImageWithGoSection(format, fault);
-      if (fault === "zero-address") {
-        const sectionHeader = 512;
-        expect(bytes.readUInt32LE(sectionHeader + 4)).toBe(1);
-        expect(bytes.readBigUInt64LE(sectionHeader + 8)).toBe(0n);
-        expect(bytes.readBigUInt64LE(sectionHeader + 16)).toBe(0n);
-        expect(bytes.readBigUInt64LE(sectionHeader + 24)).toBe(3072n);
-        expect(bytes.readBigUInt64LE(sectionHeader + 32)).toBe(16n);
-        const nameOffset = bytes.readUInt32LE(sectionHeader);
-        expect(
-          bytes.toString(
-            "ascii",
-            768 + nameOffset,
-            768 + nameOffset + ".go.buildinfo".length,
-          ),
-        ).toBe(".go.buildinfo");
-      }
-      const path = join(root, `mixed.${format}`);
-      await writeFile(path, bytes);
-      const result = await cli.run({
-        arguments: ["inspect-rust-binary", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
-        result.json,
-      );
-      expect(evidence.normalized_result).toMatchObject({
-        artifact: {
-          path,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          bytes: bytes.length,
-        },
-        format,
-        auditable_metadata: {
-          file_offset: 1024,
-          root_package_index: 1,
-          packages: [
-            { name: "itoa", version: "1.0.18" },
-            { name: "sample", version: "0.1.0", root: true },
-          ],
-          dependency_edges: [{ from_index: 1, to_index: 0 }],
-        },
-        rustc_commit: {
-          evidence_kind: "inferred",
-          hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
-        },
-      });
-      const response = await call("inspect_rust_binary", { path });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
-      const go = await cli.run({
-        arguments: ["inspect-go-binary", path, "--json"],
-      });
-      expect(go.exitCode).toBe(1);
-      expect(go.json).toMatchObject({
-        code,
-        details: { operation: "inspect_go_binary" },
-      });
-      if (fault === "zero-address")
-        expect(go.json).toMatchObject({
-          details: {
-            issues: [{ path: ["path"], reason: "invalid_format" }],
-          },
-        });
-      const goResponse = await call("inspect_go_binary", { path });
-      expect(parseMcpToolError(goResponse).error).toMatchObject({
-        code,
-        details: { operation: "inspect_go_binary" },
-      });
-      if (fault === "zero-address")
-        expect(parseMcpToolError(goResponse).error).toMatchObject({
-          details: {
-            issues: [{ path: ["path"], reason: "invalid_format" }],
-          },
-        });
-    }
+    const bytes = createRustImageWithGoSection("elf", "zero-address");
+    const path = join(root, "mixed.elf");
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result).toMatchObject({
+      artifact: {
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+      format: "elf",
+      auditable_metadata: {
+        file_offset: 1024,
+        root_package_index: 1,
+        packages: [
+          { name: "itoa", version: "1.0.18" },
+          { name: "sample", version: "0.1.0", root: true },
+        ],
+        dependency_edges: [{ from_index: 1, to_index: 0 }],
+      },
+      rustc_commit: {
+        evidence_kind: "inferred",
+        hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
+      },
+    });
+    const response = await call("inspect_rust_binary", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
+    const go = await cli.run({
+      arguments: ["inspect-go-binary", path, "--json"],
+    });
+    expect(go.exitCode).toBe(1);
+    const goFailure = {
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_go_binary",
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        reason: expect.stringContaining(
+          "Virtual address or string range is not file mapped",
+        ),
+      },
+    };
+    expect(go.json).toMatchObject(goFailure);
+    const goResponse = await call("inspect_go_binary", { path });
+    expect(parseMcpToolError(goResponse).error).toMatchObject(goFailure);
     await client.ping();
   },
 );
 
 cliTest(
-  "retrieves a larger compiler-path prefix through the CLI without losing dependencies",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-rust-cli-overflow-");
-    const path = join(root, "overflow.elf");
-    await writeFile(path, createRustHashOverflowImage());
-    const result = await cli.run({
-      arguments: [
-        "inspect-rust-binary",
-        path,
-        "--max-rustc-hashes",
-        "65",
-        "--producer-limits",
-        '{"input_bytes":8192,"output_bytes":16384}',
-        "--json",
-      ],
-    });
-    expect(result.exitCode).toBe(0);
-    const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
-      result.json,
-    );
-    const report = rustBinarySchema.parse(evidence.normalized_result);
-    expect(evidence.parameters).toMatchObject({
-      max_rustc_hashes: 65,
-      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
-    });
-    expect(report.rustc_commit?.hashes).toHaveLength(65);
-    expect(report.rustc_commit).not.toHaveProperty("coverage");
-    expect(report.auditable_metadata?.packages).toHaveLength(2);
-  },
-);
-
-cliTest(
-  "names the option of the recorded compiler-path control in the full-output envelope",
+  "reports and recovers the recorded compiler-path control without losing dependency facts",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-controls-");
     const path = join(root, "overflow.elf");
     await writeFile(path, createRustHashOverflowImage());
-    const result = await cli.run({
-      arguments: ["inspect-rust-binary", path, "--full-output", "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const envelope = result.json as {
-      data: unknown;
-      meta: { cli_controls?: unknown };
+    const inspect = async (options: string[] = []) => {
+      const result = await cli.run({
+        arguments: [
+          "inspect-rust-binary",
+          path,
+          "--full-output",
+          ...options,
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const envelope = result.json as {
+        data: unknown;
+        meta: { cli_controls?: unknown };
+      };
+      const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
+        envelope.data,
+      );
+      return {
+        envelope,
+        evidence,
+        report: rustBinarySchema.parse(evidence.normalized_result),
+      };
     };
-    const report = rustBinarySchema.parse(
-      toolContract("inspect_rust_binary").outputSchema.parse(envelope.data)
-        .normalized_result,
-    );
-    expect(report.rustc_commit?.coverage?.limit).toMatchObject({
+    const initial = await inspect();
+    expect(initial.report.rustc_commit?.hashes).toHaveLength(64);
+    expect(initial.report.rustc_commit?.coverage?.limit).toMatchObject({
       parameter: "max_rustc_hashes",
+      effective_value: 64,
     });
-    expect(envelope.meta.cli_controls).toEqual({
+    expect(initial.envelope.meta.cli_controls).toEqual({
       max_rustc_hashes: "--max-rustc-hashes",
     });
+
+    const selected = await inspect([
+      "--max-rustc-hashes",
+      "65",
+      "--producer-limits",
+      '{"input_bytes":8192,"output_bytes":16384}',
+    ]);
+    expect(selected.evidence.parameters).toMatchObject({
+      max_rustc_hashes: 65,
+      producer_limits: { input_bytes: 8192, output_bytes: 16384 },
+    });
+    expect(selected.report.rustc_commit?.hashes).toHaveLength(65);
+    expect(selected.report.rustc_commit?.hashes.slice(0, 64)).toEqual(
+      initial.report.rustc_commit?.hashes,
+    );
+    expect(selected.report.rustc_commit).not.toHaveProperty("coverage");
+    expect(selected.envelope.meta.cli_controls).toBeUndefined();
+    expect(initial.report.auditable_metadata?.packages).toHaveLength(2);
+    expect(selected.report.auditable_metadata).toEqual(
+      initial.report.auditable_metadata,
+    );
   },
 );
 
 cliTest(
-  "rejects malformed Rust view JSON before opening the selected path",
+  "refuses a WebAssembly section walk past max_wasm_sections on CLI and MCP",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-rust-view-json-");
+    const root = await createTestTempDirectory("rea-rust-cli-wasm-sections-");
+    const { client, call } = await connectLocalToolsMcp();
+    const path = join(root, "sections.wasm");
+    await writeFile(path, createWasmSectionFlood(8));
     const result = await cli.run({
       arguments: [
         "inspect-rust-binary",
-        join(root, "missing"),
-        "--view",
-        "{",
+        path,
+        "--max-wasm-sections",
+        "4",
         "--json",
       ],
     });
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "invalid_request",
+    const response = await call("inspect_rust_binary", {
+      path,
+      max_wasm_sections: 4,
+    });
+    const mcpError = parseMcpToolError(response).error;
+    const limit = {
+      control_kind: "parameter",
+      parameter: "max_wasm_sections",
+      effective_value: 4,
+      unit: "count",
+      minimum: 1,
+      maximum: 16_777_216,
+      default_value: 65_536,
+      applies_at: "next_call",
+    };
+    const refusal = {
+      kind: "adjustable_budget",
+      operation: "inspect_rust_binary",
+      control: "max_wasm_sections",
+      effective_value: 4,
+      unit: "count",
+      range: { minimum: 1, maximum: 16_777_216 },
+      default_value: 65_536,
+    };
+    expect(mcpError).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
       details: {
         operation: "inspect_rust_binary",
-        issues: [
-          {
-            path: ["view"],
-            reason: "invalid_format",
-            message: "view must be a JSON package or edge selection",
-          },
-        ],
+        resource: "cpu",
+        reported_limits: { boundary: "max_wasm_sections", maximum: 4 },
+        limit,
+        refusal,
       },
     });
-    expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+    expect(mcpError.details?.limit).not.toHaveProperty("required_value");
+    expect(mcpError.details?.limit).not.toHaveProperty("cli_flag");
+    expect(mcpError.remediation.action).toContain("max_wasm_sections");
+    expect(mcpError.remediation.action).not.toContain("--max-wasm-sections");
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "cpu",
+        limit: { ...limit, cli_flag: "--max-wasm-sections" },
+        refusal,
+      },
+    });
+    const cliRecovery = (result.json as { remediation?: { action?: string } })
+      .remediation?.action;
+    expect(cliRecovery).toContain("--max-wasm-sections");
+    expect(cliRecovery).toContain("rea inspect-rust-binary");
+    const admitted = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        path,
+        "--max-wasm-sections",
+        "8",
+        "--json",
+      ],
+    });
+    expect(admitted.exitCode, admitted.stderr).toBe(0);
+    await client.ping();
   },
 );

@@ -6,7 +6,7 @@ import {
 
 /** Defaults for complete offline Rust input and report admission. */
 export const RUST_PRODUCER_DEFAULTS = {
-  input_bytes: 256 * 1024 * 1024,
+  input_bytes: 2 * 1024 * 1024 * 1024,
   output_bytes: 8 * 1024 * 1024,
 } as const;
 export const rustProducerLimitsSchema = producerResourceLimitsSchema.pick({
@@ -16,7 +16,7 @@ export const rustProducerLimitsSchema = producerResourceLimitsSchema.pick({
 export const rustProducerLimitsField = rustProducerLimitsSchema
   .optional()
   .describe(
-    "Per-call input_bytes and output_bytes admission for the same complete Rust artifact/report, default 268435456 and 8388608 bytes. Positive safe integers; applies on the next call without restart. Compressed dependency section 1 MiB, inflated JSON 8 MiB/64x, parser nesting and transport limits remain independent.",
+    `Per-call input_bytes and output_bytes admission for the same complete Rust artifact/report, default ${String(RUST_PRODUCER_DEFAULTS.input_bytes)} and ${String(RUST_PRODUCER_DEFAULTS.output_bytes)} bytes. Positive safe integers; applies on the next call without restart. max_compressed_dependency_bytes, max_inflated_dependency_bytes, max_dependency_inflate_ratio, parser nesting and transport limits remain independent.`,
   );
 export type RustProducerLimitsInput = z.output<typeof rustProducerLimitsSchema>;
 export const resolveRustProducerLimits = (selected?: RustProducerLimitsInput) =>

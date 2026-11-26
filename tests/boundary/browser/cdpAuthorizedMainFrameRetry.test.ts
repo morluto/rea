@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -7,6 +7,7 @@ import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 import type { FakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 const operations = ["inspect", "session", "runtime"] as const;
@@ -95,10 +96,24 @@ it.each(operations)(
     trackBrowser(browser);
     const result = await run(browser, operation);
     if (!result.ok) throw result.error;
-    expect(result.value.target).toMatchObject({
-      target_id: "allowed-page",
-      [operation === "inspect" ? "url" : "initial_url"]:
-        `${browser.allowedOrigin}/app`,
+    const { allowedOrigin } = browser;
+    expect(result.value).toMatchObject({
+      target: {
+        target_id: "allowed-page",
+        [operation === "inspect" ? "url" : "initial_url"]:
+          `${allowedOrigin}/app`,
+        ...(operation === "inspect" ? { origin: allowedOrigin } : {}),
+      },
+      ...(operation === "inspect"
+        ? {
+            frames: expect.arrayContaining([
+              expect.objectContaining({
+                frame_id: "runtime-main",
+                origin: allowedOrigin,
+              }),
+            ]),
+          }
+        : {}),
     });
     expect(readsAtEnable).toBe(startupFrames.length + 1);
   },
@@ -122,9 +137,17 @@ it.each([
       details: { reason: "target_not_allowed" },
     });
     expect(frameReads(browser)).toHaveLength(1);
-    expect(browser.commands.map(({ method }) => method)).not.toContain(
-      protectedDomain[operation],
-    );
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain(protectedDomain[operation]);
+    if (operation === "inspect")
+      expect(methods).toContain("Target.detachFromTarget");
+    const evidenceMethods = [
+      "DOMSnapshot.captureSnapshot",
+      "Storage.getUsageAndQuota",
+    ];
+    expect(
+      methods.filter((method) => evidenceMethods.includes(method)),
+    ).toEqual([]);
   },
 );
 
@@ -197,10 +220,34 @@ it("withholds the final session URL when the proposed root has a parent", async 
   expect(frameReads(browser)).toHaveLength(2);
 });
 
+// Keep socket delivery real. Advance the clock only after the parsed reply
+// has placed the operation at the retry delay.
+const useAuthorizationClock = (advanceRetries: boolean) => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const retry = phaseArrival();
+  const schedule = globalThis.setTimeout;
+  const timerSpy = vi
+    .spyOn(globalThis, "setTimeout")
+    .mockImplementation((callback, delay, ...args) => {
+      const timer = schedule(callback, delay, ...args);
+      if (delay === 25) {
+        retry.arrive();
+        if (advanceRetries) queueMicrotask(() => vi.advanceTimersByTime(25));
+      }
+      return timer;
+    });
+  onTestFinished(() => {
+    timerSpy.mockRestore();
+    vi.useRealTimers();
+  });
+  return retry;
+};
+
 it("bounds unsupported malformed frame retries without authorizing execution", async () => {
   const browser = await startFrameBrowser(() =>
     selectedFrame("about:blank", { urlFragment: 7 }),
   );
+  useAuthorizationClock(true);
   const result = await run(browser, "runtime");
   expect(result).toMatchObject({
     ok: false,
@@ -216,13 +263,16 @@ it("bounds unsupported malformed frame retries without authorizing execution", a
   );
 });
 
-it("preserves cancellation while an unsupported malformed frame awaits authorization", async () => {
+it("settles caller cancellation while the authorization retry clock is held", async () => {
   const controller = new AbortController();
-  const browser = await startFrameBrowser(() => {
-    setTimeout(() => controller.abort("caller stopped authorization"), 5);
-    return selectedFrame("about:blank", { urlFragment: 7 });
-  });
-  expect(await run(browser, "inspect", controller.signal)).toMatchObject({
+  const browser = await startFrameBrowser(() =>
+    selectedFrame("about:blank", { urlFragment: 7 }),
+  );
+  const retry = useAuthorizationClock(false);
+  const operation = run(browser, "inspect", controller.signal);
+  await retry.reached(operation, "main-frame authorization retry");
+  controller.abort("caller stopped authorization");
+  expect(await operation).toMatchObject({
     ok: false,
     error: {
       _tag: "AnalysisCancelledError",

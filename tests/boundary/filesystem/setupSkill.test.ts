@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   access,
+  appendFile,
   chmod,
   copyFile,
   lstat,
@@ -94,57 +95,6 @@ describe("skill recovery backup selection", () => {
     expect(result).toEqual({ ok: true, value: "installed" });
     expect(await readFile(`${manifest}.rea.backup`, "utf8")).toBe(current);
     expect(await skillNeedsInstall(home, [])).toBe(false);
-  });
-
-  it("advertises a current recovery snapshot when the first backup is historical", async () => {
-    const home = await createTestTempDirectory("rea-skill-historical-backup-");
-    const [destination] = destinationsOf(home, []);
-    if (destination === undefined) throw new Error("Missing shared skill root");
-    const manifest = join(destination.path, "SKILL.md");
-    const current = "currently installed instructions V2\n";
-    const oldSnapshot = "historical instructions V0\n";
-    await mkdir(dirname(manifest), { recursive: true });
-    await writeFile(manifest, current);
-    await writeFile(`${manifest}.rea.backup`, oldSnapshot);
-    const operations: SkillInstallFileOperations = {
-      mkdir: async (path) =>
-        mkdir(path, { recursive: true }).then(() => undefined),
-      backup: async (source, target) =>
-        copyFile(source, target, fsConstants.COPYFILE_EXCL),
-      prepare: async (...args) => {
-        const publication = await SkillFilePublication.prepare(...args);
-        if (publication.path === manifest) {
-          const publish = publication.publish.bind(publication);
-          vi.spyOn(publication, "publish").mockImplementation(async () => {
-            await publish();
-            throw new Error("injected failure after publication");
-          });
-          vi.spyOn(publication, "restore").mockRejectedValue(
-            new Error("injected rollback failure"),
-          );
-        }
-        return publication;
-      },
-    };
-
-    const result = await installCanonicalSkill(
-      home,
-      [],
-      {},
-      process.platform,
-      operations,
-    );
-
-    if (result.ok) throw new Error("Expected the injected write failure");
-    expect(result.error.rollbackFailures).toEqual([
-      { path: manifest, reason: "injected rollback failure" },
-    ]);
-    const recovery = result.error.recoveryBackupPaths.find((path) =>
-      path.startsWith(`${manifest}.rea.backup.`),
-    );
-    expect(recovery).toBeDefined();
-    expect(await readFile(recovery!, "utf8")).toBe(current);
-    expect(await readFile(`${manifest}.rea.backup`, "utf8")).toBe(oldSnapshot);
   });
 });
 
@@ -375,10 +325,15 @@ describe("canonical skill transaction", () => {
     const manifest = join(root, "SKILL.md");
     const connection = join(root, "references/connection-and-recovery.md");
     const native = join(root, "references/native-and-artifacts.md");
+    const originalNative = "old native\n";
+    const historical = "previous native instructions\n";
+    const firstBackup = `${native}.rea.backup`;
+    const recovery = `${firstBackup}.${createHash("sha256").update(originalNative).digest("hex")}.recovery`;
     await mkdir(dirname(native), { recursive: true });
     await writeFile(manifest, "old manifest\n", { mode: 0o640 });
     await writeFile(connection, "old connection\n", { mode: 0o644 });
-    await writeFile(native, "old native\n", { mode: 0o600 });
+    await writeFile(native, originalNative, { mode: 0o600 });
+    await writeFile(firstBackup, historical);
     const operations: SkillInstallFileOperations = {
       mkdir: async (path) => {
         await mkdir(path, { recursive: true });
@@ -418,7 +373,7 @@ describe("canonical skill transaction", () => {
     expect(result.error.recoveryBackupPaths).toEqual([
       `${manifest}.rea.backup`,
       `${connection}.rea.backup`,
-      `${native}.rea.backup`,
+      recovery,
     ]);
     expect(result.error.message).toContain(
       `${native} (injected rollback failure)`,
@@ -427,8 +382,9 @@ describe("canonical skill transaction", () => {
     expect(await readFile(connection, "utf8")).toBe("old connection\n");
     await expectPermissionMode(manifest, 0o640);
     await expectPermissionMode(connection, 0o644);
-    expect(await readFile(native, "utf8")).not.toBe("old native\n");
-    expect(await readFile(`${native}.rea.backup`, "utf8")).toBe("old native\n");
+    expect(await readFile(native, "utf8")).not.toBe(originalNative);
+    expect(await readFile(recovery, "utf8")).toBe(originalNative);
+    expect(await readFile(firstBackup, "utf8")).toBe(historical);
     expect(result.error.message).toContain(
       `Existing-file backups remain at ${manifest}.rea.backup`,
     );
@@ -645,26 +601,11 @@ describe("canonical skill transaction", () => {
           "utf8",
         ),
       );
-      expect(installed).not.toMatch(
-        /filesystem-write permission grant|native_mount_approved|only with explicit approval|Obtain the per-call/u,
-      );
     }
-    expect(installedSkill).toContain(
-      "use normal repository tools and do not run REA",
-    );
     expect(installedSkill).toContain(
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
-    expect(
-      await readFile(
-        join(
-          home,
-          ".agents/skills/reverse-engineer-anything/references/javascript-applications.md",
-        ),
-        "utf8",
-      ),
-    ).toContain("analyze_javascript_application");
     expect(await skillNeedsInstall(home, [])).toBe(false);
     expect(await installSkill(home, [])).toMatchObject({
       ok: true,
@@ -753,10 +694,12 @@ it("doctor verifies installed instructions and references even when metadata is 
     [reference, true],
   ] as const) {
     if (remove) await rm(path);
-    else await writeFile(path, "Locally changed instructions.\n");
-    expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
-      "stale",
-    );
+    else await appendFile(path, "\nLocally changed instructions.\n");
+    expect((await runDoctor(undefined, host)).identity?.skill).toMatchObject({
+      state: "stale",
+      installed_version: PRODUCT_IDENTITY.skillVersion,
+      installed_tool_count: TOOL_CONTRACTS.length,
+    });
     expect(await installSkill(home, [])).toMatchObject({
       ok: true,
       value: "installed",

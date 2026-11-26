@@ -1,6 +1,5 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -21,7 +20,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { gdbMcpServer } from "../../fixtures/debuggerMcp.js";
-import type { GdbToolOptions } from "../../../src/server/serviceToolBindings.js";
+import type { GdbToolOptions } from "../../../src/server/debuggerToolBindings.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,

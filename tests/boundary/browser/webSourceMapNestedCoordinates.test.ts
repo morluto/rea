@@ -56,32 +56,66 @@ const identity = (text: string) => ({
   bytes: Buffer.byteLength(text),
 });
 
-it("adds nested same-line columns and resets the column on a later line", async () => {
+it("joins nested generated coordinates to exact declarations across section boundaries", async () => {
+  const firstText = "export const first = 1;";
+  const secondText = "export const second = 2;";
+  const first = {
+    ...leaf("same.ts", "AAAAA,QAAAA,EAAAA", ["first"]),
+    sourcesContent: [firstText],
+  };
+  const second = {
+    ...leaf("same.ts", "AAAAA", ["second"]),
+    sourcesContent: [secondText],
+  };
   const text = JSON.stringify(
     indexed(
-      section(
-        0,
-        2,
-        indexed(section(0, 3, indexed(section(0, 4, leaf("same-line.ts"))))),
-      ),
+      section(0, 2, indexed(section(0, 3, indexed(section(0, 4, first))))),
+      section(0, 19, second),
       section(5, 10, indexed(section(1, 3, leaf("later-line.ts")))),
     ),
   );
-  const sameLine = `${origin}/same-line.ts`;
-  const laterLine = `${origin}/later-line.ts`;
-  expect(await fetchMaps(text)).toMatchObject({
+  const shared = `${origin}/same.ts`;
+  const later = `${origin}/later-line.ts`;
+  const result = await fetchMaps(text);
+  expect(result).toMatchObject({
     status: "included",
     items: [
       {
         artifact: identity(text),
-        original_sources: [{ source: sameLine }, { source: laterLine }],
-        mappings: [
-          { generated_line: 1, generated_column: 9, source: sameLine },
-          { generated_line: 7, generated_column: 3, source: laterLine },
+        original_sources: [
+          {
+            source: shared,
+            declaration_index: 0,
+            artifact: identity(firstText),
+          },
+          {
+            source: shared,
+            declaration_index: 1,
+            artifact: identity(secondText),
+          },
+          { source: later, declaration_index: 2 },
         ],
       },
     ],
   });
+  // Ordered tuples of line, column, retained declaration, name and source.
+  expect(
+    result.items[0]?.mappings.map(
+      ({
+        generated_line,
+        generated_column,
+        declaration_index,
+        name,
+        source,
+      }) => [generated_line, generated_column, declaration_index, name, source],
+    ),
+  ).toEqual([
+    [1, 9, 0, "first", shared],
+    [1, 17, 0, "first", shared],
+    [1, 19, 0, "first", shared],
+    [1, 19, 1, "second", shared],
+    [7, 3, 2, null, later],
+  ]);
 });
 
 it("rejects overlaps at declared section starts and inherited stops", async () => {
@@ -144,58 +178,5 @@ it("rejects each malformed section offset and keeps its response identity", asyn
       mappings: [],
       response_identity: identity(text),
     })),
-  });
-});
-
-it("keeps named mappings before and at a shared section boundary", async () => {
-  const text = JSON.stringify(
-    indexed(
-      section(0, 0, {
-        ...leaf("same.ts", "AAAAA,QAAAA,EAAAA", ["first"]),
-        sourcesContent: ["export const first = 1;"],
-      }),
-      section(0, 10, {
-        ...leaf("same.ts", "AAAAA", ["second"]),
-        sourcesContent: ["export const second = 2;"],
-      }),
-    ),
-  );
-  expect(await fetchMaps(text)).toMatchObject({
-    status: "included",
-    items: [
-      {
-        artifact: identity(text),
-        original_sources: [
-          { source: `${origin}/same.ts`, declaration_index: 0 },
-          { source: `${origin}/same.ts`, declaration_index: 1 },
-        ],
-        mappings: [
-          {
-            generated_line: 1,
-            generated_column: 0,
-            declaration_index: 0,
-            name: "first",
-          },
-          {
-            generated_line: 1,
-            generated_column: 8,
-            declaration_index: 0,
-            name: "first",
-          },
-          {
-            generated_line: 1,
-            generated_column: 10,
-            declaration_index: 0,
-            name: "first",
-          },
-          {
-            generated_line: 1,
-            generated_column: 10,
-            declaration_index: 1,
-            name: "second",
-          },
-        ],
-      },
-    ],
   });
 });

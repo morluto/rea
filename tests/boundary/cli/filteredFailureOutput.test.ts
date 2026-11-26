@@ -1,26 +1,20 @@
+import { captureOutput } from "../../support/cli/capturedOutput.js";
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { randomUUID } from "node:crypto";
-import { Writable } from "node:stream";
 
 import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const runCli = async (arguments_: readonly string[]) => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
+  const { destination, text: readText } = captureOutput();
   const output = createCliResultOutput(
     parseCliOutputArguments(arguments_),
     destination,
@@ -45,7 +39,7 @@ const runCli = async (arguments_: readonly string[]) => {
     },
   });
   return {
-    text: Buffer.concat(chunks).toString("utf8"),
+    text: readText(),
     fallback,
     output,
   };
@@ -169,13 +163,7 @@ it.each(["json", "toon", "yaml", "md"] as const)(
 );
 
 it("keeps successful scalar filtering available", async () => {
-  const chunks: Buffer[] = [];
-  const destination = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      chunks.push(chunk);
-      callback();
-    },
-  });
+  const { destination, text: readText } = captureOutput();
   const argv = ["open-control", "--json", "--filter-output", "open"];
   const output = createCliResultOutput(
     parseCliOutputArguments(argv),
@@ -188,7 +176,7 @@ it("keeps successful scalar filtering available", async () => {
   process.exitCode = 0;
   try {
     await cli.serve(argv);
-    expect(Buffer.concat(chunks).toString("utf8")).toBe("false\n");
+    expect(readText()).toBe("false\n");
     expect(process.exitCode).toBe(0);
   } finally {
     process.exitCode = previousExitCode;

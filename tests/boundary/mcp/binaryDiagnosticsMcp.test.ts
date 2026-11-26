@@ -26,13 +26,14 @@ import {
   binaryLayoutFixture,
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../fixtures/binaryDiagnostics/inspectionProvider.js";
 import {
   elfExportImage,
   peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {
@@ -61,16 +62,18 @@ it("reports the exhausted native export allowance through MCP", async () => {
       bytes: peRepeatedExportNamesImage(0x3000),
       boundary: "retained_text",
       maximum: 16777216,
-      expected: "fixed byte allowance",
-      excluded: "fixed count",
+      parameter: "max_text_bytes",
+      excluded: "max_entries",
+      unit: "bytes",
     },
     {
       filename: "count-limit.dll",
       bytes: peStoredExportTableImage(0x40001),
       boundary: "rows",
       maximum: 262144,
-      expected: "fixed count",
-      excluded: "fixed byte allowance",
+      parameter: "max_entries",
+      excluded: "max_text_bytes",
+      unit: "count",
     },
   ];
   for (const fixture of cases) {
@@ -85,13 +88,20 @@ it("reports the exhausted native export allowance through MCP", async () => {
       code: "resource_constraint",
       retryable: false,
       details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: fixture.parameter,
+          effective_value: fixture.maximum,
+          unit: fixture.unit,
+          applies_at: "next_call",
+        },
         reported_limits: {
           boundary: fixture.boundary,
           maximum: fixture.maximum,
         },
       },
     });
-    expect(error.remediation.action).toContain(fixture.expected);
+    expect(error.remediation.action).toContain(fixture.parameter);
     expect(error.remediation.action).not.toContain(fixture.excluded);
   }
 });
@@ -290,14 +300,10 @@ it("records inline layout with compact schemas and canonical path checks", async
   let providerClosed = false;
   let providerCalls = 0;
   const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => {
+    ...inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () => {
       providerCalls++;
       return Promise.resolve(ok(value));
-    },
+    }),
     close: async () => {
       providerClosed = true;
     },

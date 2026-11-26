@@ -59,25 +59,25 @@ export const draftValueSchema = z.strictObject({
   after: jsonValueSchema,
   note: z
     .enum(VALUE_NOTES)
-    .optional()
+    .exactOptional()
     .describe(
       "by_position: no selector names it, so no check can use the pointer; view_state, renumbered, volatile, timestamp, upkeep or layout: noise the app writes, left out of the suggested checks.",
     ),
   refers_to: z
     .array(
       z.strictObject({
-        attribute: z.string().optional(),
+        attribute: z.string().exactOptional(),
         value: z.string(),
         element: z.string(),
       }),
     )
-    .optional()
+    .exactOptional()
     .describe(
       'Other elements a value names by their key or id, such as category 44 naming <cat key="44" name="Groceries"/>.',
     ),
   alternatives: z
     .array(z.string())
-    .optional()
+    .exactOptional()
     .describe(
       "A changed value's pointer naming its element by another identifier or name it holds alone, such as a shape's draw:name, for a check to use instead; at most three.",
     ),

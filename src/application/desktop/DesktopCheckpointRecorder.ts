@@ -119,7 +119,7 @@ export class CheckpointRecorder {
     trigger: DesktopCheckpoint["trigger"],
     atMs: number,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<DesktopCheckpoint> {
     const { roots, excluded, maxEntries, contentRoots } = this.scope;
     const walk = await this.walkHome(roots, excluded, maxEntries, signal);
     for (const mountPoint of walk.mountPoints) this.mountPoints.add(mountPoint);
@@ -136,7 +136,7 @@ export class CheckpointRecorder {
     } else
       ({ changes, unconfirmed } = await this.#changes(walk, retained, signal));
     this.#previous = walk;
-    this.checkpoints.push({
+    const checkpoint: DesktopCheckpoint = {
       name,
       trigger,
       at_ms: atMs,
@@ -147,6 +147,8 @@ export class CheckpointRecorder {
       unconfirmed_changes: unconfirmed,
       changes,
       retained,
-    });
+    };
+    this.checkpoints.push(checkpoint);
+    return checkpoint;
   }
 }

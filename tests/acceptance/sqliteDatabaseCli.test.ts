@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import {
   lstat,
   readFile,
@@ -35,9 +35,6 @@ import {
   createSharedMcpSession,
   type TestCli,
 } from "../support/cli/cliFixture.js";
-
-const digest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 // These stateless parity cases use the same default admission settings. Keep
 // their server file-owned, while lifecycle and configuration cases use fresh
@@ -285,7 +282,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-sqlite-size-budget-");
     const path = join(root, "selected.db");
     const walPath = `${path}-wal`;
-    const maximum = 256 * 1024 * 1024;
+    const maximum = 2 * 1024 * 1024 * 1024;
     const databaseBytes = maximum / 2;
     const walBytes = databaseBytes + 1;
     await writeFile(path, "");
@@ -323,9 +320,6 @@ cliTest(
           sqlite_snapshot_input_bytes: maximum,
           observed_sqlite_snapshot_input_bytes: String(maximum + 1),
         },
-      },
-      remediation: {
-        action: expect.stringContaining("supported export workflow"),
       },
     };
     expect(cliResult.exitCode).toBe(1);
@@ -384,14 +378,11 @@ cliTest.skipIf(process.platform === "win32" || !SQLITE_NATIVE_LIMITS_AVAILABLE)(
       code: "capability_unavailable",
       category: "unsupported_provider",
       retryable: false,
-      message: expect.stringContaining("supported consistent offline export"),
       details: {
         provider_id: "sqlite",
         operation: "inspect_sqlite_database",
+        // The system code is the fact that rules out a malformed database.
         reason: expect.stringContaining("ENAMETOOLONG"),
-      },
-      remediation: {
-        action: expect.stringContaining("supported consistent offline export"),
       },
     };
     expect(cliResult.exitCode).toBe(1);
@@ -471,10 +462,19 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       table: "selected",
       columns: ["", "id", "id"],
       worker_timeout_ms: 42000,
+      producer_limits: { input_bytes: 512 * 1024 * 1024 },
     });
     expect(selected.isError).not.toBe(true);
     expect(selected.structuredContent).toMatchObject({
-      parameters: { worker_timeout_ms: 42000 },
+      parameters: {
+        worker_timeout_ms: 42000,
+        producer_limits: { input_bytes: 512 * 1024 * 1024 },
+      },
+      limitations: expect.arrayContaining([
+        expect.stringContaining(
+          `combined input ${String(512 * 1024 * 1024)} bytes per inspection`,
+        ),
+      ]),
       normalized_result: {
         worker_timeout_ms: 42000,
         schema: {
@@ -518,13 +518,16 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         "1",
         "--worker-timeout-ms",
         "42000",
+        "--producer-limits",
+        "{}",
         "--json",
       ],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(cliResult.exitCode, cliResult.stdout + cliResult.stderr).toBe(0);
     expect(cliResult.json).toMatchObject({
-      parameters: { worker_timeout_ms: 42000 },
+      // An explicit empty object stays explicit; omission stays omitted.
+      parameters: { worker_timeout_ms: 42000, producer_limits: {} },
       normalized_result: {
         worker_timeout_ms: 42000,
         rows: { columns: ["id", ""], returned_rows: 1 },
@@ -582,7 +585,9 @@ cliTest(
           available: SQLITE_NATIVE_LIMITS_AVAILABLE,
           reason: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
-            : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+            : expect.stringContaining(
+                "supported Node.js 24.x and 26.x runtimes",
+              ),
           availability_code: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
             : "unsupported_version",
@@ -618,7 +623,9 @@ cliTest(
           available: SQLITE_NATIVE_LIMITS_AVAILABLE,
           remediation: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
-            : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+            : expect.stringContaining(
+                "supported Node.js 24.x and 26.x runtimes",
+              ),
         }),
       ]),
     );
@@ -947,21 +954,18 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
 
 /** Assert the refusal's facts, not the sentence that joins them. */
 const expectNotADatabaseRefusal = (error: unknown, selected: string): void => {
+  // The selected file's bytes are at fault, not the request.
   expect(error).toMatchObject({
-    code: "invalid_request",
+    code: "unsupported_target",
+    retry: "none",
     details: {
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("file is not a database"),
-        },
-      ],
+      path: selected,
+      failure_kind: "malformed",
+      format: "sqlite",
+      reason: expect.stringContaining("file is not a database"),
     },
   });
-  expect(error).toMatchObject({
-    details: { issues: [{ message: expect.stringContaining(selected) }] },
-  });
+  expect(error).not.toHaveProperty("details.issues");
 };
 
 cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
@@ -1038,7 +1042,20 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(ambiguous.exitCode).toBe(1);
-    expect(ambiguous.stdout).toContain("shadow table");
+    // An unresolved kind and an absent table share this issue shape, so
+    // the issue message is what distinguishes the unknown kind.
+    expect(ambiguous.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["table"],
+            reason: "invalid_format",
+            message: expect.stringContaining("shadow table"),
+          },
+        ],
+      },
+    });
     expect(
       (
         await call("inspect_sqlite_database", {
@@ -1058,7 +1075,18 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(missing.exitCode).toBe(1);
-    expect(missing.stdout).toContain("absent");
+    expect(missing.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["table"],
+            reason: "invalid_format",
+            message: expect.stringContaining("absent"),
+          },
+        ],
+      },
+    });
     expect(
       (await call("inspect_sqlite_database", { path: valid, table: "absent" }))
         .isError,

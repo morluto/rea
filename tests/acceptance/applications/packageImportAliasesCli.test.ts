@@ -1,13 +1,16 @@
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import {
+  analyzeJavaScriptDirectory,
+  sourceEvidence,
+} from "../../support/cli/javascriptApplication.js";
+
+import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
 const literalAliases = ["#/x", "#x%2Fy", "#x%2Ey", "#x\\y", "#x\0y"];
 const fallbackAliases = {
@@ -140,13 +143,7 @@ const createPackageImportAliasFixture = async () => {
     "node_modules/fixture/index.cjs": nestedSource,
     "node_modules/fixture/local.cjs": "module.exports = 'fixture-config';",
   };
-  await Promise.all(
-    Object.entries(files).map(async ([path, content]) => {
-      const absolute = join(root, path);
-      await mkdir(dirname(absolute), { recursive: true });
-      await writeFile(absolute, content);
-    }),
-  );
+  await writeFixtureFiles(root, files);
   return { root, mainSource, moduleSource, nestedSource };
 };
 
@@ -247,29 +244,3 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
-
-const sourceEvidence = (
-  sourcePath: string,
-  source: string,
-  limitation?: string,
-): unknown =>
-  expect.objectContaining({
-    artifact: expect.objectContaining({
-      available: true,
-      sha256: createHash("sha256").update(source).digest("hex"),
-    }),
-    location: expect.objectContaining({
-      available: true,
-      value: expect.objectContaining({
-        kind: "source-range",
-        source: sourcePath,
-      }),
-    }),
-    ...(limitation === undefined
-      ? {}
-      : {
-          limitations: expect.arrayContaining([
-            expect.stringContaining(limitation),
-          ]),
-        }),
-  });

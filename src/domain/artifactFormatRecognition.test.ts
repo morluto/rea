@@ -5,15 +5,26 @@ import {
   esp8266Image,
   espImage,
 } from "../../tests/fixtures/espImage.js";
-import { recognizeArtifactFormat } from "./artifactFormatRecognition.js";
+import { buildFv } from "../../tests/fixtures/uefiImage.js";
+import {
+  recognizeArtifactFormat,
+  recognizesArtifactPrefix,
+} from "./artifactFormatRecognition.js";
 import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "./firmware/androidOtaPayload.fixture.js";
+import {
+  buildAndroidSparseImage,
+  mixedAndroidSparseImage,
+} from "./firmware/androidSparseImage.fixture.js";
+import { androidSparseUnsupportedMajor } from "./firmware/androidSparseImage.js";
 import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
 import { ESP8266_REFUSAL } from "./firmware/espImage.js";
+import { buildIso9660Image } from "./iso9660/iso9660.fixture.js";
+import { ISO9660_DESCRIPTOR_OFFSET } from "./iso9660/iso9660Structures.js";
 
 /** A classic iNES header declaring one 16 KiB PRG bank, with no bank bytes. */
 const headerOnlyInes = (): Buffer => {
@@ -50,6 +61,12 @@ it.each([
     bytes: v1AndroidOtaPayload(),
     format: "android-ota-payload",
     reason: expect.stringContaining("major version 1"),
+  },
+  {
+    label: "an Android sparse image major version 2 header",
+    bytes: buildAndroidSparseImage({ majorVersion: 2 }),
+    format: "android-sparse-image",
+    reason: androidSparseUnsupportedMajor(2),
   },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
@@ -113,6 +130,13 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   });
 });
 
+it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
+  expect(recognize(mixedAndroidSparseImage())).toMatchObject({
+    state: "recognized",
+    format: "android-sparse-image",
+  });
+});
+
 it.each([16, 17])(
   "recognizes FIT from an FDT v%s structure in a bounded prefix",
   (version) => {
@@ -140,11 +164,15 @@ it("keeps FIT recognition within the v16 structure block before the strings bloc
   const strings = bytes.readUInt32BE(8) + 8;
   bytes.writeUInt32BE(strings, 12);
   bytes.writeUInt32BE(bytes.length - strings, 32);
-  expect(recognize(bytes)).toBeUndefined();
+  // The /images node lies outside the structure block, so this is a plain DTB.
+  expect(recognize(bytes)).toMatchObject({
+    state: "recognized",
+    format: "devicetree",
+  });
 });
 
 it.each([16, 17])(
-  "leaves an overlapping v%s structure and strings declaration unclaimed",
+  "refuses an overlapping v%s structure and strings declaration as a devicetree",
   (version) => {
     const bytes = devicetreeFixture(
       { name: "", children: [{ name: "images" }] },
@@ -153,7 +181,11 @@ it.each([16, 17])(
     const structure = bytes.readUInt32BE(8);
     bytes.writeUInt32BE(structure - 8, 12);
     bytes.writeUInt32BE(16, 32);
-    expect(recognize(bytes)).toBeUndefined();
+    expect(recognize(bytes)).toMatchObject({
+      state: "refused",
+      format: "devicetree",
+      reason: "Overlapping FDT blocks",
+    });
   },
 );
 
@@ -165,6 +197,95 @@ it.each([8, 12, 19])(
       children: [{ name: "images" }],
     });
     bytes.writeUInt32BE(structureSize, 36);
-    expect(recognize(bytes)).toBeUndefined();
+    expect(recognize(bytes)).toMatchObject({
+      state: "recognized",
+      format: "devicetree",
+    });
   },
 );
+
+it("recognizes the descriptor signature at sector 16 or asks for it", () => {
+  const { bytes } = buildIso9660Image();
+  expect(
+    recognizeArtifactFormat({
+      prefix: bytes,
+      fileSize: bytes.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+  const prefix = bytes.subarray(0, 4096);
+  const pending = recognizeArtifactFormat({
+    prefix,
+    fileSize: bytes.length,
+    espFlashLayout: false,
+  });
+  expect(pending).toMatchObject({ state: "needs-input", format: "iso9660" });
+  expect(
+    recognizeArtifactFormat(
+      {
+        prefix,
+        fileSize: bytes.length,
+        espFlashLayout: false,
+        iso9660Descriptor: bytes.subarray(
+          ISO9660_DESCRIPTOR_OFFSET,
+          ISO9660_DESCRIPTOR_OFFSET + 7,
+        ),
+      },
+      pending?.index,
+    ),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+  expect(
+    recognizeArtifactFormat({
+      prefix: Buffer.alloc(40_000),
+      fileSize: 40_000,
+      espFlashLayout: false,
+    }),
+  ).toBeUndefined();
+});
+
+it("leaves descriptor version support to the ISO 9660 parser", () => {
+  const { bytes } = buildIso9660Image();
+  bytes[ISO9660_DESCRIPTOR_OFFSET + 6] = 3;
+  expect(
+    recognizeArtifactFormat({
+      prefix: bytes,
+      fileSize: bytes.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+});
+
+it("recognizes an image that ends inside its first descriptor sector", () => {
+  const { bytes } = buildIso9660Image();
+  const truncated = bytes.subarray(0, ISO9660_DESCRIPTOR_OFFSET + 7);
+  expect(
+    recognizeArtifactFormat({
+      prefix: truncated,
+      fileSize: truncated.length,
+      espFlashLayout: false,
+    }),
+  ).toMatchObject({ state: "recognized", format: "iso9660" });
+  expect(
+    recognizeArtifactFormat({
+      prefix: truncated.subarray(0, -1),
+      fileSize: truncated.length - 1,
+      espFlashLayout: false,
+    }),
+  ).toBeUndefined();
+});
+
+it("lets a prefix the table recognizes outrank whole-file firmware probes", () => {
+  // A sector-aligned file extent can hold a complete firmware volume.
+  const volume = buildFv({ files: [] }).buffer;
+  const { bytes } = buildIso9660Image({
+    files: [{ path: "bios.fd", bytes: volume }],
+  });
+  expect(bytes.includes("_FVH", 0, "ascii")).toBe(true);
+  expect(recognizesArtifactPrefix(bytes, bytes.length)).toBe(true);
+  // Claims that wait on more input do not count, and a bare volume claims
+  // nothing the table recognizes.
+  expect(recognizesArtifactPrefix(bytes.subarray(0, 4096), bytes.length)).toBe(
+    false,
+  );
+  expect(recognizesArtifactPrefix(volume, volume.length)).toBe(false);
+});

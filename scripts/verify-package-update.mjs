@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { packageVerifierHomeEnvironment } from "./verify-package-home.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 /** Exercise the packaged updater with real npm and a local release registry fixture. */
@@ -20,7 +21,8 @@ export async function verifyPackageUpdate({
   const archive = await readFile(tarball);
   const entry = join(packageRoot, "scripts", "rea.mjs");
   const home = join(workspace, "update-home");
-  const codexPath = join(home, ".codex", "config.toml");
+  const homeEnvironment = packageVerifierHomeEnvironment(home);
+  const codexPath = join(homeEnvironment.CODEX_HOME, "config.toml");
   const originalConfig =
     '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@0.0.0", "mcp"]\n';
   await mkdir(dirname(codexPath), { recursive: true });
@@ -126,20 +128,7 @@ export async function verifyPackageUpdate({
       );
       const runtimeEnvironment = {
         ...environment,
-        HOME: home,
-        USERPROFILE: home,
-        APPDATA: join(home, "AppData", "Roaming"),
-        LOCALAPPDATA: join(home, "AppData", "Local"),
-        CLAUDE_CONFIG_DIR: home,
-        CODEX_HOME: join(home, ".codex"),
-        COPILOT_HOME: join(home, ".copilot"),
-        GROK_HOME: join(home, ".grok"),
-        SAND_DATA_ROOT: join(home, ".grokbot"),
-        OMP_PROFILE: undefined,
-        PI_CODING_AGENT_DIR: undefined,
-        PI_CONFIG_DIR: undefined,
-        PI_PROFILE: undefined,
-        XDG_CONFIG_HOME: join(home, ".config"),
+        ...homeEnvironment,
         OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.json"),
         npm_config_prefix: prefix,
         npm_config_registry: registry,

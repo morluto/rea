@@ -3,6 +3,8 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { validateRepository } from "./github-api.mjs";
+
 const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -140,15 +142,17 @@ export function selectPrefixDeletions(
       throw new Error(
         `Refusing to evaluate a cache outside ${prefix}: ${entry.key}`,
       );
-  // A newer snapshot on a different ref is unavailable to this ref.
-  const newestByRef = new Map();
+  // A cache restore requires its version as well as a visible ref.
+  // Preserve fallbacks for jobs using either version during a transition.
+  const newestByRestoreScope = new Map();
   for (const entry of entries.toSorted(byNewest)) {
-    const newest = newestByRef.get(entry.ref) ?? [];
+    const scope = `${entry.ref}\n${entry.version}`;
+    const newest = newestByRestoreScope.get(scope) ?? [];
     if (newest.length >= keepGenerations) continue;
     newest.push(entry.id);
-    newestByRef.set(entry.ref, newest);
+    newestByRestoreScope.set(scope, newest);
   }
-  const protectedIds = new Set([...newestByRef.values()].flat());
+  const protectedIds = new Set([...newestByRestoreScope.values()].flat());
   if (keepKey !== undefined)
     for (const entry of entries)
       if (entry.key === keepKey) protectedIds.add(entry.id);
@@ -223,13 +227,7 @@ export async function retainCaches({
   dedupeNpmDownloads = false,
   dryRun = false,
 }) {
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
+  validateRepository(repository);
   for (const family of families) {
     assertRetentionPrefix(family.prefix);
     if (
@@ -260,18 +258,6 @@ export async function retainCaches({
     ])
       await deleteCache(entry.id);
   return { dryRun, plan, npmDeletions };
-}
-
-function repositoryFromEnv(env) {
-  const repository = env.CI_REPOSITORY;
-  if (
-    typeof repository !== "string" ||
-    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)
-  )
-    throw new Error(
-      "CI_REPOSITORY must be an owner/name repository identifier",
-    );
-  return repository;
 }
 
 function familyWithKeepKey(env, prefixName, keepName) {
@@ -337,13 +323,13 @@ async function main() {
   const env = process.env;
   const dryRun = env.CACHE_RETENTION_DRY_RUN === "true";
   const report = await retainCaches({
-    repository: repositoryFromEnv(env),
+    repository: validateRepository(env.CI_REPOSITORY),
     request: (method, endpoint) => githubRequest(method, endpoint, env),
     deleteCache: async (id) => {
       try {
         await githubRequest(
           "DELETE",
-          `repos/${repositoryFromEnv(env)}/actions/caches/${String(id)}`,
+          `repos/${validateRepository(env.CI_REPOSITORY)}/actions/caches/${String(id)}`,
           env,
         );
       } catch (error) {

@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { expect, it, vi } from "vitest";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { createCli } from "../../src/cli.js";
@@ -11,6 +12,7 @@ import { writeEnvironmentServeFiles } from "../fixtures/environmentServe.js";
 const control = vi.hoisted(() => ({
   ready: undefined as (() => void) | undefined,
   served: undefined as ServedEnvironment | undefined,
+  signal: undefined as AbortSignal | undefined,
   onerror: undefined as ServeStreamableHttpOptions["onerror"],
   failClose: false,
   closeCalls: 0,
@@ -34,6 +36,7 @@ vi.mock(
       ...actual,
       serveStreamableHttp: (options: ServeStreamableHttpOptions) => {
         control.onerror = options.onerror;
+        control.signal = options.signal;
         return actual.serveStreamableHttp({
           ...options,
           createMcpServer: async (context) => {
@@ -147,6 +150,8 @@ it.each([
           ),
         );
       await pending;
+      if (!control.signal) throw new Error("Expected a command signal");
+      expect(getEventListeners(control.signal, "abort")).toHaveLength(0);
       const output: unknown = JSON.parse(stdout);
       expect(control.closeCalls).toBe(1);
       expect(process.exitCode).toBe(ending === "signal" ? 130 : 1);

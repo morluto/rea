@@ -529,8 +529,11 @@ const accessibilityForFrames = async (
       limitations,
     );
     if (reply.ok) results.push(reply.value);
-    else if (reply.error._tag === "CdpCommandUnavailable") unavailable = true;
-    else
+    else if (reply.error._tag === "CdpCommandUnavailable") {
+      // Method availability belongs to the attached target session.
+      unavailable = true;
+      break;
+    } else
       events.completeness.exclude(
         "accessibility",
         "invalid_protocol_value",

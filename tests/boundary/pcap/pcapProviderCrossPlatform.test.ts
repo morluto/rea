@@ -24,7 +24,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
-import { PcapAnalysisService } from "../../../src/application/pcap/PcapAnalysisService.js";
+import { createPcapAnalysisService } from "../../../src/application/ProviderOperationServices.js";
 import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
@@ -97,7 +97,7 @@ printf '%s|%s|%s\\n' "$PCAP_TEST_PROFILE" "$PCAP_TEST_EMPTY" "\${PCAP_TEST_ABSEN
     }
     const provider = new PcapProvider({ environment });
     onTestFinished(() => provider.close());
-    const service = new PcapAnalysisService(provider);
+    const service = createPcapAnalysisService(provider);
     const first = await service.execute("inspect_pcap_client", {});
     if (!first.ok) throw first.error;
     expect(first.value.normalized_result).toMatchObject({
@@ -606,6 +606,70 @@ it.skipIf(isWindows).each([
     });
     onTestFinished(() => provider.close());
     expect(await provider.inspectAvailability()).toMatchObject(expected);
+  },
+);
+
+it.each(["availability", "execution"] as const)(
+  "preserves a capinfos cleanup failure after missing TShark during %s",
+  async (entry) => {
+    const root = await createTestTempDirectory("rea-pcap-mixed-admission-");
+    const missing = join(root, "missing-tshark");
+    const capinfosPath = await realpath(capinfosStub);
+    let allowClose = false;
+    const release = vi.fn(async () => {
+      if (!allowClose) throw new Error("controlled capinfos close denial");
+    });
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: missing,
+        REA_CAPINFOS_COMMAND: capinfosStub,
+      },
+      artifactReader: async (path, _maximumBytes, _signal, _kind, scope) => {
+        expect(path).toBe(capinfosPath);
+        const lease = new AnalysisCleanupLease(release, [path]);
+        scope?.retain({ kind: "lease", resource: path, lease });
+        throw new ArtifactReaderFailure(
+          "io",
+          "capinfos descriptor close denied",
+          {
+            cleanup: { reason: "controlled close denial", resources: [path] },
+            cleanupLeases: [lease],
+          },
+        );
+      },
+    });
+    const request = async () => {
+      if (entry === "availability") return provider.inspectAvailability();
+      const result = await provider.execute({
+        operation: "inspect_pcap_client",
+        input: {},
+      });
+      if (!result.ok) throw result.error;
+      return result.value;
+    };
+    try {
+      const result = await request().then(
+        () => {
+          throw new Error("expected retained capinfos cleanup");
+        },
+        (error: unknown) => error,
+      );
+      expect(result).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [capinfosPath],
+        cleanupPrimary: { message: expect.stringContaining(missing) },
+      });
+      allowClose = true;
+      await provider.close();
+      expect(release).toHaveBeenCalled();
+      expect(result).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+    } finally {
+      allowClose = true;
+      await provider.close();
+    }
   },
 );
 

@@ -1,3 +1,4 @@
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -5,10 +6,8 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 export const PROCEDURES = {
   "0x1": "_TtC7Fixture5Class",
@@ -29,16 +28,11 @@ export const connect = async (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ) => {
   const server = createServer({ kind: "fixed", analysis }, { environment });
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "enhanced-test", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 /** Close every client/server pair opened by `connect` in this module. */

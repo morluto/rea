@@ -39,6 +39,7 @@ export async function verifyGhidraSearchFacts(
       `${operation} must preserve inventory facts for ${row.value}`,
     );
     const trace = await call("trace_feature", {
+      detail: "complete",
       query: row.value,
       case_sensitive: true,
     });

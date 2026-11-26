@@ -6,11 +6,14 @@ import type { BrowserContext } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import {
+  BrowserObservationError,
+  browserCleanupObservation,
+} from "../domain/browserObservationError.js";
 import type {
   RetainBrowserScenarioCleanup,
   BrowserScenarioSessionPort,
@@ -141,7 +144,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           throw new BrowserObservationError(OPERATION, "cleanup_failed", {
             cause,
             cleanup: {
-              reason: this.redactError(cause),
+              reason: this.redactError(
+                new Error(browserCleanupObservation(cause).reason),
+              ),
               resources: this.cleanupLease.cleanupResources ?? [],
             },
           });
@@ -486,6 +491,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.eventCapture.limitations();
   }
 
+  captureFinalized(): boolean {
+    return this.eventCapture.captureFinalized();
+  }
+
   storageLimitations(): readonly string[] {
     return this.storage?.limitations() ?? [];
   }
@@ -560,7 +569,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
               { cause },
             );
       failure.retainDiagnostics({
-        collected_artifacts: jsonValueSchema.parse(artifacts),
+        collected_artifacts: ownedJsonValueSchema.parse(artifacts),
       });
       throw failure;
     }
@@ -582,7 +591,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           : new BrowserObservationError(OPERATION, "cleanup_failed", {
               cause,
               cleanup: {
-                reason: this.redactError(cause),
+                reason: this.redactError(
+                  new Error(browserCleanupObservation(cause).reason),
+                ),
                 resources: this.cleanupLease.cleanupResources ?? [],
               },
             });

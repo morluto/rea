@@ -11,6 +11,7 @@ import {
   decodeMachoFixedWordFields,
   machoFixedWordFieldNames,
   readMachoLoadCommandTableHeader,
+  type MachoHeaderDeclarations,
 } from "./machoLoadCommands.js";
 import {
   classifyMachoVersionMinCommand,
@@ -90,6 +91,7 @@ const PROJECTED_SECTION_BYTES = 2048;
 const PROJECTED_CHILD_BYTES = 256;
 const PROJECTED_STRING_EXPANSION = 24;
 const DEFAULT_PROJECTED_BYTES = 64 * 1024 * 1024;
+const COMMAND_STRING_PREFIX_BYTES = 4096;
 
 export interface MachoCommandNames {
   readonly sliceSize: number;
@@ -192,6 +194,7 @@ export const readMachoCommandNames = async (
   maximumStringBytes: number,
   maximumRecords: number,
   maximumProjectedBytes = DEFAULT_PROJECTED_BYTES,
+  admittedHeader?: MachoHeaderDeclarations,
 ): Promise<MachoCommandNames> => {
   if (
     !Number.isSafeInteger(maximumStringBytes) ||
@@ -218,12 +221,17 @@ export const readMachoCommandNames = async (
       throw truncatedInput("macho", "Mach-O range is truncated");
     return value;
   };
-  const header = await exact(0, Math.min(32, imageSize));
-  const parsed = readMachoLoadCommandTableHeader(header, imageSize);
-  if (!parsed.ok) throw malformedInput("macho", parsed.error);
-  if (parsed.value === null)
-    throw malformedInput("macho", "Selected slice is not Mach-O");
-  const table = parsed.value;
+  let table: MachoHeaderDeclarations;
+  if (admittedHeader !== undefined) {
+    table = admittedHeader;
+  } else {
+    const header = await exact(0, Math.min(32, imageSize));
+    const parsed = readMachoLoadCommandTableHeader(header, imageSize);
+    if (!parsed.ok) throw malformedInput("macho", parsed.error);
+    if (parsed.value === null)
+      throw malformedInput("macho", "Selected slice is not Mach-O");
+    table = parsed.value;
+  }
   const cursor = new MachoLoadCommandCursor(table);
   if (table.commandCount > maximumRecords)
     throw loadCommandLimit(maximumRecords, "records");
@@ -264,8 +272,17 @@ export const readMachoCommandNames = async (
     label: string,
   ): Promise<Uint8Array> => {
     const length = Math.min(extent, stringAllowance() + 1);
-    const bytes = await exact(offset, length);
-    const end = bytes.indexOf(0);
+    let bytes = await exact(
+      offset,
+      Math.min(length, COMMAND_STRING_PREFIX_BYTES),
+    );
+    let end = bytes.indexOf(0);
+    if (end < 0 && bytes.byteLength < length) {
+      // Only long names need a second read. Read the whole bounded window
+      // then so retaining a split name still takes just one owned copy.
+      bytes = await exact(offset, length);
+      end = bytes.indexOf(0);
+    }
     if (end < 0) {
       if (length < extent) admitStringBytes(length);
       throw malformedInput("macho", `${label} is unterminated`);
@@ -685,7 +702,7 @@ export const readMachoCommandNames = async (
       cpuType: table.identity.cpuType,
       cpuSubtype: table.identity.cpuSubtype,
       fileType: table.fileType,
-      flags: machoWordReader(header, table.littleEndian).u32(24),
+      flags: table.flags,
     },
     commands,
   };

@@ -1,3 +1,4 @@
+import type { WorkflowAnalysisPort } from "../WorkflowEvidence.js";
 import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
@@ -37,6 +38,7 @@ import { executeFact } from "../AnalysisOperationFacts.js";
 import { addressCoordinate } from "../../domain/native/addressCoordinate.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { inlineLinkedSessionLimitations } from "../binary/SessionLimitationContext.js";
 import {
   classifyOutputPath,
   DecompileExport,
@@ -106,15 +108,40 @@ interface PublishState {
 }
 
 /**
+ * The directory outlives the session, so its files, journal and index keep the
+ * full text of session limitations a result only references.
+ */
+const withInlineSessionLimitations = (
+  session: WorkflowAnalysisPort,
+): WorkflowAnalysisPort => ({
+  ...(session.resourceScope === undefined
+    ? {}
+    : { resourceScope: session.resourceScope }),
+  execute: async (operation, parameters, options) => {
+    const executed = await session.execute(operation, parameters, options);
+    return executed.ok
+      ? ok(inlineLinkedSessionLimitations(executed.value))
+      : executed;
+  },
+  ...(session.recordItemLimitations === undefined
+    ? {}
+    : {
+        recordItemLimitations: (operation, execution) =>
+          session.recordItemLimitations?.(operation, execution),
+      }),
+});
+
+/**
  * Write one pseudocode file per selected function and return only a manifest.
  * Files already committed stay in place when a later function fails or the
  * caller cancels.
  */
 export const decompileAll = async (
-  analysis: AnalysisOperationPort,
+  sessionAnalysis: WorkflowAnalysisPort,
   input: DecompileDirectoryInput,
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
+  const analysis = withInlineSessionLimitations(sessionAnalysis);
   const bounds = validateDecompileBounds(input);
   if (!bounds.ok) return bounds;
   const placement = await classifyOutputPath(
@@ -380,7 +407,7 @@ const identityFrom = (
 };
 
 interface PublishInput {
-  readonly analysis: AnalysisOperationPort;
+  readonly analysis: WorkflowAnalysisPort;
   readonly session: DecompileExport;
   readonly procedures: readonly SelectedProcedure[];
   readonly identity: ExportIdentity;
@@ -506,7 +533,7 @@ const attemptOne = async (
 };
 
 const publishOne = async (input: {
-  readonly analysis: AnalysisOperationPort;
+  readonly analysis: WorkflowAnalysisPort;
   readonly session: DecompileExport;
   readonly procedure: SelectedProcedure;
   readonly identity: ExportIdentity;
@@ -561,6 +588,7 @@ const publishOne = async (input: {
     observationMismatch(input.identity, decompiled.value) === undefined
   ) {
     const original = decompiled.value;
+    input.analysis.recordItemLimitations?.("procedure_pseudo_code", original);
     const originalSource: NonNullable<
       DecompileDirectoryFunctionRecord["provider_source"]
     > =
@@ -616,6 +644,10 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
+  input.analysis.recordItemLimitations?.(
+    "procedure_pseudo_code",
+    decompiled.value,
+  );
   const caveats = [
     ...new Set([
       ...infoCaveats,
@@ -734,7 +766,7 @@ const publishOne = async (input: {
 };
 
 const readBody = async (
-  analysis: AnalysisOperationPort,
+  analysis: WorkflowAnalysisPort,
   address: string,
   identity: ExportIdentity,
   signal: AbortSignal | undefined,
@@ -746,8 +778,8 @@ const readBody = async (
       readonly support: "unknown" | "unavailable";
       /**
        * Caveats of a procedure_info observation for this export's target and
-       * profile. An observation for another target or profile is foreign and
-       * contributes none.
+       * profile. An observation for another target or profile, or with a
+       * validated different entry point, contributes no caveats.
        */
       readonly limitations?: readonly string[];
       /**
@@ -800,19 +832,19 @@ const readBody = async (
       support,
     };
   const parsed = procedureInfoSchema.safeParse(observed.value.result);
-  if (!parsed.success)
-    return {
-      kind: "body",
-      fact: unavailableBody("procedure_info returned an invalid body."),
-      support,
-      limitations: observed.value.limitations,
-    };
-  if (!sameAddress(parsed.data.entrypoint, address))
+  if (parsed.success && !sameAddress(parsed.data.entrypoint, address))
     return {
       kind: "body",
       fact: unavailableBody(
         "procedure_info described a different entry point than this function.",
       ),
+      support,
+    };
+  analysis.recordItemLimitations?.("procedure_info", observed.value);
+  if (!parsed.success)
+    return {
+      kind: "body",
+      fact: unavailableBody("procedure_info returned an invalid body."),
       support,
       limitations: observed.value.limitations,
     };

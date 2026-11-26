@@ -7,6 +7,7 @@ import { RustBinaryProvider } from "../../../src/rust/RustBinaryProvider.js";
 import {
   createRustImage,
   createRustHashOverflowImage,
+  createWasmSectionFlood,
 } from "../../fixtures/rust/image.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -213,6 +214,105 @@ it("reports byte trimming only when it removes a compiler path", async () => {
   }
 });
 
+it("refuses dependency JSON at the binding parser budget and admits the measured compressed size", async () => {
+  const root = await createTestTempDirectory("rea-rust-dependency-budget-");
+  const path = join(root, "selected.elf");
+  await writeFile(path, createRustImage({ format: "elf" }));
+  const provider = new RustBinaryProvider();
+  try {
+    const compressed = await provider.inspect({
+      path,
+      max_compressed_dependency_bytes: 1,
+    });
+    if (compressed.ok)
+      throw new Error("Expected the compressed-section refusal");
+    const projected = projectAnalysisError(compressed.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: {
+          boundary: "max_compressed_dependency_bytes",
+          maximum: 1,
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_compressed_dependency_bytes",
+          effective_value: 1,
+          unit: "bytes",
+          minimum: 1,
+          default_value: 1024 * 1024,
+          applies_at: "next_call",
+        },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_rust_binary",
+          control: "max_compressed_dependency_bytes",
+          effective_value: 1,
+          unit: "bytes",
+          default_value: 1024 * 1024,
+        },
+      },
+    });
+    const reportedLimit = projected.details?.limit;
+    const required =
+      reportedLimit !== null &&
+      typeof reportedLimit === "object" &&
+      !Array.isArray(reportedLimit) &&
+      typeof reportedLimit.required_value === "number"
+        ? reportedLimit.required_value
+        : undefined;
+    if (required === undefined || required <= 1)
+      throw new Error("Expected the measured compressed section size");
+    const admitted = await provider.inspect({
+      path,
+      max_compressed_dependency_bytes: required,
+    });
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value.auditable_metadata?.packages.length).toBeGreaterThan(
+      0,
+    );
+
+    const ratio = await provider.inspect({
+      path,
+      max_dependency_inflate_ratio: 1,
+    });
+    if (ratio.ok) throw new Error("Expected the inflate-ratio refusal");
+    expect(projectAnalysisError(ratio.error).details).toMatchObject({
+      limit: {
+        parameter: "max_dependency_inflate_ratio",
+        effective_value: 1,
+        unit: "count",
+        default_value: 64,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_dependency_inflate_ratio",
+      },
+    });
+
+    const inflated = await provider.inspect({
+      path,
+      max_inflated_dependency_bytes: 1,
+    });
+    if (inflated.ok) throw new Error("Expected the inflated-JSON refusal");
+    expect(projectAnalysisError(inflated.error).details).toMatchObject({
+      limit: {
+        parameter: "max_inflated_dependency_bytes",
+        effective_value: 1,
+        default_value: 8 * 1024 * 1024,
+      },
+      refusal: {
+        kind: "adjustable_budget",
+        control: "max_inflated_dependency_bytes",
+      },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
 it("cancels a many-frame compressed ELF section-name table", async () => {
   const root = await createTestTempDirectory("rea-rust-zstd-cancel-");
   const path = join(root, "app");
@@ -240,5 +340,33 @@ it("cancels a many-frame compressed ELF section-name table", async () => {
     });
   } finally {
     spy.mockRestore();
+  }
+});
+
+it("names max_wasm_sections when a module has more sections than it", async () => {
+  const root = await createTestTempDirectory("rea-rust-wasm-sections-");
+  const path = join(root, "module.wasm");
+  await writeFile(path, createWasmSectionFlood(8));
+  const provider = new RustBinaryProvider();
+  try {
+    const refused = await provider.inspect({ path, max_wasm_sections: 4 });
+    if (refused.ok) throw new Error("Expected a max_wasm_sections refusal");
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_wasm_sections",
+          effective_value: 4,
+          default_value: 65_536,
+        },
+        refusal: { kind: "adjustable_budget" },
+      },
+    });
+    const admitted = await provider.inspect({ path, max_wasm_sections: 8 });
+    if (!admitted.ok) throw admitted.error;
+    expect(admitted.value.format).toBe("wasm");
+  } finally {
+    await provider.close();
   }
 });

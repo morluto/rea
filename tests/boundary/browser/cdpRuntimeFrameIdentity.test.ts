@@ -81,6 +81,7 @@ it.each([
   ["execution", "equivalent inline fragment", false, "inline", null],
   ["listeners", "fragment change, no loader", false, changedFragment, changed],
   ["execution", "fragment change, same loader", true, changedFragment, null],
+  ["listeners", "path change, same loader", true, "new-path", null],
   ["listeners", "malformed fragment", true, badFragment, invalid],
   [
     "listeners",
@@ -111,7 +112,9 @@ it.each([
         const updated =
           change === "inline"
             ? { url: `${url}#details`, urlFragment: undefined }
-            : change;
+            : change === "new-path"
+              ? { url: `${origin}/new-path?caller=value` }
+              : change;
         return frameTree(url, {
           loaderId: loader ? documentId : undefined,
           urlFragment: "#details",
@@ -123,9 +126,10 @@ it.each([
     const result = await run(browser, action);
     if (reason === null) {
       if (!result.ok) throw result.error;
-      expect(result.value.target.initial_url).toBe(
-        `${browser.allowedOrigin}${query}#details`,
-      );
+      expect(result.value.target).toMatchObject({
+        initial_url: `${browser.allowedOrigin}${query}#details`,
+        loader_id: loader ? documentId : null,
+      });
     } else {
       expect(result).toMatchObject({ ok: false, error: { reason } });
     }

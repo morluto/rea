@@ -1,21 +1,13 @@
 import { basename } from "node:path";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
-  stableArtifactInputFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  closeArtifactResources,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   yieldArtifactRead,
   ArtifactResourceScope,
@@ -23,11 +15,13 @@ import {
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import {
   goBinarySchema,
   goAnalysisBudgets,
@@ -38,145 +32,106 @@ import {
   type GoStringLiterals,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  readGoBinaryImage,
-  readGoBinaryImageCooperative,
+  readGoBinaryImageFromHandle,
   type GoBinaryImage,
 } from "./GoBinaryImage.js";
-import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
+import { requireSelectedNativeImageFromReader } from "../domain/apple/machoSliceSelection.js";
 import {
   BinaryResourceFailure,
-  binaryResourceCeiling,
+  isNativeStructureFailure,
 } from "../domain/binaryContainer.js";
-import { errorMessage } from "../kernel/errorMessage.js";
+import {
+  NATIVE_STRUCTURE_BYTES,
+  nativeStructureConstraint,
+} from "../domain/native/nativeStructureBudget.js";
 
 const OPERATION = "inspect_go_binary";
-
-const budgetRecovery = (
-  parameter: keyof GoAnalysisBudgets,
-  value: number,
-): string =>
-  value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
-    ? `Increase ${parameter} above ${String(value)} (maximum ${String(GO_ANALYSIS_BUDGET_MAXIMA[parameter])}) on the next inspect_go_binary request; no restart is required.`
-    : `${parameter} is at its runtime representation maximum ${String(value)}; no larger value is supported. Preserve the complete selected artifact and report this boundary rather than repeating the unchanged request.`;
+const HEADER_PREFIX_BYTES = 4096;
 
 /** The per-call control of an exhausted budget, while a larger value is selectable. */
 const budgetLimit = (
   parameter: keyof GoAnalysisBudgets,
   value: number,
-): { readonly limit?: AnalysisControlLimit } =>
-  value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
-    ? {
-        limit: {
-          control_kind: "parameter",
-          parameter,
-          effective_value: value,
-          unit: parameter.endsWith("_bytes") ? "bytes" : "count",
-          minimum: 1,
-          maximum: GO_ANALYSIS_BUDGET_MAXIMA[parameter],
-          default_value: GO_ANALYSIS_BUDGET_DEFAULTS[parameter],
-          applies_at: "next_call",
-        },
-      }
-    : {};
-
-const failureForPrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  budgets: GoAnalysisBudgets,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof BinaryResourceFailure) {
-    const parameter =
-      cause.boundary === "search"
-        ? "max_header_search_bytes"
-        : cause.boundary === "build-info"
-          ? "max_build_info_bytes"
-          : undefined;
-    return parseLimitConstraint(
-      OPERATION,
-      cause.boundary === "search" ? "cpu" : "memory",
-      cause,
-      {
-        path,
-        ...(parameter === undefined
-          ? fixedAllowanceOptions(
-              "The Go structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(cause),
-            )
-          : {
-              retryable: false,
-              remediationAction: `${cause.boundary === "search" ? "The Go build-info header-search allowance" : "The Go build-info string allowance"} is ${String(budgets[parameter])} bytes. ${budgetRecovery(parameter, budgets[parameter])} Other byte and report budgets are independent. Repeating the unchanged request cannot raise this allowance.`,
-              ...budgetLimit(parameter, budgets[parameter]),
-            }),
-      },
-    );
-  }
-  const formatFailure = parseFailureAnalysisError(OPERATION, path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        {
-          maximum_input_bytes: budgets.max_input_bytes,
-          parameter: "max_input_bytes",
-          unit: "bytes",
-        },
-        {
-          cause,
-          retryable: false,
-          remediationAction: `${budgetRecovery("max_input_bytes", budgets.max_input_bytes)} Report, build-info and structural allowances remain independent. Preserve the complete artifact; do not truncate required bytes.`,
-          ...budgetLimit("max_input_bytes", budgets.max_input_bytes),
-        },
-      );
-    if (cause.reason === "path")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    path,
-    "artifact",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
-    },
-  });
-};
+): { readonly limit: AnalysisControlLimit } => ({
+  // At its maximum the generated recovery asks for a narrower request.
+  limit: {
+    control_kind: "parameter",
+    parameter,
+    effective_value: value,
+    unit: parameter.endsWith("_bytes") ? "bytes" : "count",
+    minimum: 1,
+    maximum: GO_ANALYSIS_BUDGET_MAXIMA[parameter],
+    default_value: GO_ANALYSIS_BUDGET_DEFAULTS[parameter],
+    applies_at: "next_call",
+  },
+});
 
 const failureFor = (
   cause: unknown,
   path: string,
   budgets: GoAnalysisBudgets,
-  snapshot?: StableArtifactSnapshot,
+  snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: GoBinary | undefined,
 ): AnalysisError => {
-  const primary = failureForPrimary(
-    artifactFilePrimaryFacts(cause),
-    path,
-    budgets,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: GO_BINARY_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path,
+      description: "artifact",
+      recognise: (failure, origin) => {
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure, path);
+        if (failure instanceof BinaryResourceFailure) {
+          const parameter =
+            failure.boundary === "search"
+              ? "max_header_search_bytes"
+              : failure.boundary === "build-info"
+                ? "max_build_info_bytes"
+                : undefined;
+          // Only the container's tables (max_structure_bytes, above) and these
+          // two Go budgets raise a resource failure here.
+          if (parameter === undefined) return undefined;
+          return parseLimitConstraint(
+            OPERATION,
+            failure.boundary === "search" ? "cpu" : "memory",
+            failure,
+            {
+              path,
+              retryable: false,
+              ...budgetLimit(parameter, budgets[parameter]),
+            },
+          );
+        }
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        )
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            "file-size",
+            failure.message,
+            {
+              maximum_input_bytes: budgets.max_input_bytes,
+              parameter: "max_input_bytes",
+              unit: "bytes",
+            },
+            {
+              cause: failure,
+              retryable: false,
+              ...budgetLimit("max_input_bytes", budgets.max_input_bytes),
+            },
+          );
+        return undefined;
+      },
+    }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,
@@ -199,7 +154,6 @@ const outputLimit = (path: string, maximumBytes: number) =>
     },
     {
       retryable: false,
-      remediationAction: `The Go complete-report allowance is ${String(maximumBytes)} bytes. ${budgetRecovery("max_report_bytes", maximumBytes)} This did not produce complete Evidence to page. MCP delivery limits remain independent.`,
       ...budgetLimit("max_report_bytes", maximumBytes),
     },
   );
@@ -209,6 +163,7 @@ const limitationsFor = (
   image: GoBinaryImage,
   stringLiterals: GoStringLiterals | undefined,
   budgets: GoAnalysisBudgets,
+  structureBytes: number,
 ): string[] => {
   const {
     build_info: info,
@@ -220,7 +175,7 @@ const limitationsFor = (
     stringLiterals === undefined
       ? "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered."
       : "Only Go build information and inferred static (ptr, len) string-header candidates are inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding retains its separate 16 MiB bound. These are not operating-system memory or CPU limits.`,
+    `Resource guards use max_input_bytes=${String(budgets.max_input_bytes)}, max_header_search_bytes=${String(budgets.max_header_search_bytes)}, max_build_info_bytes=${String(budgets.max_build_info_bytes)} and max_report_bytes=${String(budgets.max_report_bytes)}; increase the named per-call budget for the next inspection when needed. Native structural table decoding uses max_structure_bytes=${String(structureBytes)}. These are not operating-system memory or CPU limits.`,
     ...(info !== null && (info.go_version === null || info.module_text === null)
       ? [
           "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
@@ -303,16 +258,12 @@ export class GoBinaryProvider implements GoBinaryPort {
   readonly identity = GO_BINARY_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        GO_BINARY_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      GO_BINARY_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read complete compiler/module metadata while preserving original byte identity and source ranges. */
@@ -320,85 +271,104 @@ export class GoBinaryProvider implements GoBinaryPort {
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let completed: GoBinary | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     const budgets = goAnalysisBudgets(input);
+    const structureBytes =
+      input.max_structure_bytes ?? NATIVE_STRUCTURE_BYTES.default_value;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const parsedData = await withStableArtifactHandle<GoBinary>(
           input.path,
           budgets.max_input_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const selected = requireSelectedNativeImage(
-          OPERATION,
-          input.path,
-          snapshot.bytes,
-          input.architecture,
-        );
-        const imageOptions = {
-          includeStringLiterals: input.include_string_literals === true,
-          budgets,
-          checkActive: () => assertArtifactReadActive(options?.signal),
-        };
-        const image =
-          options?.signal === undefined
-            ? readGoBinaryImage(selected.bytes, imageOptions)
-            : await readGoBinaryImageCooperative(
-                selected.bytes,
-                imageOptions,
-                () => yieldArtifactRead(options.signal),
-              );
-        const {
-          section_names_limitation: _sectionNamesLimitation,
-          macho_chained_fixups: _machoChainedFixups,
-          string_literals: rawStringLiterals,
-          ...publicImage
-        } = image;
-        const info = inFile(image.build_info, selected.fileOffset);
-        const stringLiterals = inFileStringLiterals(
-          rawStringLiterals,
-          selected.fileOffset,
-        );
-        const report = {
-          ...publicImage,
-          artifact: {
-            path: input.path,
-            file_name: basename(input.path),
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (observed) => {
+              snapshot = observed;
+            },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
-          ...(selected.selection === null
-            ? {}
-            : { selected_slice: selected.selection }),
-          build_info: info,
-          ...(stringLiterals === undefined
-            ? {}
-            : { string_literals: stringLiterals }),
-          limitations: [
-            ...limitationsFor(image, stringLiterals, budgets),
-            ...selected.limitations,
-          ],
-        };
-        if (
-          jsonValueByteLength(report, budgets.max_report_bytes) >
-          budgets.max_report_bytes
-        )
-          throw outputLimit(input.path, budgets.max_report_bytes);
-        const parsed = goBinarySchema.safeParse(report);
-        if (!parsed.success)
-          throw new AnalysisOutputError(
-            OPERATION,
-            "Go reader produced invalid source ranges or report values.",
-            { cause: parsed.error },
-          );
-        assertArtifactReadActive(options?.signal);
-        return ok(parsed.data);
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const selected = await requireSelectedNativeImageFromReader(
+              OPERATION,
+              input.path,
+              handle,
+              input.architecture,
+            );
+            const imageOptions = {
+              includeStringLiterals: input.include_string_literals === true,
+              budgets,
+              structureBytes,
+              checkActive: () => assertArtifactReadActive(options?.signal),
+            };
+            const image = await readGoBinaryImageFromHandle(
+              selected.source,
+              imageOptions,
+              () => yieldArtifactRead(options?.signal),
+            );
+            const {
+              section_names_limitation: _sectionNamesLimitation,
+              macho_chained_fixups: _machoChainedFixups,
+              string_literals: rawStringLiterals,
+              ...publicImage
+            } = image;
+            const info = inFile(image.build_info, selected.fileOffset);
+            const stringLiterals = inFileStringLiterals(
+              rawStringLiterals,
+              selected.fileOffset,
+            );
+            const report = {
+              ...publicImage,
+              artifact: {
+                path: input.path,
+                file_name: basename(input.path),
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              ...(selected.selection === null
+                ? {}
+                : { selected_slice: selected.selection }),
+              build_info: info,
+              ...(stringLiterals === undefined
+                ? {}
+                : { string_literals: stringLiterals }),
+              limitations: [
+                ...limitationsFor(
+                  image,
+                  stringLiterals,
+                  budgets,
+                  structureBytes,
+                ),
+                ...selected.limitations,
+              ],
+            };
+            if (
+              jsonValueByteLength(report, budgets.max_report_bytes) >
+              budgets.max_report_bytes
+            )
+              throw outputLimit(input.path, budgets.max_report_bytes);
+            const parsed = goBinarySchema.safeParse(report);
+            if (!parsed.success)
+              throw new AnalysisOutputError(
+                OPERATION,
+                "Go reader produced invalid source ranges or report values.",
+                { cause: parsed.error },
+              );
+            assertArtifactReadActive(options?.signal);
+            return parsed.data;
+          },
+        );
+        return ok(parsedData);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, budgets, snapshot));
+      return err(failureFor(cause, input.path, budgets, snapshot, completed));
     }
   }
 }

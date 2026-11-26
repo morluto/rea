@@ -115,9 +115,7 @@ const frameTreeResult = (
     port,
     frameTreeReads > 1 && options.frameUrlAfterFirstRead !== undefined
       ? options.frameUrlAfterFirstRead
-      : frameTreeReads <= (options.transitionalFrameReads ?? 0)
-        ? ":"
-        : (options.electronFileUrl ?? options.attachedFrameUrl),
+      : options.electronFileUrl,
     options.extraCollections === true,
     options.webMcpFrameCount,
   );

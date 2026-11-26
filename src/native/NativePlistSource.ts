@@ -8,7 +8,7 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   bindArtifactFileCleanup,
   assertArtifactReadActive,
   withArtifactRegularFile,
@@ -243,10 +243,7 @@ const nativePlistPrimaryFailure = (
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return cancelledBy(
-        "inspect_plist",
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError("inspect_plist", cause);
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"
@@ -534,6 +531,11 @@ const readPlistSourceBytes = async (
  * This is a probe window, not a document cap, and has no runtime override.
  */
 const PLIST_MARKUP_PROBE_BYTES = 4096;
+const PLIST_PROBE_DECODERS = {
+  "utf-8": new TextDecoder("utf-8"),
+  "utf-16le": new TextDecoder("utf-16le"),
+  "utf-16be": new TextDecoder("utf-16be"),
+} as const;
 
 /** Source classification remains independent of plutil's converted value format. */
 export const plistSourceFormat = (
@@ -552,7 +554,7 @@ export const plistSourceFormat = (
       : head[0] === 0xfe && head[1] === 0xff
         ? "utf-16be"
         : "utf-8";
-  const text = new TextDecoder(encoding).decode(head).trimStart();
+  const text = PLIST_PROBE_DECODERS[encoding].decode(head).trimStart();
   return /^<(?:[!?]|(?:plist|dict|array|string|integer|real|data|date|true|false)[\s/>])/u.test(
     text,
   )
