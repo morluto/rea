@@ -16,6 +16,14 @@ import {
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
 
+/** Decode textual true/false after the caller applies its format's whitespace policy. */
+export const parseTrueFalseText = (value: string | null): boolean | null => {
+  const folded = value?.toLowerCase();
+  if (folded === "true") return true;
+  if (folded === "false") return false;
+  return null;
+};
+
 /** Match an XML element node regardless of namespace. */
 export const isXmlElement = (node: Node | null): node is Element =>
   node !== null && node.nodeType === 1;

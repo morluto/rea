@@ -56,11 +56,14 @@ import {
   notExecutedActionError,
   type ScenarioActionStop,
 } from "./ScenarioActionSequence.js";
-import { browserScenarioCaptureData } from "./BrowserScenarioPartialObservation.js";
+import {
+  browserScenarioCaptureData,
+  browserScenarioGlobalCompleteness,
+  completedCaptureWithIncompleteCleanup,
+} from "./BrowserScenarioPartialObservation.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [
@@ -239,23 +242,6 @@ const executeStep = async (input: {
   });
 };
 
-const globalCompleteness = (
-  scenario: BrowserScenario,
-  session: BrowserScenarioSessionPort,
-  steps: readonly BrowserScenarioStep[],
-): BrowserScenarioCompleteness => {
-  const missing = steps.flatMap(
-    ({ completeness }) => completeness.missing_sections,
-  );
-  const truncated = steps.flatMap(
-    ({ completeness }) => completeness.truncated_sections,
-  );
-  if (session.mode === "connect") missing.push("events");
-  if ((session.eventLimitations?.().length ?? 0) > 0) missing.push("events");
-  if ((session.storageLimitations?.().length ?? 0) > 0) missing.push("storage");
-  return classifyBrowserScenarioCompleteness(missing, truncated);
-};
-
 const runScenario = async (
   openSession: BrowserScenarioSessionOpener,
   scenario: BrowserScenario,
@@ -275,8 +261,22 @@ const runScenario = async (
   let cleanup: BrowserScenarioPartialObservation["capture"]["browser"]["cleanup"] =
     "incomplete";
   let primary: AnalysisError | undefined;
+  let incompleteCleanup:
+    | {
+        readonly reason: string;
+        readonly resources: readonly string[];
+      }
+    | undefined;
   const completeCapture = (): BrowserScenarioCapture => {
-    const completeness = globalCompleteness(scenario, session, steps);
+    if (incompleteCleanup !== undefined)
+      return completedCaptureWithIncompleteCleanup({
+        session,
+        scenario,
+        startedAt,
+        steps,
+        cleanup: incompleteCleanup,
+      });
+    const completeness = browserScenarioGlobalCompleteness(session, steps);
     return browserScenarioCaptureSchema.parse({
       ...browserScenarioCaptureData({
         session,
@@ -340,6 +340,21 @@ const runScenario = async (
         } catch (cause: unknown) {
           primary?.retainPartialObservation(partial(cleanupLimitation));
           const observation = browserCleanupObservation(cause);
+          const redactText = (value: string) =>
+            session.redactError(new Error(value));
+          retainCleanup(session.cleanupLease, redactText);
+          if (
+            primary === undefined &&
+            options.signal?.aborted !== true &&
+            steps.every(({ status }) => status === "completed") &&
+            session.captureFinalized?.() === true
+          ) {
+            incompleteCleanup = {
+              reason: redactText(observation.reason),
+              resources: observation.resources.map(redactText),
+            };
+            return;
+          }
           const failure = new BrowserObservationError(
             OPERATION,
             "cleanup_failed",
@@ -349,7 +364,6 @@ const runScenario = async (
               detail: `Browser scenario cleanup could not be confirmed: ${observation.reason}. Collected steps and events are retained in partial_observation. Review the reported resources before retrying.`,
             },
           );
-          retainCleanup(session.cleanupLease);
           new AnalysisCleanupLeaseGroup(failure, [session.cleanupLease]);
           throw failure;
         }
@@ -509,7 +523,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
           PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
           (pending.cleanupResources ?? []).map(redactText),
           {
-            reason: redactText(errorMessage(cause)),
+            reason: redactText(browserCleanupObservation(cause).reason),
           },
           { operation: OPERATION, cause },
         );

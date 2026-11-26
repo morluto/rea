@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "./result.js";
 import type {
   TargetFailureFacts,
   TargetFailureOf,
@@ -192,4 +193,17 @@ export const parseFailureFromCause = (
 ): ParseFailureError | undefined => {
   if (cause instanceof ParseFailureError) return cause;
   return undefined;
+};
+
+/** Return a parser's reported failure and let unexpected exceptions reach the caller. */
+export const captureParseFailure = <T>(
+  read: () => T,
+): Result<T, ParseFailureError> => {
+  try {
+    return ok(read());
+  } catch (cause) {
+    const failure = parseFailureFromCause(cause);
+    if (failure === undefined) throw cause;
+    return err(failure);
+  }
 };

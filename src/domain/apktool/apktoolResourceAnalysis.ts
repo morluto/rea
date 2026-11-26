@@ -307,7 +307,11 @@ export const apktoolResultSchemas = {
         "Primary string entries; empty when include_strings is false or string_tables_only is true. An unrequested field does not establish an empty table.",
       ),
     locale: z.string().nullable(),
-    locales: z.array(z.string().min(1)),
+    locales: z
+      .array(z.string().min(1))
+      .describe(
+        "Every locale with a res/values-<locale>/strings.xml in the decoded workspace, sorted; the default table is not listed. A listed table can still hold no valid strings; select it with locale or locales to read it.",
+      ),
     string_tables: z
       .array(stringTableSchema)
       .optional()

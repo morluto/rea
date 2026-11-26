@@ -7,7 +7,11 @@ import {
 } from "./analysisProfile.js";
 import { buildCallPath } from "./callPath.js";
 import { combineFunctionRelationshipCoverage } from "./functionCallCoverage.js";
-import { callPathResultSchema, type CallPathInput } from "./callPathSchemas.js";
+import {
+  CALL_PATH_REPRESENTATION_BUDGET_BYTES,
+  callPathResultSchema,
+  type CallPathInput,
+} from "./callPathSchemas.js";
 import {
   createEvidence,
   type Evidence,
@@ -28,12 +32,13 @@ const observe = (
     readonly calleeUnavailable?: string;
     readonly analysisProfile?: AnalysisProfileCommitment;
     readonly target?: EvidenceSubjectTarget;
+    readonly name?: string;
   } = {},
 ): Evidence => {
   const value = {
     procedure: {
       address,
-      name: `fn_${address.slice(2)}`,
+      name: options.name ?? `fn_${address.slice(2)}`,
       classification: null,
       body: {
         available: false,
@@ -392,10 +397,16 @@ describe("call path topology and capacity", () => {
       goal: { address: address(length + 1) },
     });
     expect(result).toMatchObject({ status: "found", shortest_hops: length });
+    // The sole path is linear in the supplied Evidence, so it is returned
+    // even though it is larger than the budget for additional paths.
     expect(result.paths).toHaveLength(1);
     expect(result.paths[0]?.nodes).toHaveLength(length + 1);
     expect(result.paths[0]?.edges).toHaveLength(length);
     expect(result.paths[0]?.nodes.at(-1)?.address).toBe(address(length + 1));
+    expect(result).toMatchObject({
+      paths_truncated: false,
+      paths_limited_by_bytes: false,
+    });
   });
 
   it("returns the sole shortest path alongside a deep merging dead-end graph", () => {
@@ -931,4 +942,205 @@ it("keeps an absent path unknown when only callee facet availability is declared
   ]);
   expect(result.status).toBe("unknown");
   expect(result.limitations).toContain("Graph callees unavailable");
+});
+// Two functions per layer, each reaching both functions of the next layer. One
+// dossier per function keeps the supplied input linear in `layers` while the
+// number of distinct shortest paths doubles with every added layer.
+const lattice = (
+  layers: number,
+): { functions: Evidence[]; start: string; goal: string } => {
+  const address = (layer: number, branch: number) =>
+    `0x${(0x1000 + layer * 0x10 + branch).toString(16)}`;
+  const functions: Evidence[] = [];
+  for (let layer = 0; layer <= layers; layer += 1)
+    for (let branch = 0; branch < 2; branch += 1)
+      functions.push(
+        observe(
+          address(layer, branch),
+          layer === layers
+            ? []
+            : [address(layer + 1, 0), address(layer + 1, 1)],
+        ),
+      );
+  return { functions, start: address(0, 0), goal: address(layers, 0) };
+};
+const shortestPathTotal = (layers: number) => 2 ** (layers - 1);
+
+describe("call path enumeration capacity", () => {
+  it("reports the exact total and bounds the inline paths", () => {
+    const { functions, start, goal } = lattice(8);
+    const result = buildCallPath({
+      functions,
+      start: { address: start },
+      goal: { address: goal },
+    });
+    expect(result).toMatchObject({ status: "found", shortest_hops: 8 });
+    expect(result.total_shortest_paths).toBe(shortestPathTotal(8));
+    expect(result.paths).toHaveLength(64);
+    expect(result.paths_truncated).toBe(true);
+  });
+
+  it("reports a complete inline path set when it fits the capacity", () => {
+    const { functions, start, goal } = lattice(4);
+    const result = buildCallPath({
+      functions,
+      start: { address: start },
+      goal: { address: goal },
+    });
+    expect(result.paths).toHaveLength(shortestPathTotal(4));
+    expect(result.total_shortest_paths).toBe(shortestPathTotal(4));
+    expect(result.paths_truncated).toBe(false);
+    expect(result.paths_limited_by_bytes).toBe(false);
+  });
+
+  it("honors a caller-selected capacity and keeps the canonical first paths", () => {
+    const { functions, start, goal } = lattice(8);
+    const bounded = buildCallPath({
+      functions,
+      start: { address: start },
+      goal: { address: goal },
+      max_paths: 32,
+    });
+    const wider = buildCallPath({
+      functions,
+      start: { address: start },
+      goal: { address: goal },
+      max_paths: 128,
+    });
+    expect(bounded.paths).toHaveLength(32);
+    expect(bounded.paths_truncated).toBe(true);
+    expect(wider.paths).toHaveLength(shortestPathTotal(8));
+    expect(wider.paths_truncated).toBe(false);
+    // Widening the capacity extends the list; it never reorders the prefix.
+    expect(wider.paths.slice(0, 32)).toEqual(bounded.paths);
+    expect(bounded.total_shortest_paths).toBe(shortestPathTotal(8));
+    expect(wider.total_shortest_paths).toBe(shortestPathTotal(8));
+  });
+
+  it("treats max_paths as a count preference rather than a resource ceiling", () => {
+    const { functions, start, goal } = lattice(4);
+    expect(
+      buildCallPath({
+        functions,
+        start: { address: start },
+        goal: { address: goal },
+        max_paths: Number.MAX_SAFE_INTEGER,
+      }).paths,
+    ).toHaveLength(shortestPathTotal(4));
+    expect(() =>
+      buildCallPath({
+        functions,
+        start: { address: start },
+        goal: { address: goal },
+        max_paths: Number.MAX_SAFE_INTEGER + 1,
+      }),
+    ).toThrow();
+    expect(() =>
+      buildCallPath({
+        functions,
+        start: { address: start },
+        goal: { address: goal },
+        max_paths: 0,
+      }),
+    ).toThrow();
+  });
+
+  it("reports no paths and no truncation when no shortest path exists", () => {
+    const result = run([observe("0x1000", []), observe("0x4000", [])]);
+    expect(result).toMatchObject({
+      // The supplied dossiers do not commit complete relationship coverage, so
+      // the narrower observed_status carries the absence while status stays
+      // unknown; only a complete discovery may publish not_found.
+      status: "unknown",
+      search_scope: { observed_status: "not_found" },
+      paths: [],
+      total_shortest_paths: 0,
+      total_shortest_paths_capped: false,
+      paths_truncated: false,
+      paths_limited_by_bytes: false,
+    });
+  });
+
+  it("marks a count that exceeds the exactly representable range as a lower bound", () => {
+    // 2^52 paths is still exact; one more layer doubles it past 2^53 - 1, where
+    // a plain number can no longer distinguish the total from its own bound.
+    const withinRange = lattice(53);
+    const exact = buildCallPath({
+      functions: withinRange.functions,
+      start: { address: withinRange.start },
+      goal: { address: withinRange.goal },
+    });
+    expect(exact.total_shortest_paths).toBe(2 ** 52);
+    expect(exact.total_shortest_paths_capped).toBe(false);
+    expect(exact.paths_truncated).toBe(true);
+
+    const beyondRange = lattice(54);
+    const capped = buildCallPath({
+      functions: beyondRange.functions,
+      start: { address: beyondRange.start },
+      goal: { address: beyondRange.goal },
+    });
+    expect(capped.total_shortest_paths_capped).toBe(true);
+    expect(capped.total_shortest_paths).toBe(Number.MAX_SAFE_INTEGER);
+    expect(capped.paths.length).toBeLessThanOrEqual(64);
+    // The byte budget bounds the serialized representation, and a bounded prefix
+    // of this lattice fits it, so the count capacity is what truncates here.
+    expect(capped.paths_limited_by_bytes).toBe(false);
+    expect(capped.paths_truncated).toBe(true);
+    expect(callPathResultSchema.parse(capped)).toEqual(capped);
+  });
+});
+
+describe("call path representation budget", () => {
+  it("stops before the cited shortest-path representation exceeds its byte budget", () => {
+    const { functions, start, goal } = lattice(18);
+    const result = buildCallPath({
+      functions,
+      start: { address: start },
+      goal: { address: goal },
+      max_paths: 1_000_000,
+    });
+    expect(result.total_shortest_paths).toBe(shortestPathTotal(18));
+    expect(result.paths_limited_by_bytes).toBe(true);
+    expect(result.paths_truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result.paths))).toBeLessThanOrEqual(
+      CALL_PATH_REPRESENTATION_BUDGET_BYTES,
+    );
+    // Every lattice path serializes to the same size, so exact accounting
+    // stops only when one more path and its separator would not fit.
+    const used = Buffer.byteLength(JSON.stringify(result.paths));
+    const onePath = Buffer.byteLength(JSON.stringify(result.paths[0]));
+    expect(CALL_PATH_REPRESENTATION_BUDGET_BYTES - used).toBeLessThan(
+      onePath + 1,
+    );
+  });
+
+  it("returns the first shortest path and bounds the paths after it", () => {
+    // Two shortest paths, each larger than the whole budget: the first is
+    // returned, and the budget stops the second.
+    const oversizedName = "n".repeat(CALL_PATH_REPRESENTATION_BUDGET_BYTES);
+    const functions = [
+      observe("0x1000", ["0x2000", "0x3000"], "rea-workflow", {
+        name: oversizedName,
+      }),
+      observe("0x2000", ["0x4000"]),
+      observe("0x3000", ["0x4000"]),
+      observe("0x4000", []),
+    ];
+    const result = buildCallPath({
+      functions,
+      start: { address: "0x1000" },
+      goal: { address: "0x4000" },
+    });
+    expect(result).toMatchObject({
+      status: "found",
+      shortest_hops: 2,
+      total_shortest_paths: 2,
+      paths_truncated: true,
+      paths_limited_by_bytes: true,
+    });
+    expect(
+      result.paths.map(({ nodes }) => nodes.map(({ address }) => address)),
+    ).toEqual([["0x1000", "0x2000", "0x4000"]]);
+  });
 });

@@ -14,6 +14,8 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
+import { claimsExecutableHeader } from "./binaryTarget.js";
 import { hasQualcommMbnHeader } from "./qualcommMbnImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
@@ -52,6 +54,7 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-sparse-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -185,6 +188,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
           };
     },
     ({ prefix }) => {
+      const sparse = recognizeAndroidSparseImage(prefix);
+      if (sparse === undefined) return undefined;
+      return sparse.state === "recognized"
+        ? { state: "recognized", format: "android-sparse-image" }
+        : {
+            state: "refused",
+            format: "android-sparse-image",
+            reason: sparse.reason,
+          };
+    },
+    ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);
       return format === undefined ? undefined : { state: "recognized", format };
     },
@@ -257,9 +271,11 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
     // A legacy MBN header has no magic; the version word, sizes and pointer
-    // arithmetic must agree, so it runs after every signature format. An ELF
-    // MBN is ELF here; root inventory reads it as MBN for its hash segment.
+    // arithmetic must agree, so it runs after every signature format and yields
+    // to native executable headers (ELF, PE/DOS MZ, Mach-O, FAT). An ELF MBN is
+    // ELF here; root inventory reads it as MBN for its hash segment.
     ({ prefix, fileSize }) =>
+      !claimsExecutableHeader(prefix, fileSize) &&
       hasQualcommMbnHeader(prefix, fileSize)
         ? { state: "recognized", format: "qualcomm-mbn" }
         : undefined,

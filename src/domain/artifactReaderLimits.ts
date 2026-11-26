@@ -95,6 +95,15 @@ export const godotReaderLimitsSchema = z.strictObject({
 });
 export type GodotReaderLimits = z.output<typeof godotReaderLimitsSchema>;
 
+export const DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS = {
+  chunk_count: 1_048_576,
+};
+export const androidSparseImageReaderLimitsSchema = z.strictObject({
+  chunk_count: count,
+});
+export type AndroidSparseImageReaderLimits = z.output<
+  typeof androidSparseImageReaderLimitsSchema
+>;
 export const DEFAULT_ISO9660_READER_LIMITS = {
   descriptor_count: 64,
   directory_depth: 64,
@@ -232,6 +241,15 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Godot directory representation admission; omitted fields use ${JSON.stringify(DEFAULT_GODOT_READER_LIMITS)}. Applies before path allocation and again to retained metadata.`,
     ),
+  android_sparse_image: z
+    .strictObject({
+      chunk_count:
+        androidSparseImageReaderLimitsSchema.shape.chunk_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
+    ),
   iso9660: z
     .strictObject({
       descriptor_count:
@@ -301,18 +319,27 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
 export type ArtifactReaderLimitsInput = z.output<
   typeof artifactReaderLimitsInputSchema
 >;
-export const artifactReaderLimitsSchema = z.strictObject({
+const resolvedArtifactReaderLimitsSchema = z.strictObject({
   bun: bunReaderLimitsSchema,
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  android_sparse_image: androidSparseImageReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
-export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
+export type ArtifactReaderLimits = z.output<
+  typeof resolvedArtifactReaderLimitsSchema
+>;
+
+// Earlier Evidence predates sparse-image admission and omits that policy.
+export const artifactReaderLimitsSchema =
+  resolvedArtifactReaderLimitsSchema.extend({
+    android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+  });
 
 /**
  * The per-call fields that `artifact.member_count` backs. Each counts the
@@ -345,6 +372,10 @@ export const resolveArtifactReaderLimits = (
     ...selected?.node_sea,
   },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
+  android_sparse_image: {
+    ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
+    ...selected?.android_sparse_image,
+  },
   iso9660: { ...DEFAULT_ISO9660_READER_LIMITS, ...selected?.iso9660 },
   deno: {
     ...DEFAULT_DENO_READER_LIMITS,
@@ -384,6 +415,7 @@ const READER_LIMIT_GROUPS = {
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  android_sparse_image: androidSparseImageReaderLimitsSchema,
   iso9660: iso9660ReaderLimitsSchema,
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,

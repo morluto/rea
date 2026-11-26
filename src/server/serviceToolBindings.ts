@@ -14,9 +14,11 @@ import type { AndroidAnalysisService } from "../application/android/AndroidAnaly
 import {
   androidJniInspectionInputSchema,
   androidPackageInspectionInputSchema,
+  androidReferencesInspectionInputSchema,
   androidSymbolInspectionInputSchemas,
 } from "../domain/android/androidAnalysis.js";
 import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnalysis.js";
+import { decodeAndroidResourcesRequestSchema } from "../contracts/apktool/apktoolToolContracts.js";
 import {
   executeRetainedSummaryOperation,
   inspectAnalysisView,
@@ -279,10 +281,19 @@ const SERVICE_TOOL_BINDINGS = {
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
-    ...contractServiceBindings(service, [
-      "search_android_classes",
-      "trace_android_references",
-    ]),
+    ...contractServiceBindings(service, ["search_android_classes"]),
+    trace_android_references: {
+      admission: "sdk",
+      run: (input, options) =>
+        executeRetainedSummaryOperation(
+          service,
+          "trace_android_references",
+          androidReferencesInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
+    },
     inspect_android_package: {
       admission: "sdk",
       run: (input, options) =>
@@ -332,11 +343,21 @@ const SERVICE_TOOL_BINDINGS = {
         ),
     },
   })) satisfies Bind<AndroidAnalysisService>,
-  apktoolAnalysis: ((service) =>
-    contractServiceBindings(service, [
-      "inspect_apktool_client",
-      "decode_android_resources",
-    ])) satisfies Bind<ApktoolResourceAnalysisService>,
+  apktoolAnalysis: ((service, retention) => ({
+    ...contractServiceBindings(service, ["inspect_apktool_client"]),
+    decode_android_resources: {
+      admission: "sdk",
+      run: (input, options) =>
+        executeRetainedSummaryOperation(
+          service,
+          "decode_android_resources",
+          decodeAndroidResourcesRequestSchema,
+          input,
+          retention,
+          options,
+        ),
+    },
+  })) satisfies Bind<ApktoolResourceAnalysisService>,
   jebAnalysis: ((service) =>
     contractServiceBindings(service, [
       "inspect_jeb_client",

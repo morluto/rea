@@ -109,6 +109,16 @@ both `source.kind: "retained-evidence"` and `view: {kind: "native", facet:
 Use the producer's handoff for other supported views rather than maintaining
 another supposedly exhaustive list in the shared consumer description.
 
+Make an input refusal teach the rule it applies. Below the first level the
+compact profile keeps no refinement, `pattern`, `not` or description, so a
+nested rule reaches the agent only when a call is refused. Report the issue
+at the field path, and state the rule and the accepted form in one sentence,
+as in `A page's fetch cannot set Sec-Trace: names starting with Proxy- or Sec-
+are reserved for the browser.` A bare `Invalid value` costs another round trip.
+Do not echo a refused value that may carry a secret, such as a URL or an
+endpoint identifier. Restating the rule in the tool description costs tokens
+on every listing; do that only for a rule most calls need.
+
 Keep configuration tutorials and detailed matching algorithms with their owning
 parameter contracts, product guides and actionable failures. Retain applicability,
 source identity, uncertainty, authority and cleanup facts needed to choose or

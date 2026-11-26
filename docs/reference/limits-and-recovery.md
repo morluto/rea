@@ -462,9 +462,10 @@ not, the work is never refused or truncated:
     owns, never a symbolic link; files are created exclusively as `0600` by
     the Evidence bundle writer.
   - **Key and lifetime:** each file is named by the SHA-256 of the complete
-    record's exact JSON, so it covers every input and caller choice the
-    record holds, including caller paths the Evidence ID leaves out. A
-    repeat run reuses the file and never rewrites it. A repeat run, or a
+    bundle's canonical JSON, including captured source records and caller
+    paths that semantic Evidence IDs leave out. The separate
+    `record_sha256` receipt still hashes only the complete parent record.
+    A repeat with the same bundle reuses the file and never rewrites it. A repeat run, or a
     `rea inspect-analysis-view` read of the file, renews its age. Each
     retention removes records unused for 7 days, then the least recently
     used until the cache fits `delivery.cli_retained_evidence_bytes`
@@ -485,7 +486,10 @@ not, the work is never refused or truncated:
     and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
     analysis never fails because of retention. A save that published the
     file but then failed (staging cleanup or cancellation) reports that
-    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
+    failure and its cleanup state, as `--evidence_output` does; unfinished
+    staging cleanup before commit likewise reports `cleanup_incomplete` with
+    its remaining resources, and an oversized bundle whose post-write removal
+    fails keeps its receipt, paging cursor, and `retention_failure`. Caller inputs are never
     echoed, since they can carry access credentials; the note names both.
 
 A failure's own facts (code, `failure_kind`, retry, recovery and limits)
@@ -498,8 +502,14 @@ view, and `details.partial_observation_delivery` carries the same delivery
 facts as a successful result. On MCP the session retains the complete
 partial Evidence, `next` pages it, and a `resource_link` to it follows
 the error text when one read can deliver it. On the CLI, `--evidence_output`
-publishes it and `next` names the bundle. Without `--evidence_output`,
-nothing is written and `rerun` names the arguments to add.
+publishes it and `next` names the bundle. Without `--evidence_output`, it is
+retained in the same private cache as a successful over-budget result
+(`retained: "cache-file"`), with `details.diagnostics.evidence_bundle`
+reporting its `path`, `bytes`, and `record_sha256` and `next` paging that
+file. When retention is off (`--no-retain` or
+`REA_CLI_RETAINED_EVIDENCE_BYTES=0`) or fails, nothing is written and `rerun`
+names the arguments to add (with `retention_failure` when a write failed);
+cancelled failures do not write to the cache.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with
@@ -734,18 +744,20 @@ editable setting or active worker telemetry.
 ## Artifact reader admission
 
 `inspect_artifact` and `extract_artifact` accept `bun`, `dotnet_bundle`,
-`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg` and `tar` groups in
-`artifact_limits`. Their controls apply when recognition
-or inventory encounters that format; supplying
-a policy does not assert the format is present. Unsupported keys are rejected.
-Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
-[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and
+`node_sea`, `godot`, `iso9660`, `deno`, `wxapkg`, `tar` and
+`android_sparse_image` groups in `artifact_limits`. Their controls apply when
+recognition or inventory encounters that format. Supplying a policy does not
+assert the format is present. Unsupported keys are rejected. Each group follows
+one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
+[Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md),
 [Bun standalone](../bun-standalone.md), [Deno compile](../deno-standalone.md),
-[wxapkg](../wxapkg.md) and [tar](../tar-archives.md) for format semantics.
+[wxapkg](../wxapkg.md), [tar](../tar-archives.md) and
+[Android sparse images](../guides/firmware/android-sparse-image.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
-retains each archive's encoded-size-derived default. The .NET bundle group's
+SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers,
+including repeated readable logical occurrences. Omission retains each
+archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default

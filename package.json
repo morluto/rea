@@ -46,7 +46,7 @@
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
-  "packageManager": "npm@11.16.0",
+  "packageManager": "npm@11.21.3",
   "files": [
     "dist",
     "install.sh",
@@ -396,7 +396,7 @@
     "cborg": "7.0.0",
     "cross-spawn": "7.0.6",
     "diff": "9.0.0",
-    "evmole": "0.9.6",
+    "evmole": "0.10.1",
     "graphql": "17.1.0",
     "har-schema": "2.0.0",
     "ignore": "7.0.16",
