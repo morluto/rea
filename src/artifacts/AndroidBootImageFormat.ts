@@ -1497,7 +1497,7 @@ const be32 = (buffer: Buffer, offset: number): number => {
 /** A 64-bit AVB counter kept exact; unlike positions it is not a file offset. */
 const u64beExact = (buffer: Buffer, offset: number, what: string): bigint => {
   requireBytes(buffer, offset + 8, what, AVB_VBMETA_FORMAT);
-  return buffer.readBigUInt64BE(offset);
+  return bigEndianAvbReader(buffer).word(offset, 64);
 };
 
 const avbFlagNames = (flags: number): string[] => {
