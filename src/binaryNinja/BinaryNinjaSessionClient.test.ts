@@ -8,12 +8,14 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { constants as bufferConstants } from "node:buffer";
 import {
   createBinaryNinjaTarget,
   RecordingBinaryNinjaMcp,
 } from "../../tests/fixtures/binaryNinjaMcp.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { BinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
 import { BINARY_NINJA_XREF_LIMITATION } from "./BinaryNinjaProviderCapabilities.js";
 import { BinaryNinjaSessionClient } from "./BinaryNinjaSessionClient.js";
@@ -839,15 +841,25 @@ describe("Binary Ninja string capacity", () => {
     producer.pageSize = 1;
     heapCapacity.stringLimit = 1024;
     try {
-      expect(
-        await client.execute("procedure_pseudo_code", { procedure: "main" }),
-      ).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "AnalysisResourceConstraintError",
-          reportedLimits: {
-            required_string_code_units: 1201,
-            maximum_string_code_units: 1024,
+      const result = await client.execute("procedure_pseudo_code", {
+        procedure: "main",
+      });
+      if (result.ok) throw new Error("Expected a string length refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        reportedLimits: {
+          required_string_code_units: 1201,
+          maximum_string_code_units: 1024,
+        },
+      });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        retryable: false,
+        details: {
+          refusal: {
+            kind: "fixed_ceiling",
+            operation: "procedure_pseudo_code",
+            limit: 1024,
+            unit: "UTF-16 code units",
           },
         },
       });
@@ -879,6 +891,7 @@ describe("Binary Ninja string capacity", () => {
         ok: false,
         error: {
           _tag: "AnalysisResourceConstraintError",
+          recovery: { measuredExhaustion: true },
           reportedLimits: { available_bytes: 250000 },
         },
       });
@@ -916,38 +929,57 @@ describe("Binary Ninja string capacity", () => {
     }
   });
 
-  it("rejects an unrepresentable declared string length before allocation", async () => {
-    const { client, producer } = await fixture();
-    producer.strings = [
-      { address: "0x500000", type: "AsciiString", bytes: Buffer.from("test") },
-    ];
-    const original = producer.call.bind(producer);
-    producer.call = async (name, args) => {
-      const reply = await original(name, args);
-      return name === "bn_string_list"
-        ? {
-            ...reply,
-            text: reply.text!.replace("| 0x4 |", "| 0xffffffffffffffff |"),
-          }
-        : reply;
-    };
-    try {
-      expect(
-        await client.execute("search_strings", { pattern: "test" }),
-      ).toMatchObject({
-        ok: false,
-        error: { _tag: "AnalysisResourceConstraintError" },
-      });
-      expect(
-        producer.calls.some(
-          ({ name, args }) =>
-            name === "bn_memory_read" && args.address === "0x500000",
-        ),
-      ).toBe(false);
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
+  it.each([
+    {
+      length: "0xffffffffffffffff",
+      limit: bufferConstants.MAX_LENGTH,
+      unit: "bytes",
+    },
+    { length: "0x401", limit: 1024, unit: "UTF-16 code units" },
+  ])(
+    "rejects a declared string beyond the $unit ceiling before allocation",
+    async ({ length, limit, unit }) => {
+      const { client, producer } = await fixture();
+      heapCapacity.stringLimit = 1024;
+      producer.strings = [
+        {
+          address: "0x500000",
+          type: "AsciiString",
+          bytes: Buffer.from("test"),
+        },
+      ];
+      const original = producer.call.bind(producer);
+      producer.call = async (name, args) => {
+        const reply = await original(name, args);
+        return name === "bn_string_list"
+          ? {
+              ...reply,
+              text: reply.text!.replace("| 0x4 |", `| ${length} |`),
+            }
+          : reply;
+      };
+      try {
+        const result = await client.execute("search_strings", {
+          pattern: "test",
+        });
+        if (result.ok) throw new Error("Expected a declared length refusal");
+        expect(projectAnalysisError(result.error)).toMatchObject({
+          retryable: false,
+          details: {
+            refusal: { kind: "fixed_ceiling", limit, unit },
+          },
+        });
+        expect(
+          producer.calls.some(
+            ({ name, args }) =>
+              name === "bn_memory_read" && args.address === "0x500000",
+          ),
+        ).toBe(false);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+    },
+  );
 });
 
 it("reports a failed connection close and retries it", async () => {

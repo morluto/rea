@@ -21,7 +21,11 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -194,7 +198,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
             upstream: this.connection.serverInfo(),
             view_before: before,
             view_after: after,
-            observations: jsonValueSchema.parse(runner.raw),
+            observations: ownedJsonValueSchema.parse(runner.raw),
           },
           limitations: [...BINARY_NINJA_LIMITATIONS, ...runner.limitations],
           ...(runner.relationshipCoverage === undefined
@@ -307,7 +311,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
       runner.raw.length > 0 &&
       before !== undefined
     ) {
-      const observations = jsonValueSchema.parse(runner.raw);
+      const observations = ownedJsonValueSchema.parse(runner.raw);
       failure.retainPartialObservation(
         createEvidence(this.target, BINARY_NINJA_PROVIDER_IDENTITY, {
           predicateType: "analysis-observation",

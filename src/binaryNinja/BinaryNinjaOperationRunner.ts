@@ -7,6 +7,7 @@ import {
   AnalysisProtocolError,
   measuredResourceConstraint,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { constants as bufferConstants } from "node:buffer";
 import { getHeapStatistics } from "node:v8";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
@@ -100,6 +101,14 @@ interface Relationships {
 const INSTRUCTION_LINE = /^(0x[0-9a-f]+) {2}(.*)$/iu;
 const BLOCK_RANGE = /^(0x[0-9a-f]+)-(0x[0-9a-f]+) \(\d+ bytes\)$/iu;
 const isHexAddress = (value: string): boolean => /^0x[0-9a-f]+$/iu.test(value);
+const nodeStringAllowance = (narrowing: string) =>
+  fixedAllowanceOptions("The Node.js string length limit", "parser", {
+    limit: bufferConstants.MAX_STRING_LENGTH,
+    unit: "UTF-16 code units",
+    narrowing,
+  });
+const STRING_NARROWING =
+  "Request a different string by address with list_strings or inspect the string in Binary Ninja.";
 
 /** Estimate without serializing or copying the reply being admitted. */
 const retainedReplyCapacity = (value: JsonValue): bigint => {
@@ -474,8 +483,9 @@ export class BinaryNinjaOperationRunner {
         row.type === "Utf32String" || row.type === "Utf16String"
           ? length / 2n
           : length;
+      const bufferExceeded = length > BigInt(bufferConstants.MAX_LENGTH);
       if (
-        length > BigInt(bufferConstants.MAX_LENGTH) ||
+        bufferExceeded ||
         codeUnits > BigInt(bufferConstants.MAX_STRING_LENGTH)
       )
         throw measuredResourceConstraint(
@@ -488,10 +498,17 @@ export class BinaryNinjaOperationRunner {
             maximum_buffer_bytes: bufferConstants.MAX_LENGTH,
             maximum_string_code_units: bufferConstants.MAX_STRING_LENGTH,
           },
-          {
-            remediationAction:
-              "Inspect the string in Binary Ninja or request a different string by address.",
-          },
+          bufferExceeded
+            ? fixedAllowanceOptions(
+                "The Node.js buffer length limit",
+                "bytes",
+                {
+                  limit: bufferConstants.MAX_LENGTH,
+                  unit: "bytes",
+                  narrowing: STRING_NARROWING,
+                },
+              )
+            : nodeStringAllowance(STRING_NARROWING),
         );
     }
     this.requireCapacity(
@@ -522,6 +539,7 @@ export class BinaryNinjaOperationRunner {
           available_heap_bytes: heap.total_available_size,
         },
         {
+          measuredExhaustion: true,
           remediationAction:
             "Free memory or raise the Node.js heap allowance for REA, then retry.",
         },
@@ -572,7 +590,7 @@ export class BinaryNinjaOperationRunner {
           required_string_code_units: codeUnits,
           maximum_string_code_units: bufferConstants.MAX_STRING_LENGTH,
         },
-        { remediationAction: "Inspect the function in Binary Ninja." },
+        nodeStringAllowance("Inspect the function in Binary Ninja."),
       );
     return lines.join("\n");
   }
