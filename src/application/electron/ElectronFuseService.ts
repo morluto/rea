@@ -39,7 +39,7 @@ export class ElectronFuseService {
         outputSchema: electronFuseReportSchema,
         provider: this.provider,
         invalidOutputMessage:
-          "Electron fuse reader returned a malformed report, changed the selected artifact identity, or exceeded the requested file or sentinel budget.",
+          "Electron fuse reader returned a malformed report, changed the selected artifact identity, or exceeded the requested file, sentinel, or decoded-byte budget.",
         toParameters: (input): InspectElectronFusesRequest => ({
           ...callerAnalysisParameters(rawInput)(input),
           path: input.path,

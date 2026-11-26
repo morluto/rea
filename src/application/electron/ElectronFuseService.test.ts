@@ -226,8 +226,41 @@ it("rejects provider reports that exceed caller-selected file or sentinel budget
     max_decoded_bytes: 1024,
   });
   expect(decodedResult.ok).toBe(false);
-  if (!decodedResult.ok)
+  if (!decodedResult.ok) {
     expect(decodedResult.error).toBeInstanceOf(AnalysisOutputError);
+    expect(decodedResult.error.message).toContain("decoded-byte budget");
+  }
+
+  // Omitted max_decoded_bytes enforces the 8 MiB default across slices.
+  const oversizedDefaultDecoded: ElectronFuseReport = {
+    ...report,
+    artifact: { ...report.artifact, bytes: 1000000 },
+    slices: Array.from({ length: 128 }, (_, sliceIndex) => ({
+      index: sliceIndex,
+      file_offset: 0,
+      size: 1000000,
+      architecture: null,
+      sentinel_count: 65,
+      sentinels: Array.from({ length: 65 }, (_, sentinelIndex) => ({
+        sentinel_offset: sentinelIndex * 64,
+        wire_version: 2,
+        declared_length: 0,
+        fuses: [],
+        complete: true,
+      })),
+    })),
+  };
+  const defaultDecodedResult = await new ElectronFuseService({
+    identity,
+    close: async () => {},
+    inspect: async () => ok(oversizedDefaultDecoded),
+  }).inspect({
+    path: report.artifact.selected_path,
+    max_sentinels_per_slice: 1024,
+  });
+  expect(defaultDecodedResult.ok).toBe(false);
+  if (!defaultDecodedResult.ok)
+    expect(defaultDecodedResult.error).toBeInstanceOf(AnalysisOutputError);
 
   const thirtyThreeSentinels = Array.from({ length: 33 }, (_, i) => ({
     sentinel_offset: i * 40,

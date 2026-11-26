@@ -1187,4 +1187,108 @@ it("refuses multi-slice fuse expansion before allocating objects and honors max_
       expect.stringContaining("4096 bytes"),
     );
   }
+
+  // Slice-level pre-allocation guard: 9 empty slices * 128 B = 1,152 B > 1,024 B.
+  const emptySlice = thinMacho(0x0100000c, Buffer.alloc(16));
+  const nineCount = 9;
+  const nineTableEnd = 8 + nineCount * 20;
+  const nineTable = Buffer.alloc(nineTableEnd);
+  nineTable.writeUInt32BE(0xcafebabe, 0);
+  nineTable.writeUInt32BE(nineCount, 4);
+  for (let i = 0; i < nineCount; i += 1) {
+    const base = 8 + i * 20;
+    nineTable.writeUInt32BE(0x0100000c, base);
+    nineTable.writeUInt32BE(0, base + 4);
+    nineTable.writeUInt32BE(nineTableEnd + i * emptySlice.length, base + 8);
+    nineTable.writeUInt32BE(emptySlice.length, base + 12);
+    nineTable.writeUInt32BE(0, base + 16);
+  }
+  const nineEmptyPath = join(root, "fat-9-empty-slices");
+  await writeFile(
+    nineEmptyPath,
+    Buffer.concat([
+      nineTable,
+      ...Array.from({ length: nineCount }, () => emptySlice),
+    ]),
+  );
+  const nineSliceRefused = await provider.inspect({
+    path: nineEmptyPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(nineSliceRefused.ok).toBe(false);
+  if (!nineSliceRefused.ok) {
+    expect(projectAnalysisError(nineSliceRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+      },
+    });
+  }
+
+  // Sentinel-level pre-allocation guard with 0-fuse wires:
+  // 1 slice (128 B) + 2 empty sentinels (2 * 1,024 B) > 1,024 B before parseWire.
+  const zeroFuseWire = Buffer.concat([FUSE_SENTINEL, fuseWire(1, [])]);
+  const twoZeroPath = join(root, "two-zero-fuse-sentinels");
+  await writeFile(
+    twoZeroPath,
+    thinMacho(0x0100000c, Buffer.concat([zeroFuseWire, zeroFuseWire])),
+  );
+  const zeroSentinelRefused = await provider.inspect({
+    path: twoZeroPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(zeroSentinelRefused.ok).toBe(false);
+  if (!zeroSentinelRefused.ok) {
+    expect(projectAnalysisError(zeroSentinelRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: { parameter: "max_decoded_bytes", effective_value: 1024 },
+      },
+    });
+  }
+
+  // High sentinel count with 0-fuse v1 wires (limitation amplification attack):
+  // 128 slices * 70 empty v1 sentinels = 8,960 sentinels (> 8 MiB at 1,024 B/sentinel).
+  const manyZeroSlice = thinMacho(
+    0x0100000c,
+    Buffer.concat(Array.from({ length: 70 }, () => zeroFuseWire)),
+  );
+  const manyZeroTable = Buffer.alloc(tableEnd);
+  manyZeroTable.writeUInt32BE(0xcafebabe, 0);
+  manyZeroTable.writeUInt32BE(sliceCount, 4);
+  for (let i = 0; i < sliceCount; i += 1) {
+    const base = 8 + i * 20;
+    manyZeroTable.writeUInt32BE(0x0100000c, base);
+    manyZeroTable.writeUInt32BE(0, base + 4);
+    manyZeroTable.writeUInt32BE(tableEnd + i * manyZeroSlice.length, base + 8);
+    manyZeroTable.writeUInt32BE(manyZeroSlice.length, base + 12);
+    manyZeroTable.writeUInt32BE(0, base + 16);
+  }
+  const manyZeroPath = join(root, "fat-128-empty-sentinels");
+  await writeFile(
+    manyZeroPath,
+    Buffer.concat([
+      manyZeroTable,
+      ...Array.from({ length: sliceCount }, () => manyZeroSlice),
+    ]),
+  );
+  const manyZeroRefused = await provider.inspect({
+    path: manyZeroPath,
+    max_sentinels_per_slice: 1024,
+  });
+  expect(manyZeroRefused.ok).toBe(false);
+  if (!manyZeroRefused.ok) {
+    expect(projectAnalysisError(manyZeroRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: {
+          parameter: "max_decoded_bytes",
+          effective_value: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+        },
+      },
+    });
+  }
 });

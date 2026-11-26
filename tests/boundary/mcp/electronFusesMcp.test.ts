@@ -297,7 +297,7 @@ fuseMcpTest(
         path,
         max_file_bytes: image.bytes.length,
         max_sentinels_per_slice: 2,
-        max_decoded_bytes: 4096,
+        max_decoded_bytes: 8192,
       },
     });
     expect(admitted.isError, JSON.stringify(admitted.content)).not.toBe(true);
@@ -308,7 +308,7 @@ fuseMcpTest(
       path,
       max_file_bytes: image.bytes.length,
       max_sentinels_per_slice: 2,
-      max_decoded_bytes: 4096,
+      max_decoded_bytes: 8192,
     });
     expect(evidence.normalized_result.slices[0]?.sentinel_count).toBe(2);
   },

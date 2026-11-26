@@ -19,9 +19,13 @@ export const MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 1024;
 export const DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES = 8 * 1024 * 1024;
 export const MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES = 16 * 1024 * 1024;
 
-/** Conservative per-record decoded representation costs accounted before allocation. */
+/**
+ * Conservative per-record decoded representation costs accounted before allocation.
+ * Each sentinel also expands into derived runtime_implications, Evidence locations,
+ * and duplicated limitations on both the report and Evidence envelope.
+ */
 export const ELECTRON_FUSE_SLICE_ESTIMATED_BYTES = 128;
-export const ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES = 128;
+export const ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES = 1024;
 export const ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES = 128;
 
 /** The per-call budgets of `inspect_electron_fuses`. */
@@ -385,6 +389,7 @@ const validateReportBounds = (
   context: z.RefinementCtx,
 ): void => {
   const size = report.artifact.bytes;
+  const sentinelOffsetsBySlice: Set<number>[] = [];
   for (const [sliceIndex, slice] of report.slices.entries()) {
     if (slice.index !== sliceIndex)
       context.addIssue({
@@ -404,8 +409,12 @@ const validateReportBounds = (
         path: ["slices", sliceIndex],
         message: "Slice range extends outside the selected artifact.",
       });
-    for (const [sentinelIndex, sentinel] of slice.sentinels.entries())
+    const offsets = new Set<number>();
+    for (const [sentinelIndex, sentinel] of slice.sentinels.entries()) {
+      offsets.add(sentinel.sentinel_offset);
       validateSentinel(slice, sentinel, sliceIndex, sentinelIndex, context);
+    }
+    sentinelOffsetsBySlice.push(offsets);
   }
   const expected = new Set(
     describeElectronFuseFindings(
@@ -421,10 +430,9 @@ const validateReportBounds = (
         message:
           "Runtime implication is not supported by the reported fuse bytes and applicability.",
       });
-    const slice = report.slices[implication.slice_index];
     if (
-      slice?.sentinels.some(
-        (sentinel) => sentinel.sentinel_offset === implication.sentinel_offset,
+      sentinelOffsetsBySlice[implication.slice_index]?.has(
+        implication.sentinel_offset,
       ) !== true
     )
       context.addIssue({

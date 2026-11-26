@@ -15,6 +15,8 @@ import {
   estimateElectronFuseDecodedBytes,
   inspectElectronFusesInputSchema,
   MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+  MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+  MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
   type ElectronFuseSlice,
 } from "./electronFuses.js";
 
@@ -311,6 +313,31 @@ it("validates max_decoded_bytes bounds and estimates decoded representation acro
     inspectElectronFusesInputSchema.safeParse({
       path: samplePath,
       max_decoded_bytes: MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES + 1,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_file_bytes: 31,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_file_bytes: MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES + 1,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_sentinels_per_slice: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectElectronFusesInputSchema.safeParse({
+      path: samplePath,
+      max_sentinels_per_slice:
+        MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE + 1,
     }).success,
   ).toBe(false);
   expect(

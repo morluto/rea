@@ -497,7 +497,7 @@ cliTest(
         "--max-sentinels-per-slice",
         "2",
         "--max-decoded-bytes",
-        "4096",
+        "8192",
         "--json",
       ],
     });
@@ -507,7 +507,7 @@ cliTest(
         path,
         max_file_bytes: image.bytes.length,
         max_sentinels_per_slice: 2,
-        max_decoded_bytes: 4096,
+        max_decoded_bytes: 8192,
       },
       normalized_result: {
         slices: [{ sentinel_count: 2 }],
