@@ -476,6 +476,8 @@
 * **native:** validate SHT_GNU_HASH bounds and fall back to DT_GNU_HASH ([#13713](https://github.com/morluto/rea/issues/13713)) ([e6b30f9](https://github.com/morluto/rea/commit/e6b30f945ec214e05ca13c36874e155737a6d4cb))
 * **objc:** preserve class import reader failures ([#13892](https://github.com/morluto/rea/issues/13892)) ([99c2104](https://github.com/morluto/rea/commit/99c2104da9b3e4d179436cbed477c98668a935a3))
 * **objdump:** summarize command output by its size ([285af34](https://github.com/morluto/rea/commit/285af34aead58d24cd503bb49047d238b4f25053))
+* **package:** declare the projected manifest scripts without prepare ([68e1ec3](https://github.com/morluto/rea/commit/68e1ec3e3633af005bbac8ab3a077a3741107e41))
+* **package:** leave the source-checkout prepare script out of the published manifest ([30c8721](https://github.com/morluto/rea/commit/30c87211f384c389eedd0e85065304dd17c28572))
 * **pe-unwind:** mark exception directory coverage partial when trailing bytes exist ([#14515](https://github.com/morluto/rea/issues/14515)) ([b1907ae](https://github.com/morluto/rea/commit/b1907ae5915245c283487a8c2be03bc543881952))
 * **pe:** bound static readers by the bytes they read, not file size ([#14262](https://github.com/morluto/rea/issues/14262)) ([789ca04](https://github.com/morluto/rea/commit/789ca0412579d2a1ae84ad1683dfe8808937908a))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
