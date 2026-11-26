@@ -141,7 +141,9 @@ it("delivers ordered GDB records once and queries their retained parent after cl
     source_provider: gdbEvidence().provider,
     source_parameters: gdbEvidence().parameters,
     summary: {
-      records: capture.records,
+      // The console stream record is reported by size; asynchronous,
+      // unrecognized and result records keep their order.
+      records: ['=thread-created,id="1"', "unrecognized 🧪 record", "7^done"],
       mi: capture.mi,
       completion_status: "unknown",
       output_truncated: true,
@@ -149,6 +151,7 @@ it("delivers ordered GDB records once and queries their retained parent after cl
       process_exit_code: null,
       available_counts: {
         records: 4,
+        stream_records: 1,
         console_utf16_units: capture.console.length,
         target_utf16_units: 0,
         log_utf16_units: 0,
