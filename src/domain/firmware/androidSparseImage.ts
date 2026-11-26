@@ -440,7 +440,7 @@ export const parseAndroidSparseChunk = (
     return err(
       malformed(
         `chunk ${String(index)} output does not fit beside its chunk header`,
-        undefined,
+        fileOffset + 4,
         "chunk_sz",
       ),
     );
