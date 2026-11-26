@@ -201,13 +201,6 @@
       "reason": "Playwright trace archive input and record parser allowances are resource policies."
     }
   },
-  "src/captures/TsharkCaptureProvider.ts": {
-    "\"The packet-field discovery record allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "Packet-field discovery record capture is a producer budget."
-    }
-  },
   "src/domain/analysisErrorCore.ts": {
     "text(recovery.fixedAllowance.name)": {
       "class": "forwarding",
@@ -549,12 +542,6 @@
       "reason": "The decoded-JSON work across both tshark passes bounds the in-process parse; raising it needs a streaming decoder or a heap-aware control, so it stays fixed until then."
     }
   },
-  "src/process/ArtifactAnalysisResources.ts": {
-    "allowanceName": {
-      "class": "forwarding",
-      "reason": "Declares a producer input allowance only for callers that offer no budget parameter; the value is the caller's selected maximum."
-    }
-  },
   "src/process/capture/ProcessSensitiveOutput.ts": {
     "\"Sensitive terminal redaction\"": {
       "class": "pending",
@@ -595,13 +582,6 @@
       "class": "pending",
       "issue": 14235,
       "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    }
-  },
-  "src/signals/SigrokRecordingProvider.ts": {
-    "\"The sigrok decoder-discovery line allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "sigrok decoder-discovery line capture is a producer budget."
     }
   },
   "src/sqlite/SqliteDatabaseFailures.ts": {
