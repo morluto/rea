@@ -336,7 +336,7 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
 export type ArtifactReaderLimitsInput = z.output<
   typeof artifactReaderLimitsInputSchema
 >;
-const resolvedArtifactReaderLimitsSchema = z.strictObject({
+const readerLimitGroups = {
   bun: bunReaderLimitsSchema,
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
@@ -346,6 +346,10 @@ const resolvedArtifactReaderLimitsSchema = z.strictObject({
   deno: denoReaderLimitsSchema,
   wxapkg: wxapkgReaderLimitsSchema,
   tar: tarReaderLimitsSchema,
+} as const;
+
+const resolvedArtifactReaderLimitsSchema = z.strictObject({
+  ...readerLimitGroups,
   expanded_bytes: bytes.exactOptional(),
 });
 export type ArtifactReaderLimits = z.output<
@@ -426,25 +430,14 @@ export const artifactMemberCountSelected = (
   }
 };
 
-/** Every group's resolved schema; the source of each field's supported range. */
-const READER_LIMIT_GROUPS = {
-  bun: bunReaderLimitsSchema,
-  dotnet_bundle: dotnetBundleReaderLimitsSchema,
-  node_sea: nodeSeaReaderLimitsSchema,
-  godot: godotReaderLimitsSchema,
-  iso9660: iso9660ReaderLimitsSchema,
-  deno: denoReaderLimitsSchema,
-  wxapkg: wxapkgReaderLimitsSchema,
-  tar: tarReaderLimitsSchema,
-} as const;
-type ReaderLimitGroup = keyof typeof READER_LIMIT_GROUPS;
+type ReaderLimitGroup = keyof typeof readerLimitGroups;
 
 /** The exact contract field a reader admission names on refusal. */
 export type ArtifactReaderLimitParameter =
   | {
       [
         Group in ReaderLimitGroup
-      ]: `artifact_limits.${Group}.${keyof z.output<(typeof READER_LIMIT_GROUPS)[Group]> & string}`;
+      ]: `artifact_limits.${Group}.${keyof z.output<(typeof readerLimitGroups)[Group]> & string}`;
     }[ReaderLimitGroup]
   | "artifact_limits.expanded_bytes";
 
@@ -475,7 +468,7 @@ export const artifactReaderLimitMaximum = (
     field === undefined
       ? bytes
       : (
-          READER_LIMIT_GROUPS[group as ReaderLimitGroup].shape as Record<
+          readerLimitGroups[group as ReaderLimitGroup].shape as Record<
             string,
             typeof bytes
           >

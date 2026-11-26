@@ -54,6 +54,7 @@ export class AndroidVbmetaArtifactReader extends PositionalArtifactReader<Androi
   ): Promise<PositionalArtifactEntries<AndroidVbmetaMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
+      this.format,
       handle,
       0,
       Math.min(initial.size, AVB_HEADER_SIZE),
@@ -68,6 +69,7 @@ export class AndroidVbmetaArtifactReader extends PositionalArtifactReader<Androi
     );
     if (!extent.ok) throw parseFailure(extent.error);
     const imageBytes = await readArtifactFileBytes(
+      this.format,
       handle,
       0,
       extent.value.imageSize,
