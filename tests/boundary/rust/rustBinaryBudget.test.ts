@@ -265,11 +265,10 @@ it("names max_wasm_sections when a module has more sections than it", async () =
       },
     });
     const admitted = await provider.inspect({ path });
-    expect(
-      admitted.ok ||
-        projectAnalysisError(admitted.error).details?.limit?.parameter !==
-          "max_wasm_sections",
-    ).toBe(true);
+    if (!admitted.ok)
+      expect(projectAnalysisError(admitted.error).details?.limit).not.toEqual(
+        expect.objectContaining({ parameter: "max_wasm_sections" }),
+      );
   } finally {
     await provider.close();
   }
