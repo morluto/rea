@@ -18,7 +18,6 @@ import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
 import {
-  ArtifactReaderFailure,
   type ArtifactResourceScope,
   unsupportedArtifact,
 } from "../../resources/index.js";
@@ -55,7 +54,10 @@ import {
 import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
-import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
+import {
+  assertReconstructionActive,
+  readJavaScriptArtifactFiles,
+} from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
@@ -118,7 +120,7 @@ export const reconstructJavaScriptArtifact = async (
       });
       await checkpointJavaScriptAnalysis(signal);
     };
-    abortIfNeeded(signal);
+    assertReconstructionActive(signal);
     const selectedPath = absoluteCallerPath(input.input_path);
     const { path, metadata } = await resolveSelectedInput(selectedPath);
     const format = resolveFormat(path, metadata, input, selectedPath);
@@ -253,7 +255,7 @@ export const reconstructJavaScriptArtifact = async (
           worker,
           semanticProjection,
           async (file, completed, total) => {
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
             const ast =
               javascriptArtifactAnalysisScopes[file.kind]?.authority ===
               "ast-static-analysis";
@@ -265,18 +267,18 @@ export const reconstructJavaScriptArtifact = async (
               total: 1,
               message: `${ast ? "Parsing and projecting" : "Processing metadata for"} ${file.path} (${String(completed + 1)}/${String(total)})`,
             });
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
           },
           signal,
           async (file, phase) => {
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
             await progress?.report({
               phase: `javascript_worker_${phase}`,
               completed: 0,
               total: 1,
               message: `JavaScript worker ${phase}: ${file.path}`,
             });
-            abortIfNeeded(signal);
+            assertReconstructionActive(signal);
           },
           preloads.paths,
           preloads.limitations,
@@ -586,13 +588,4 @@ const resolveFormat = (
       },
     ]);
   return observed;
-};
-
-const abortIfNeeded = (signal?: AbortSignal): void => {
-  if (signal?.aborted === true)
-    throw new ArtifactReaderFailure(
-      "cancelled",
-      "JavaScript artifact reconstruction cancelled",
-      { cause: signal.reason },
-    );
 };

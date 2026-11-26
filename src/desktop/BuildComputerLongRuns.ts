@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -163,7 +164,7 @@ export class BuildComputerLongRuns {
         };
       }
     } catch (cause: unknown) {
-      let primary = signal.aborted
+      const primary = signal.aborted
         ? cancelledBy(OPERATION, signal)
         : cause instanceof AnalysisError
           ? cause
@@ -178,11 +179,11 @@ export class BuildComputerLongRuns {
       if (!this.#jobs.has(job)) throw primary;
       const released = await this.#cancel(job);
       const completed = released.completed ?? observedCommand;
-      if (signal.aborted && !(primary instanceof AnalysisCancelledError)) {
-        const cancelled = cancelledBy(OPERATION, signal);
-        cancelled.retainSecondaryFailure(primary);
-        primary = cancelled;
-      }
+      // A cancellation that arrived while the job was being cancelled is
+      // later than the failure already determined above; keep that failure
+      // primary and retain the cancellation beside it.
+      if (signal.aborted && !(primary instanceof AnalysisCancelledError))
+        analysisErrorWithCancellation(primary, cancelledBy(OPERATION, signal));
       if (released.verified) {
         if (completed !== undefined)
           primary.retainDiagnostics({ completed_command: completed });

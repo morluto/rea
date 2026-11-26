@@ -3,6 +3,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   renderCliDocument,
+  structuredOutputRequested,
   type ParsedCliOutputArguments,
 } from "./cliOutput.js";
 import { estimateTokenCount } from "tokenx";
@@ -143,7 +144,12 @@ export const renderCliCommandFailure = (
 ): string => {
   const { controls, stdoutIsTerminal, cta } = input;
   const human = stdoutIsTerminal && !controls.formatExplicit;
-  if (human && failure.fieldErrors !== undefined)
+  // Usage text is terminal presentation; a requested document or count wins.
+  if (
+    human &&
+    !structuredOutputRequested(controls) &&
+    failure.fieldErrors !== undefined
+  )
     return `${validationUsage(input.cli, input.entry, failure.fieldErrors)}\n`;
   const format =
     controls.format === "csv" || controls.format === "tsv"

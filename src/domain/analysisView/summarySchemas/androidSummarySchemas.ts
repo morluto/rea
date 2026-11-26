@@ -23,9 +23,16 @@ import {
 import { androidMethodSummarySchema } from "../androidSymbolView.js";
 import {
   androidClassSummarySchema,
-  androidClassViewItemsSchema,
+  androidClassFieldRowSchema,
+  androidClassMappingSymbolRowSchema,
+  androidClassMethodRowSchema,
 } from "../androidClassView.js";
-import { androidClassViewRequestSchema } from "../../android/androidClassQuery.js";
+import {
+  androidClassFieldsViewRequestSchema,
+  androidClassInnerClassesViewRequestSchema,
+  androidClassMappingSymbolsViewRequestSchema,
+  androidClassMethodsViewRequestSchema,
+} from "../../android/androidClassQuery.js";
 import {
   androidReferencesViewRequestSchema,
   androidReferenceTopClassesViewRequestSchema,
@@ -143,13 +150,41 @@ export const androidReferencesPageViewResultSchema = z.discriminatedUnion(
   ],
 );
 
-/** One page of a retained class inspection's methods, fields, inner classes or mapping symbols. */
-export const androidClassPageViewResultSchema = z.strictObject({
+const classPageBase = {
   ...viewResultBaseFields,
   kind: z.literal("android-class"),
   parent_operation: z.literal("inspect_android_class"),
-  view: androidClassViewRequestSchema,
-  class_name: z.string(),
-  items: androidClassViewItemsSchema,
-  byte_limited: z.boolean(),
-});
+};
+const classPage = <View extends z.ZodType, Row extends z.ZodType>(
+  view: View,
+  row: Row,
+) =>
+  z.strictObject({
+    ...classPageBase,
+    view,
+    class_name: z.string(),
+    items: z.array(row),
+    byte_limited: z.boolean(),
+  });
+
+/** Dispatch by kind and validate each member page against its selected facet. */
+export const androidClassPageViewResultSchema = z
+  .object({ kind: classPageBase.kind })
+  .passthrough()
+  .pipe(
+    z.union([
+      classPage(
+        androidClassMethodsViewRequestSchema,
+        androidClassMethodRowSchema,
+      ),
+      classPage(
+        androidClassFieldsViewRequestSchema,
+        androidClassFieldRowSchema,
+      ),
+      classPage(androidClassInnerClassesViewRequestSchema, z.string()),
+      classPage(
+        androidClassMappingSymbolsViewRequestSchema,
+        androidClassMappingSymbolRowSchema,
+      ),
+    ]),
+  );
