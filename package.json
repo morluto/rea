@@ -422,7 +422,7 @@
   },
   "overrides": {
     "@electron/asar": {
-      "glob": "14.0.4"
+      "glob": "14.0.6"
     },
     "typed-rest-client": {
       "qs": "6.16.1"
