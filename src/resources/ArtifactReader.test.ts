@@ -79,17 +79,37 @@ it("requires an integrity failure to name its check, including when rebuilt", ()
  * sentence names, so the shared builder must keep both parts exact.
  */
 it("names the format and label a shared malformed sentence reports", () => {
+  // Each part is asserted exactly: a builder that dropped `format` or added a
+  // prefix would still pass a substring check.
   const fit = malformedFormatFailure("fit", "FIT")("header size is zero");
   expect(fit).toBeInstanceOf(ArtifactReaderFailure);
   expect(fit.reason).toBe("malformed");
-  expect(fit.message).toContain("FIT is malformed: header size is zero");
-  expect(
-    malformedFormatFailure("godot-pck", "Godot PCK")("member overlaps").message,
-  ).toContain("Godot PCK is malformed: member overlaps");
-  expect(
-    malformedFormatFailure("node-sea", "Node SEA blob")("blob was not found")
-      .message,
-  ).toContain("Node SEA blob is malformed: blob was not found");
+  expect(fit.message).toBe("FIT is malformed: header size is zero");
+  expect(fit.parseFailure).toMatchObject({
+    kind: "malformed",
+    format: "fit",
+    detail: "FIT is malformed: header size is zero",
+  });
+  const godot = malformedFormatFailure(
+    "godot-pck",
+    "Godot PCK",
+  )("member overlaps");
+  expect(godot.message).toBe("Godot PCK is malformed: member overlaps");
+  expect(godot.parseFailure).toMatchObject({
+    kind: "malformed",
+    format: "godot-pck",
+    detail: "Godot PCK is malformed: member overlaps",
+  });
+  const sea = malformedFormatFailure(
+    "node-sea",
+    "Node SEA blob",
+  )("blob was not found");
+  expect(sea.message).toBe("Node SEA blob is malformed: blob was not found");
+  expect(sea.parseFailure).toMatchObject({
+    kind: "malformed",
+    format: "node-sea",
+    detail: "Node SEA blob is malformed: blob was not found",
+  });
 });
 
 it("keeps a file-size refusal's observed size through a rebuild", () => {
