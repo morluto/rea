@@ -525,6 +525,60 @@ describe("Ghidra Windows installation commitment", () => {
       providerVersion: SUPPORTED_GHIDRA_VERSION,
     });
   });
+
+  it.each([
+    {
+      name: "PATH-only JDK",
+      path: "C:\\Windows\\System32;C:\\Java\\jdk-25\\bin",
+      expected: "C:\\Java\\jdk-25\\bin\\java.exe",
+    },
+    {
+      name: "relative PATH entry",
+      path: "jdk-25\\bin",
+      expected: "java.exe",
+    },
+  ])(
+    "selects the Windows Java launcher from $name",
+    async ({ path, expected }) => {
+      const probed: string[] = [];
+      const inspection = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: { PATH: path, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          installDir: WINDOWS_INSTALL,
+          platform: "win32",
+          architecture: "x64",
+        },
+        {
+          platform: "win32",
+          architecture: "x64",
+          readText: (candidate) =>
+            candidate === WINDOWS_PROPERTIES
+              ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
+              : undefined,
+          executable: (candidate) =>
+            candidate === expected ||
+            candidate === WINDOWS_HEADLESS ||
+            candidate === WINDOWS_DECOMPILER,
+          probeJava: (command) => {
+            probed.push(command);
+            return javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              home: "C:\\Java\\jdk-25",
+              osName: "Windows 11",
+            });
+          },
+        },
+      );
+      // The owned-process launcher admits only an absolute executable path, so
+      // a JDK on PATH must not reach it as a bare command name.
+      expect(probed).toEqual([expected]);
+      expect(inspection).toMatchObject({
+        status: "available",
+        javaCommand: expected,
+      });
+    },
+  );
 });
 
 describe("Ghidra installation rejection diagnostics", () => {
