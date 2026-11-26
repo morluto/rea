@@ -118,7 +118,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   PACKAGED_NATIVE_IMAGES,
-  MAX_RELEASE_EXPOSURE_FILE_BYTES,
+  RELEASE_EXPOSURE_FILE_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
@@ -255,7 +255,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     visitInterruptedScan?: ReleaseExposureScanVisitor,
   ): Promise<Result<ReleaseExposureScan, AnalysisError>> {
     const maxFileBytes =
-      input.max_file_bytes ?? MAX_RELEASE_EXPOSURE_FILE_BYTES;
+      input.max_file_bytes ?? RELEASE_EXPOSURE_FILE_BYTES.default_value;
     const context: ScanContext = {
       signal: options?.signal,
       resources: this.#resources,

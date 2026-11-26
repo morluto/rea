@@ -93,7 +93,12 @@ it.skipIf(process.platform === "win32")(
         default_value: DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
         applies_at: "next_call",
       });
-      expect(projected.details).not.toHaveProperty("refusal");
+      expect(projected.details?.refusal).toMatchObject({
+        kind: "adjustable_budget",
+        control: "producer_limits.output_bytes",
+      });
+      // Capture stops at the budget, so no required value is claimed.
+      expect(projected.details?.refusal).not.toHaveProperty("required_value");
       const raised = await decode({ output_bytes: DECODE_OUTPUT_BYTES });
       if (!raised.ok) throw raised.error;
       expect(raised.value.result).toMatchObject({

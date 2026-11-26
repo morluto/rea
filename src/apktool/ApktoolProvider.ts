@@ -42,7 +42,6 @@ import {
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_OUTPUT_BYTES,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
-  MAX_APKTOOL_DECODE_OUTPUT_BYTES,
   type ApktoolRequest,
   type ApktoolDecodeResult,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
@@ -233,13 +232,8 @@ const apktoolCommandFailure = (
     outputLimit: {
       limits: { max_output_bytes: limits.maxOutputBytes },
       limit: apktoolDecodeOutputLimit(limits.maxOutputBytes),
-      recovery: {
-        retryable: false,
-        remediationAction:
-          limits.maxOutputBytes < MAX_APKTOOL_DECODE_OUTPUT_BYTES
-            ? `Pass a larger producer_limits.output_bytes (up to ${String(MAX_APKTOOL_DECODE_OUTPUT_BYTES)} bytes) on the next decode of the same APK; no restart is required. decode_timeout_ms does not raise it.`
-            : `producer_limits.output_bytes is at its maximum of ${String(limits.maxOutputBytes)} bytes; review why apktool wrote this much output. Repeating the unchanged request fails the same way.`,
-      },
+      // Capture stops at the budget, so the output it needs is unmeasured.
+      recovery: { retryable: false },
     },
     runtimeExhaustion: ({ area }) => ({
       limits: null,

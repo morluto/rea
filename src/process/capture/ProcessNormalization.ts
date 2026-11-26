@@ -501,10 +501,9 @@ export const normalizeRetainedTerminalFrames = (
               : "terminal-sensitive-input-normalization",
         },
         {
+          // Normalization stops at the remaining budget, so the need is unmeasured.
           limit: processOutputBytesLimit(maximumBytes),
           retryable: false,
-          remediationAction:
-            "Increase limits.output_bytes within its advertised range, or select a narrower scenario. Completed raw PTY chunks remain in partial observations; the corrected normalized representation did not fit.",
         },
       );
     bytes += value.utf8Bytes;

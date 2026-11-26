@@ -37,7 +37,6 @@ import {
   appleResourceKeyFields,
   assetUtilOutputLimit,
   DEFAULT_ASSETUTIL_OUTPUT_BYTES,
-  MAX_ASSETUTIL_OUTPUT_BYTES,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
   type AppleAssetAnalysisCoverage,
@@ -68,12 +67,6 @@ const ASSETUTIL = "/usr/bin/assetutil";
 const ASSETUTIL_TIMEOUT_MS = 60_000;
 const OPERATION = "inspect_asset_catalog";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
-
-/** Recovery for assetutil output above the selected producer_limits.output_bytes. */
-const assetUtilOutputRecovery = (outputBytes: number): string =>
-  outputBytes < MAX_ASSETUTIL_OUTPUT_BYTES
-    ? `Pass a larger producer_limits.output_bytes (up to ${String(MAX_ASSETUTIL_OUTPUT_BYTES)} bytes) on the next inspect_asset_catalog call for the same bundle; no restart is required.`
-    : `producer_limits.output_bytes is at its maximum of ${String(outputBytes)} bytes, the in-process decode bound; inspecting this bundle's catalogs needs a streaming decoder. Repeating the unchanged request fails the same way.`;
 
 /** Launches assetutil under owned supervision; tests substitute a stand-in process. */
 export type AssetUtilLauncher = (
@@ -584,10 +577,8 @@ const assetUtilOutcomeContext = (
     reason: `assetutil output exceeds producer_limits.output_bytes (${String(outputBytes)} bytes)`,
     limits: { maximum_output_bytes: outputBytes },
     limit: assetUtilOutputLimit(outputBytes),
-    recovery: {
-      retryable: false,
-      remediationAction: assetUtilOutputRecovery(outputBytes),
-    },
+    // Capture stops at the budget, so the output it needs is unmeasured.
+    recovery: { retryable: false },
   },
   launchUnavailable: (failure, details) =>
     new AnalysisCapabilityUnavailableError(

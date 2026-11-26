@@ -34,7 +34,11 @@ import {
 } from "./cliEvidencePublication.js";
 import { rebindLoggedCliFailure } from "../cliLogging.js";
 import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
-import { projectCliCommandOutput } from "./projectCliAnalysisResult.js";
+import {
+  cliRefusalSpelling,
+  projectCliCommandOutput,
+} from "./projectCliAnalysisResult.js";
+import { runWithAnalysisRefusalSpelling } from "../domain/analysisRefusalSpelling.js";
 import {
   cliResultControls,
   withCliResultControls,
@@ -177,16 +181,22 @@ export const runCliCommand = async (
     await withCliEvidencePublication(
       () =>
         withCliResultControls(async () => {
-          const rawValue = await entry.definition.run({
-            ...parsed.value,
-            formatExplicit: controls.formatExplicit,
-          });
-          const value = projectCliCommandOutput(rawValue, {
+          const projection = {
             operations: entry.operations,
             commands: cliCommands(cli),
             cliName: cli.name,
             recordedCommands: RECORDED_CLI_COMMAND_REGISTRATIONS,
-          });
+          };
+          // Refusal recovery is rendered in this command's spelling.
+          const rawValue = await runWithAnalysisRefusalSpelling(
+            cliRefusalSpelling(projection),
+            () =>
+              entry.definition.run({
+                ...parsed.value,
+                formatExplicit: controls.formatExplicit,
+              }),
+          );
+          const value = projectCliCommandOutput(rawValue, projection);
           rebindLoggedCliFailure(rawValue, value);
           if (!output.handled)
             await output.write(value, {

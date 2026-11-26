@@ -596,17 +596,39 @@ const prepareFunctionsDirectory = async (
       ),
     );
   resources.ownFunctionsDirectory(stat);
+  // umask can clear bits, and a parent setgid bit is inherited, so mkdir's
+  // 0700 is not always the mode on disk. macOS virtiofs shares assign a new
+  // inode when chmod changes that mode. Cleanup compares the owned identity,
+  // so a repair records the post-chmod directory only when it is still a real
+  // directory on this device. A symlink or a different device keeps the
+  // pre-chmod identity and is not removed.
+  if (directoryPermissionMode(stat) === 0o700n) return ok(undefined);
   const secured = await chmod(directory, 0o700).catch(
     (cause: unknown) => cause,
   );
-  return secured === undefined
-    ? ok(undefined)
-    : err(
-        decompileInputError(
-          "output_directory",
-          "The functions directory could not be secured.",
-        ),
-      );
+  if (secured !== undefined)
+    return err(
+      decompileInputError(
+        "output_directory",
+        "The functions directory could not be secured.",
+      ),
+    );
+  const repaired = await lstat(directory, { bigint: true }).catch(
+    (cause: unknown) => cause,
+  );
+  if (
+    !isDirectoryStat(repaired) ||
+    !hasFileIdentity(repaired) ||
+    repaired.dev !== stat.dev
+  )
+    return err(
+      decompileInputError(
+        "output_directory",
+        "The functions directory is not a real directory.",
+      ),
+    );
+  resources.ownFunctionsDirectory(repaired);
+  return ok(undefined);
 };
 
 const seedJournal = async (
@@ -1165,6 +1187,13 @@ const isFileHandle = (value: unknown): value is FileHandle =>
 
 const isDirectoryStat = (value: unknown): boolean =>
   isStat(value) && value.isDirectory() && !value.isSymbolicLink();
+
+/** Permission bits, including set-id and sticky, from a bigint lstat. */
+const directoryPermissionMode = (value: unknown): bigint | undefined => {
+  if (typeof value !== "object" || value === null || !("mode" in value))
+    return undefined;
+  return typeof value.mode === "bigint" ? value.mode & 0o7777n : undefined;
+};
 
 const isSymlinkStat = (value: unknown): boolean =>
   isStat(value) && value.isSymbolicLink();

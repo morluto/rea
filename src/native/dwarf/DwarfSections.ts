@@ -14,6 +14,8 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
+  nativeStructureFailure,
   type ImageSection,
 } from "../../domain/binaryContainer.js";
 import {
@@ -45,7 +47,10 @@ const MACHO_DWARF_SEGMENT = "__DWARF,";
 const MACHO_ZERO_FILL_TYPES = new Set([0x1, 0xc, 0x12]);
 const SPLIT_DEBUG_INFO = ".debug_info.dwo";
 export const MAX_PE_SECTION_NAME_BYTES = 65536;
-export const MAX_PE_DECODED_NAME_BYTES = 16 * 1024 * 1024;
+/** Limit name of the per-name COFF string-table decode allowance. */
+export const PE_SECTION_NAME_LIMIT = "pe-section-name-bytes";
+/** Limit name of the retained-section bound: at most the admitted image size. */
+export const DWARF_RETAINED_SECTIONS_LIMIT = "retained-dwarf-section-bytes";
 const DUPLICATE_SECTION =
   "Duplicate section; the first file-backed copy was read";
 
@@ -165,7 +170,7 @@ const storedDwarfSections = (source: ByteSource) => {
         "structure",
         source.size,
         "Retained file-backed DWARF sections would exceed the admitted image size.",
-        "structure",
+        DWARF_RETAINED_SECTIONS_LIMIT,
         "bytes",
       );
     const bytes = await readSourceSlice(source, offset, size);
@@ -180,8 +185,13 @@ export const locateDwarfSectionsFromHandle = async (
   source: ByteSource,
   maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   pause?: ZstandardFramePause,
+  structureBytes = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Promise<LocatedDwarfImage> => {
-  const budget: InflateBudget = { allowance: maximumDecodedBytes, used: 0 };
+  const budget: InflateBudget = {
+    allowance: maximumDecodedBytes,
+    used: 0,
+    structureBytes,
+  };
   const magic = await readSourceSlice(source, 0, Math.min(4, source.size));
   if (hasElfMagic(magic)) return finish(await locateElf(source, budget, pause));
   if (hasDosMzMagic(magic)) return finish(await locatePe(source, budget));
@@ -368,6 +378,8 @@ interface ImageIdentity {
 interface InflateBudget {
   readonly allowance: number;
   used: number;
+  /** `max_structure_bytes` for the image's directory and decoded section names. */
+  readonly structureBytes: number;
 }
 
 /** One row per name and reason, so repeated sections cannot grow the report. */
@@ -478,6 +490,7 @@ const locateElf = async (
     source,
     pause ?? (() => Promise.resolve()),
     "inspect_dwarf_units",
+    { structureBytes: budget.structureBytes },
   );
   if (directory.section_names_limitation !== undefined)
     throw new BinaryFormatFailure(
@@ -630,8 +643,8 @@ const locatePe = async (
   source: ByteSource,
   budget: InflateBudget,
 ): Promise<ImageIdentity> => {
-  const directory = await readPeDirectory(source);
-  const names = await peSectionNames(source, directory);
+  const directory = await readPeDirectory(source, budget.structureBytes);
+  const names = await peSectionNames(source, directory, budget.structureBytes);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
   const readStored = storedDwarfSections(source);
@@ -676,8 +689,8 @@ const locatePe = async (
   };
 };
 
-const readPeDirectory = async (source: ByteSource) => {
-  const steps = readPeSectionDirectory(source.size);
+const readPeDirectory = async (source: ByteSource, structureBytes: number) => {
+  const steps = readPeSectionDirectory(source.size, structureBytes);
   let next = steps.next();
   while (!next.done) {
     const { offset, size } = next.value;
@@ -690,6 +703,7 @@ const readPeDirectory = async (source: ByteSource) => {
 const peSectionNames = async (
   source: ByteSource,
   directory: NativeSectionDirectory,
+  structureBytes: number,
 ): Promise<ReadonlyMap<number, string>> => {
   const { sections } = directory;
   const names = new Map<number, string>();
@@ -757,7 +771,7 @@ const peSectionNames = async (
     }
     // Reserve two bytes per character before allocating a JavaScript string.
     const remainingCharacters = Math.floor(
-      (MAX_PE_DECODED_NAME_BYTES - decodedNameBytes) / 2,
+      (structureBytes - decodedNameBytes) / 2,
     );
     const maximumCharacters = Math.min(
       MAX_PE_SECTION_NAME_BYTES,
@@ -766,15 +780,19 @@ const peSectionNames = async (
     const end = Math.min(strings.length, at + maximumCharacters + 1);
     const relativeNul = strings.subarray(at, end).indexOf(0);
     if (relativeNul < 0 && end - at > maximumCharacters)
-      throw new BinaryResourceFailure(
-        "structure",
-        remainingCharacters < MAX_PE_SECTION_NAME_BYTES
-          ? MAX_PE_DECODED_NAME_BYTES
-          : MAX_PE_SECTION_NAME_BYTES,
-        remainingCharacters < MAX_PE_SECTION_NAME_BYTES
-          ? "Decoded PE section names exceed the 16 MiB structural budget"
-          : "PE section name exceeds the 65536-byte decoding allowance",
-      );
+      throw remainingCharacters < MAX_PE_SECTION_NAME_BYTES
+        ? nativeStructureFailure(
+            "Decoded PE section names",
+            decodedNameBytes + (end - at) * 2,
+            structureBytes,
+          )
+        : new BinaryResourceFailure(
+            "structure",
+            MAX_PE_SECTION_NAME_BYTES,
+            "PE section name exceeds the 65536-byte decoding allowance",
+            PE_SECTION_NAME_LIMIT,
+            "bytes",
+          );
     const nul = relativeNul < 0 ? -1 : at + relativeNul;
     if (nul < 0)
       throw new BinaryFormatFailure(
@@ -793,7 +811,7 @@ const locateMacho = async (
   source: ByteSource,
   budget: InflateBudget,
 ): Promise<ImageIdentity> => {
-  const image = await readMachoImageFromReader(source);
+  const image = await readMachoImageFromReader(source, budget.structureBytes);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
   const readStored = storedDwarfSections(source);
