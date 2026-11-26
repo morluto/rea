@@ -9,6 +9,7 @@ import { boundedList } from "../boundedList.js";
 import { prefixedDigestSchema } from "../digests.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import type { JsonValue } from "../jsonValue.js";
+import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { err, ok } from "../result.js";
 import {
   PLACEHOLDER_COVERAGE,
@@ -44,6 +45,11 @@ type Extracted = ArtifactExtractionResult["artifacts"][number];
 
 /** Rows of a collection that a summary samples before counting the rest. */
 const SUMMARY_SAMPLE = 16;
+/**
+ * Serialized bytes each sampled collection may use. A contradiction can carry
+ * signer names of tens of kilobytes; it is counted and paged instead.
+ */
+const SUMMARY_SAMPLE_BYTES = 4096;
 
 const count = z.int().nonnegative();
 
@@ -93,7 +99,7 @@ const sampled = <Item extends z.ZodType>(item: Item, description: string) =>
   z
     .strictObject({ items: z.array(item), omitted: count })
     .describe(
-      `${description}, at most ${String(SUMMARY_SAMPLE)}; omitted counts the rest`,
+      `${description} in order, at most ${String(SUMMARY_SAMPLE)} within ${String(SUMMARY_SAMPLE_BYTES)} serialized bytes; omitted counts the rest, which the collection pages`,
     );
 
 const resultShape = artifactExtractionResultSchema.shape;
@@ -139,9 +145,20 @@ const readExtraction = createAnalysisViewResultReader(
   artifactExtractionResultSchema,
 );
 
+/** A leading sample bounded by count and bytes; an oversized row ends it. */
 const sample = <Item>(items: readonly Item[]) => {
   const listed = boundedList(items, SUMMARY_SAMPLE);
-  return { items: [...listed.items], omitted: listed.omitted };
+  const kept: Item[] = [];
+  let bytes = 0;
+  for (const item of listed.items) {
+    bytes += jsonValueByteLength(
+      item as unknown as JsonValue,
+      SUMMARY_SAMPLE_BYTES - bytes,
+    );
+    if (bytes > SUMMARY_SAMPLE_BYTES) break;
+    kept.push(item);
+  }
+  return { items: kept, omitted: items.length - kept.length };
 };
 
 const summarize = (
