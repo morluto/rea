@@ -109,7 +109,9 @@ const synthesizeAloneHeader = (
   expected: number,
   dictionaryBytes: number,
 ): Buffer => {
-  const alone = Buffer.allocUnsafe(input.length + LZMA_ALONE_SIZE_BYTES);
+  // Non-pooled backing ArrayBuffer so it can be transferred to the worker
+  // directly without copying the encoded stream a second time.
+  const alone = Buffer.allocUnsafeSlow(input.length + LZMA_ALONE_SIZE_BYTES);
   input.copy(alone, 0, 0, LZMA_PROPS_BYTES);
   alone.writeBigUInt64LE(BigInt(expected), LZMA_PROPS_BYTES);
   input.copy(alone, LZMA_PROPS_BYTES + LZMA_ALONE_SIZE_BYTES, LZMA_PROPS_BYTES);
@@ -127,35 +129,72 @@ const decodeAloneInWorker = async (
 ): Promise<Buffer> => {
   await yieldArtifactRead(signal);
   const lzmaPath = createRequire(import.meta.url).resolve("lzma-purejs");
-  const transfer = Buffer.allocUnsafeSlow(alone.length);
-  alone.copy(transfer);
+  // allocUnsafeSlow always owns a dedicated ArrayBuffer (not a SharedArrayBuffer).
+  const transferable = alone.buffer as ArrayBuffer;
   return await new Promise<Buffer>((resolve, reject) => {
-    let settled = false;
+    let finishing = false;
+    let exited = false;
+    let termination: Promise<number> | undefined;
     const worker = new Worker(LZMA_WORKER_SOURCE, {
       eval: true,
       workerData: {
         lzmaPath,
-        alone: transfer.buffer,
+        alone: transferable,
         expected,
       },
-      transferList: [transfer.buffer],
+      transferList: [transferable],
     });
-    const settle = (action: () => void): void => {
-      if (settled) return;
-      settled = true;
+    const terminateWorker = (): Promise<number> => {
+      if (exited) return Promise.resolve(0);
+      termination ??= worker.terminate();
+      return termination;
+    };
+    const finish = (
+      outcome:
+        | { readonly ok: true; readonly value: Buffer }
+        | { readonly ok: false; readonly cause: unknown },
+      waitForExit: boolean,
+    ): void => {
+      if (finishing) return;
+      finishing = true;
       signal?.removeEventListener("abort", onAbort);
-      action();
+      const settleNow = (): void => {
+        if (outcome.ok) resolve(outcome.value);
+        else reject(outcome.cause);
+      };
+      if (!waitForExit || exited) {
+        settleNow();
+        return;
+      }
+      terminateWorker().then(
+        () => {
+          exited = true;
+          settleNow();
+        },
+        (termCause: unknown) => {
+          if (outcome.ok) {
+            reject(termCause);
+            return;
+          }
+          reject(
+            new AggregateError(
+              [outcome.cause, termCause],
+              "Unity LZMA decode and worker termination both failed",
+              { cause: outcome.cause },
+            ),
+          );
+        },
+      );
     };
     const onAbort = (): void => {
-      void worker.terminate();
-      settle(() => {
-        try {
-          assertArtifactReadActive(signal);
-          rejectLzma("Unity LZMA worker terminated");
-        } catch (cause: unknown) {
-          reject(cause);
-        }
-      });
+      let cause: unknown;
+      try {
+        assertArtifactReadActive(signal);
+        rejectLzma("Unity LZMA worker terminated");
+      } catch (caught: unknown) {
+        cause = caught;
+      }
+      finish({ ok: false, cause }, true);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) {
@@ -163,35 +202,32 @@ const decodeAloneInWorker = async (
       return;
     }
     worker.on("message", (message: WorkerReply) => {
-      settle(() => {
-        void worker.terminate();
-        if (message.ok) {
-          resolve(Buffer.from(message.buffer));
-          return;
-        }
-        if (message.kind === "structure") {
-          reject(
-            new BinaryResourceFailure("structure", expected, message.message),
-          );
-          return;
-        }
-        reject(new BinaryFormatFailure("malformed", message.message));
-      });
+      if (message.ok) {
+        finish({ ok: true, value: Buffer.from(message.buffer) }, true);
+        return;
+      }
+      const cause =
+        message.kind === "structure"
+          ? new BinaryResourceFailure("structure", expected, message.message)
+          : new BinaryFormatFailure("malformed", message.message);
+      finish({ ok: false, cause }, true);
     });
     worker.on("error", (cause: Error) => {
-      settle(() => reject(cause));
+      finish({ ok: false, cause }, true);
     });
     worker.on("exit", (code: number) => {
-      settle(() => {
-        try {
-          assertArtifactReadActive(signal);
-        } catch (cause: unknown) {
-          reject(cause);
-          return;
-        }
+      exited = true;
+      if (finishing) return;
+      let cause: unknown;
+      try {
+        assertArtifactReadActive(signal);
         if (code !== 0)
           rejectLzma("Unity LZMA worker exited before completing");
-      });
+        rejectLzma("Unity LZMA worker exited without returning a result");
+      } catch (caught: unknown) {
+        cause = caught;
+      }
+      finish({ ok: false, cause }, false);
     });
   });
 };
