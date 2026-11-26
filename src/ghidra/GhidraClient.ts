@@ -1015,10 +1015,15 @@ export class GhidraClient {
     const starting = this.#startupAttempt;
     starting?.close();
     const previous = this.#closePromise;
-    // Join an equal or stronger close; a forced stop requested during a
-    // graceful close still runs once that close settles.
+    // Join an equal or stronger close. A forced stop requested during a
+    // graceful close interrupts that close's outstanding bridge requests (a
+    // stalled checkpoint or shutdown reply), then runs once it settles.
     if (previous !== undefined && (!forceStop || this.#closeForced))
       return previous;
+    if (previous !== undefined)
+      this.#failAll(
+        this.#failure("process", "Ghidra close escalated to a forced stop"),
+      );
     this.#closeForced = forceStop;
     const attempt: Promise<void> = (previous ?? Promise.resolve())
       .catch(() => undefined)

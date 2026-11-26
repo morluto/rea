@@ -165,17 +165,26 @@ export class CutterBridgeService {
     });
     const tail = (previous ?? Promise.resolve()).then(() => turn);
     this.#sessionTurns.set(input.session_id, tail);
+    let acquired = previous === undefined;
     try {
       if (previous !== undefined) {
         const waited = await waitForAbortable(previous, options.signal);
         if (waited instanceof AbortedWait)
           return err(cancelledBy("cutter_command", waited));
+        acquired = true;
       }
       return await this.#executeInTurn(input, options);
     } finally {
       release();
-      if (this.#sessionTurns.get(input.session_id) === tail)
-        this.#sessionTurns.delete(input.session_id);
+      const clear = (): void => {
+        if (this.#sessionTurns.get(input.session_id) === tail)
+          this.#sessionTurns.delete(input.session_id);
+      };
+      // A waiter cancelled before its turn leaves a tail that still waits for
+      // its predecessor; keep the gate until that chain settles so a later
+      // command queues behind the running one.
+      if (acquired) clear();
+      else void tail.then(clear);
     }
   }
 

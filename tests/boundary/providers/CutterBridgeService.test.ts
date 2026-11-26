@@ -711,3 +711,56 @@ it("gates a concurrent command behind a same-session command whose completion is
   });
   expect(dispatches).toBe(1);
 });
+
+it("keeps the session gate when a queued command is cancelled before its turn", async () => {
+  let finishFirst: (() => void) | undefined;
+  let dispatches = 0;
+  const service = new CutterBridgeService({
+    listSessions: async () => emptyCutterDiscovery(),
+    confirmCommandCompletion: vi.fn(async () => ({
+      ok: true as const,
+      value: false,
+    })),
+    execute: async () => {
+      dispatches += 1;
+      await new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      });
+      return {
+        requestId: "1e0b8c7a-3f61-4c2e-9a54-6f0d2b7c9e10",
+        output: null,
+        currentFile: "/fixtures/sample.bin",
+        documentGeneration: 7,
+        identityStatus: "partial" as const,
+        cutterVersion: null,
+        executionState: "unknown" as const,
+        error: "transport-response-missing",
+        message: "dispatched without a receipt",
+        outputTruncated: false,
+      };
+    },
+  });
+  const first = service.execute(cutterInput);
+  await waitFor(() => expect(finishFirst).toBeDefined());
+  const controller = new AbortController();
+  const cancelled = service.execute(cutterInput, { signal: controller.signal });
+  controller.abort(new Error("caller left the queue"));
+  expect(await cancelled).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  // A later command still queues behind the running one.
+  const later = service.execute(cutterInput);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(dispatches).toBe(1);
+  finishFirst?.();
+  expect(await first).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  expect(await later).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  expect(dispatches).toBe(1);
+});
