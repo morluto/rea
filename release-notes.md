@@ -823,6 +823,7 @@
 * **build:** share skill file enumeration across generators ([#14339](https://github.com/morluto/rea/issues/14339)) ([73f72c9](https://github.com/morluto/rea/commit/73f72c9cd69ad5a669dd4fc705d4b45af4297f11))
 * centralize owned finalization and configuration failures ([#14071](https://github.com/morluto/rea/issues/14071)) ([4bbaf17](https://github.com/morluto/rea/commit/4bbaf175121f101b319cd8aa0b4d47d3f40d5862))
 * **ci:** share completeness guard grouping transitions ([#14637](https://github.com/morluto/rea/issues/14637)) ([0f358c2](https://github.com/morluto/rea/commit/0f358c2c97cfa80db35d563fdb53c1f270982771))
+* **ci:** share repository identifier validation ([#14678](https://github.com/morluto/rea/issues/14678)) ([9ca9654](https://github.com/morluto/rea/commit/9ca96545000614067c158ad32e39be5cf9fa0509))
 * **cli/server:** break remaining module-layer cycles ([#14013](https://github.com/morluto/rea/issues/14013)) ([b565f78](https://github.com/morluto/rea/commit/b565f787cb4642a277f85d1a299acb8c49d7b409))
 * **cli:** derive command names from their declaring contracts ([#14325](https://github.com/morluto/rea/issues/14325)) ([a27751b](https://github.com/morluto/rea/commit/a27751b41d9cfa0e1a2fa52c0eef9646447fa1ad))
 * **cli:** extract contractCliDescriptionTypes from contractCliDescription ([#13729](https://github.com/morluto/rea/issues/13729)) ([f3ff526](https://github.com/morluto/rea/commit/f3ff526f28f3da36b5236e89d4350f5f2e7a7d9b))
