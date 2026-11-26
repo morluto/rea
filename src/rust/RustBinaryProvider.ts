@@ -24,6 +24,8 @@ import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
   rustBinarySchema,
   rustcPartialCoverage,
+  RUST_WASM_SECTION_BUDGET,
+  rustWasmSectionLimit,
   type InspectRustBinaryInput,
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
@@ -31,7 +33,6 @@ import {
   resolveRustDependencyBudgets,
   rustDependencyParameterLimit,
 } from "../domain/rust/rustDependencyBudget.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readRustBinaryImageFromHandle,
@@ -42,11 +43,9 @@ import {
   RUST_AUDITABLE_FORMAT,
   RUST_AUDITABLE_GRAPH_LIMIT,
 } from "./RustAuditableReader.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../domain/binaryContainer.js";
-import { MAX_WASM_SECTIONS, WASM_FORMAT } from "./RustWasmImage.js";
+import { isNativeStructureFailure } from "../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../domain/native/nativeStructureBudget.js";
+import { WASM_FORMAT } from "./RustWasmImage.js";
 import {
   isParseLimit,
   parseLimitConstraint,
@@ -132,6 +131,8 @@ export class RustBinaryProvider implements RustBinaryPort {
                 limits.output_bytes,
                 () => yieldArtifactRead(options?.signal),
                 dependencyBudgets,
+                input.max_structure_bytes,
+                input.max_wasm_sections,
               ),
               selected.fileOffset,
             );
@@ -152,7 +153,12 @@ export class RustBinaryProvider implements RustBinaryPort {
                 ? {}
                 : { selected_slice: selected.selection }),
               limitations: [
-                ...limitationsFor(image, dependencyBudgets),
+                ...limitationsFor(
+                  image,
+                  dependencyBudgets,
+                  input.max_wasm_sections ??
+                    RUST_WASM_SECTION_BUDGET.default_value,
+                ),
                 `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; max_compressed_dependency_bytes, max_inflated_dependency_bytes and max_dependency_inflate_ratio remain independent.`,
                 ...selected.limitations,
               ],
@@ -235,12 +241,13 @@ const resourceGuardLimitation = (
 const limitationsFor = (
   image: RustBinaryImage,
   budgets: ReturnType<typeof resolveRustDependencyBudgets>,
+  maxWasmSections: number,
 ): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
   `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
   ...(image.format === "wasm"
     ? [
-        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. At most ${MAX_WASM_SECTIONS} section payloads are examined.`,
+        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. At most ${String(maxWasmSections)} section payloads (max_wasm_sections) are examined.`,
       ]
     : []),
   resourceGuardLimitation(budgets),
@@ -395,16 +402,8 @@ const failureFor = (
       path,
       description: "artifact",
       recognise: (failure, origin) => {
-        if (failure instanceof BinaryResourceFailure)
-          return parseLimitConstraint(OPERATION, "memory", failure, {
-            path,
-            legacyMaximumKey: "maximum_bytes",
-            ...fixedAllowanceOptions(
-              "This native container parser allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
-          });
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure, path);
         if (isParseLimit(failure, RUST_AUDITABLE_FORMAT)) {
           const { name, maximum } = failure.failure.limit;
           if (name === RUST_AUDITABLE_GRAPH_LIMIT)
@@ -434,11 +433,8 @@ const failureFor = (
         if (isParseLimit(failure, WASM_FORMAT))
           return parseLimitConstraint(OPERATION, "cpu", failure, {
             path,
-            ...fixedAllowanceOptions(
-              "The WebAssembly section-walk allowance",
-              "work",
-              { limit: failure.failure.limit.maximum, unit: "sections" },
-            ),
+            retryable: false,
+            limit: rustWasmSectionLimit(failure.failure.limit.maximum),
           });
         if (
           origin === "owned-or-classified" &&

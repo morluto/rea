@@ -19,6 +19,11 @@ import {
   machoSliceArchitectureSchema,
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
+import { maxStructureBytesSchema } from "../native/nativeStructureBudget.js";
+import {
+  parameterBudgetLimit,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 /** Known revisions used to interpret compatible cargo-auditable documents. */
 export const RUST_AUDITABLE_FORMAT_VERSIONS = [0, 1, 8] as const;
@@ -135,12 +140,37 @@ export const rustcPartialCoverage = (
 });
 
 /** One explicit local executable or library, independent of a disassembler target. */
+/** `max_wasm_sections`: WebAssembly sections walked in one module. */
+export const RUST_WASM_SECTION_BUDGET = {
+  minimum: 1,
+  maximum: 16_777_216,
+  default_value: 65_536,
+  unit: "count",
+} as const satisfies ParameterBudget;
+
+/** The `max_wasm_sections` control that stopped a section walk. */
+export const rustWasmSectionLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_wasm_sections",
+    RUST_WASM_SECTION_BUDGET,
+    effectiveValue,
+  );
+
 export const inspectRustBinaryInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected executable or library",
   ),
   architecture: machoSliceArchitectureSchema.exactOptional(),
   producer_limits: rustProducerLimitsField,
+  max_structure_bytes: maxStructureBytesSchema,
+  max_wasm_sections: z
+    .int()
+    .min(RUST_WASM_SECTION_BUDGET.minimum)
+    .max(RUST_WASM_SECTION_BUDGET.maximum)
+    .exactOptional()
+    .describe(
+      "Maximum WebAssembly sections to walk (default 65536); each costs a frame read",
+    ),
   max_rustc_hashes: z
     .int()
     .positive()
