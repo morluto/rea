@@ -46,6 +46,8 @@ jobs:
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
       - run: npm run test:prepare
+      - name: Require the mutation project to cover every mutated file
+        run: npm run verify:mutation-targets
       - name: Run the complete configuration
         env:
           MUTATION_CONFIG: ${{ matrix.config }}
