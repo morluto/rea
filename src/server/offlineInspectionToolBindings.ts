@@ -216,7 +216,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   ociImageLayout: ((service) => ({
     inspect_oci_image_layout: {
       admission: "application",
-      run: (input, options) => service.inspect(input, options),
+      summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<OciImageLayoutService>,
   pythonPyc: ((service) => ({

@@ -81,22 +81,37 @@ const isStringArray = (value: unknown): value is readonly string[] => {
   return true;
 };
 
+interface ParsedAnnotations {
+  readonly annotations: { name: string; value: string }[];
+  readonly dropped: number;
+}
+
 // Each retained annotation is charged as its serialized {name, value} record
 // before it is allocated, so many short pairs cannot outgrow their text.
+// Non-string values are counted in the same pass so defect reporting does not
+// rescan annotations.
 const annotationsOf = (
   value: unknown,
-  charge?: (bytes: number) => void,
-): { name: string; value: string }[] => {
-  if (!isRecord(value)) return [];
+  options: {
+    readonly retain: boolean;
+    readonly charge?: (bytes: number) => void;
+  },
+): ParsedAnnotations => {
+  if (!isRecord(value)) return { annotations: [], dropped: 0 };
   const annotations: { name: string; value: string }[] = [];
+  let dropped = 0;
   for (const [name, entry] of Object.entries(value)) {
-    if (typeof entry !== "string") continue;
-    charge?.(
+    if (typeof entry !== "string") {
+      dropped += 1;
+      continue;
+    }
+    if (!options.retain) continue;
+    options.charge?.(
       annotationRecordBytes(name, entry) + (annotations.length > 0 ? 1 : 0),
     );
     annotations.push({ name, value: entry });
   }
-  return annotations;
+  return { annotations, dropped };
 };
 
 const platformOf = (
@@ -128,10 +143,18 @@ const schemaVersionDefect = (value: unknown): string | undefined => {
   return `schemaVersion is ${kind}, not the number 2`;
 };
 
+interface ParsedDescriptor {
+  readonly descriptor: OciImageLayoutIndex["entries"][number];
+  readonly droppedAnnotations: number;
+}
+
 const descriptorOf = (
   value: unknown,
-  chargeAnnotation?: (bytes: number) => void,
-): OciImageLayoutIndex["entries"][number] | undefined => {
+  options: {
+    readonly retainAnnotations?: boolean;
+    readonly chargeAnnotation?: (bytes: number) => void;
+  } = {},
+): ParsedDescriptor | undefined => {
   if (!isRecord(value)) return undefined;
   const mediaType = nonempty(value.mediaType) ?? nonempty(value.media_type);
   const digest = nonempty(value.digest);
@@ -142,12 +165,21 @@ const descriptorOf = (
     value.size >= 0
       ? value.size
       : null;
+  const { annotations, dropped } = annotationsOf(value.annotations, {
+    retain: options.retainAnnotations ?? false,
+    ...(options.chargeAnnotation === undefined
+      ? {}
+      : { charge: options.chargeAnnotation }),
+  });
   return {
-    media_type: mediaType,
-    digest,
-    size,
-    platform: platformOf(value.platform),
-    annotations: annotationsOf(value.annotations, chargeAnnotation),
+    descriptor: {
+      media_type: mediaType,
+      digest,
+      size,
+      platform: platformOf(value.platform),
+      annotations,
+    },
+    droppedAnnotations: dropped,
   };
 };
 
@@ -186,7 +218,10 @@ const describeSizeValue = (size: unknown): string => {
  * Why a descriptor's present platform or annotations cannot be modeled in
  * full. `descriptorOf` still keeps the readable parts; null counts as absent.
  */
-const descriptorMetadataDefects = (value: unknown): string[] => {
+const descriptorMetadataDefects = (
+  value: unknown,
+  droppedAnnotations: number,
+): string[] => {
   if (!isRecord(value)) return [];
   const defects: string[] = [];
   const { platform, annotations } = value;
@@ -209,15 +244,10 @@ const descriptorMetadataDefects = (value: unknown): string[] => {
   if (annotations !== undefined && annotations !== null) {
     if (!isRecord(annotations))
       defects.push("annotations is not a JSON object; it is not modeled");
-    else {
-      const dropped = Object.values(annotations).filter(
-        (entry) => typeof entry !== "string",
-      ).length;
-      if (dropped > 0)
-        defects.push(
-          `annotations has ${String(dropped)} value${dropped === 1 ? "" : "s"} that ${dropped === 1 ? "is" : "are"} not a string; ${dropped === 1 ? "it is" : "they are"} omitted`,
-        );
-    }
+    else if (droppedAnnotations > 0)
+      defects.push(
+        `annotations has ${String(droppedAnnotations)} value${droppedAnnotations === 1 ? "" : "s"} that ${droppedAnnotations === 1 ? "is" : "are"} not a string; ${droppedAnnotations === 1 ? "it is" : "they are"} omitted`,
+      );
   }
   return defects;
 };
@@ -1244,6 +1274,7 @@ const inventoryOciImageLayout = async (
     where: string,
     value: unknown,
     ownerDigest: string,
+    droppedAnnotations: number,
   ): void => {
     const defect = descriptorSizeDefect(value);
     if (defect !== undefined)
@@ -1255,7 +1286,10 @@ const inventoryOciImageLayout = async (
       );
     // Damaged platform or annotations are reported rather than read as
     // absent; the readable entries stay on the descriptor.
-    for (const metadataDefect of descriptorMetadataDefects(value))
+    for (const metadataDefect of descriptorMetadataDefects(
+      value,
+      droppedAnnotations,
+    ))
       recordFinding(
         findings,
         "malformed_blob_json",
@@ -1526,8 +1560,8 @@ const inventoryOciImageLayout = async (
   ): Promise<void> => {
     if (value === undefined) return;
     chargeDescriptor();
-    const descriptor = descriptorOf(value);
-    if (descriptor === undefined) {
+    const parsedSubject = descriptorOf(value);
+    if (parsedSubject === undefined) {
       referenceGraphTruncated = true;
       chargeRejectedDescriptorText(value);
       recordFinding(
@@ -1538,11 +1572,13 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    const { descriptor, droppedAnnotations } = parsedSubject;
     chargeAcceptedDescriptorText(descriptor);
     reportDescriptorDefects(
       `${owner} ${ownerDigest} subject`,
       value,
       ownerDigest,
+      droppedAnnotations,
     );
     const parsed = parseOciDigest(descriptor.digest);
     const path =
@@ -1787,8 +1823,11 @@ const inventoryOciImageLayout = async (
     for (const [position, item] of manifests.entries()) {
       chargeDescriptor();
       // Annotations spend max_descriptor_bytes as each record is built.
-      const descriptor = descriptorOf(item, spendDescriptorBytes);
-      if (descriptor === undefined) {
+      const parsedEntry = descriptorOf(item, {
+        retainAnnotations: true,
+        chargeAnnotation: spendDescriptorBytes,
+      });
+      if (parsedEntry === undefined) {
         referenceGraphTruncated = true;
         chargeRejectedDescriptorText(item);
         recordFinding(
@@ -1799,12 +1838,14 @@ const inventoryOciImageLayout = async (
         );
         continue;
       }
+      const { descriptor, droppedAnnotations } = parsedEntry;
       chargeDescriptorBytes(descriptor);
       indexEntries.push(descriptor);
       reportDescriptorDefects(
         `Index ${digest} manifests[${String(position)}]`,
         item,
         digest,
+        droppedAnnotations,
       );
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
       if (!isOciKnownMediaType(descriptor.media_type)) {
@@ -1896,7 +1937,8 @@ const inventoryOciImageLayout = async (
       );
     // config is required; a manifest without one is as damaged as one whose
     // config descriptor cannot be modeled.
-    const configDescriptor = descriptorOf(document.value.config);
+    const parsedConfigDescriptor = descriptorOf(document.value.config);
+    const configDescriptor = parsedConfigDescriptor?.descriptor;
     if (configDescriptor === undefined) {
       referenceGraphTruncated = true;
       chargeRejectedDescriptorText(document.value.config);
@@ -1924,8 +1966,8 @@ const inventoryOciImageLayout = async (
     }
     for (const [position, item] of layerItems.entries()) {
       chargeDescriptor();
-      const descriptor = descriptorOf(item);
-      if (descriptor === undefined) {
+      const parsedLayer = descriptorOf(item);
+      if (parsedLayer === undefined) {
         referenceGraphTruncated = true;
         chargeRejectedDescriptorText(item);
         recordFinding(
@@ -1936,11 +1978,13 @@ const inventoryOciImageLayout = async (
         );
         continue;
       }
+      const { descriptor, droppedAnnotations } = parsedLayer;
       chargeAcceptedDescriptorText(descriptor);
       reportDescriptorDefects(
         `Manifest ${digest} layers[${String(position)}]`,
         item,
         digest,
+        droppedAnnotations,
       );
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
       if (!isOciKnownMediaType(descriptor.media_type))
@@ -1966,12 +2010,14 @@ const inventoryOciImageLayout = async (
       });
     }
     let configFacts = EMPTY_CONFIG_FACTS;
-    if (configDescriptor !== undefined) {
+    if (parsedConfigDescriptor !== undefined) {
+      const configDescriptor = parsedConfigDescriptor.descriptor;
       chargeAcceptedDescriptorText(configDescriptor);
       reportDescriptorDefects(
         `Manifest ${digest} config`,
         document.value.config,
         digest,
+        parsedConfigDescriptor.droppedAnnotations,
       );
       remember(
         configDescriptor.digest,

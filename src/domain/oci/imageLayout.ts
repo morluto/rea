@@ -3,6 +3,11 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { coverageStatusSchema } from "../coverage.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 /** Format identity for typed OCI image-layout parse failures. */
 export const OCI_IMAGE_LAYOUT_FORMAT = "oci-image-layout";
@@ -31,15 +36,56 @@ export const MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES = 512 * 1024 * 1024;
 /** Hard ceiling on nested index depth. */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH = 8;
 
-export const OCI_IMAGE_LAYOUT_LIMIT_MAXIMA = {
-  max_json_bytes: MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES,
-  max_blob_bytes: MAX_INSPECT_OCI_IMAGE_LAYOUT_BLOB_BYTES,
-  max_entries: MAX_INSPECT_OCI_IMAGE_LAYOUT_ENTRIES,
-  max_descriptors: MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS,
-  max_config_bytes: MAX_INSPECT_OCI_IMAGE_LAYOUT_CONFIG_BYTES,
-  max_descriptor_bytes: MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES,
-  max_index_depth: MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH,
-} as const;
+/** The per-call budgets of `inspect_oci_image_layout`. */
+export const OCI_IMAGE_LAYOUT_BUDGETS = {
+  max_json_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES,
+    default_value: 1048576,
+    unit: "bytes",
+  },
+  max_blob_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_BLOB_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_ENTRIES,
+    default_value: 4096,
+    unit: "count",
+  },
+  max_descriptors: {
+    minimum: 1,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS,
+    default_value: 65536,
+    unit: "count",
+  },
+  max_config_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_CONFIG_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_descriptor_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_index_depth: {
+    minimum: 1,
+    maximum: MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH,
+    default_value: 4,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type OciImageLayoutBudget = keyof typeof OCI_IMAGE_LAYOUT_BUDGETS;
+
+/** The per-call budget that stopped an OCI image-layout inspection. */
+export const ociImageLayoutBudgetLimit =
+  parameterBudgetLimitFor<OciImageLayoutBudget>(OCI_IMAGE_LAYOUT_BUDGETS);
 
 /** Descriptor media types this reader inventories without treating as unknown. */
 export const OCI_KNOWN_MEDIA_TYPES = [
@@ -143,67 +189,39 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
     .describe(
       "Include config Env values (default true); false leaves each value null and keeps only the names",
     ),
-  max_json_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES)
-    .default(1048576)
-    .describe(
-      "Maximum bytes to decode for one JSON document (oci-layout, index, manifest, or config; default 1 MiB)",
-    ),
-  max_blob_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_BLOB_BYTES)
-    .default(67108864)
-    .describe("Maximum bytes to hash for one referenced blob (default 64 MiB)"),
-  max_entries: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_ENTRIES)
-    .default(4096)
-    .describe(
-      "Maximum directory entries to examine; exceeding the budget fails without partial success",
-    ),
-  max_descriptors: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS)
-    .default(65536)
-    .describe(
-      "Maximum index, manifest and layer descriptors to decode across the layout, counted per reference so shared layers count once per manifest; exceeding the budget fails without partial success",
-    ),
-  max_config_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_CONFIG_BYTES)
-    .default(67108864)
-    .describe(
-      "Maximum serialized bytes of config-derived image facts across the layout, counted once per image so a shared config counts once per manifest that uses it (default 64 MiB); exceeding the budget fails without partial success",
-    ),
-  max_descriptor_bytes: z
-    .number()
-    .int()
-    .min(16)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES)
-    .default(67108864)
-    .describe(
-      "Maximum bytes charged for descriptor text retained across the layout: index entry digests, media types, platforms and annotations, accepted subject, config and layer digests and media types counted once per referencing manifest or index, the digest text findings retain for rejected descriptors, and the unknown media types findings quote from a document's own mediaType. Annotations are charged as serialized JSON {name, value} records, including keys, escapes and separators between records. Other descriptor text is charged as UTF-8 bytes (default budget 64 MiB); exceeding the budget fails without partial success",
-    ),
-  max_index_depth: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH)
-    .default(4)
-    .describe(
-      "Maximum nested index depth, counting the top-level index.json as depth 0",
-    ),
+  max_json_bytes: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_json_bytes,
+  ).describe(
+    "Maximum bytes to decode for one JSON document (oci-layout, index, manifest, or config; default 1 MiB)",
+  ),
+  max_blob_bytes: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_blob_bytes,
+  ).describe("Maximum bytes to hash for one referenced blob (default 64 MiB)"),
+  max_entries: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_entries,
+  ).describe(
+    "Maximum directory entries to examine; exceeding the budget fails without partial success",
+  ),
+  max_descriptors: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_descriptors,
+  ).describe(
+    "Maximum index, manifest and layer descriptors to decode across the layout, counted per reference so shared layers count once per manifest; exceeding the budget fails without partial success",
+  ),
+  max_config_bytes: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_config_bytes,
+  ).describe(
+    "Maximum serialized bytes of config-derived image facts across the layout, counted once per image so a shared config counts once per manifest that uses it (default 64 MiB); exceeding the budget fails without partial success",
+  ),
+  max_descriptor_bytes: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_descriptor_bytes,
+  ).describe(
+    "Maximum bytes charged for descriptor text retained across the layout: index entry digests, media types, platforms and annotations, accepted subject, config and layer digests and media types counted once per referencing manifest or index, the digest text findings retain for rejected descriptors, and the unknown media types findings quote from a document's own mediaType. Annotations are charged as serialized JSON {name, value} records, including keys, escapes and separators between records. Other descriptor text is charged as UTF-8 bytes (default budget 64 MiB); exceeding the budget fails without partial success",
+  ),
+  max_index_depth: parameterBudgetSchema(
+    OCI_IMAGE_LAYOUT_BUDGETS.max_index_depth,
+  ).describe(
+    "Maximum nested index depth, counting the top-level index.json as depth 0",
+  ),
 });
 
 const nullableText = z.string().min(1).nullable();

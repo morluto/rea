@@ -21,10 +21,12 @@ import {
   unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
+  OCI_IMAGE_LAYOUT_BUDGETS,
   OCI_IMAGE_LAYOUT_FORMAT,
-  OCI_IMAGE_LAYOUT_LIMIT_MAXIMA,
+  ociImageLayoutBudgetLimit,
   type InspectOciImageLayoutInput,
   type OciImageLayout,
+  type OciImageLayoutBudget,
 } from "../domain/oci/imageLayout.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -42,14 +44,6 @@ import {
 } from "../providers/classifyProviderFailure.js";
 
 const OPERATION = "inspect_oci_image_layout";
-
-const budgetRecovery = (
-  parameter: keyof typeof OCI_IMAGE_LAYOUT_LIMIT_MAXIMA,
-  selected: number,
-): string =>
-  selected >= OCI_IMAGE_LAYOUT_LIMIT_MAXIMA[parameter]
-    ? `${parameter} is at this operation's maximum of ${String(OCI_IMAGE_LAYOUT_LIMIT_MAXIMA[parameter])}; select a complete layout within that bound.`
-    : `Raise ${parameter} above ${String(selected)}, up to ${String(OCI_IMAGE_LAYOUT_LIMIT_MAXIMA[parameter])}, or select a smaller layout. The budget applies on the next call; repeating the unchanged request does not raise it.`;
 
 const layoutPartial = (
   cause: unknown,
@@ -115,15 +109,13 @@ const layoutFailureDialect = (
         { ...options, cause },
       );
     if (isParseLimit(cause, OCI_IMAGE_LAYOUT_FORMAT)) {
+      const { limit } = cause.failure;
       const parameter = (
-        Object.keys(
-          OCI_IMAGE_LAYOUT_LIMIT_MAXIMA,
-        ) as (keyof typeof OCI_IMAGE_LAYOUT_LIMIT_MAXIMA)[]
-      ).find((name) => name === cause.failure.limit.name);
+        Object.keys(OCI_IMAGE_LAYOUT_BUDGETS) as OciImageLayoutBudget[]
+      ).find((name) => name === limit.name);
       return parseLimitConstraint(
         OPERATION,
-        cause.failure.limit.name === "max_entries" ||
-          cause.failure.limit.name === "max_descriptors"
+        limit.name === "max_entries" || limit.name === "max_descriptors"
           ? "capacity"
           : "memory",
         cause,
@@ -134,10 +126,12 @@ const layoutFailureDialect = (
           ...(parameter === undefined
             ? {}
             : {
-                remediationAction: budgetRecovery(
-                  parameter,
-                  cause.failure.limit.maximum,
-                ),
+                limit: {
+                  ...ociImageLayoutBudgetLimit(parameter, limit.maximum),
+                  ...(typeof limit.required === "number"
+                    ? { required_value: limit.required }
+                    : {}),
+                },
               }),
         },
       );
