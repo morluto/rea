@@ -1175,6 +1175,7 @@ const parseElfDependenciesCore = function* (
     verneedSection,
     addresses.get(DT_VERNEED),
     unique.get(DT_VERNEEDNUM) ?? verneedSection?.info,
+    dynamic.offset,
     issues,
     versionNames,
     () => {
@@ -1195,6 +1196,7 @@ const parseElfDependenciesCore = function* (
     verdefSection,
     addresses.get(DT_VERDEF),
     unique.get(DT_VERDEFNUM) ?? verdefSection?.info,
+    dynamic.offset,
     issues,
     () => {
       examinedVersions += 1;
@@ -1251,11 +1253,13 @@ const parseElfDependenciesCore = function* (
   if (
     dynsymTable === null &&
     symbolCount !== null &&
-    (dynsymSection !== undefined || addresses.has(DT_SYMTAB))
+    (dynsymSection !== undefined || addresses.has(DT_SYMTAB) || symbolCount > 0)
   )
     issues.push({
       code: "table_unavailable",
-      location: hex(addresses.get(DT_SYMTAB) ?? dynsymSection?.offset ?? 0),
+      location: hex(
+        addresses.get(DT_SYMTAB) ?? dynsymSection?.offset ?? dynamic.offset,
+      ),
       message:
         "Dynamic symbol table could not be located from section headers or DT_SYMTAB",
     });
@@ -1588,6 +1592,7 @@ const parseVerneed = function* (
   section: SectionFacts | undefined,
   address: bigint | undefined,
   declaredCount: number | undefined,
+  dynamicOffset: number,
   issues: ElfDependencyIssue[],
   versionNames: Map<number, { name: string | null; file: string | null }>,
   chargeVersion: () => void,
@@ -1601,15 +1606,23 @@ const parseVerneed = function* (
     issues,
   );
   if (table === null) {
+    const declaresRecords = declaredCount !== undefined && declaredCount > 0;
     if (address !== undefined)
       issues.push({
         code: "table_unavailable",
         location: hex(address),
         message: "GNU version requirements could not be located",
       });
+    else if (section === undefined && declaresRecords)
+      issues.push({
+        code: "table_unavailable",
+        location: hex(dynamicOffset),
+        message:
+          "GNU version requirements declare DT_VERNEEDNUM without DT_VERNEED or SHT_GNU_VERNEED",
+      });
     return {
       status:
-        address === undefined && section === undefined
+        address === undefined && section === undefined && !declaresRecords
           ? "absent"
           : "unreadable",
       location: null,
@@ -1736,6 +1749,7 @@ const parseVerdef = function* (
   section: SectionFacts | undefined,
   address: bigint | undefined,
   declaredCount: number | undefined,
+  dynamicOffset: number,
   issues: ElfDependencyIssue[],
   chargeVersion: () => void,
 ): ElfDependencySteps<ElfDependencies["version_definitions"]> {
@@ -1748,15 +1762,23 @@ const parseVerdef = function* (
     issues,
   );
   if (table === null) {
+    const declaresRecords = declaredCount !== undefined && declaredCount > 0;
     if (address !== undefined)
       issues.push({
         code: "table_unavailable",
         location: hex(address),
         message: "GNU version definitions could not be located",
       });
+    else if (section === undefined && declaresRecords)
+      issues.push({
+        code: "table_unavailable",
+        location: hex(dynamicOffset),
+        message:
+          "GNU version definitions declare DT_VERDEFNUM without DT_VERDEF or SHT_GNU_VERDEF",
+      });
     return {
       status:
-        address === undefined && section === undefined
+        address === undefined && section === undefined && !declaresRecords
           ? "absent"
           : "unreadable",
       location: null,
