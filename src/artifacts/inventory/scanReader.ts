@@ -383,7 +383,10 @@ const visitArtifactEntries = async (
             : { status: "unknown" as const, limitations: [limitation] };
         if (traversal !== undefined) context.traversal.record(traversal);
         occurrence.hash_status = "unavailable";
-        occurrence.limitations.push(limitation);
+        // A reader that refuses content it already listed with a limitation
+        // names the same reason on the entry and on the refusal.
+        if (!occurrence.limitations.includes(limitation))
+          occurrence.limitations.push(limitation);
       }
       if (digested === undefined) noteUnreadContainerSuffix(occurrence);
       else {

@@ -251,6 +251,7 @@ export interface ArtifactReader {
     | ZipPackageFormat
     | "asar"
     | "ines"
+    | "nds"
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
@@ -260,6 +261,8 @@ export interface ArtifactReader {
     | "ktx"
     | "ktx2"
     | "uimage"
+    | "nso"
+    | "nro"
     | "android-boot-image"
     | "android-ota-payload"
     | "android-sparse-image"

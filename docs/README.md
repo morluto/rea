@@ -133,9 +133,11 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Godot PCK archives](godot-pck.md)
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
+- [Nintendo DS ROMs](guides/firmware/nds-roms.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [ISO 9660 disc images](guides/firmware/iso9660-images.md)
 - [tar and gzip-compressed tar archives](tar-archives.md)
+- [Nintendo Switch NSO and NRO executables](guides/firmware/switch-executables.md)
 - [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly

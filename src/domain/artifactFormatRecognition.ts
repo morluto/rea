@@ -8,6 +8,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { hasNdsHeader } from "./ndsRom.js";
 import {
   hasIso9660Signature,
   ISO9660_DESCRIPTOR_OFFSET,
@@ -17,6 +18,7 @@ import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
+import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
@@ -41,6 +43,7 @@ import { hasZipSignature } from "./zipPackageFormat.js";
 export type RecognizedArtifactFormat = Extract<
   ArtifactFormatId,
   | "ines"
+  | "nds"
   | "zip"
   | "godot-pck"
   | "unityfs"
@@ -51,6 +54,8 @@ export type RecognizedArtifactFormat = Extract<
   | "ktx"
   | "ktx2"
   | "uimage"
+  | "nso"
+  | "nro"
   | "android-boot-image"
   | "android-ota-payload"
   | "android-sparse-image"
@@ -174,6 +179,8 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("ktx", hasKtx1Identifier),
     when("ktx2", hasKtx2Identifier),
     when("uimage", hasUImageMagic),
+    when("nso", hasNsoMagic),
+    when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
@@ -270,6 +277,9 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     },
     // Binary plists, including keyed archives, often use other extensions.
     when("plist", hasBinaryPlistSignature),
+    // No magic: the stored logo CRC and a matching checksum claim it, after
+    // every format with a leading signature.
+    when("nds", hasNdsHeader),
   ];
 
 /**

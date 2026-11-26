@@ -524,6 +524,11 @@ export const documentationSections = [
         route: "/ines-containers",
       },
       {
+        text: "Nintendo DS ROMs",
+        source: "guides/firmware/nds-roms.md",
+        route: "/nds-roms",
+      },
+      {
         text: "WeChat mini-program wxapkg archives",
         source: "wxapkg.md",
         route: "/wxapkg",
@@ -537,6 +542,11 @@ export const documentationSections = [
         text: "tar and gzip-compressed tar archives",
         source: "tar-archives.md",
         route: "/tar-archives",
+      },
+      {
+        text: "Nintendo Switch NSO and NRO executables",
+        source: "guides/firmware/switch-executables.md",
+        route: "/switch-executables",
       },
       {
         text: "GPU asset headers: DDS, GLB, KTX and KTX2",
