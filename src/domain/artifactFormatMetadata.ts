@@ -40,6 +40,7 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  androidSparseImageMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -76,6 +77,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uImageEntryMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidOtaPartitionMetadataSchema,
+  androidSparseImageMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
@@ -254,6 +256,10 @@ const declarationsByKind: {
   "android-ota-partition": {
     notCompared:
       "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
+  },
+  "android-sparse-image": {
+    notCompared:
+      "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
   },
   "esp-image": {
     notCompared:

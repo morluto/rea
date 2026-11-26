@@ -830,6 +830,135 @@ it("joins late transport publication and seals the deferred server registry befo
   }
 });
 
+it.each([
+  { eagerResult: 0, exitCodes: [] as const, settled: "resolved" },
+  { eagerResult: 1, exitCodes: [1] as const, settled: "rejected" },
+])(
+  "keeps eager startup result $eagerResult when close aborts during its cleanup",
+  async ({ eagerResult, exitCodes, settled }) => {
+    const directory = await createTestTempDirectory("rea-deferred-startup-");
+    const stub = join(directory, "eager-stub.mjs");
+    const hook = join(directory, "register-eager-hook.mjs");
+    const resolver = join(directory, "resolve-eager.mjs");
+    await writeFile(
+      stub,
+      `export const runEager = async (dependencies) => {
+  dependencies.captureShutdown?.(async () => {});
+  globalThis.__markEagerEntered();
+  await globalThis.__cleanupHold;
+  globalThis.__eagerSawAbort = dependencies.startupSignal?.aborted === true;
+  return globalThis.__eagerResult;
+};
+`,
+    );
+    await writeFile(
+      resolver,
+      `import { pathToFileURL } from "node:url";
+const stub = pathToFileURL(${JSON.stringify(stub)}).href;
+export async function resolve(specifier, context, next) {
+  const fromDeferred = context.parentURL?.includes("/dist/main/deferredRuntime.js") === true;
+  const eager = specifier === "./eagerRuntime.js" || specifier.endsWith("/main/eagerRuntime.js");
+  if (fromDeferred && eager) return { url: stub, shortCircuit: true };
+  return next(specifier, context);
+}
+`,
+    );
+    await writeFile(
+      hook,
+      `import { register } from "node:module";
+import { pathToFileURL } from "node:url";
+register(pathToFileURL(${JSON.stringify(resolver)}).href, import.meta.url);
+`,
+    );
+    const child = spawnSync(
+      process.execPath,
+      [
+        `--import=${hook}`,
+        "--input-type=module",
+        "--eval",
+        `
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const parsed = parseConfig({ HOME: process.env.HOME, REA_LOG_LEVEL: "silent" });
+if (!parsed.ok) throw parsed.error;
+const exitCodes = [];
+let releaseCleanup;
+globalThis.__cleanupHold = new Promise((resolve) => { releaseCleanup = resolve; });
+globalThis.__eagerResult = ${String(eagerResult)};
+globalThis.__eagerEntered = new Promise((resolve) => { globalThis.__markEagerEntered = resolve; });
+const outcome = {};
+const result = await runDeferred({
+  env: {},
+  writeStderr: () => {},
+  setExitCode: (code) => { exitCodes.push(code); },
+  registerShutdown: () => () => {},
+  serve: async (factory) => {
+    const server = factory({});
+    const loading = server.ensureRuntime().then(
+      () => ({ settled: "resolved" }),
+      (cause) => ({
+        settled: "rejected",
+        message: cause instanceof Error ? cause.message : "",
+      }),
+    );
+    await globalThis.__eagerEntered;
+    const closing = server.close();
+    releaseCleanup();
+    outcome.loading = await loading;
+    outcome.close = await closing.then(
+      () => ({ settled: "resolved" }),
+      (cause) => ({
+        settled: "rejected",
+        name: cause instanceof AggregateError ? "AggregateError" : cause instanceof Error ? cause.name : "",
+        message: cause instanceof Error ? cause.message : "",
+      }),
+    );
+    return { close: async () => {} };
+  },
+}, parsed.value);
+const loading = outcome.loading;
+console.log(JSON.stringify({
+  result,
+  exitCodes,
+  sawAbort: globalThis.__eagerSawAbort === true,
+  loading: loading.settled === "rejected"
+    ? { settled: loading.settled, message: loading.message }
+    : { settled: loading.settled },
+  close: outcome.close,
+}));
+`,
+      ],
+      {
+        cwd: process.cwd(),
+        env: withCompileCache({
+          ...process.env,
+          EAGER_RESULT: String(eagerResult),
+        }),
+        encoding: "utf8",
+        timeout: 15000,
+      },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    const report = JSON.parse(child.stdout) as {
+      readonly result: number;
+      readonly exitCodes: readonly number[];
+      readonly sawAbort: boolean;
+      readonly loading: { readonly settled: string; readonly message?: string };
+      readonly close: { readonly settled: string };
+    };
+    expect(report.result).toBe(0);
+    expect(report.sawAbort).toBe(true);
+    expect(report.exitCodes).toEqual([...exitCodes]);
+    expect(report.close).toEqual({ settled: "resolved" });
+    expect(report.loading).toEqual(
+      settled === "rejected"
+        ? { settled: "rejected", message: SERVER_START_FAILED }
+        : { settled: "resolved" },
+    );
+  },
+);
+
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
   const opened = await client.callTool({

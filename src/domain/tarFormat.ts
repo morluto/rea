@@ -348,29 +348,45 @@ export const walkPaxRecords = (
   return undefined;
 };
 
+/** Keywords whose values `hdrcharset=BINARY` leaves as raw bytes (POSIX pax "hdrcharset"). */
+const PAX_BINARY_KEYWORDS = new Set(["path", "linkpath", "uname", "gname"]);
+
 /**
  * Parse pax extended-header records: `"<length> <key>=<value>\n"`, where
- * `length` counts the whole record in bytes. Values are UTF-8.
+ * `length` counts the whole record in bytes. Values are UTF-8, except that a
+ * `hdrcharset=BINARY` record in the same header leaves path, linkpath, uname
+ * and gname as raw bytes; those that are not UTF-8 are decoded as Latin-1 and
+ * named in `latin1`.
  */
 export const parsePaxRecords = (
   bytes: Uint8Array,
-): { readonly records: TarPaxRecords } | { readonly reason: string } => {
-  const records = new Map<string, string>();
-  let invalidReason: string | undefined;
-  const error = walkPaxRecords(bytes, (key, value, stop) => {
-    if (!isStrictUtf8(value)) {
-      invalidReason = "pax record value is not UTF-8";
-      stop();
-      return;
-    }
-    records.set(
-      Buffer.from(key).toString("utf8"),
-      Buffer.from(value).toString("utf8"),
-    );
+):
+  | { readonly records: TarPaxRecords; readonly latin1: readonly string[] }
+  | { readonly reason: string } => {
+  const values: [string, Uint8Array][] = [];
+  const error = walkPaxRecords(bytes, (key, value) => {
+    values.push([Buffer.from(key).toString("utf8"), value]);
   });
-  if (invalidReason !== undefined) return { reason: invalidReason };
   if (error !== undefined) return { reason: error.reason };
-  return { records };
+  const binary = values.some(
+    ([key, value]) =>
+      key === "hdrcharset" &&
+      Buffer.from(value).toString("latin1") === "BINARY",
+  );
+  const records = new Map<string, string>();
+  const latin1 = new Set<string>();
+  for (const [key, value] of values) {
+    if (isStrictUtf8(value)) {
+      records.set(key, Buffer.from(value).toString("utf8"));
+      latin1.delete(key);
+      continue;
+    }
+    if (!binary || !PAX_BINARY_KEYWORDS.has(key))
+      return { reason: "pax record value is not UTF-8" };
+    records.set(key, Buffer.from(value).toString("latin1"));
+    latin1.add(key);
+  }
+  return { records, latin1: [...latin1] };
 };
 
 /** Number of whole blocks that hold `size` data bytes. */

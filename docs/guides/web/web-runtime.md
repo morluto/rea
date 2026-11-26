@@ -23,9 +23,14 @@ captured UTF-16 units. On that page the summary was 7.5 KB. Page it with
 
 - `functions`: coverage rows, filtered by `script_ids` or `executed_only`;
 - `requests`: filtered by `methods`;
-- `sources`: script metadata and text sizes;
+- `sources`: script metadata with the lowercase SHA-256, UTF-8 byte count and
+  UTF-16 code-unit count for captured text, or a reason for unavailable or
+  excluded text;
 - `source-text`: one script's text by `script_id`, `offset` and `limit` in
   UTF-16 code units.
+
+Use `view.collection` to interpret every row in `items`. Both tools' full
+output schemas validate rows against that collection.
 
 `detail: "complete"` returns everything inline. On the CLI,
 `--detail summary` requires `--evidence_output`.

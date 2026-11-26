@@ -17,7 +17,7 @@ import {
   BinaryFormatFailure,
   isNativeStructureFailure,
 } from "../../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";

@@ -20,7 +20,7 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
 import { isNativeStructureFailure } from "../../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { parseKernelModuleFromHandle } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";

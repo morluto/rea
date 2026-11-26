@@ -66,6 +66,28 @@ export class DesktopRemoteTaskReaders {
     ]);
   }
 
+  /**
+   * Whether any retained reader failure can still be retried against a live
+   * build computer. Once every remaining reader has an uncertain command or
+   * cleanup outcome, only container teardown can resolve it.
+   */
+  hasRetryablePending(): boolean {
+    if (this.#pending.size === 0) return true;
+    return [...this.#pending].some(
+      (pending) =>
+        pending.uncertain === undefined &&
+        pending.cleanupUncertain === undefined,
+    );
+  }
+
+  /** Confirm reader cleanup after verified build-computer container teardown. */
+  resolveAfterVerifiedComputerTeardown(): void {
+    this.#pending.clear();
+    this.#release.confirm();
+    this.#release = new AnalysisCleanupRelease();
+    this.#failures.clear();
+  }
+
   async read(
     readers: readonly DesktopTaskReader[],
     signal: AbortSignal,

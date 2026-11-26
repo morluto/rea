@@ -118,6 +118,7 @@ These stay out of `update_analysis_settings`.
 | `REA_MCP_MAX_INPUT_ELEMENTS`        | `src/config/mcpInputBudget.ts`         |                1024 |        1 | `Number.MAX_SAFE_INTEGER` | MCP server creation                         | Argument admission for the server process. Prose restart.                                                   |
 | `REA_MCP_MAX_RESPONSE_BYTES`        | `src/config/mcpResponseBudget.ts`      | 10485760 when unset | 10485760 | `Number.MAX_SAFE_INTEGER` | MCP server creation                         | Stdio receive buffer and the paired client buffer. Prose restart.                                           |
 | `REA_MCP_TOOLS_LIST_BUDGET_MS`      | `src/config/mcpStartupBudgets.ts`      |                5000 |        1 |                2147483647 | MCP server startup                          | Startup phase of the MCP server itself. Prose.                                                              |
+| `REA_MCP_TOOLS_LIST_PAGE_BYTES`     | `src/config/mcpToolsListPageBudget.ts` |              917504 |        1 |                   1048576 | MCP server creation                         | Tools/list page size for the server process. Prose restart.                                                 |
 | `REA_RECONNECT_TIMEOUT_SECONDS`     | `src/hopper/BridgeLauncher.ts`         |                  30 |       30 |                        30 | written into the Hopper bridge helper       | Not a caller setting. It is `HOPPER_SHUTDOWN_TIMEOUT_MS / 1000`.                                            |
 | `REA_SWIFTC_COMPILE_TIMEOUT_MS`     | `src/config/providerStartupTimeout.ts` |              120000 |        1 |                2147483647 | Darwin ownership-helper reader construction | Captured at process start for that helper compile. Prose restart.                                           |
 
@@ -222,11 +223,14 @@ each operation's schema owns its bounds, and a refusal reports
 `details.limit` with `control_kind: "parameter"` and `applies_at: "next_call"`.
 These parameters report that limit:
 
-| Operation                                     | Parameter                | Default    | Floor |                   Maximum | Owner                                 |
-| --------------------------------------------- | ------------------------ | ---------- | ----: | ------------------------: | ------------------------------------- |
-| `inspect_il2cpp_metadata`                     | `max_native_index_bytes` | 1073741824 |     1 | `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts` |
-| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`         | 67108864   |    64 |                 536870912 | `src/domain/native/elfReadBudgets.ts` |
-| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`            | 128        |     1 |                       256 | `src/domain/native/elfReadBudgets.ts` |
+| Operation                                     | Parameter                         | Default    | Floor |                              Maximum | Owner                                     |
+| --------------------------------------------- | --------------------------------- | ---------- | ----: | -----------------------------------: | ----------------------------------------- |
+| `inspect_il2cpp_metadata`                     | `max_native_index_bytes`          | 1073741824 |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/il2cpp/il2cppMetadata.ts`     |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_file_bytes`                  | 67108864   |    64 |                            536870912 | `src/domain/native/elfReadBudgets.ts`     |
+| `inspect_elf_notes`, `inspect_elf_debug_link` | `max_entries`                     | 128        |     1 |                                  256 | `src/domain/native/elfReadBudgets.ts`     |
+| `inspect_rust_binary`                         | `max_compressed_dependency_bytes` | 1048576    |     1 |        `buffer.constants.MAX_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
+| `inspect_rust_binary`                         | `max_inflated_dependency_bytes`   | 8388608    |     1 | `buffer.constants.MAX_STRING_LENGTH` | `src/domain/rust/rustDependencyBudget.ts` |
+| `inspect_rust_binary`                         | `max_dependency_inflate_ratio`    | 64         |     1 |            `Number.MAX_SAFE_INTEGER` | `src/domain/rust/rustDependencyBudget.ts` |
 
 Refusals that still name a per-call control only in prose are counted by
 `scripts/verify/fixed-ceilings.mjs` against

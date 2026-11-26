@@ -1,7 +1,7 @@
 {
   "schemas": {
-    "input compact": "3b90930bf5a2e65b",
-    "output compact": "4bda7c3651bfc579"
+    "input compact": "c437b17fce61bb4c",
+    "output compact": "fc6c5d5a78a47254"
   },
   "patterns": {
     "input": ["^(?:(?:[\\-.0-9A-Z_a-z~]|%[0-9A-Fa-f]{2})+:)?0[Xx][0-9A-Fa-f]+$"]

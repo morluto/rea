@@ -33,7 +33,7 @@ import {
 } from "../../domain/binaryContainer.js";
 import { readElfHardeningFromHandle } from "./ElfHardening.js";
 import { readMachoHardeningFromHandle } from "./MachoHardening.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { readPeHardeningFromHandle } from "./PeHardening.js";
 
 const OPERATION = "inspect_binary_hardening";

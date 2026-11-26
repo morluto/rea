@@ -3497,10 +3497,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== evmole@0.9.6 =====
+===== evmole@0.10.1 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
-Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
+Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.1.tgz
+Integrity: sha512-kSN/g/Wi4vXNJPV7jgV1TrKSFKCJuaNiBs2rvCDv5+mzRaHkM7inImkRhqQKHdLx41TCIsWKzAaDihVMf06iTg==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---

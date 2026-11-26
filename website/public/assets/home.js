@@ -130,6 +130,19 @@ function initializeHomeNavigation() {
       );
     });
   });
+  // The dropdown overlays the page, so let readers dismiss it directly.
+  const summary = menu.querySelector("summary");
+  const dismiss = () => {
+    if (sidebarLayout || !menu.open) return false;
+    menu.open = false;
+    return true;
+  };
+  menu.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && dismiss()) summary?.focus();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!menu.contains(event.target)) dismiss();
+  });
   window.addEventListener("scroll", schedulePosition, { passive: true });
   window.addEventListener("resize", schedulePosition, { passive: true });
   window.addEventListener("hashchange", schedulePosition);
