@@ -1,6 +1,6 @@
 import { nugetNupkgSchema } from "../../src/domain/nuget/nupkg.js";
 import { createHash } from "node:crypto";
-import { unlink, writeFile } from "node:fs/promises";
+import { truncate, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../src/contracts/analysisViewToolContracts.js";
@@ -14,6 +14,7 @@ import {
   nugetNupkgNameEncodingFixture,
 } from "../../src/nuget/NugetNupkg.fixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -215,6 +216,38 @@ cliTest(
     });
     const admitted = await cli.run({ arguments: command });
     expect(admitted.exitCode, admitted.stderr).toBe(0);
+  },
+);
+
+cliTest(
+  "refuses a package above the default max_file_bytes through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-nupkg-file-budget-");
+    const path = join(root, "oversized.nupkg");
+    const defaultBytes = 256 * 1024 * 1024;
+    await writeFile(path, "");
+    // Sparse: the size check refuses before any byte is read.
+    await truncate(path, defaultBytes + 1);
+    const expected = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: defaultBytes,
+          default_value: defaultBytes,
+        },
+      },
+    };
+    const refused = await cli.run({
+      arguments: ["inspect-nuget-nupkg", path, "--json"],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject(expected);
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_nuget_nupkg", { path });
+    expect(parseMcpToolError(reply).error).toMatchObject(expected);
   },
 );
 
