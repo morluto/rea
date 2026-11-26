@@ -118,12 +118,14 @@ cliTest(
     for (const [index, descriptor] of rootMetadata.descriptors.entries()) {
       const name = descriptor.tag_name.toLowerCase().replaceAll("_", "-");
       const path = `descriptor-${String(index)}-${name}.bin`;
-      expect(await readFile(join(result.output_root, path))).toEqual(
-        bytes.subarray(
-          descriptor.offset,
-          descriptor.offset + 16 + descriptor.num_bytes_following,
+      expect(
+        (await readFile(join(result.output_root, path))).equals(
+          bytes.subarray(
+            descriptor.offset,
+            descriptor.offset + 16 + descriptor.num_bytes_following,
+          ),
         ),
-      );
+      ).toBe(true);
     }
   },
 );

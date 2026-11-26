@@ -96,15 +96,17 @@ it("retains Android vbmeta facts through compiled MCP", async () => {
     for (const [index, descriptor] of metadata.descriptors.entries()) {
       const name = descriptor.tag_name.toLowerCase().replaceAll("_", "-");
       expect(
-        await readFile(
-          join(outputRoot, `descriptor-${String(index)}-${name}.bin`),
+        (
+          await readFile(
+            join(outputRoot, `descriptor-${String(index)}-${name}.bin`),
+          )
+        ).equals(
+          bytes.subarray(
+            descriptor.offset,
+            descriptor.offset + 16 + descriptor.num_bytes_following,
+          ),
         ),
-      ).toEqual(
-        bytes.subarray(
-          descriptor.offset,
-          descriptor.offset + 16 + descriptor.num_bytes_following,
-        ),
-      );
+      ).toBe(true);
     }
     expect((await readFile(path)).equals(bytes)).toBe(true);
     await call("close_binary", {});
