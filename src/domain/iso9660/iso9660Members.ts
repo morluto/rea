@@ -30,11 +30,23 @@ const FLAG_HIDDEN = 0x01;
 const FLAG_ASSOCIATED = 0x04;
 
 /**
+ * A section whose big-endian data length copy disagrees with its
+ * little-endian half.
+ */
+interface Iso9660DataLengthDisagreement {
+  /** Absolute image offset of the section's directory record. */
+  readonly recordOffset: number;
+  readonly littleEndian: number;
+  readonly bigEndian: number;
+}
+
+/**
  * One directory member: a single record, or every record of a multi-extent
  * file. `identifier`, `flags`, `recordingDate`, `fileUnitSize` and
  * `interleaveGapSize` are observed in the first record, at `recordOffset`;
  * the other sections must repeat its identifier and its flags apart from the
- * protection and multi-extent bits. `name`, `directory`, `dataLength`, `layout` and
+ * protection and multi-extent bits. `dataLengthDisagreements` is observed in
+ * each section's record. `name`, `directory`, `dataLength`, `layout` and
  * `identifierCharset` are derived.
  */
 export interface Iso9660Member {
@@ -51,6 +63,11 @@ export interface Iso9660Member {
   readonly interleaveGapSize: number;
   readonly extents: readonly Iso9660Extent[];
   readonly dataLength: number;
+  /**
+   * Sections whose big-endian data length copy disagrees with the
+   * little-endian half that `extents` and `dataLength` use.
+   */
+  readonly dataLengthDisagreements: readonly Iso9660DataLengthDisagreement[];
   readonly layout: Iso9660ExtentLayout;
   /**
    * `ucs-2` for Joliet identifiers; `ascii` for primary identifiers within
@@ -152,6 +169,7 @@ const memberOf = (
   extents: readonly Iso9660Extent[],
   dataLength: number,
   layout: Iso9660ExtentLayout,
+  dataLengthDisagreements: readonly Iso9660DataLengthDisagreement[],
 ): Iso9660Member => {
   const decoded = decodeIdentifier(first, joliet);
   const directory = (first.flags & ISO9660_FLAG_DIRECTORY) !== 0;
@@ -166,6 +184,7 @@ const memberOf = (
     interleaveGapSize: first.interleaveGapSize,
     extents,
     dataLength,
+    dataLengthDisagreements,
     layout,
   };
 };
@@ -191,6 +210,7 @@ export function* groupIso9660Members(
   let first: Iso9660DirectoryRecord | undefined;
   let extents: Iso9660Extent[] = [];
   let dataLength = 0;
+  let disagreements: Iso9660DataLengthDisagreement[] = [];
   let layout: Iso9660ExtentLayout = "contiguous";
   let position = 0;
   for (const step of steps) {
@@ -217,14 +237,21 @@ export function* groupIso9660Members(
     layout = extentLayout(layout, extents.at(-1), extent);
     extents.push(extent);
     dataLength += extent.dataLength;
+    if (record.dataLengthBigEndian !== null)
+      disagreements.push({
+        recordOffset: record.offset,
+        littleEndian: record.dataLength,
+        bigEndian: record.dataLengthBigEndian,
+      });
     if (continued) {
       yield undefined;
       continue;
     }
-    yield memberOf(first, joliet, extents, dataLength, layout);
+    yield memberOf(first, joliet, extents, dataLength, layout, disagreements);
     first = undefined;
     extents = [];
     dataLength = 0;
+    disagreements = [];
     layout = "contiguous";
   }
   if (first !== undefined)

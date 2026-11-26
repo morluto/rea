@@ -460,6 +460,10 @@ const entryFor = (
             "ISO 9660 empty file records the unallocated extent sentinel; source_location repeats the declared block and names no stored bytes.",
           ]
         : []),
+      ...member.dataLengthDisagreements.map(
+        ({ recordOffset, littleEndian, bigEndian }) =>
+          `ISO 9660 directory record at byte ${String(recordOffset)} stores data_length ${String(littleEndian)} in its little-endian half and ${String(bigEndian)} in its big-endian copy; the entry uses the little-endian value, and which half is correct is unknown.`,
+      ),
       ...(member.identifierCharset === "undeclared"
         ? [
             "ISO 9660 primary identifier has bytes above 0x7F, which ECMA-119 does not assign; they are shown as Latin-1 and the intended characters are unknown.",

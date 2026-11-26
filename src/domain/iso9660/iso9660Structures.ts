@@ -18,7 +18,9 @@ import {
 /**
  * ISO 9660 (ECMA-119) directory records and the bounds shared with the
  * volume descriptor parser. Both-endian fields are decoded from both halves
- * and must agree. Rock Ridge (SUSP) system-use fields are not decoded.
+ * and must agree, except a directory record's data length, whose
+ * little-endian half is used and whose disagreeing big-endian copy is kept.
+ * Rock Ridge (SUSP) system-use fields are not decoded.
  */
 export const ISO9660_FORMAT = "iso9660";
 export const ISO9660_SECTOR_BYTES = 2048;
@@ -109,7 +111,15 @@ export interface Iso9660DirectoryRecord {
   readonly offset: number;
   readonly extendedAttributeLength: number;
   readonly extentLocation: number;
+  /** The little-endian half of the both-endian data length. */
   readonly dataLength: number;
+  /**
+   * The big-endian copy of the data length when it disagrees with
+   * `dataLength`, otherwise null. Linux isofs, libarchive and pycdlib read
+   * only the little-endian half, because mastering programs have written
+   * images whose big-endian copy is wrong.
+   */
+  readonly dataLengthBigEndian: number | null;
   readonly recordingDate: string | null;
   readonly flags: number;
   readonly fileUnitSize: number;
@@ -173,7 +183,7 @@ const bothEndianHalves = (
 };
 
 /** The failure for a both-endian field at `offset` whose halves must agree. */
-const iso9660HalvesDisagree = (
+export const iso9660HalvesDisagree = (
   offset: number,
   field: string,
 ): ParseFailureError<"malformed"> =>
@@ -295,11 +305,14 @@ export const iso9660DirectoryRecordAt = (
       base + at + 1,
       "extended_attribute_length",
     );
+  const dataLength = bothEndianHalves(bytes, at + 10, 4);
   return {
     offset: base + at,
     extendedAttributeLength,
     extentLocation: readBothEndian32(bytes, at + 2, base, "extent_location"),
-    dataLength: readBothEndian32(bytes, at + 10, base, "data_length"),
+    dataLength: dataLength.value,
+    dataLengthBigEndian:
+      dataLength.copy === dataLength.value ? null : dataLength.copy,
     recordingDate: decodeIso9660RecordDate(bytes, at + 18),
     flags,
     fileUnitSize,
