@@ -46,6 +46,8 @@ it("preserves locked runtime facts and optional dependencies without mutating so
   const before = structuredClone(source);
   const packed = pluginPackageMetadata(source.manifest, source.lock);
   expect(source).toEqual(before);
+  // @ts-expect-error The projected manifest declares no prepare script.
+  expect(packed.packageJson.scripts?.prepare).toBeUndefined();
   // An installed package never runs prepare, so npm need not ask to allow it.
   expect(packed.packageJson).toEqual({
     name: "rea-agents",

@@ -29,8 +29,10 @@ export function pluginPackageMetadata<Manifest extends PackageManifest>(
   manifest: Manifest,
   lock: PackageLock,
 ): {
-  packageJson: Omit<Manifest, "devDependencies" | "overrides"> & {
+  packageJson: Omit<Manifest, "devDependencies" | "overrides" | "scripts"> & {
     bundleDependencies: string[];
+    /** The source scripts without prepare, which an installed package never runs. */
+    scripts?: Omit<NonNullable<Manifest["scripts"]>, "prepare">;
   };
   shrinkwrap: PackageLock;
 };
