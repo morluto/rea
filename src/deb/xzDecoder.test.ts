@@ -335,3 +335,174 @@ it("refuses an xz stream whose index cannot be read before decoding it", async (
   });
   expect(decodes).toBe(0);
 });
+
+const extractSingleBlock = (
+  xz: Buffer,
+): {
+  readonly header: Buffer;
+  readonly block: Buffer;
+  readonly unpadded: number;
+  readonly uncompressed: number;
+  readonly flags1: number;
+} => {
+  const footerStart = xz.length - 12;
+  const backwardSize = (xz.readUInt32LE(footerStart + 4) + 1) * 4;
+  const indexStart = footerStart - backwardSize;
+  const readMb = (offset: number): { value: number; next: number } => {
+    let value = 0;
+    let shift = 0;
+    for (let i = offset; i < footerStart - 4; i++) {
+      const b = xz[i]!;
+      value += (b & 0x7f) * 2 ** shift;
+      shift += 7;
+      if ((b & 0x80) === 0) return { value, next: i + 1 };
+    }
+    throw new Error("invalid mbint");
+  };
+  const unpadded = readMb(indexStart + 2);
+  const uncompressed = readMb(unpadded.next);
+  return {
+    header: xz.subarray(0, 12),
+    block: Buffer.from(xz.subarray(12, indexStart)),
+    unpadded: unpadded.value,
+    uncompressed: uncompressed.value,
+    flags1: xz[7]!,
+  };
+};
+
+const assembleXzStream = (
+  header: Buffer,
+  flags1: number,
+  blocks: readonly Buffer[],
+  records: readonly {
+    readonly unpadded: number;
+    readonly uncompressed: number;
+  }[],
+): Buffer => {
+  const recordBuffers = records.flatMap((record) => [
+    encodeMbInt(record.unpadded),
+    encodeMbInt(record.uncompressed),
+  ]);
+  const indexBody = Buffer.concat([
+    Buffer.from([0x00]),
+    encodeMbInt(records.length),
+    ...recordBuffers,
+  ]);
+  const padLen = (4 - (indexBody.length % 4)) % 4;
+  const indexNoCrc = Buffer.concat([indexBody, Buffer.alloc(padLen)]);
+  const indexCrc = Buffer.alloc(4);
+  writeU32LE(indexCrc, 0, crc32(indexNoCrc));
+  const index = Buffer.concat([indexNoCrc, indexCrc]);
+
+  const footer = Buffer.alloc(12);
+  writeU32LE(footer, 4, index.length / 4 - 1);
+  footer[8] = 0x00;
+  footer[9] = flags1;
+  footer[10] = 0x59;
+  footer[11] = 0x5a;
+  writeU32LE(footer, 0, crc32(footer.subarray(4, 10)));
+  return Buffer.concat([header, ...blocks, index, footer]);
+};
+
+it("decodes a valid multi-block xz stream by walking actual block boundaries", async () => {
+  const first = extractSingleBlock(compressXz(Buffer.from("block-one\n")));
+  const second = extractSingleBlock(compressXz(Buffer.from("block-two\n")));
+  const twoBlock = assembleXzStream(
+    first.header,
+    first.flags1,
+    [first.block, second.block],
+    [
+      { unpadded: first.unpadded, uncompressed: first.uncompressed },
+      { unpadded: second.unpadded, uncompressed: second.uncompressed },
+    ],
+  );
+  expect(xzUncompressedSize(twoBlock)).toBe(
+    first.uncompressed + second.uncompressed,
+  );
+  const decoded = await decodeXz(twoBlock, 4096);
+  expect(decoded.ok).toBe(true);
+  if (!decoded.ok) throw new Error("Expected multi-block xz decode");
+  expect(Buffer.from(decoded.value).toString("utf8")).toBe(
+    "block-one\nblock-two\n",
+  );
+});
+
+it("refuses a forged xz index record that spans two blocks to hide an oversized LZMA2 dictionary", async () => {
+  const first = extractSingleBlock(compressXz(Buffer.from("benign-1")));
+  const hugeSecondXz = withLzma2DictionaryProp(
+    compressXz(Buffer.from("hidden-2")),
+    40,
+  );
+  const second = extractSingleBlock(hugeSecondXz);
+  // Forge a single index record whose unpadded size spans block 1 (padded) +
+  // block 2, hiding block 2's 4 GiB LZMA2 dictionary from index-only jumps.
+  const forged = assembleXzStream(
+    first.header,
+    first.flags1,
+    [first.block, second.block],
+    [
+      {
+        unpadded: first.block.length + second.unpadded,
+        uncompressed: first.uncompressed,
+      },
+    ],
+  );
+
+  let decodes = 0;
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
+      decompressStream: (input) => {
+        decodes += 1;
+        return input as unknown as ReadableStream<Buffer>;
+      },
+    },
+  });
+
+  expect(xzUncompressedSize(forged)).toBeNull();
+  const decoded = await decodeXz(forged, 1 << 20);
+  expect(decoded).toEqual({ ok: false, error: { kind: "malformed" } });
+  expect(decodes).toBe(0);
+});
+
+it("refuses an oversized LZMA2 dictionary in a later block of a multi-block xz stream", async () => {
+  const first = extractSingleBlock(compressXz(Buffer.from("benign-1")));
+  const second = extractSingleBlock(
+    withLzma2DictionaryProp(compressXz(Buffer.from("oversized-2")), 40),
+  );
+  const stream = assembleXzStream(
+    first.header,
+    first.flags1,
+    [first.block, second.block],
+    [
+      { unpadded: first.unpadded, uncompressed: first.uncompressed },
+      { unpadded: second.unpadded, uncompressed: second.uncompressed },
+    ],
+  );
+
+  let decodes = 0;
+  replaceXzBindingForTests({
+    status: "ready",
+    api: {
+      compressSync: (input) =>
+        compressXz(typeof input === "string" ? Buffer.from(input) : input),
+      decompressStream: (input) => {
+        decodes += 1;
+        return input as unknown as ReadableStream<Buffer>;
+      },
+    },
+  });
+
+  const decoded = await decodeXz(stream, 1 << 20);
+  expect(decoded).toEqual({
+    ok: false,
+    error: {
+      kind: "dictionary_too_large",
+      dictionaryBytes: 0xffffffff,
+      maximum: XZ_DICTIONARY_MAX_BYTES,
+    },
+  });
+  expect(decodes).toBe(0);
+});

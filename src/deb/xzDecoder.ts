@@ -122,10 +122,70 @@ export const lzma2DictionaryBytes = (props: number): number | null => {
   return (2 | (props & 1)) * 2 ** (Math.floor(props / 2) + 11);
 };
 
-const validCheckType = (flagsByte1: number): boolean => {
-  if ((flagsByte1 & 0xf0) !== 0) return false;
-  const check = flagsByte1 & 0x0f;
-  return check === 0x00 || check === 0x01 || check === 0x04 || check === 0x0a;
+const checkSizeForFlags = (flagsByte1: number): number | null => {
+  if ((flagsByte1 & 0xf0) !== 0) return null;
+  switch (flagsByte1 & 0x0f) {
+    case 0x00:
+      return 0;
+    case 0x01:
+      return 4;
+    case 0x04:
+      return 8;
+    case 0x0a:
+      return 32;
+    default:
+      return null;
+  }
+};
+
+/**
+ * Walk LZMA2 chunk headers from `start` within `[start, end)` to establish the
+ * exact Compressed Data byte length (including the `0x00` end-of-payload
+ * marker) and chunk-declared uncompressed byte count without decompressing.
+ */
+const scanLzma2Block = (
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+): {
+  readonly compressedSize: number;
+  readonly uncompressedSize: number;
+} | null => {
+  let cursor = start;
+  let uncompressedSize = 0;
+  while (cursor < end) {
+    const control = bytes[cursor]!;
+    if (control === 0x00)
+      return {
+        compressedSize: cursor + 1 - start,
+        uncompressedSize,
+      };
+    if (control === 0x01 || control === 0x02) {
+      if (cursor + 3 > end) return null;
+      const chunkUncompressed =
+        ((bytes[cursor + 1]! << 8) | bytes[cursor + 2]!) + 1;
+      cursor += 3 + chunkUncompressed;
+      if (cursor > end) return null;
+      uncompressedSize += chunkUncompressed;
+      if (!Number.isSafeInteger(uncompressedSize)) return null;
+      continue;
+    }
+    if (control < 0x80) return null;
+    const headerLength = control >= 0xc0 ? 6 : 5;
+    if (cursor + headerLength > end) return null;
+    const chunkUncompressed =
+      (((control & 0x1f) << 16) |
+        (bytes[cursor + 1]! << 8) |
+        bytes[cursor + 2]!) +
+      1;
+    const chunkCompressed =
+      ((bytes[cursor + 3]! << 8) | bytes[cursor + 4]!) + 1;
+    cursor += headerLength + chunkCompressed;
+    if (cursor > end) return null;
+    uncompressedSize += chunkUncompressed;
+    if (!Number.isSafeInteger(uncompressedSize)) return null;
+  }
+  return null;
 };
 
 /**
@@ -198,7 +258,8 @@ const inspectXzStreams = (
       return err({ kind: "malformed" });
     const flags0 = bytes[footer + 8]!;
     const flags1 = bytes[footer + 9]!;
-    if (flags0 !== 0x00 || !validCheckType(flags1))
+    const checkSize = checkSizeForFlags(flags1);
+    if (flags0 !== 0x00 || checkSize === null)
       return err({ kind: "malformed" });
 
     const backwardSize = (readU32LE(bytes, footer + 4) + 1) * 4;
@@ -271,25 +332,24 @@ const inspectXzStreams = (
     )
       return err({ kind: "malformed" });
 
-    // Rescan index records in place without retaining an array of block objects.
+    // Walk actual XZ blocks sequentially from the stream header by framing each
+    // block's LZMA2 payload, verifying every block boundary against the index
+    // so a forged index record cannot span two blocks and hide the second.
     let blockOffset = streamHeaderStart + XZ_HEADER_SIZE;
     let recordCursor = records.next;
+    let scannedUncompressed = 0;
     for (let n = 0; n < records.value; n++) {
       const unpadded = readMbInt(index, recordCursor, indexBodyEnd);
       if (unpadded === null) return err({ kind: "malformed" });
       const size = readMbInt(index, unpadded.next, indexBodyEnd);
       if (size === null) return err({ kind: "malformed" });
-      const blockPadded = Math.ceil(unpadded.value / 4) * 4;
       recordCursor = size.next;
 
       const encodedHeaderSize = bytes[blockOffset];
       if (encodedHeaderSize === undefined || encodedHeaderSize === 0)
         return err({ kind: "malformed" });
       const blockHeaderSize = (encodedHeaderSize + 1) * 4;
-      if (
-        blockHeaderSize > blockPadded ||
-        blockOffset + blockHeaderSize > indexStart
-      )
+      if (blockOffset + blockHeaderSize + checkSize > indexStart)
         return err({ kind: "malformed" });
       const blockHeader = bytes.subarray(
         blockOffset,
@@ -305,6 +365,7 @@ const inspectXzStreams = (
       const numFilters = (blockFlags & 0x03) + 1;
       let headerCursor = 2;
       const headerBodyEnd = blockHeaderSize - 4;
+      let headerCompressedSize: number | null = null;
 
       if ((blockFlags & 0x40) !== 0) {
         const compressedSize = readMbInt(
@@ -313,6 +374,7 @@ const inspectXzStreams = (
           headerBodyEnd,
         );
         if (compressedSize === null) return err({ kind: "malformed" });
+        headerCompressedSize = compressedSize.value;
         headerCursor = compressedSize.next;
       }
       if ((blockFlags & 0x80) !== 0) {
@@ -334,8 +396,10 @@ const inspectXzStreams = (
         headerCursor = propsSize.next;
         if (headerCursor + propsSize.value > headerBodyEnd)
           return err({ kind: "malformed" });
+        const isLastFilter = f === numFilters - 1;
         if (filterId.value === XZ_FILTER_LZMA2) {
-          if (propsSize.value !== 1) return err({ kind: "malformed" });
+          if (!isLastFilter || propsSize.value !== 1)
+            return err({ kind: "malformed" });
           const dictBytes = lzma2DictionaryBytes(blockHeader[headerCursor]!);
           if (dictBytes === null) return err({ kind: "malformed" });
           if (dictBytes > maxDictionaryBytes) maxDictionaryBytes = dictBytes;
@@ -345,6 +409,8 @@ const inspectXzStreams = (
               dictionaryBytes: dictBytes,
               maximum: XZ_DICTIONARY_MAX_BYTES,
             });
+        } else if (isLastFilter) {
+          return err({ kind: "malformed" });
         }
         headerCursor += propsSize.value;
       }
@@ -352,8 +418,43 @@ const inspectXzStreams = (
       for (let i = headerCursor; i < headerBodyEnd; i++)
         if (blockHeader[i] !== 0) return err({ kind: "malformed" });
 
-      blockOffset += blockPadded;
+      const compressedStart = blockOffset + blockHeaderSize;
+      const scanned = scanLzma2Block(
+        bytes,
+        compressedStart,
+        indexStart - checkSize,
+      );
+      if (scanned === null) return err({ kind: "malformed" });
+      if (
+        headerCompressedSize !== null &&
+        scanned.compressedSize !== headerCompressedSize
+      )
+        return err({ kind: "malformed" });
+
+      const padStart = compressedStart + scanned.compressedSize;
+      const padLength = (4 - (scanned.compressedSize % 4)) % 4;
+      const blockEnd = padStart + padLength + checkSize;
+      if (blockEnd > indexStart) return err({ kind: "malformed" });
+      for (let i = 0; i < padLength; i++)
+        if (bytes[padStart + i] !== 0) return err({ kind: "malformed" });
+
+      const actualUnpadded =
+        blockHeaderSize + scanned.compressedSize + checkSize;
+      if (actualUnpadded !== unpadded.value) return err({ kind: "malformed" });
+
+      scannedUncompressed += scanned.uncompressedSize;
+      if (!Number.isSafeInteger(scannedUncompressed))
+        return err({ kind: "malformed" });
+      if (
+        maxUncompressed !== undefined &&
+        scannedUncompressed > maxUncompressed
+      )
+        return err({ kind: "too_large" });
+
+      blockOffset = blockEnd;
     }
+
+    if (blockOffset !== indexStart) return err({ kind: "malformed" });
 
     streamEnd = xzStreamEnd(bytes, streamHeaderStart);
   }

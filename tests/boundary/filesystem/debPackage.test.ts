@@ -14,6 +14,7 @@ import {
   compressXz,
   replaceXzBindingForTests,
 } from "../../../src/deb/xzDecoder.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
@@ -236,18 +237,28 @@ it("waits for an in-flight async XZ parse before close resolves", async () => {
 
   const service = createDebPackageService();
   const inspectPromise = service.inspect({ path });
-  await xzStarted;
+  let closePromise: Promise<void> | undefined;
+  try {
+    await awaitAcknowledgement(
+      xzStarted,
+      inspectPromise,
+      "XZ data decode entry",
+    );
 
-  let closeResolved = false;
-  const closePromise = service.close().then(() => {
-    closeResolved = true;
-  });
+    let closeResolved = false;
+    closePromise = service.close().then(() => {
+      closeResolved = true;
+    });
 
-  await new Promise((resolve) => setTimeout(resolve, 25));
-  expect(closeResolved).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(closeResolved).toBe(false);
 
-  finishXzDecode();
-  const [inspectResult] = await Promise.all([inspectPromise, closePromise]);
-  expect(closeResolved).toBe(true);
-  expect(inspectResult.ok).toBe(true);
+    finishXzDecode();
+    const [inspectResult] = await Promise.all([inspectPromise, closePromise]);
+    expect(closeResolved).toBe(true);
+    expect(inspectResult.ok).toBe(true);
+  } finally {
+    finishXzDecode();
+    await Promise.allSettled([inspectPromise, closePromise ?? service.close()]);
+  }
 });

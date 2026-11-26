@@ -869,6 +869,39 @@ const expandArchive = async (
   return member.bytes;
 };
 
+/** Count lines containing at least one non-whitespace character without allocating a line array. */
+const countNonEmptyLines = (text: string): number => {
+  let count = 0;
+  let lineHasNonWhitespace = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 0x0a) {
+      if (lineHasNonWhitespace) count += 1;
+      lineHasNonWhitespace = false;
+      continue;
+    }
+    if (lineHasNonWhitespace) continue;
+    if (code <= 0x20) {
+      if (
+        code !== 0x20 &&
+        code !== 0x09 &&
+        code !== 0x0d &&
+        code !== 0x0b &&
+        code !== 0x0c
+      )
+        lineHasNonWhitespace = true;
+      continue;
+    }
+    if (code < 0x80) {
+      lineHasNonWhitespace = true;
+      continue;
+    }
+    if (text[i]!.trim().length > 0) lineHasNonWhitespace = true;
+  }
+  if (lineHasNonWhitespace) count += 1;
+  return count;
+};
+
 const listedFile = (
   files: ReadonlyMap<string, Uint8Array>,
   name: string,
@@ -879,8 +912,7 @@ const listedFile = (
   if (bytes === undefined) return { present: false, count: null, text: null };
   const text = decodeUtf8(bytes);
   if (text === null) return { present: true, count: null, text: null };
-  const lines = text.split(/\n/u).filter((line) => line.trim().length > 0);
-  return { present: true, count: lines.length, text };
+  return { present: true, count: countNonEmptyLines(text), text };
 };
 
 const interpreterLine = (bytes: Uint8Array): string | null => {
@@ -895,11 +927,17 @@ const interpreterLine = (bytes: Uint8Array): string | null => {
   return interpreter.length === 0 ? null : interpreter;
 };
 
+interface ParsedControl {
+  readonly control: DebControl;
+  readonly controlFilePresent: boolean;
+  readonly md5sumsText: string | null;
+}
+
 const parseControl = (
   tar: TarParse,
   issues: DebPackageIssue[],
   limitations: string[],
-): DebControl => {
+): ParsedControl => {
   // Only the first paragraph describes the package; stop there so a control
   // file of many small paragraphs never builds one map for each of them.
   const bytes = tar.files.get("control");
@@ -951,8 +989,15 @@ const parseControl = (
       });
   }
   const description = textField("description");
+  const descriptionNewline =
+    description === null ? -1 : description.indexOf("\n");
   const description_summary =
-    description === null ? null : (description.split("\n")[0]?.trim() ?? "");
+    description === null
+      ? null
+      : (descriptionNewline === -1
+          ? description
+          : description.slice(0, descriptionNewline)
+        ).trim();
   // Count alternatives and nested architecture/profile list items before
   // splitting any, so separators or bracketed tokens cannot expand the report
   // past its allowance.
@@ -1020,23 +1065,27 @@ const parseControl = (
       "Transport credentials were redacted from the Homepage URL.",
     );
   return {
-    package: textField("package"),
-    version,
-    architecture: textField("architecture"),
-    maintainer: textField("maintainer"),
-    installed_size,
-    section: textField("section"),
-    priority: textField("priority"),
-    homepage: redactedHomepage.url,
-    description_summary:
-      description_summary === "" ? null : description_summary,
-    source: textField("source"),
-    multi_arch: textField("multi-arch"),
-    essential,
-    relationships,
-    conffiles: { present: conffiles.present, count: conffiles.count },
-    md5sums: { present: md5sums.present, count: md5sums.count },
-    maintainer_scripts: scripts,
+    control: {
+      package: textField("package"),
+      version,
+      architecture: textField("architecture"),
+      maintainer: textField("maintainer"),
+      installed_size,
+      section: textField("section"),
+      priority: textField("priority"),
+      homepage: redactedHomepage.url,
+      description_summary:
+        description_summary === "" ? null : description_summary,
+      source: textField("source"),
+      multi_arch: textField("multi-arch"),
+      essential,
+      relationships,
+      conffiles: { present: conffiles.present, count: conffiles.count },
+      md5sums: { present: md5sums.present, count: md5sums.count },
+      maintainer_scripts: scripts,
+    },
+    controlFilePresent: text !== null,
+    md5sumsText: md5sums.text,
   };
 };
 
@@ -1064,24 +1113,34 @@ const md5Paths = (
 ): { readonly paths: readonly string[]; readonly unread: number } => {
   const paths: string[] = [];
   let unread = 0;
-  for (const raw of text.split(/\n/u)) {
-    const line = raw.replace(/\r$/u, "");
-    if (line === "") continue;
-    // GNU md5sum prefixes a line with a backslash when it escaped the name
-    // (backslash, newline or carriage return). The digest is separated from
-    // the path by a space and a space or `*`; other spaces stay in the path.
-    const escaped = line.startsWith("\\");
-    const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(
-      escaped ? line.slice(1) : line,
-    );
-    const name =
-      match?.[1] === undefined
-        ? undefined
-        : escaped
-          ? unescapeMd5Name(match[1])
-          : match[1];
-    if (name === undefined) unread += 1;
-    else paths.push(logicalTarPath(name));
+  let start = 0;
+  while (start <= text.length) {
+    const end = text.indexOf("\n", start);
+    const lineEnd = end === -1 ? text.length : end;
+    const trimmedEnd =
+      lineEnd > start && text.charCodeAt(lineEnd - 1) === 0x0d
+        ? lineEnd - 1
+        : lineEnd;
+    if (trimmedEnd > start) {
+      const line = text.slice(start, trimmedEnd);
+      // GNU md5sum prefixes a line with a backslash when it escaped the name
+      // (backslash, newline or carriage return). The digest is separated from
+      // the path by a space and a space or `*`; other spaces stay in the path.
+      const escaped = line.startsWith("\\");
+      const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(
+        escaped ? line.slice(1) : line,
+      );
+      const name =
+        match?.[1] === undefined
+          ? undefined
+          : escaped
+            ? unescapeMd5Name(match[1])
+            : match[1];
+      if (name === undefined) unread += 1;
+      else paths.push(logicalTarPath(name));
+    }
+    if (end === -1) break;
+    start = end + 1;
   }
   return { paths, unread };
 };
@@ -1197,6 +1256,8 @@ export const parseDebPackage = async (
       : nonempty(decodeUtf8(debianBinary.bytes)?.replace(/\n$/u, "") ?? "");
   const issues: DebPackageIssue[] = [];
   let control: DebControl | null = null;
+  let controlFilePresent = false;
+  let md5sumsText: string | null = null;
   let controlTar: TarParse | null = null;
   let dataTar: TarParse | null = null;
   let examined_control_bytes = 0;
@@ -1238,8 +1299,12 @@ export const parseDebPackage = async (
         controlMember.name,
         { resource: "max_control_bytes", maximum: input.max_control_bytes },
       );
-      if (controlTar.entries.length > 0 || controlTar.files.size > 0)
-        control = parseControl(controlTar, issues, limitations);
+      if (controlTar.entries.length > 0 || controlTar.files.size > 0) {
+        const parsedControl = parseControl(controlTar, issues, limitations);
+        control = parsedControl.control;
+        controlFilePresent = parsedControl.controlFilePresent;
+        md5sumsText = parsedControl.md5sumsText;
+      }
       if (controlTar.error !== undefined)
         attachPartial(controlTar.error, snapshot());
     }
@@ -1260,10 +1325,6 @@ export const parseDebPackage = async (
     attachPartial(cause, snapshot());
   }
   let md5sums_cross_check: DebPackage["md5sums_cross_check"] = null;
-  const md5sumsText =
-    control !== null && control.md5sums.present && controlTar !== null
-      ? listedFile(controlTar.files, "md5sums").text
-      : null;
   if (control !== null && control.md5sums.present && md5sumsText === null)
     limitations.push(
       "md5sums is not readable UTF-8 text; the md5sums cross-check is unknown.",
@@ -1322,9 +1383,6 @@ export const parseDebPackage = async (
     limitations.push("No control.tar member was present.");
   if (dataMember === undefined)
     limitations.push("No data.tar member was present.");
-  const controlFilePresent =
-    controlTar !== null &&
-    listedFile(controlTar.files, "control").text !== null;
   if (controlTar !== null && !controlFilePresent)
     limitations.push("control.tar held no control file.");
   if (debianBinary === undefined)

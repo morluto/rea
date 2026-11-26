@@ -1588,3 +1588,31 @@ it("does not skip following files when a directory or header-only tar entry decl
     ["usr/bin/link-after-dir", "symlink", 0],
   ]);
 });
+
+it("counts large multi-million-line conffiles and blank-padded md5sums without line-array allocation", async () => {
+  const conffileLines = 1_500_000;
+  const conffiles = `${"a\n".repeat(conffileLines)}  \t\r\n\n`;
+  const md5sums = `${"\n".repeat(1_500_000)}${"0".repeat(32)}  usr/share/doc/hello\r\n`;
+  const bytes = debPackageFixture({
+    conffiles,
+    md5sums,
+    dataEntries: [{ name: "./usr/share/doc/hello", content: "hi" }],
+  });
+  const started = performance.now();
+  const report = await parse(bytes, { max_control_bytes: 8 * 1024 * 1024 });
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(report.control?.conffiles).toEqual({
+    present: true,
+    count: conffileLines,
+  });
+  expect(report.control?.md5sums).toEqual({
+    present: true,
+    count: 1,
+  });
+  expect(report.md5sums_cross_check).toEqual({
+    listed: 1,
+    present: 1,
+    missing_from_inventory: 0,
+    missing_from_md5sums: 0,
+  });
+});
