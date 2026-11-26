@@ -368,6 +368,7 @@ export const ENTRY_FILES = Object.freeze(
         "pe/PeImportsProvider.ts",
         "pe/PeLoadConfigProvider.ts",
         "pe/PeUnwindRangesProvider.ts",
+        "pe/PeOverlayProvider.ts",
         "pe/PeResourcesProvider.ts",
         "pwntools/PwntoolsDecoder.ts",
         "pwntools/PwntoolsLayoutProvider.ts",

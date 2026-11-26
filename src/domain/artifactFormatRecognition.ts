@@ -301,6 +301,33 @@ export const recognizeArtifactFormat = (
 };
 
 /**
+ * Recognize content from a bounded prefix and optional suffix without extra
+ * reads. A refused claim falls through: a header-only iNES region, for
+ * example, has the signature but not the declared cartridge extent. A claim
+ * that needs more bytes falls through too: a bounded prefix and trailer
+ * cannot locate an ESP flash partition table. The caller's bounded XML
+ * signature probe decides plist last.
+ */
+export const recognizeBoundedArtifactFormat = (
+  input: Omit<ArtifactRecognitionInput, "espFlashLayout"> & {
+    readonly xmlPlistSignature: boolean;
+  },
+): Exclude<RecognizedArtifactFormat, "esp-flash-image"> | undefined => {
+  for (
+    let recognition = recognizeArtifactFormat(input);
+    recognition !== undefined;
+    recognition = recognizeArtifactFormat(input, recognition.index + 1)
+  ) {
+    if (
+      recognition.state === "recognized" &&
+      recognition.format !== "esp-flash-image"
+    )
+      return recognition.format;
+  }
+  return input.xmlPlistSignature ? "plist" : undefined;
+};
+
+/**
  * Whether a bounded prefix alone lets the table recognize a format. Claims
  * that need more input or refuse do not count. The whole-file firmware probe
  * asks this first, so inventory classification and binary target resolution
