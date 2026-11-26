@@ -155,7 +155,8 @@ await test("methods other than GET and HEAD skip Markdown negotiation", async ()
             ifMatch: request.headers.get("If-Match"),
             body,
           });
-          const preconditionFailed = request.headers.get("If-Match") === '"html"';
+          const preconditionFailed =
+            request.headers.get("If-Match") === '"html"';
           return new Response(preconditionFailed ? null : body, {
             status: preconditionFailed ? 412 : 200,
             headers: { ETag: '"html"', Allow: "GET, HEAD" },
