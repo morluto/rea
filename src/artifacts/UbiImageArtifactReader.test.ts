@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
@@ -26,14 +26,12 @@ import {
 } from "../domain/firmware/ubiImage.js";
 import { zipArchive } from "../domain/desktop/zipArchive.fixture.js";
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const path = join(await createTestTempDirectory("rea-ubi-image-"), name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-ubi-image-", name, bytes);
 
 const ROOTFS = Buffer.concat([
   ubiLebData(0x72, "ROOTFS-0"),
@@ -192,8 +190,7 @@ it("refuses a volume with a missing LEB while serving the others", async () => {
   const path = await writeCarrier("gap.ubi", missingLebImage());
   const reader = new UbiImageArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     const [rootfs, config] = entries;
     expect(rootfs).toMatchObject({
       path: "volumes/rootfs",
@@ -260,8 +257,7 @@ it("refuses a volume whose only LEB sits in a corrupt PEB instead of serving it 
   );
   const reader = new UbiImageArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     expect(entries).toMatchObject([
       {
         path: "volumes/kernel",
@@ -311,8 +307,7 @@ it("serves the older LEB copy when a newer wear-leveling copy fails its data CRC
   );
   const reader = new UbiImageArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     const bytes = await buffer(await reader.open(entries[0]!));
     expect(bytes.subarray(0, 8).toString("latin1")).toBe("ORIGINAL");
     expect(reader.formatMetadata()).toMatchObject({ stale_leb_copy_count: 1 });
@@ -381,8 +376,7 @@ it("falls back to layout LEB 1 when layout LEB 0 is unverified", async () => {
   );
   const fallbackReader = new UbiImageArtifactReader(fallbackPath);
   try {
-    const entries = [];
-    for await (const entry of fallbackReader.entries()) entries.push(entry);
+    const entries = await collectEntries(fallbackReader);
     expect(entries).toMatchObject([{ path: "volumes/current" }]);
     expect(fallbackReader.formatMetadata()).toMatchObject({
       volume_table_copies_found: 1,
@@ -435,8 +429,7 @@ it("keeps the LEB mapping private to the reader", async () => {
   const path = await writeCarrier("nand.ubi", twoVolumeUbiImage());
   const reader = new UbiImageArtifactReader(path);
   try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
+    const entries = await collectEntries(reader);
     const kernel = entries.find((entry) => entry.path === "volumes/kernel");
     expect(kernel).toBeDefined();
     expect(kernel).not.toHaveProperty("volume");
