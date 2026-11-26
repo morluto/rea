@@ -746,13 +746,19 @@ export const classifyUbiPeb = (
   );
   if (isErased(ecBytes))
     return ok(
-      isErased(vidBytes)
-        ? { state: "erased" }
-        : {
+      !isErased(vidBytes)
+        ? {
             state: "corrupt",
             reason: "erased erase-counter header before a written VID header",
             ec: null,
-          },
+          }
+        : !isErased(bytes)
+          ? {
+              state: "corrupt",
+              reason: "erased headers before written eraseblock bytes",
+              ec: null,
+            }
+          : { state: "erased" },
     );
   const ec = readEcHeader(ecBytes);
   if (ec.state === "invalid")
@@ -1137,21 +1143,45 @@ const winningLebs = (
 };
 
 /**
+ * Whether a layout-volume VID header permits reading `tableBytes` of
+ * volume-table records from its LEB. Linux UBI defines the internal layout
+ * volume as dynamic with alignment 1 (`data_pad === 0`); a wear-leveling
+ * copy (`copy_flag !== 0`) also declares how many bytes were copied in
+ * `data_size`, which must cover the full table.
+ */
+const isValidLayoutVid = (
+  vid: UbiVidHeader,
+  geometry: UbiGeometry,
+  tableBytes: number,
+): boolean =>
+  vid.volType === VOLUME_TYPE_DYNAMIC &&
+  vid.dataPad === 0 &&
+  geometry.lebSize - vid.dataPad >= tableBytes &&
+  (vid.copyFlag === 0 || vid.dataSize >= tableBytes);
+
+/**
  * The layout volume's usable LEB 0 and LEB 1 PEBs, as `winningLebs` selects
  * them. A layout LEB whose surviving winner is an unverified wear-leveling
- * copy (its data CRC failed with no verified copy to fall back to) returns
- * null so it is excluded before choosing the volume table.
+ * copy (its data CRC failed with no verified copy to fall back to) or whose
+ * VID header does not permit the volume table bytes returns null so it is
+ * excluded before choosing the volume table.
  */
 const ubiLayoutVolumePebs = (
   pebs: readonly UbiPeb[],
   verifiedCopies: ReadonlySet<number>,
+  geometry: UbiGeometry,
 ): readonly [number | null, number | null] => {
   const layout = winningLebs(pebs, verifiedCopies).lebs.get(
     UBI_LAYOUT_VOLUME_ID,
   );
+  const tableBytes = ubiVolumeTableBytes(geometry);
   const usable = (lnum: 0 | 1): number | null => {
     const winner = layout?.get(lnum);
-    return winner === undefined || winner.unverified ? null : winner.peb;
+    return winner === undefined ||
+      winner.unverified ||
+      !isValidLayoutVid(winner.vid, geometry, tableBytes)
+      ? null
+      : winner.peb;
   };
   return [usable(0), usable(1)];
 };
@@ -1683,6 +1713,26 @@ const findSmallerGridError = async (
   return ok(null);
 };
 
+const isPebRemainderErased = async (
+  ctx: UbiParseContext,
+  index: number,
+  geometry: UbiGeometry,
+): Promise<boolean> => {
+  const start = index * geometry.pebSize + geometry.headerReadBytes;
+  const end = (index + 1) * geometry.pebSize;
+  for (
+    let offset = start, chunks = 0;
+    offset < end;
+    offset += SCAN_CHUNK_BYTES, chunks += 1
+  ) {
+    await ctx.checkpoint?.(chunks % 16 === 0);
+    const length = Math.min(SCAN_CHUNK_BYTES, end - offset);
+    const chunk = await ctx.read(offset, length);
+    if (chunk.length < length || !isErased(chunk)) return false;
+  }
+  return true;
+};
+
 const readVerifiedUbiTableCopies = async (
   ctx: UbiParseContext,
   geometry: UbiGeometry,
@@ -1710,7 +1760,7 @@ const readVerifiedUbiTableCopies = async (
   }
   const tableBytes = ubiVolumeTableBytes(geometry);
   const copies: (Uint8Array | null)[] = [];
-  for (const peb of ubiLayoutVolumePebs(pebs, verifiedCopies))
+  for (const peb of ubiLayoutVolumePebs(pebs, verifiedCopies, geometry))
     copies.push(
       peb === null
         ? null
@@ -1745,7 +1795,18 @@ const evaluateUbiPebCandidate = async (
       measured.value,
     );
     if (peb.ok) {
-      pebs.push(peb.value);
+      if (
+        peb.value.state === "erased" &&
+        !(await isPebRemainderErased(ctx, index, measured.value))
+      ) {
+        pebs.push({
+          state: "corrupt",
+          reason: "erased headers before written eraseblock bytes",
+          ec: null,
+        });
+      } else {
+        pebs.push(peb.value);
+      }
     } else {
       pebError ??= peb.error;
       pebs.push({ state: "corrupt", reason: peb.error.message, ec: null });

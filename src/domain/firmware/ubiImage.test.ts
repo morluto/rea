@@ -2553,3 +2553,176 @@ it("counts known LEB gaps even when an earlier refusal prevents extraction", asy
     ranges: [],
   });
 });
+
+it("classifies a block with erased headers and written payload as corrupt instead of truncating", async () => {
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 2 },
+  ];
+  const intact = ubiImage([
+    ...ubiLayoutPebs(records),
+    { kind: "leb", volId: 0, lnum: 0, data: ubiLebData(0x30), sqnum: 2n },
+    { kind: "leb", volId: 0, lnum: 1, data: ubiLebData(0x31), sqnum: 3n },
+  ]);
+  expect((await image(intact)).volumes[0]).toMatchObject({
+    extractRefusal: null,
+    dataBytes: 3840,
+  });
+
+  // Erase only the first 128 bytes (EC + VID headers) of the last block while
+  // keeping its payload. It must classify as corrupt so rootfs is not silently
+  // truncated from 3,840 bytes to 1,920 bytes.
+  const headersErased = Buffer.from(intact);
+  headersErased.fill(0xff, 3 * 2048, 3 * 2048 + 128);
+  const damaged = await image(headersErased);
+  expect(damaged).toMatchObject({
+    corruptPebCount: 1,
+    erasedPebCount: 0,
+  });
+  expect(damaged.volumes[0]).toMatchObject({
+    name: "rootfs",
+    mappedLebCount: 1,
+    extractRefusal: "lost_lebs",
+    dataBytes: null,
+    ranges: [],
+  });
+
+  // Control: erasing the entire last block makes it genuinely erased.
+  const fullyErased = Buffer.from(intact);
+  fullyErased.fill(0xff, 3 * 2048, 4 * 2048);
+  const clean = await image(fullyErased);
+  expect(clean).toMatchObject({
+    corruptPebCount: 0,
+    erasedPebCount: 1,
+  });
+  expect(clean.volumes[0]).toMatchObject({
+    name: "rootfs",
+    mappedLebCount: 1,
+    extractRefusal: null,
+    dataBytes: 1920,
+  });
+
+  // Bounded chunked reads detect a written byte past the 64 KiB chunk boundary.
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const wideLeb = wide.pebSize - wide.dataOffset;
+  const wideBytes = ubiImage(
+    [
+      ...ubiLayoutPebs(records, wide),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.alloc(wideLeb, 0x30),
+        sqnum: 2n,
+      },
+      { kind: "erased" },
+    ],
+    wide,
+  );
+  // Write a single non-0xFF byte near the end of the 128 KiB erased block.
+  wideBytes[wideBytes.length - 1] = 0x42;
+  let maxChunkRead = 0;
+  const parsedWide = await parseUbiImage(wideBytes.length, (offset, length) => {
+    if (offset >= 3 * wide.pebSize)
+      maxChunkRead = Math.max(maxChunkRead, length);
+    return wideBytes.subarray(offset, offset + length);
+  });
+  expect(parsedWide.ok).toBe(true);
+  if (!parsedWide.ok) return;
+  expect(maxChunkRead).toBeLessThanOrEqual(64 * 1024 + 64);
+  expect(parsedWide.value).toMatchObject({
+    corruptPebCount: 1,
+    erasedPebCount: 0,
+  });
+  expect(parsedWide.value.volumes[0]).toMatchObject({
+    extractRefusal: "lost_lebs",
+    dataBytes: null,
+  });
+});
+
+describe("layout volume VID validation", () => {
+  const slots = ubiVolumeTableSlots();
+  const staleTable = ubiVolumeTable(
+    [{ id: 0, name: "stale", type: "dynamic", reservedPebs: 1 }],
+    slots,
+  );
+  const soundTable = ubiVolumeTable(
+    [{ id: 0, name: "current", type: "dynamic", reservedPebs: 4 }],
+    slots,
+  );
+
+  it.each([
+    [
+      "excessive data_pad leaving 1 usable byte",
+      { volType: "dynamic" as const, dataPad: 1919 },
+    ],
+    [
+      "static layout VID with data_size=1",
+      { volType: "static" as const, dataSize: 1, usedEbs: 1 },
+    ],
+    [
+      "dynamic wear-leveling copy with data_size=1",
+      { volType: "dynamic" as const, copyFlag: true, dataSize: 1 },
+    ],
+  ])(
+    "rejects an invalid layout VID (%s), falls back to LEB 1, and refuses when both are invalid",
+    async (_label, invalidVid) => {
+      const invalidCopy = (lnum: 0 | 1, sqnum: bigint): UbiFixturePeb => ({
+        kind: "leb",
+        volId: UBI_LAYOUT_VOLUME_ID,
+        lnum,
+        data: staleTable,
+        sqnum,
+        ...invalidVid,
+      });
+      const soundCopy: UbiFixturePeb = {
+        kind: "leb",
+        volId: UBI_LAYOUT_VOLUME_ID,
+        lnum: 1,
+        data: soundTable,
+        sqnum: 2n,
+        volType: "dynamic",
+      };
+
+      // Invalid LEB 0 falls back to sound LEB 1 instead of supplying the stale table.
+      const fallback = await image(
+        ubiImage([
+          invalidCopy(0, 1n),
+          soundCopy,
+          { kind: "leb", volId: 0, lnum: 0, data: ubiLebData(0x43), sqnum: 3n },
+        ]),
+      );
+      expect(fallback.volumeTable).toMatchObject({
+        copiesFound: 1,
+        copiesValid: 1,
+        copiesAgree: null,
+        sourceLnum: 1,
+      });
+      expect(fallback.volumes).toMatchObject([
+        { name: "current", reservedPebs: 4, extractRefusal: null },
+      ]);
+
+      // Both layout copies invalid -> refuse the image.
+      expect(
+        await parse(
+          ubiImage([
+            invalidCopy(0, 1n),
+            invalidCopy(1, 2n),
+            {
+              kind: "leb",
+              volId: 0,
+              lnum: 0,
+              data: ubiLebData(0x43),
+              sqnum: 3n,
+            },
+          ]),
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("no valid volume table"),
+        },
+      });
+    },
+  );
+});
