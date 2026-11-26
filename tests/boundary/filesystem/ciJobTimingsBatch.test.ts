@@ -58,6 +58,13 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
   );
   const calls = JSON.parse(await readFile(fixture.calls, "utf8"));
 
+  for (const workflow of ["ci.yml", "release.yml"])
+    expect(calls).toContainEqual([
+      "api",
+      expect.stringContaining(
+        `/workflows/${workflow}/runs?status=completed&exclude_pull_requests=true`,
+      ),
+    ]);
   expect(result.stdout).toContain("3 collected runs");
   expect(
     await readFile(join(fixture.directory, "summary.md"), "utf8"),

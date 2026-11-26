@@ -3,11 +3,45 @@ import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js"
 import type { z } from "zod";
 
 import type { objcPropertySchema } from "../domain/native/objcSwiftMetadata.js";
+import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import {
   issue,
   type DecodeIssue,
 } from "../domain/apple/appleDispatchDecodeFacts.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+
+/** Presence of an undecoded `_classProperties` pointer slot. */
+export type UndecodedClassPropertyList =
+  | { readonly kind: "absent" }
+  | { readonly kind: "present"; readonly symbol?: string }
+  | { readonly kind: "unreadable"; readonly reason: string };
+
+/**
+ * Resolve a `_classProperties` pointer slot without decoding the list.
+ * Only a raw or rebased zero establishes absence: a bound slot names a list
+ * in another image, and a zero whose fixups are unknown may be either.
+ */
+export const inspectUndecodedClassPropertyList = (
+  read: { resolvePointer(address: bigint): PointerResolution },
+  field: bigint,
+): UndecodedClassPropertyList => {
+  let list: PointerResolution;
+  try {
+    list = read.resolvePointer(field);
+  } catch (cause: unknown) {
+    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
+    return { kind: "unreadable", reason: errorMessage(cause) };
+  }
+  if (list.kind === "unsupported")
+    return { kind: "unreadable", reason: list.reason };
+  if (list.kind === "unknown" && list.raw === 0n)
+    return { kind: "unreadable", reason: list.reason };
+  if ((list.kind === "raw" || list.kind === "rebase") && list.target === 0n)
+    return { kind: "absent" };
+  return list.kind === "bind"
+    ? { kind: "present", symbol: list.symbol }
+    : { kind: "present" };
+};
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 

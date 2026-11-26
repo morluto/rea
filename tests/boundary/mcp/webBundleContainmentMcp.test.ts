@@ -71,7 +71,6 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   const interrupted = await client.callTool({
     name: "analyze_web_bundle",
     arguments: {
-      detail: "complete",
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
@@ -140,7 +139,6 @@ it("retains timeout Evidence and recovers on the same MCP server", async () => {
   const recovered = await client.callTool({
     name: "analyze_web_bundle",
     arguments: {
-      detail: "complete",
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",

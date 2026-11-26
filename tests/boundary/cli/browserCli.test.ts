@@ -13,6 +13,7 @@ import {
   type FakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
+import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 
 const browsers: FakeCdpBrowser[] = [];
 
@@ -83,6 +84,68 @@ cliTest(
         },
       },
     });
+  },
+);
+
+cliTest(
+  "delivers an observe-web-execution summary only with its Evidence bundle",
+  async ({ cli }) => {
+    const browser = await startRuntimeBrowser();
+    browsers.push(browser);
+    const run = (extra: readonly string[]) =>
+      cli.run({
+        arguments: [
+          "observe-web-execution",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "5",
+          ...extra,
+          "--json",
+        ],
+        environment: process.env,
+      });
+    const complete = await run([]);
+    expect(complete.exitCode, complete.stderr).toBe(0);
+    expect(complete.json).toMatchObject({ operation: "observe_web_execution" });
+
+    const unbundled = await run(["--detail", "summary"]);
+    expect(unbundled.exitCode).not.toBe(0);
+
+    const directory = await createTestTempDirectory("rea-web-execution-");
+    const summary = await run([
+      "--detail",
+      "summary",
+      "--evidence_output",
+      join(directory, "bundle.json"),
+    ]);
+    expect(summary.exitCode, summary.stderr).toBe(0);
+    expect(summary.json).toMatchObject({
+      summary: {
+        operation: "inspect_analysis_view",
+        normalized_result: {
+          kind: "summary",
+          parent_operation: "observe_web_execution",
+          summary: { counts: { functions: 2, executed_functions: 1 } },
+        },
+      },
+    });
+  },
+);
+
+cliTest(
+  "refuses a retained capture reference the one-shot CLI cannot resolve",
+  async ({ cli }) => {
+    const id = `ev_${"0".repeat(64)}`;
+    const side = JSON.stringify({
+      inspection: { kind: "retained-evidence", evidence_id: id },
+    });
+    const refused = await cli.run({
+      arguments: ["compare-web-captures", side, side, "--json"],
+      environment: process.env,
+    });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stdout + refused.stderr).toContain(id);
   },
 );
 

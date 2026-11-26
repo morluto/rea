@@ -127,12 +127,15 @@ export const observeCdpSession = async (
     capture.assertPreArmBufferWithinLimit();
     capture.arm(armTimestamp);
     capture.assertRequestOwnershipWithinLimit();
-    await context.connection.send(
-      "Page.setLifecycleEventsEnabled",
-      { enabled: true },
-      context.sessionId,
-      context.signal,
-    );
+    // A capture that ended before arming observes nothing more; do not turn
+    // lifecycle reporting on for a target it no longer follows.
+    if (!capture.stopped)
+      await context.connection.send(
+        "Page.setLifecycleEventsEnabled",
+        { enabled: true },
+        context.sessionId,
+        context.signal,
+      );
     if (!capture.stopped)
       await context.progress?.report({
         phase: "browser_observation",
@@ -161,6 +164,10 @@ export const observeCdpSession = async (
     // Terminal progress is awaited and may admit more protocol events.
     capture.assertRequestOwnershipWithinLimit();
     if (capture.scopeExcluded) endReason = "target_left_scope";
+    // A termination observed after the window, while the final state was
+    // read, means that state belongs to a target that no longer exists.
+    else if (endReason === "window_elapsed" && capture.endReason !== undefined)
+      endReason = capture.endReason;
     return {
       browser: context.discovery.version,
       target: {
@@ -325,6 +332,11 @@ class TimelineCapture {
   /** One lifecycle fact controls event retention and readiness delivery. */
   get stopped(): boolean {
     return this.#endReason !== undefined || this.#scopeExcluded;
+  }
+
+  /** The first end the capture itself recorded, if any. */
+  get endReason(): EndReason | undefined {
+    return this.#endReason;
   }
 
   onEnd(listener: (reason: EndReason) => void): () => void {

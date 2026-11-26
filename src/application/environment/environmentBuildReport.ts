@@ -375,13 +375,17 @@ export const scanCredentialNames = (
     const postData = member(request, "postData");
     const text = member(postData, "text");
     const label = `record ${ordinal} request`;
-    // A HAR may record form fields only as structured params; each occurrence counts, as in a form body.
-    if (typeof text !== "string")
+    // HAR 1.2 permits postData.text alongside postData.params; fall back to params when text is absent, empty, or not a JSON/form body.
+    const scanned =
+      typeof text === "string" && text.length > 0
+        ? scannableBody(text, member(postData, "mimeType"))
+        : undefined;
+    if (scanned === undefined)
       scan.entries(member(postData, "params"), label, (name, value) => {
         if (typeof value === "string")
           scan.field(`${label} /${escapeJsonPointerToken(name)}`, name, value);
       });
-    else scan.body(scannableBody(text, member(postData, "mimeType")), label);
+    else scan.body(scanned, label);
     scan.body(
       decodedBody(
         readRecordedResponseBody(record, SCAN_BODY_LIMIT_BYTES),

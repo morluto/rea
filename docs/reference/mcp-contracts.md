@@ -1150,7 +1150,13 @@ invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
 By default, `tools/list` returns the complete canonical tool inventory, including tools that
-are currently unavailable. Opening or closing a target or observing a provider
+are currently unavailable. When the serialized listing would exceed one SSE
+event under the strictest known client limit, the server pages it per the MCP
+cursor contract instead: each page carries a `nextCursor` until the last page,
+and following the cursors returns the complete inventory. Catalogs that fit are
+returned in one response, exactly as before. A cursor is bound to the catalog
+snapshot it started from; if the catalog changes mid-listing, the server
+rejects the cursor and the client restarts without one. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
 
@@ -2097,7 +2103,8 @@ when both are omitted, storage is not compared.
 `compare_artifacts` also compares the declarations in the `format_metadata` of <!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->UnityFS members (`unityfs-entry`), PyInstaller entries
 (`pyinstaller-entry`), Node SEA members (`node-sea-entry`),
 ESP image segments (`esp-image-segment`), DfuSe elements (`dfuse-element`),
-ESP flash partitions (`esp-flash-partition`), FIT images (`fit-image`) and tar
+ESP flash partitions (`esp-flash-partition`), Nintendo DS ROM members
+(`nds-entry`), FIT images (`fit-image`) and tar
 members (`tar-entry`)<!-- END:compare-artifacts:compared-format-metadata-kinds -->;
 each format's guide names the compared fields. A changed declaration is a
 metadata change, including when content is unavailable. A declaration that
@@ -2157,6 +2164,25 @@ does not check unpacked companions against those hashes at runtime. Integrity
 failures for such entries name this cause and the operation to rerun with
 `record-and-continue`; REA does not exempt unpacked entries silently.
 
+When an unpacked PE companion already mismatches and removing
+`IMAGE_DIRECTORY_ENTRY_SECURITY` (plus zeroing the security directory and PE
+checksum) restores the declared SHA-256, the contradiction records a
+`signing_explanation` with `kind: "signed-after-packing"`, `platform:
+"pe-authenticode"`, the unsigned digest, certificate-table size, and signer
+subjects when PKCS#7 decoding supplies a unique issuer-and-serial match. Exact
+encoded issuer identity is required; unmatched or ambiguous signers are not
+named. `signer_subjects_complete: false` indicates unresolved signers, incomplete
+certificate coverage, a decoding limit, or unreadable PKCS#7. The optional
+reconstruction buffers the companion in memory and is capped at 67108864 bytes
+(representation bound for one PE rebuild); inventory acquisition
+`maximumBytes` also bounds the second read. When either budget refuses the
+companion, the contradiction stays unexplained and a limitation names the
+effective ceiling. This does not verify a signature or certificate chain.
+Observed bytes stay `observed-untrusted` and `hash_status` remains `mismatched`;
+the explanation is additive evidence, not a trust upgrade. Mach-O
+code-signature growth is not classified yet. A mismatch that does not restore
+the declared digest stays an ordinary unexplained contradiction.
+
 ## Schema advertisement
 
 Advertised input and output schemas contain no reachable recursive references.
@@ -2172,6 +2198,8 @@ operands instead of repeating their full output schemas in the input catalog.
 Pass the original `inspect_web_page` normalized result in `before.inspection`
 and `after.inspection`, optional complete `discover_webmcp_tools` results in
 `webmcp`, or complete `capture_browser_scenario` results in the scenario fields.
+Each field also accepts a retained Evidence reference, described under
+[Comparison input shapes](#comparison-input-shapes).
 Do not construct partial observations from the abbreviated declaration: the
 server still validates every canonical field before comparison. Input groups
 and analyst-authored normalization rules remain explicit. This presentation
@@ -2464,6 +2492,9 @@ the MCP specification does not require an output schema for
 For the 1 MiB FastMCP SSE limit reported by Unsloth in
 [#9093](https://github.com/morluto/rea/issues/9093), see the
 [tested catalog configuration](../getting-started/client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+The default catalog now pages itself when it exceeds one event, so a client
+that follows `nextCursor` loads the complete inventory without those settings;
+the settings remain the way to reduce the context the catalog costs.
 Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
@@ -2543,6 +2574,15 @@ and the identity dimension unknown.
   `normalized_result` objects from `capture_browser_scenario`. Optional
   `normalization` defaults to `{ "rules": [] }` in the canonical scenario parser;
   this scenario-only default is omitted from the merged advertised input.
+
+Each capture may instead be `{"kind":"retained-evidence","evidence_id":...}`.
+The ID names retained producer Evidence in the current session, or the
+`inspect_analysis_view` summary that budgeted delivery returned for it. REA
+reads the complete retained record, validates its `normalized_result` as the
+inline capture, and lists the records it read in `evidence_links`. The
+comparison result and parameters are the same as for the same captures sent
+inline. A reference to other Evidence, or to Evidence the session does not
+retain, is refused.
 
 The advertised schema includes complete nested capture fields and rejects
 incomplete pairs and structurally malformed captures. Mixed comparison families,

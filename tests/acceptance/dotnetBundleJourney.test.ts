@@ -18,7 +18,6 @@ import {
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
-import { completeArguments } from "../support/completeDetail.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -159,7 +158,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
     };
     try {
       const inspected = await cli.run({
-        arguments: completeArguments("inspect-artifact", path),
+        arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
@@ -242,7 +241,7 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
   );
 
   const result = await cli.run({
-    arguments: completeArguments("inspect-artifact", path),
+    arguments: ["inspect-artifact", path, "--json"],
     environment: { REA_LOG_LEVEL: "silent" },
   });
   expect(result.exitCode, result.stderr).toBe(1);
@@ -257,10 +256,13 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
       reader_limit: {
         parameter: "artifact_limits.dotnet_bundle.path_parts",
         effective_value: 256,
-        required_value: 257,
         unit: "count",
         can_increase: true,
       },
     },
+  });
+  // The path-depth count stops at the limit, so it knows only a lower bound.
+  expect(result.json).not.toMatchObject({
+    details: { reader_limit: { required_value: expect.anything() } },
   });
 });

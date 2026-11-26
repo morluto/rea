@@ -4,6 +4,11 @@ import {
   aps2Table,
 } from "../../../tests/fixtures/elfAndroidPacked.js";
 import {
+  BinaryResourceFailure,
+  isNativeStructureFailure,
+  NATIVE_STRUCTURE_LIMIT,
+} from "../binaryContainer.js";
+import {
   ElfPointerRelocationFailure,
   readElfRelocationWritesSteps,
   readElfPointerRelocationsSteps,
@@ -205,6 +210,92 @@ it("admits equivalent expanded table work before iterating a compressed group", 
   expect(() => decode(aps2Table([1_000_000, 0]))).toThrow(
     "16 MiB decode-work allowance",
   );
+});
+
+it("bounds Android packed relocation input and expanded work with caller structureBytes", () => {
+  // 100 RELA64 records = 2400 expanded bytes.
+  const expandedFixture = packedImage(aps2Table([100, 0]));
+  let expandedFailure: unknown;
+  try {
+    [
+      ...readElfRelocationWritesSteps(expandedFixture.bytes, {
+        ...expandedFixture.input,
+        structureBytes: 1024,
+      }),
+    ];
+  } catch (cause) {
+    expandedFailure = cause;
+  }
+  expect(expandedFailure).toBeInstanceOf(BinaryResourceFailure);
+  expect(isNativeStructureFailure(expandedFailure)).toBe(true);
+  expect(expandedFailure).toMatchObject({
+    maximum_bytes: 1024,
+    failure: {
+      limit: {
+        name: NATIVE_STRUCTURE_LIMIT,
+        maximum: 1024,
+        required: 2400,
+      },
+    },
+  });
+
+  // Non-APS2 garbage exceeding structureBytes stays malformed, not a budget refusal.
+  const nonAps2Fixture = packedImage(Buffer.alloc(2048, 0x58));
+  expect(() => [
+    ...readElfRelocationWritesSteps(nonAps2Fixture.bytes, {
+      ...nonAps2Fixture.input,
+      structureBytes: 1024,
+    }),
+  ]).toThrow("lacks an APS2 header");
+
+  // Packed input bytes exceeding structureBytes fails before decoding APS2 header.
+  const oversizedPacked = Buffer.concat([
+    Buffer.from("APS2"),
+    Buffer.alloc(2048, 0),
+  ]);
+  const packedFixture = packedImage(oversizedPacked);
+  let packedFailure: unknown;
+  try {
+    [
+      ...readElfRelocationWritesSteps(packedFixture.bytes, {
+        ...packedFixture.input,
+        structureBytes: 1024,
+      }),
+    ];
+  } catch (cause) {
+    packedFailure = cause;
+  }
+  expect(packedFailure).toBeInstanceOf(BinaryResourceFailure);
+  expect(isNativeStructureFailure(packedFailure)).toBe(true);
+  expect(packedFailure).toMatchObject({
+    maximum_bytes: 1024,
+    failure: {
+      limit: {
+        name: NATIVE_STRUCTURE_LIMIT,
+        maximum: 1024,
+        required: 2052,
+      },
+    },
+  });
+
+  // Raising structureBytes above expanded bytes admits the table.
+  const validPacked = aps2Table([3, 0x500 - 8, 3, 15, 8, 8, 0x20]);
+  const validFixture = packedImage(validPacked);
+  expect(() => [
+    ...readElfRelocationWritesSteps(validFixture.bytes, {
+      ...validFixture.input,
+      structureBytes: 64,
+    }),
+  ]).toThrow(BinaryResourceFailure);
+  const steps = readElfRelocationWritesSteps(validFixture.bytes, {
+    ...validFixture.input,
+    structureBytes: 128,
+  });
+  const writes: ElfPointerWrite[] = [];
+  for (const step of steps) {
+    if (step !== undefined) writes.push(step);
+  }
+  expect(writes).toHaveLength(3);
 });
 
 it.each([

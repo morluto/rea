@@ -67,11 +67,7 @@ it.each([
       );
       const response = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: {
-          detail: "complete",
-          input_path: root,
-          format: "directory",
-        },
+        arguments: { input_path: root, format: "directory" },
       });
       expect(fault.calls).toBe(1);
       expect(response.isError).toBe(true);
@@ -106,11 +102,7 @@ it.each([
       fault.method = "";
       const control = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: {
-          detail: "complete",
-          input_path: root,
-          format: "directory",
-        },
+        arguments: { input_path: root, format: "directory" },
       });
       expect(control.isError, JSON.stringify(control)).not.toBe(true);
     } finally {

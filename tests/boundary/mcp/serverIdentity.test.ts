@@ -262,7 +262,7 @@ describe("active-target availability over MCP", () => {
       });
       const call = await client.callTool({
         name: "inspect_macho",
-        arguments: { detail: "complete" },
+        arguments: {},
       });
       expect(parseMcpToolError(call)).toMatchObject({
         error: { code: "target_unavailable" },

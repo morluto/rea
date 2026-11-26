@@ -33,6 +33,7 @@ Global Options:
   --json                                      Shorthand for --format json
   --llms, --llms-full                         Print LLM-readable manifest
   --mcp                                       Start as MCP stdio server
+  --no-retain                                 Write no over-budget result to the retained-Evidence cache
   --schema                                    Show JSON Schema for command
   --token-count                               Print token count of output (instead of output)
   --token-limit <n>                           Limit output to n tokens

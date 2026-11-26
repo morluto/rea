@@ -72,11 +72,7 @@ mcpTest(
     const client = await mcp.connect(server);
     const result = await client.callTool({
       name: "inspect_with_objdump",
-      arguments: {
-        detail: "complete",
-        path: "package.json",
-        operation: "file_headers",
-      },
+      arguments: { path: "package.json", operation: "file_headers" },
     });
     const projected = parseMcpToolError(result);
     expect(projected.error).toMatchObject({

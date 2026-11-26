@@ -32,6 +32,7 @@ import {
   mcpInitializeBudgetMsSchema,
   mcpToolsListBudgetMsSchema,
 } from "./mcpStartupBudgets.js";
+import { mcpToolsListPageBytesSchema } from "./mcpToolsListPageBudget.js";
 import { mcpToolFamiliesSchema } from "./mcpToolFamilies.js";
 import { parseLoaderArgs, parseStringArray } from "./parsers.js";
 import { processStartConfigurationSchema } from "./processStart.js";
@@ -44,6 +45,7 @@ const environmentSchema = z.object({
   REA_MCP_MAX_INPUT_ELEMENTS: mcpInputBudgetSchema.optional(),
   REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),
   REA_MCP_TOOLS_LIST_BUDGET_MS: mcpToolsListBudgetMsSchema.optional(),
+  REA_MCP_TOOLS_LIST_PAGE_BYTES: mcpToolsListPageBytesSchema.optional(),
   REA_MCP_FIRST_CATALOG_BUDGET_MS: mcpFirstCatalogBudgetMsSchema.optional(),
   REA_MCP_DOCTOR_DEADLINE_MS: mcpDoctorDeadlineMsSchema.optional(),
   REA_MCP_INPUT_SCHEMA_PROFILE: mcpInputSchemaProfileSchema.optional(),

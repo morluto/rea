@@ -222,6 +222,15 @@ export class AnalysisProviderRegistry {
     );
   }
 
+  /** Wait until no close is in progress, including closes that start meanwhile. */
+  async #settleClosing(): Promise<Result<null, AnalysisError>> {
+    while (this.#closing !== undefined) {
+      const closed = await this.#closing;
+      if (!closed.ok) return closed;
+    }
+    return ok(null);
+  }
+
   /** Close candidate-owned resources even when no target client was opened. */
   closeOwnedResources(): Promise<Result<null, AnalysisError>> {
     this.#closing ??= Promise.resolve()
@@ -450,8 +459,8 @@ export class AnalysisProviderRegistry {
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
     if (this.#closing !== undefined) {
-      const closed = await this.#closing;
-      if (!closed.ok) return closed;
+      const settled = await this.#settleClosing();
+      if (!settled.ok) return settled;
     }
     for (const failure of this.#selectionCleanup)
       if (!failure.cleanupIncomplete) this.#selectionCleanup.delete(failure);
@@ -471,6 +480,14 @@ export class AnalysisProviderRegistry {
     }
     if (isAborted(options.signal))
       return err(cancelledBy("open_binary", options.signal));
+    // Admission must follow the last close synchronously: a close that began
+    // while this caller awaited cleanup would not see this selection.
+    if (this.#closing !== undefined) {
+      const admitted = await this.#settleClosing();
+      if (!admitted.ok) return admitted;
+      if (isAborted(options.signal))
+        return err(cancelledBy("open_binary", options.signal));
+    }
     const selection = new SharedStartupAttempt<SelectionResult>(
       (signal) =>
         Promise.resolve().then(() =>

@@ -194,7 +194,9 @@ whitespace, after which `.version` must be the first module token. Inventory and
 kernel inspection use strict UTF-8 and reuse a complete, valid scan. Invalid
 encoding can leave a recognizable PTX object with an unknown target. A file
 longer than the scan budget, including one that ends mid-character at the
-budget, gives partial discovery.
+budget, gives partial discovery. An unmatched `}` or a body still open at the end
+of the text also leaves the target unknown, matching the unbalanced body that
+kernel inspection rejects.
 
 ## Read PTX text
 

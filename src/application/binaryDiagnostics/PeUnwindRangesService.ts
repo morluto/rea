@@ -93,10 +93,14 @@ const validReport = (
   if (directory !== "present")
     return (
       coverage.total_entries === 0 &&
+      coverage.trailing_bytes === 0 &&
       entries.length === 0 &&
       (coverage.status === "complete") === (directory === "absent")
     );
-  if ((coverage.status === "complete") !== (coverage.unknown_entries === 0))
+  if (
+    (coverage.status === "complete") !==
+    (coverage.unknown_entries === 0 && coverage.trailing_bytes === 0)
+  )
     return false;
   return entries.every(
     (entry) =>

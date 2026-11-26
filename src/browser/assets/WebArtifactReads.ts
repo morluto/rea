@@ -3,11 +3,11 @@ import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArti
 import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
 import {
+  artifactFileCleanupError,
   ArtifactReaderFailure,
   stableArtifactInputRecovery,
   artifactFileCancellationError,
   artifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
   type ArtifactResourceScope,
   completedStableArtifact,
@@ -27,7 +27,6 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
@@ -152,14 +151,12 @@ export const webArtifactReadError = (
     context,
     signal,
   );
-  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const cleanup = new ProviderCleanupError(
-      "captured-web-artifacts",
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { cause, operation: context.operation },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
+  const cleanup = artifactFileCleanupError(
+    cause,
+    "captured-web-artifacts",
+    context.operation,
+  );
+  if (cleanup !== undefined) {
     return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,

@@ -85,20 +85,29 @@ export const ownArtifactStream = (
   output.on("error", () => undefined);
   streams?.add(output);
   let producerComplete = false;
+  const canRetireOnAbort = (): boolean =>
+    producerComplete ||
+    (source.readableEnded && !source.errored && output.writableLength > 0);
   const onAbort = (): void => {
     // Active I/O and validation own failure precedence; cancellation also
-    // retires buffered output after production completes.
-    if (!producerComplete || output.destroyed) return;
+    // retires buffered output after production completes or when the source
+    // has ended and output is stalled on readable backpressure before flush.
+    if (!canRetireOnAbort() || output.destroyed) return;
     output.destroy(cancellationFailure(signal?.reason));
+  };
+  const onSourceEnd = (): void => {
+    if (signal?.aborted) onAbort();
   };
   const retired = new Promise<void>((resolve) => {
     output.once("close", () => {
       streams?.delete(output);
       signal?.removeEventListener("abort", onAbort);
+      source.removeListener("end", onSourceEnd);
       resolve();
     });
   });
   signal?.addEventListener("abort", onAbort, { once: true });
+  source.once("end", onSourceEnd);
   if (signal?.aborted) onAbort();
   output.once("finish", () => {
     // A successful writable finish follows the transform's final validation.
