@@ -36,6 +36,11 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 
+const noInterfaceBuilder = async () =>
+  ({
+    graph: { nodes: [], truncated: false, coverage: [] },
+  }) as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
+
 /**
  * Run a stand-in Node script as assetutil under the real owned-process
  * launcher. The script reads its own arguments first, then `--info <path>`.
@@ -560,12 +565,7 @@ it.skipIf(process.platform === "win32")(
         environment: {},
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
-        analyzeInterfaceBuilder: async () =>
-          ({
-            graph: { nodes: [], truncated: false, coverage: [] },
-          }) as unknown as Awaited<
-            ReturnType<typeof analyzeInterfaceBuilderBundle>
-          >,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
         assetUtilLauncher: (options) => {
           launches++;
           return spawnOwnedProviderProcess({ ...options, command: missing });
@@ -599,12 +599,7 @@ it.each([
         environment: {},
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
-        analyzeInterfaceBuilder: async () =>
-          ({
-            graph: { nodes: [], truncated: false, coverage: [] },
-          }) as unknown as Awaited<
-            ReturnType<typeof analyzeInterfaceBuilderBundle>
-          >,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
         assetUtilLauncher: async () => {
           throw spawnFailure(code, "/usr/bin/assetutil");
         },
@@ -646,12 +641,7 @@ describe("assetutil process cleanup", () => {
         bundlePath: bundle,
         targetSha256: "a".repeat(64),
         resources,
-        analyzeInterfaceBuilder: async () =>
-          ({
-            graph: { nodes: [], truncated: false, coverage: [] },
-          }) as unknown as Awaited<
-            ReturnType<typeof analyzeInterfaceBuilderBundle>
-          >,
+        analyzeInterfaceBuilder: noInterfaceBuilder,
         assetUtilLauncher: async (options) => {
           launches++;
           const spawned = await standIn(options);
@@ -1095,10 +1085,6 @@ it.skipIf(process.platform === "win32")(
 );
 
 describe("assetutil producer_limits.output_bytes", () => {
-  const noInterfaceBuilder = async () =>
-    ({
-      graph: { nodes: [], truncated: false, coverage: [] },
-    }) as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
   const outputLimit = (effective: number) => ({
     control_kind: "parameter",
     parameter: "producer_limits.output_bytes",
