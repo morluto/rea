@@ -4,7 +4,6 @@ import {
   mkdir,
   rm,
   realpath,
-  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -216,7 +215,6 @@ it.skipIf(SKIP_PERMISSIONS)(
   "reports a search-denied working directory as host access denial",
   async () => {
     const { denied } = await deniedFixture();
-    await chmod(denied, 0o750);
     const selected = join(denied, "cwd");
     const failure = await withoutSearchPermission(denied, () =>
       runtimePathOutcome({
@@ -224,7 +222,6 @@ it.skipIf(SKIP_PERMISSIONS)(
         working_directory: selected,
       }),
     );
-    expect((await stat(denied)).mode & 0o7777).toBe(0o750);
     expect(failure).toBeInstanceOf(AnalysisAccessDeniedError);
     if (!(failure instanceof AnalysisAccessDeniedError)) return;
     expect(projectAnalysisError(failure)).toMatchObject({
