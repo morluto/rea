@@ -148,11 +148,7 @@ const blockMatcher = (
   const minEntropy = view.min_entropy;
   const maxEntropy = view.max_entropy;
   const boundaryFilter = view.run_boundaries_only === true;
-  if (
-    minEntropy === undefined &&
-    maxEntropy === undefined &&
-    !boundaryFilter
-  )
+  if (minEntropy === undefined && maxEntropy === undefined && !boundaryFilter)
     return undefined;
   const boundaries = boundaryFilter
     ? collectRunBoundaryOffsets(report.runs)

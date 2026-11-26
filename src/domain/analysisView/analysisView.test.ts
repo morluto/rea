@@ -2066,9 +2066,7 @@ const entropySeriesParent = (
   };
 };
 
-it(
-  "filters byte entropy blocks by inclusive thresholds and pages with filter coverage",
-  () => {
+it("filters byte entropy blocks by inclusive thresholds and pages with filter coverage", () => {
   const parent = entropySeriesParent([0, 1, 1.0001, 4.5, 7.1999, 7.2, 8]);
   const high = projectAnalysisView(parent, {
     kind: "byte-entropy",
@@ -2132,9 +2130,7 @@ it(
   });
 });
 
-it(
-  "filters byte entropy blocks at run boundaries including unclassified transitions and partial final blocks",
-  () => {
+it("filters byte entropy blocks at run boundaries including unclassified transitions and partial final blocks", () => {
   const parent = entropySeriesParent(
     [0, 0, 0, 4.5, 4.5, 4.5, 8, 8, 8, 0.2],
     { lastLength: 33 },
@@ -2186,9 +2182,7 @@ it(
   });
 });
 
-it(
-  "handles empty filtered matches, out-of-range offsets, invalid thresholds and run filter rejections",
-  () => {
+it("handles empty filtered matches, out-of-range offsets, invalid thresholds and run filter rejections", () => {
   const parent = entropySeriesParent([0, 0, 7.9, 0]);
   const none = projectAnalysisView(parent, {
     kind: "byte-entropy",
@@ -2258,9 +2252,7 @@ it(
   }
 });
 
-it(
-  "returns boundary blocks for a 2 GiB 32768-block sparse window in one filtered call",
-  () => {
+it("returns boundary blocks for a 2 GiB 32768-block sparse window in one filtered call", () => {
   const entropies = new Array<number>(32_768).fill(0);
   entropies[16_384] = 8;
   const parent = entropySeriesParent(entropies, {

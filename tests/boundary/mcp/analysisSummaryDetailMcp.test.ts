@@ -324,13 +324,11 @@ cliTest(
   },
 );
 
-it(
-  "filters retained byte entropy blocks by threshold and run boundaries across MCP",
-  async () => {
+it("filters retained byte entropy blocks by threshold and run boundaries across MCP", async () => {
   const root = await createTestTempDirectory("rea-entropy-filter-mcp-");
   const path = join(root, "multi-run.bin");
   const bytes = Buffer.alloc(38 * 256);
-  const highBlock = Buffer.from(Array.from({ length: 256 }, (_, byte) => byte));
+  const highBlock = Buffer.from(Array.from({ length: 256 }, (_, b) => b));
   for (let index = 16; index < 22; index += 1)
     highBlock.copy(bytes, index * 256);
   await writeFile(path, bytes);
@@ -446,9 +444,7 @@ it(
   });
 });
 
-it(
-  "returns boundary blocks of a 2 GiB 32768-block sparse window in one MCP call",
-  async () => {
+it("returns boundary blocks of a 2 GiB 32768-block sparse window in one MCP call", async () => {
   const root = await createTestTempDirectory("rea-entropy-sparse-mcp-");
   const evidencePath = join(root, "sparse-2g.json");
   const artifactPath = join(root, "sparse-3g.bin");
