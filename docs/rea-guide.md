@@ -184,7 +184,7 @@ The ledger as a whole carries `ledger_id` (`rol_…`) + `closure_digest`, which 
 
 ### Closure semantics
 
-An obligation reaches `verified` only when one manifest binding supplies a unique owner, the required fixtures, and a passing verifier of comparable authority. Static observations can create candidates. They do not prove the claim by themselves. `blocked` and `out-of-scope` stay visible and do not count as verified. A listed residual-unknown ID keeps the claim open even after that unknown record is resolved.
+An obligation reaches `verified` only when one manifest binding supplies a unique owner, the required fixtures, and a passing verifier of comparable authority. Existing Evidence IDs, or a passing manifest claim by itself, are not proof: fixture and verifier results must be observed `rea.reconstruction-proof` Evidence from `verify_reconstruction_obligations`, with a compatible authority and `passed: true`, and the manifest verifier carries `nondeterminism` (`mode` and `specification`). See [Proof applicability](reference/reconstruction-obligation-ledgers.md#proof-applicability). Static observations can create candidates. They do not prove the claim by themselves. `blocked` and `out-of-scope` stay visible and do not count as verified. A listed residual-unknown ID keeps the claim open even after that unknown record is resolved.
 
 Request shape, reviewed obligations, manifest bindings, proof applicability, and closure status are owned by [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md).
 
