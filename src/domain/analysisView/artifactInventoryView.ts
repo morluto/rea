@@ -317,6 +317,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "wxapkg" ||
     inventory.manifest.root_format === "iso9660" ||
     inventory.manifest.root_format === "tar" ||
+    inventory.manifest.root_format === "nso" ||
+    inventory.manifest.root_format === "nro" ||
     inventory.manifest.root_format === "pyinstaller" ||
     inventory.manifest.root_format === "node-sea" ||
     inventory.manifest.root_format === "intel-hex" ||
@@ -327,6 +329,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "bflt" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
+    inventory.manifest.root_format === "nds" ||
     inventory.manifest.root_format === "android-ota-payload" ||
     inventory.manifest.root_format === "android-sparse-image";
   const counts = inventoryCounts(source);

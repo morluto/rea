@@ -72,6 +72,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "pkg",
   "asar",
   "ines",
+  "nds",
   "godot-pck",
   "unityfs",
   "wxapkg",
@@ -81,6 +82,8 @@ export const ARTIFACT_FORMAT_IDS = [
   "ktx",
   "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-ota-payload",
   "android-sparse-image",
@@ -128,6 +131,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
+  "nds",
   "zip",
   "godot-pck",
   "unityfs",
@@ -138,6 +142,8 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ktx",
   "ktx2",
   "uimage",
+  "nso",
+  "nro",
   "android-boot-image",
   "android-ota-payload",
   "android-sparse-image",

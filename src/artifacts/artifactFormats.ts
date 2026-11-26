@@ -40,6 +40,7 @@ import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { InesArtifactReader } from "./InesArtifactReader.js";
+import { NdsRomArtifactReader } from "./NdsRomArtifactReader.js";
 import { Iso9660ArtifactReader } from "./Iso9660ArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
@@ -55,6 +56,7 @@ import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactRead
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { BfltArtifactReader } from "./BfltArtifactReader.js";
+import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { TarArtifactReader } from "./tar/TarArtifactReader.js";
@@ -263,6 +265,25 @@ const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
       new GpuAssetArtifactReader(path, id, sourceOf(options)),
   });
 
+const switchExecutable = <Id extends "nso" | "nro">(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      id === "nso"
+        ? "NSO inventory reports header facts and text, rodata and data segments. LZ4-compressed segments are decompressed within artifact_limits.expanded_bytes and hashed against the header; code is not disassembled or executed."
+        : "NRO inventory reports header facts, text, rodata and data segments and the ASET icon, NACP and RomFS ranges. Asset contents are not interpreted, and code is not disassembled or executed.",
+    createReader: (path, options) =>
+      new SwitchExecutableArtifactReader(
+        path,
+        id,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  });
+
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
     retainClassifiedSource: true,
@@ -405,6 +426,20 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.tar,
       ),
   }),
+  nds: container("nds", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Nintendo DS ROM inventory reports cartridge header facts and lists the ARM9 and ARM7 binaries, overlay files and NitroROM filesystem files as stored byte ranges. Secure-area encryption, compression and NitroARC archives inside files are not decoded.",
+    createReader: (path, options) =>
+      new NdsRomArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
+  }),
   dds: gpuAsset("dds"),
   glb: gpuAsset("glb"),
   ktx: gpuAsset("ktx"),
@@ -419,6 +454,8 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new UImageArtifactReader(path, sourceOf(options), options.integrity),
   }),
+  nso: switchExecutable("nso"),
+  nro: switchExecutable("nro"),
   "android-boot-image": container("android-boot-image", {
     roleContainer: true,
     retainClassifiedSource: true,
