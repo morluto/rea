@@ -315,6 +315,26 @@ describe("parseOtlpTrace attributes", () => {
     });
   });
 
+  it("selects the declared value member rather than the first JSON key", () => {
+    // AnyValue names its member; an unknown sibling key is no evidence of the
+    // kind and must not hide the value the export actually recorded.
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            {
+              key: "kept",
+              value: { unexpected: true, stringValue: "kept" },
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(
+      new Map(report.spans[0]!.attributes.map((a) => [a.key, a])).get("kept"),
+    ).toMatchObject({ value_kind: "string", string_value: "kept" });
+  });
+
   it("keeps a damaged base64 payload from reading as a short byte string", () => {
     // Buffer.from silently drops malformed base64, so "!!!!" would otherwise
     // report zero bytes and look like a recorded empty payload.

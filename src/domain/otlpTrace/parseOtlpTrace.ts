@@ -184,6 +184,17 @@ type Attribute = OtlpSpan["attributes"][number];
  * Standard-alphabet base64 with every four-character group complete and its
  * padding only at the end. Node's decoder accepts none of this by itself.
  */
+/** The members AnyValue declares, in the order OTLP's own JSON mapping lists. */
+const ANY_VALUE_MEMBERS = [
+  "stringValue",
+  "boolValue",
+  "intValue",
+  "doubleValue",
+  "bytesValue",
+  "arrayValue",
+  "kvlistValue",
+] as const;
+
 const isCanonicalBase64 = (text: string): boolean =>
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
     text,
@@ -210,7 +221,9 @@ const readAttribute = (
     element_count: null,
   } as const;
   if (!isRecord(rawValue)) return { ...empty, value_kind: "empty" };
-  const kind = Object.keys(rawValue)[0];
+  // AnyValue names its member explicitly, so the first JSON key is no evidence
+  // of the kind: `{unexpected, stringValue}` would otherwise read as empty.
+  const kind = ANY_VALUE_MEMBERS.find((member) => member in rawValue);
   const value = kind === undefined ? undefined : rawValue[kind];
   switch (kind) {
     case "stringValue":
