@@ -91,6 +91,7 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "bflt",
   "esp-image",
   "fit",
+  "compound-file",
   "qualcomm-mbn",
   "ntfs-mft",
   "plist",
