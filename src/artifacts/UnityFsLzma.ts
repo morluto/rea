@@ -1,9 +1,18 @@
 import { fileURLToPath } from "node:url";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { LZMA_WORKER_LIMITS } from "../domain/compression/lzmaWorkerLimits.js";
 import type { LimitRef } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import {
   LzmaReplyFailure,
   LzmaSession,
@@ -26,6 +35,7 @@ const PROPERTIES_BYTES = 5;
 const SIZE_BYTES = 8;
 const RANGE_CODER_BYTES = 5;
 const OPERATION = "decode_unityfs_block";
+const PROVIDER_ID = "rea-unityfs";
 
 export interface UnityFsDecodeContext {
   readonly resources: ArtifactResourceScope;
@@ -38,6 +48,31 @@ const cancelled = (reason: unknown) =>
     cause: reason,
   });
 
+const unavailableWorker = (detail: string, options: AnalysisErrorOptions) =>
+  new AnalysisCapabilityUnavailableError(
+    PROVIDER_ID,
+    OPERATION,
+    `UnityFS LZMA worker failed: ${detail}`,
+    options,
+  );
+
+const workerFailureDialect: ProviderFailureDialect = {
+  providerId: PROVIDER_ID,
+  operation: OPERATION,
+  recognise: (cause) => processInspectionCancellationError(cause, OPERATION),
+  command: () => ({
+    operation: OPERATION,
+    capturedOutput: capturedProviderOutput,
+    outputLimit: {
+      limits: { diagnostic_bytes: LZMA_WORKER_LIMITS.diagnosticBytes },
+      recovery: { retryable: false },
+    },
+    dialect: (outcome, options) => unavailableWorker(outcome.message, options),
+  }),
+  unclassified: (cause, options) =>
+    unavailableWorker(errorMessage(cause), { ...options, cause }),
+};
+
 const classifyWorkerFailure = (
   cause: unknown,
   signal: AbortSignal,
@@ -46,15 +81,20 @@ const classifyWorkerFailure = (
   if (cause instanceof LzmaReplyFailure) return replyFailure(cause.reply);
   if (signal.aborted && Object.is(cause, signal.reason))
     return cancelled(signal.reason);
-  if (cause instanceof OwnedCommandFailure && cause.cancellation !== undefined)
-    return cancelled(cause.cancellation.reason);
-  if (cause instanceof AnalysisCancelledError) return cancelled(cause.cause);
-  const inspection = processInspectionCancellationError(cause, OPERATION);
-  if (inspection !== undefined) return cancelled(inspection.cause);
+  const failure = classifyProviderFailure(cause, workerFailureDialect);
+  if (failure instanceof AnalysisCancelledError)
+    return cancelled(failure.cause);
+  if (failure instanceof AnalysisResourceConstraintError)
+    return new ArtifactReaderFailure("limit", failure.reason, {
+      cause: failure,
+      resourceConstraint: failure,
+    });
   return new ArtifactReaderFailure(
     "unavailable",
-    `UnityFS LZMA worker failed: ${errorMessage(cause)}`,
-    { cause },
+    failure instanceof AnalysisCapabilityUnavailableError
+      ? failure.reason
+      : failure.message,
+    { cause: failure },
   );
 };
 
@@ -76,7 +116,7 @@ const failurePolicy = (
         },
         run: (work) => work(),
       },
-      "rea-unityfs",
+      PROVIDER_ID,
       OPERATION,
     );
     if (failures.length === 0) return primary;

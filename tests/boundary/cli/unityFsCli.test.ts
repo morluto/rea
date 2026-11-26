@@ -1,14 +1,109 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactComparisonResultSchema } from "../../../src/domain/artifactComparison.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+// Windows uses the native job launcher instead of Node's child_process.spawn.
+cliTest.skipIf(process.platform === "win32").for([
+  ["EAGAIN", { resource: "capacity", exhausted: "processes" }],
+  ["ENOMEM", { resource: "capacity", exhausted: "memory" }],
+  ["heap", { resource: "memory" }],
+  ["exit", null],
+] as const)(
+  "reports a UnityFS worker %s failure consistently in CLI and MCP",
+  async ([failure, constraint], { cli }) => {
+    const root = await createTestTempDirectory("rea-unity-worker-failure-");
+    const path = join(root, "bundle");
+    const preload = join(root, "worker-failure.mjs");
+    await writeFile(
+      path,
+      buildUnityFs([{ path: "CAB", data: "abc" }], { blockCompression: 1 }),
+    );
+    await writeFile(
+      preload,
+      `
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+const spawn = childProcess.spawn;
+const failure = ${JSON.stringify(failure)};
+childProcess.spawn = (command, args, options) => {
+  if (args.at(-1) !== "--stdio" || !args.at(-2)?.endsWith("LzmaWorker.js"))
+    return spawn(command, args, options);
+  if (failure === "EAGAIN" || failure === "ENOMEM")
+    throw Object.assign(new Error("controlled worker launch refusal"), {
+      code: failure, syscall: "spawn " + command, path: command,
+    });
+  const diagnostic = failure === "heap"
+    ? "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"
+    : "controlled decoder exit";
+  return spawn(command, ["-e", \`
+    process.stdin.once("data", () =>
+      process.stderr.write(\${JSON.stringify(diagnostic)} + "\\\\n", () => {
+        process.exitCode = 1;
+        process.stdin.destroy();
+      }),
+    );
+  \`], options);
+};
+syncBuiltinESMExports();
+`,
+    );
+    const environment = {
+      NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+    };
+    const details =
+      constraint === null
+        ? {
+            reason: "unavailable",
+            detail: expect.stringContaining("controlled decoder exit"),
+          }
+        : {
+            resource: constraint.resource,
+            ...("exhausted" in constraint
+              ? {
+                  reported_limits: {
+                    spawn_error: failure,
+                    exhausted_resource: constraint.exhausted,
+                  },
+                  diagnostics: { system_code: failure },
+                }
+              : {
+                  diagnostics: {
+                    runtime_exhaustion_report: { runtime: "v8", area: "heap" },
+                  },
+                }),
+          };
+    const expected = {
+      code:
+        constraint === null
+          ? "artifact_operation_failed"
+          : "resource_constraint",
+      category: constraint === null ? "unavailable" : "resource_constraint",
+      details: { operation: "inspect_artifact", ...details },
+    };
+    const cliResult = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+      environment,
+    });
+    const { call } = await connectLocalToolsMcp(environment);
+    expect((await call("open_binary", { path })).isError).not.toBe(true);
+    const mcpResult = parseMcpToolError(await call("inspect_artifact", {}));
+    await call("close_binary", {});
+    expect(cliResult.exitCode, cliResult.stderr).toBe(1);
+    expect(cliResult.json).toMatchObject(expected);
+    expect(mcpResult.error).toMatchObject(expected);
+  },
+);
 
 cliTest.for([
   "fixed header",

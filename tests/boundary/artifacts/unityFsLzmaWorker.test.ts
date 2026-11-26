@@ -7,14 +7,22 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempFile } from "../../fixtures/temporaryDirectory.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { UnityFsArtifactReader } from "../../../src/artifacts/UnityFsArtifactReader.js";
 import { decodeUnityFsBlock } from "../../../src/artifacts/UnityFsStructures.js";
+import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import * as providerProcess from "../../../src/process/ProviderProcess.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import {
   LzmaFrameReader,
   type LzmaFrameReadOptions,
 } from "../../../src/providers/LzmaProtocol.js";
-import { ArtifactResourceScope } from "../../../src/resources/index.js";
+import {
+  ArtifactResourceScope,
+  translateArtifactFailure,
+} from "../../../src/resources/index.js";
 
 const workerModulePath = fileURLToPath(
   new URL("../../../dist/providers/LzmaWorker.js", import.meta.url),
@@ -184,6 +192,104 @@ describe("UnityFS through the shared LZMA subprocess", () => {
 });
 
 describe("UnityFS supervised subprocess cleanup", () => {
+  it("retains a launch constraint through late cancellation and an owned cleanup retry", async () => {
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const launch = vi
+      .spyOn(providerProcess, "spawnOwnedProviderProcess")
+      .mockRejectedValueOnce(spawnFailure("EAGAIN", process.execPath));
+    const close = vi.spyOn(PrivateRuntimeRoot.prototype, "close");
+    close.mockImplementationOnce(async () => {
+      controller.abort(new Error("cancel during cleanup"));
+      throw new Error("controlled worker root cleanup refusal");
+    });
+    try {
+      const cause = await decodeUnityFsBlock(1, raw, 3, {
+        resources,
+        workerModulePath,
+        signal: controller.signal,
+      }).then(
+        () => {
+          throw new Error("Expected worker launch to fail");
+        },
+        (cause: unknown) => cause,
+      );
+      const translated = translateArtifactFailure(
+        "extract_artifact",
+        "/bundle",
+        cause,
+      );
+      expect(launch).toHaveBeenCalledOnce();
+      const [root] = close.mock.contexts;
+      if (!(root instanceof PrivateRuntimeRoot))
+        throw new Error("Expected cleanup of the worker's runtime root");
+      expect(resources.hasPending).toBe(true);
+      expect(projectAnalysisError(translated)).toMatchObject({
+        code: "cleanup_incomplete",
+        category: "resource_constraint",
+        details: {
+          operation: "extract_artifact",
+          execution_failure: "resource_constraint",
+          resource: "capacity",
+          resources: [root.path],
+          diagnostics: { system_code: "EAGAIN" },
+        },
+      });
+      await resources.retryCleanup();
+      expect(close.mock.contexts).toEqual([root, root]);
+      expect(resources.hasPending).toBe(false);
+      expect(projectAnalysisError(translated)).toMatchObject({
+        code: "resource_constraint",
+        retryable: true,
+        details: { operation: "extract_artifact", resource: "capacity" },
+      });
+    } finally {
+      launch.mockRestore();
+      close.mockRestore();
+      await resources.close();
+    }
+  });
+
+  it("keeps a caller's timeout-shaped abort reason opaque during worker startup", async () => {
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = new AnalysisTimeoutError("caller", 123);
+    const create = PrivateRuntimeRoot.create;
+    const root = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementationOnce(async (options) => {
+        const created = await create(options);
+        controller.abort(reason);
+        return created;
+      });
+    try {
+      const cause = await decodeUnityFsBlock(1, raw, 3, {
+        resources,
+        workerModulePath,
+        signal: controller.signal,
+      }).then(
+        () => {
+          throw new Error("Expected worker startup to cancel");
+        },
+        (cause: unknown) => cause,
+      );
+      const translated = translateArtifactFailure(
+        "inspect_artifact",
+        "/bundle",
+        cause,
+      );
+      expect(translated.cause).toBe(reason);
+      expect(projectAnalysisError(translated)).toMatchObject({
+        code: "cancelled",
+        details: { operation: "inspect_artifact" },
+      });
+      expect(resources.hasPending).toBe(false);
+    } finally {
+      root.mockRestore();
+      await resources.close();
+    }
+  });
+
   it.each(["cancelled", "malformed"] as const)(
     "preserves %s and retries the same supervisor after failed cleanup",
     async (primary) => {

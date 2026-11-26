@@ -1,4 +1,5 @@
 import type { FixedAllowance } from "../domain/fixedAllowanceRemediation.js";
+import type { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
@@ -47,6 +48,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly partialObservation?: AnalysisPartialObservation | undefined;
   /** The constrained resource bound for a limit failure. */
   readonly boundary?: ArtifactLimitBoundary;
+  /** A provider-owned constraint whose classification and recovery are already established. */
+  readonly resourceConstraint?: AnalysisResourceConstraintError;
   /** For a `file-size` limit, the observed size the refused read needs. */
   readonly observedBytes?: bigint | undefined;
   /** Named admission whose recovery must not be inferred from other limit text. */
@@ -317,6 +320,7 @@ export class ArtifactReaderFailure extends Error {
   partialObservation: AnalysisPartialObservation | undefined;
   /** The constrained bound for a `limit` reason, when the reader knows it. */
   readonly boundary: ArtifactLimitBoundary | undefined;
+  readonly resourceConstraint: AnalysisResourceConstraintError | undefined;
   readonly observedBytes: bigint | undefined;
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
@@ -384,6 +388,7 @@ export class ArtifactReaderFailure extends Error {
       options?.cleanupLeases ?? (this.cleanup === undefined ? [] : undefined);
     this.partialObservation = options?.partialObservation;
     this.boundary = options?.boundary;
+    this.resourceConstraint = options?.resourceConstraint;
     this.observedBytes = options?.observedBytes;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
@@ -407,6 +412,7 @@ export class ArtifactReaderFailure extends Error {
     | "userMessage"
     | "resolvedPath"
     | "boundary"
+    | "resourceConstraint"
     | "observedBytes"
     | "admission"
     | "readerLimit"
@@ -422,6 +428,9 @@ export class ArtifactReaderFailure extends Error {
         ? {}
         : { resolvedPath: this.resolvedPath }),
       ...(this.boundary === undefined ? {} : { boundary: this.boundary }),
+      ...(this.resourceConstraint === undefined
+        ? {}
+        : { resourceConstraint: this.resourceConstraint }),
       ...(this.observedBytes === undefined
         ? {}
         : { observedBytes: this.observedBytes }),

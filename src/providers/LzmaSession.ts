@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { LZMA_WORKER_LIMITS } from "../domain/compression/lzmaWorkerLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -215,6 +214,8 @@ export class LzmaReplyFailure extends Error {
 /** Caller-specific error projection; the process and cleanup owner is shared. */
 export interface LzmaFailurePolicy<Failure> {
   readonly runtimePrefix: string;
+  /** Only the caller that armed a deadline can identify its interruption. */
+  isDeadlineAbort?(signal: AbortSignal): boolean;
   classify(cause: unknown, path: string): Failure;
   retainInspectionCleanup(
     preparation: ProcessInspectionFailure,
@@ -421,7 +422,7 @@ export class LzmaSession<Failure> {
         throwCommandPreparationFailure(
           cause,
           signal.aborted
-            ? signal.reason instanceof AnalysisTimeoutError
+            ? this.policy.isDeadlineAbort?.(signal) === true
               ? "timeout"
               : "cancelled"
             : undefined,

@@ -12,6 +12,7 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import type { ProviderAdapterErrorOptions } from "../domain/providerAdapterError.js";
 import {
   UnclassifiedProviderFailure,
@@ -230,15 +231,17 @@ export interface ProviderOutcomeContext {
   ) => AnalysisCapturedOutput;
   /** Options every classified error carries, such as retained cleanup. */
   readonly details?: AnalysisErrorOptions;
-  readonly timeout: {
-    readonly ms: number;
-    /** Which deadline elapsed, when the generic timeout text is not enough. */
-    readonly userMessage?: string;
-    /** The setting or action that changes that deadline. */
-    readonly remediationAction?: string;
-    /** The setting, parameter or environment control that selected the deadline. */
-    readonly limit?: AnalysisLimit;
-  };
+  readonly timeout?:
+    | {
+        readonly ms: number;
+        /** Which deadline elapsed, when the generic timeout text is not enough. */
+        readonly userMessage?: string;
+        /** The setting or action that changes that deadline. */
+        readonly remediationAction?: string;
+        /** The setting, parameter or environment control that selected the deadline. */
+        readonly limit?: AnalysisLimit;
+      }
+    | undefined;
   readonly outputLimit: {
     /** The budget that was exceeded, when the generic report is not enough. */
     readonly reason?: string;
@@ -313,6 +316,11 @@ export const classifyProviderOutcome = (
       );
     }
     case "timeout":
+      if (context.timeout === undefined)
+        throw new InternalInvariantError(
+          "An owned command reported a timeout without a deadline policy.",
+          { cause: outcome.cause },
+        );
       return new AnalysisTimeoutError(operation, context.timeout.ms, {
         ...details,
         ...(context.timeout.userMessage === undefined

@@ -26,6 +26,7 @@ const failurePolicy = (
   resources: ArtifactResourceScope,
 ): LzmaFailurePolicy<AnalysisError> => ({
   runtimePrefix: "rea-uefi-lzma",
+  isDeadlineAbort: (signal) => signal.reason instanceof AnalysisTimeoutError,
   classify: (cause, path) =>
     classifyProviderFailure(cause, uefiFailureDialect(operation, path)),
   retainInspectionCleanup(preparation, primary) {

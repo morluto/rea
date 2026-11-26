@@ -4,7 +4,10 @@ import {
   ZstandardFrameAllowanceError,
 } from "../domain/compression/zstandardFrameAllowance.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisTargetFailureError,
+  reattributedResourceConstraint,
+} from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -30,6 +33,18 @@ export const translateArtifactFailure = (
   if (cause instanceof ZstandardFrameAllowanceError)
     return projectZstandardFrameAllowance(operation, cause);
   if (cause instanceof ArtifactReaderFailure) {
+    const constraint = cause.resourceConstraint;
+    if (constraint !== undefined) {
+      const error = reattributedResourceConstraint(operation, constraint, {
+        cause,
+        diagnostics: constraint.diagnostics,
+        capturedOutput: constraint.capturedOutput,
+        partialObservation: cause.partialObservation,
+        cleanup: cause.cleanup,
+      });
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
     const target = artifactReaderTargetFailure(operation, path, cause);
     if (target === undefined)
       return translateArtifactOperationFailure(operation, cause);
