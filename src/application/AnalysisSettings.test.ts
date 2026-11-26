@@ -563,3 +563,12 @@ it("retains an invalid capture heap seed through override and reset", () => {
   );
   expect(() => heap.source).toThrow("REA_CAPTURE_DECODER_OLD_GENERATION_MIB");
 });
+
+it("includes producer.output_bytes when filtering inspect_analysis_settings by sigrok-recording", () => {
+  const store = new AnalysisSettings({});
+  expect(
+    store
+      .inspect({ provider: "sigrok-recording" })
+      .settings.map(({ setting }) => setting),
+  ).toContain("producer.output_bytes");
+});
