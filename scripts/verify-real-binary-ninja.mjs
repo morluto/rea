@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
 import {
   verifierFailureReasons,
@@ -159,12 +163,14 @@ const cli = async () => {
       process.execPath,
       [
         entry,
-        "function",
-        target,
-        values.procedure,
-        "--provider",
-        "binary-ninja",
-        "--json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          target,
+          values.procedure,
+          "--provider",
+          "binary-ninja",
+          "--json",
+        ])),
       ],
       {
         env: environment,
@@ -189,10 +195,9 @@ const cli = async () => {
 };
 const mcp = async (cliDossier) => {
   phase = "production MCP connection";
-  const client = new Client({
-    name: "rea-real-binary-ninja-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({ name: "rea-real-binary-ninja-verifier", version: "1" }),
+  );
   const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entry, "mcp"],
