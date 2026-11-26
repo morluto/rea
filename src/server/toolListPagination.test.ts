@@ -17,6 +17,8 @@ import {
 import { createToolResultDelivery } from "./toolResult.js";
 import { paginateToolsList } from "./toolListPagination.js";
 import { createMcpSchemaValidation } from "../../tests/fixtures/mcpSchemaValidation.js";
+import { canonicalJson } from "../domain/comparisonSemantics.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /**
  * The compact presentation strips field descriptions before advertising, so
@@ -240,6 +242,16 @@ describe("tools/list pagination", () => {
         data: {
           code: "resource_constraint",
           details: {
+            limit: {
+              control_kind: "environment",
+              environment: MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
+              effective_value: OVERSIZED_TEST_PAGE_BUDGET_BYTES,
+              unit: "bytes",
+              minimum: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.floorBytes,
+              maximum: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.maximumBytes,
+              default_value: DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET.defaultBytes,
+              applies_at: "next_startup",
+            },
             reported_limits: {
               setting: MCP_TOOLS_LIST_PAGE_BUDGET_SETTING,
               source: "setting",
@@ -282,6 +294,36 @@ const pageBudget = (bytes: number): McpToolsListPageBudget => ({
 });
 
 describe("tools/list cursor identity", () => {
+  it("preserves cursor digests and byte-sized pages for escaped Unicode", () => {
+    const tools = Array.from({ length: 8 }, (_, index) => ({
+      ...listedTool(`unicode_${String(index)}`, 'quoted"field\\name'),
+      description: 'quotes " slash \\ newline\n fox 🦊 lone \ud800'.repeat(8),
+    }));
+    const message = toolsListMessage(tools);
+    const budget = pageBudget(1024);
+    const digest = sha256Hex(canonicalJson(tools, "tools/list"));
+    const received: unknown[] = [];
+    let cursor: string | undefined;
+    for (let index = 0; index < tools.length; index++) {
+      const page = paginateToolsList(message, cursor, budget);
+      if (!isToolsListReply(page))
+        throw new Error("Expected a tools/list page");
+      expect(
+        Buffer.byteLength(JSON.stringify(page), "utf8"),
+      ).toBeLessThanOrEqual(budget.bytes);
+      received.push(...page.result.tools);
+      cursor = page.result.nextCursor;
+      if (cursor === undefined) break;
+      expect(
+        JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")),
+      ).toMatchObject({
+        digest,
+      });
+    }
+    expect(cursor).toBeUndefined();
+    expect(received).toEqual(tools);
+  });
+
   it("invalidates a cursor when a tool schema changes and the name does not", () => {
     const original = [
       listedTool("same", "alpha-field-with-enough-text"),

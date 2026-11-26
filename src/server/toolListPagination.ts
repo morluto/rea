@@ -5,10 +5,10 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { canonicalJson } from "../domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { jsonByteLength } from "../domain/jsonSerialization.js";
 import { toolsListPageBudgetConstraint } from "../domain/parseFailureAnalysisError.js";
 import { isRecord } from "../kernel/isRecord.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   type McpToolsListPageBudget,
@@ -63,7 +63,7 @@ const decodeToolListCursor = (raw: string): ToolListCursor | undefined => {
  * cursor even when the tool name is unchanged.
  */
 const toolListDigest = (tools: readonly unknown[]): string =>
-  sha256Hex(canonicalJson(tools, "tools/list"));
+  digestCanonicalValue(tools, "tools/list");
 
 const toolsListCursorError = (
   message: JSONRPCResultResponse,
@@ -87,6 +87,16 @@ const toolsListPageBudgetError = (
   const error = toolsListPageBudgetConstraint(budget, toolName, {
     remediationAction: mcpToolsListPageBudgetRecovery(budget),
     retryable: false,
+    limit: {
+      control_kind: "environment",
+      environment: budget.setting,
+      effective_value: budget.bytes,
+      unit: "bytes",
+      minimum: budget.floorBytes,
+      maximum: budget.maximumBytes,
+      default_value: budget.defaultBytes,
+      applies_at: "next_startup",
+    },
   });
   return {
     jsonrpc: "2.0",
@@ -173,16 +183,10 @@ const pageFromOffset = (
     offset: 999_999,
     digest,
   });
-  let bytes = Buffer.byteLength(
-    JSON.stringify(pageToolsListMessage(message, [], dummyCursor)),
-    "utf8",
-  );
+  let bytes = jsonByteLength(pageToolsListMessage(message, [], dummyCursor));
   let end = offset;
   while (end < tools.length) {
-    const toolSize = Buffer.byteLength(
-      JSON.stringify(tools[end] ?? null),
-      "utf8",
-    );
+    const toolSize = jsonByteLength(tools[end] ?? null);
     const nextBytes = bytes + toolSize + (end === offset ? 0 : 1);
     if (nextBytes > budget.bytes && end > offset) break;
     bytes = nextBytes;
