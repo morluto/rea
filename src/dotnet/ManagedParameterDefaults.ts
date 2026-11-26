@@ -2,7 +2,6 @@ import type {
   ManagedMemberInspection,
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
-import { BinaryReader } from "../domain/binaryContainer.js";
 import type { ManagedConstantReader } from "./ManagedConstants.js";
 import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import {
@@ -10,6 +9,8 @@ import {
   type ManagedMetadataLayout,
 } from "../domain/managed/managedMetadataLayout.js";
 import {
+  managedMetadataReader,
+  metadataRowCursor,
   metadataToken,
   readMetadataString,
 } from "../domain/managed/managedMetadataHeaps.js";
@@ -131,30 +132,17 @@ const attributedRun = (
 };
 
 /**
- * Param columns (ECMA-335 II.22.33): Flags and Sequence, then the Name string
- * index. Layout admission bounds every row of the table, and the checked
- * reader names any range that is not.
+ * A Param row's Flags column (ECMA-335 II.22.33), the only column needed to
+ * decide whether the row declares a default. Most rows declare none, so they
+ * are examined without the per-row bookkeeping of a retained row.
  */
-const readParamRow = (
-  reader: BinaryReader,
+const readParamFlags = (
+  bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
-): {
-  readonly offset: number;
-  readonly flags: number;
-  readonly sequence: number;
-  readonly nameIndex: number;
-} => {
+): { readonly offset: number; readonly flags: number } => {
   const offset = metadataRowOffset(layout, 8, row);
-  return {
-    offset,
-    flags: reader.u16(offset),
-    sequence: reader.u16(offset + 2),
-    nameIndex:
-      layout.stringIndexSize === 2
-        ? reader.u16(offset + 4)
-        : reader.u32(offset + 4),
-  };
+  return { offset, flags: managedMetadataReader(bytes).u16(offset) };
 };
 
 /**
@@ -167,13 +155,12 @@ const readParamRow = (
  */
 const unownedParameterDefault = (
   bytes: Buffer,
-  reader: BinaryReader,
   layout: ManagedMetadataLayout,
   constant: ManagedConstantReader,
   runs: ParamRuns,
 ): ManagedReaderFailure | null => {
   const declares = (row: number, reason: string) => {
-    const { offset, flags } = readParamRow(reader, layout, row);
+    const { offset, flags } = readParamFlags(bytes, layout, row);
     // Presence is enough to make every method's defaults unknown, so an
     // unowned row's value is never decoded or charged.
     return !constant.declares(8, row, flags)
@@ -219,7 +206,6 @@ export const createManagedParameterDefaultReader = (
   issues: ManagedParseIssue[],
   constant: ManagedConstantReader,
 ): ((methodRow: number) => ParameterDefault[] | null) => {
-  const reader = new BinaryReader(bytes, true, "managed");
   let runs: ParamRuns | undefined;
   // Undefined until the unowned-row scan runs; a clean scan caches null so the
   // Param table is scanned once per reader, not once per method.
@@ -232,30 +218,31 @@ export const createManagedParameterDefaultReader = (
       runs ??= readParamRuns(bytes, layout);
       const { start, end } = attributedRun(bytes, layout, runs, methodRow);
       if (unowned === undefined)
-        unowned = unownedParameterDefault(
-          bytes,
-          reader,
-          layout,
-          constant,
-          runs,
-        );
+        unowned = unownedParameterDefault(bytes, layout, constant, runs);
       if (unowned !== null) throw unowned;
       const defaults: ParameterDefault[] = [];
       for (let position = start; position < end; position += 1) {
         const row = memberListDefinitionRow(bytes, layout, 8, position);
         // One unreadable Param row is reported without hiding its siblings.
         const entry = readManagedValue((): ParameterDefault | null => {
-          const param = readParamRow(reader, layout, row);
-          const declared = constant(8, row, param.flags);
+          const declared = constant(
+            8,
+            row,
+            readParamFlags(bytes, layout, row).flags,
+          );
           if (declared === null) return null;
-          // A retained default carries the row bookkeeping its cursor did.
-          managedDecodeBudget(layout).reserveRow(8, row, param.offset);
+          // A retained row is read like every other retained metadata row:
+          // checked columns and its per-row budget charge.
+          const cursor = metadataRowCursor(bytes, layout, 8, row);
+          const flags = cursor.u16();
+          const sequence = cursor.u16();
+          const nameIndex = cursor.readIndex(layout.stringIndexSize);
           return {
             token: metadataToken(8, row),
-            row_offset: param.offset,
-            sequence: param.sequence,
-            name: readMetadataString(bytes, layout, param.nameIndex),
-            flags: param.flags,
+            row_offset: cursor.start,
+            sequence,
+            name: readMetadataString(bytes, layout, nameIndex),
+            flags,
             constant: declared,
           };
         }, issues);
