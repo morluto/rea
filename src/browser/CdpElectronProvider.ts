@@ -36,6 +36,7 @@ import {
 import { inspectCdpElectronPage } from "./CdpElectronInspection.js";
 import {
   authorizedElectronFile,
+  ElectronFileScope,
   mapElectronFileAuthorizationFailure,
   retryElectronFileCleanup,
 } from "./ElectronFileScope.js";
@@ -53,6 +54,8 @@ import { errorMessage } from "../kernel/errorMessage.js";
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
+  /** This provider's ASAR descriptors; shutdown retries only its own. */
+  readonly #files = new ElectronFileScope();
   readonly #asarHeaderAdmission: AsarHeaderAdmission;
 
   /** The admission comes from the composition root's environment; default otherwise. */
@@ -85,7 +88,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
       await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
     const outcomes = await Promise.allSettled([
       this.#owner.close(),
-      retryElectronFileCleanup(),
+      retryElectronFileCleanup(this.#files),
     ]);
     const failures = outcomes.flatMap((outcome) =>
       outcome.status === "rejected" ? [outcome.reason as unknown] : [],
@@ -161,6 +164,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
           options.signal,
           "list_electron_targets",
           this.#asarHeaderAdmission,
+          this.#files,
         );
         if (path === undefined) {
           examined += 1;
@@ -276,6 +280,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
             discovery,
             input.target_id,
             this.#asarHeaderAdmission,
+            this.#files,
             options.signal,
           );
           targetSession = await openCdpTargetSession(
@@ -299,6 +304,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
                 target,
                 input,
                 asarHeaderAdmission: this.#asarHeaderAdmission,
+                files: this.#files,
                 ...(options.signal === undefined
                   ? {}
                   : { signal: options.signal }),
@@ -380,6 +386,7 @@ const authorizeTarget = async (
   discovery: CdpEndpointDiscovery,
   targetId: string,
   asarHeaderAdmission: AsarHeaderAdmission,
+  files: ElectronFileScope,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
   const operation = "inspect_electron_page";
@@ -399,6 +406,7 @@ const authorizeTarget = async (
     signal,
     operation,
     asarHeaderAdmission,
+    files,
   );
   throwIfElectronOperationCancelled(signal, operation);
   if (path === undefined)

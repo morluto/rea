@@ -130,6 +130,18 @@ export const parseCliOutputArguments = (
   readCliOutputArguments(parseCliGlobalArguments(arguments_));
 
 /**
+ * Whether the caller asked for the result document rather than terminal
+ * presentation: a selected format, the full-output envelope, or a token count.
+ */
+export const structuredOutputRequested = (
+  controls: Pick<
+    ParsedCliOutputArguments,
+    "formatExplicit" | "fullOutput" | "tokenCount"
+  >,
+): boolean =>
+  controls.formatExplicit || controls.fullOutput || controls.tokenCount;
+
+/**
  * Read effective output controls from one invocation's global arguments. The
  * global split decides which tokens are flag values; this reader interprets
  * them, and a valued flag left among the command tokens is missing its value.

@@ -17,6 +17,7 @@ import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import type { McpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import { SERVER_START_FAILED } from "./serverStartFailure.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
 import { serverInstructions } from "./serverInstructions.js";
 
@@ -49,6 +50,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
   private readonly tools = new Map<string, DeferredTool>();
   private readonly prompts = new Map<string, DeferredPrompt>();
   private loading: Promise<void> | undefined;
+  /** Close cancels in-flight startup rather than waiting for it to finish. */
+  private readonly startup = new AbortController();
   private closing = false;
   private closeAttempt: Promise<void> | undefined;
   private protocolClosed = false;
@@ -62,6 +65,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     delivery: ToolResultDelivery,
     private readonly initialize: (
       server: DeferredEvidenceMcpServer,
+      signal: AbortSignal,
     ) => Promise<void>,
     options: {
       readonly maximumInputElements?: number | undefined;
@@ -235,7 +239,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     if (this.closing)
       return Promise.reject(new Error("MCP connection is closed"));
     this.loading ??= Promise.resolve()
-      .then(() => this.initialize(this))
+      .then(() => this.initialize(this, this.startup.signal))
       .catch(() => {
         throw new Error(SERVER_START_FAILED);
       });
@@ -360,6 +364,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
 
   override close(): Promise<void> {
     this.closing = true;
+    if (!this.startup.signal.aborted)
+      this.startup.abort(OwnerCancellation.ownerClosed);
     this.closeAttempt ??= Promise.resolve()
       .then(() => this.finishClose())
       .catch((cause) => {

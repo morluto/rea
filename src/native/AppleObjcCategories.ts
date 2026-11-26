@@ -1,10 +1,12 @@
 import { malformedInput } from "../domain/parseFailure.js";
 import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import type { Section } from "../domain/apple/appleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
-import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
+import {
+  inspectUndecodedClassPropertyList,
+  readObjcPropertiesOf,
+} from "./AppleObjcProperties.js";
 import {
   issue,
   type DecodeIssue,
@@ -38,6 +40,30 @@ const unnamedClassReference = (
   return bound === undefined
     ? `Category ${category} class reference is null`
     : `Category ${category} class reference is bound to ${bound.symbol}, which is not read as an Objective-C class name`;
+};
+
+/**
+ * Swift lists categories on a class reached through a Swift class stub in
+ * `__objc_catlist2`, out of sight of runtimes without stub support, and the
+ * Objective-C runtime loads both lists the same way.
+ */
+const CATEGORY_LISTS: ReadonlySet<string> = new Set([
+  "__objc_catlist",
+  "__objc_catlist2",
+]);
+
+/**
+ * Whether a class reference is a Swift class stub rather than a `class_t`.
+ * Like the runtime's `isStubClass`, a stub's first word is a plain value
+ * from 1 to 15 where a class has its isa pointer. A stub holds only that
+ * word and an initializer, so its class name is not in the stub.
+ */
+const isSwiftClassStub = (
+  read: Pick<ObjcDispatchReaders, "resolvePointer">,
+  address: bigint,
+): boolean => {
+  const isa = read.resolvePointer(address);
+  return isa.kind === "raw" && isa.target >= 1n && isa.target < 16n;
 };
 
 /** `objc_image_info` flag: this image's `category_t` records end in `_classProperties`. */
@@ -119,30 +145,21 @@ const categoryClassPropertyIssue = (
     );
   if (declaration.kind === "unknown")
     return unreadable(declaration.location, declaration.reason);
-  let list: PointerResolution;
-  try {
-    list = read.resolvePointer(field);
-  } catch (cause: unknown) {
-    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-    return unreadable(field, errorMessage(cause));
-  }
-  if (list.kind === "unsupported") return unreadable(field, list.reason);
-  if (list.kind === "unknown" && list.raw === 0n)
-    return unreadable(field, list.reason);
-  if ((list.kind === "raw" || list.kind === "rebase") && list.target === 0n)
-    return null;
+  const list = inspectUndecodedClassPropertyList(read, field);
+  if (list.kind === "absent") return null;
+  if (list.kind === "unreadable") return unreadable(field, list.reason);
   return issue(
     "objc_properties_categories",
     "category_class_properties_not_decoded",
-    list.kind === "bind"
-      ? `Category ${name} class property list is bound to ${list.symbol} and is not decoded`
-      : `Category ${name} class property list is not decoded`,
+    list.symbol === undefined
+      ? `Category ${name} class property list is not decoded`
+      : `Category ${name} class property list is bound to ${list.symbol} and is not decoded`,
     `0x${field.toString(16)}`,
   );
 };
 
 /**
- * Decode `__objc_catlist` `category_t` records:
+ * Decode `__objc_catlist` and `__objc_catlist2` `category_t` records:
  * name, cls, instanceMethods, classMethods, protocols, instanceProperties.
  * A declared `_classProperties` list is reported, not decoded: the public
  * property shape has no class/instance discriminator.
@@ -175,8 +192,8 @@ export const decodeObjcCategories = (input: {
     read,
     input.sections.filter(({ name }) => name === "__objc_imageinfo"),
   );
-  for (const section of input.sections.filter(
-    ({ name }) => name === "__objc_catlist",
+  for (const section of input.sections.filter(({ name }) =>
+    CATEGORY_LISTS.has(name),
   )) {
     if (section.size % 8 !== 0)
       throw new BinaryFormatFailure(
@@ -200,7 +217,16 @@ export const decodeObjcCategories = (input: {
         let className = external ?? null;
         if (external === undefined && local !== 0n)
           try {
-            className = input.localClassName(local);
+            if (isSwiftClassStub(read, local))
+              input.issues.push(
+                issue(
+                  "objc_properties_categories",
+                  "category_class_unresolved",
+                  `Category ${name} class reference 0x${local.toString(16)} is a Swift class stub, which is not read as an Objective-C class name`,
+                  `0x${(category + 8n).toString(16)}`,
+                ),
+              );
+            else className = input.localClassName(local);
           } catch (cause: unknown) {
             if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
             // The category's own name and methods do not depend on its owner;

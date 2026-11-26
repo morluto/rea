@@ -5,6 +5,7 @@ import {
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
+  signedAfterPackingExplanationSchema,
 } from "./artifactIntegrity.js";
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
@@ -110,6 +111,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "esp-flash-image",
   "fit",
   "ntfs-mft",
@@ -148,6 +150,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "esp-image",
   "uf2",
   "dfuse",
+  "bflt",
   "fit",
   "ntfs-mft",
   "mach-o-universal",
@@ -246,7 +249,11 @@ const integrityContradictionBaseSchema = z.object({
 });
 
 export const integrityContradictionSchema = z.union([
-  integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  integrityContradictionBaseSchema.extend({
+    ...artifactSha256PairSchema.shape,
+    /** Present when PE Authenticode stripping restores the declared SHA-256. */
+    signing_explanation: signedAfterPackingExplanationSchema.exactOptional(),
+  }),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactCrc32PairSchema.shape),

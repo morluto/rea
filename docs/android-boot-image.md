@@ -59,6 +59,12 @@ Non-empty components become children:
 | `bootconfig`            | bootconfig                       |
 | `signature`             | version 4 boot signature         |
 
+The header and the version 4 ramdisk table are read as metadata, not
+children. Every other declared range of the image layout must be a child for
+coverage to be `complete`. A vendor ramdisk section that the version 4 table
+entries do not cover, or bytes between the sequential layout and a version 1
+or 2 `recovery_dtbo`, leave coverage `unknown` with a limitation naming them.
+
 A child whose first bytes match gzip (`1f 8b`), an lz4 frame (`04 22 4d 18`),
 legacy lz4 (`02 21 4c 18`), or zstd (`28 b5 2f fd`) records that compression.
 Other prefixes stay unknown, which does not prove the bytes are uncompressed.
