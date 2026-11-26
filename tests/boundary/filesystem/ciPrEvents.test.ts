@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -12,21 +13,25 @@ async function workflow(name: string) {
       concurrency: z.object({ group: z.string() }).optional(),
       jobs: z.record(
         z.string(),
-        z.object({
-          name: z.string().optional(),
-          if: z.string().optional(),
-          uses: z.string().optional(),
-          with: z.record(z.string(), z.string()).optional(),
-          steps: z
-            .array(
-              z.object({
-                run: z.string().optional(),
-                uses: z.string().optional(),
-                env: z.record(z.string(), z.string()).optional(),
-              }),
-            )
-            .optional(),
-        }),
+        z
+          .object({
+            env: z.record(z.string(), z.string()).optional(),
+            name: z.string().optional(),
+            if: z.string().optional(),
+            uses: z.string().optional(),
+            with: z.record(z.string(), z.string()).optional(),
+            steps: z
+              .array(
+                z.object({
+                  run: z.string().optional(),
+                  uses: z.string().optional(),
+                  with: z.record(z.string(), z.unknown()).optional(),
+                  env: z.record(z.string(), z.string()).optional(),
+                }),
+              )
+              .optional(),
+          })
+          .passthrough(),
       ),
     })
     .parse(
@@ -92,7 +97,58 @@ it("qualifies only ci:full label additions at the caller's merge revision", asyn
       with: { source_sha: "${{ github.sha }}" },
     },
   ]);
+  expect(full.jobs.qualification).not.toHaveProperty("secrets");
   // Metadata events must not create skipped replacements for the main CI checks.
   expect(full.jobs.required).toBeUndefined();
   expect(full.concurrency).toBeUndefined();
+});
+
+it("checks out test sources only for fast PRs and history only for revision comparisons", async () => {
+  const changes = (await workflow("ci.yml")).jobs.changes!;
+  const checkout = changes.steps?.find((step) =>
+    step.uses?.startsWith("actions/checkout@"),
+  )?.with;
+  const sparse = z.string().parse(checkout?.["sparse-checkout"]);
+  const depth = z.string().parse(checkout?.["fetch-depth"]);
+  const fastSweep = "23 1,5,7,11,13,17,19,23 * * *";
+  for (const [event, full, fullOnPush, schedule, expectedDepth, traceTests] of [
+    ["pull_request", false, false, "", 0, true],
+    ["pull_request", true, false, "", 1, false],
+    ["push", false, false, "", 1, false],
+    ["push", false, true, "", 0, false],
+    ["schedule", false, false, fastSweep, 0, false],
+    ["schedule", false, false, "23 3 * * *", 1, false],
+    ["workflow_dispatch", false, false, "", 1, false],
+  ] as const) {
+    const context = {
+      env: { ...changes.env, CI_FULL: String(full) },
+      github: { event_name: event, event: { schedule } },
+      vars: { REA_CI_FULL_ON_PUSH: String(fullOnPush) },
+    };
+    const expand = (value: string) =>
+      value.replace(/\$\{\{([^}]+)\}\}/gu, (_match, expression: string) =>
+        String(runInNewContext(expression, context, { timeout: 1_000 })),
+      );
+    expect(Number(expand(depth))).toBe(expectedDepth);
+    const patterns = expand(sparse).trim().split("\n");
+    expect(patterns).toContain("/.nvmrc");
+    expect(patterns).toContain("/scripts/ci/");
+    expect(patterns).toContain("/scripts/lib/");
+    expect(patterns.includes("/scripts/")).toBe(traceTests);
+    expect(patterns.includes("/tests/")).toBe(traceTests);
+  }
+});
+
+it("includes release PR qualification in the ordinary required CI gate", async () => {
+  const ci = await workflow("ci.yml");
+  const full = ci.jobs.changes?.env?.CI_FULL;
+  expect(full).toContain("github.event_name == 'pull_request'");
+  expect(full).toContain(
+    "github.event.pull_request.head.repo.full_name == github.repository",
+  );
+  expect(full).toContain(
+    "startsWith(github.event.pull_request.head.ref, format('release-please--branches--{0}--', github.event.pull_request.base.ref))",
+  );
+  expect(ci.jobs.required?.name).toBe("CI required");
+  expect(ci.jobs.required?.needs).toContain("static-deep");
 });

@@ -1,23 +1,32 @@
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cutterCommandInputSchema } from "../contracts/cutterToolContracts.js";
+import type { CutterBridgeDiscovery } from "../domain/cutterDiscovery.js";
 import {
   CutterBridgeClient,
-  type CutterBridgeDiscovery,
   type CutterBridgeExecution,
+  type CutterDiscoveryOptions,
 } from "./CutterBridgeClient.js";
-import { CUTTER_PROVIDER_IDENTITY } from "./CutterBridgeClient.js";
+import { CUTTER_PROVIDER_IDENTITY } from "./CutterProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface CutterBridgePort {
-  listSessions(): Promise<CutterBridgeDiscovery>;
+  listSessions(
+    options?: CutterDiscoveryOptions,
+  ): Promise<CutterBridgeDiscovery>;
+  close?(): Promise<void>;
+  retryDescriptorCleanup?(): Promise<void>;
   confirmCommandCompletion?(
     sessionId: string,
     requestId: string,
@@ -41,6 +50,8 @@ export class CutterBridgeService {
       readonly sessionId: string;
       readonly completionToken?: string;
       readonly failure: AnalysisOutputError;
+      /** Confirmed by the producer's terminal receipt; the failure reads it. */
+      readonly release: AnalysisCleanupRelease;
     }
   >();
 
@@ -66,16 +77,71 @@ export class CutterBridgeService {
         requestId,
         pending.completionToken,
       );
-      if (!receipt.ok || !receipt.value) return err(pending.failure);
-      const { failure } = pending;
-      failure.resolveCleanup();
+      if (!receipt.ok)
+        return err(
+          analysisErrorWithCleanupDependencies(
+            pending.failure,
+            receipt.error,
+            "cutter_command",
+          ),
+        );
+      if (!receipt.value) return err(pending.failure);
+      pending.release.confirm();
       this.#pendingCleanup.delete(requestId);
     }
     return ok(null);
   }
 
-  listSessions(): Promise<CutterBridgeDiscovery> {
-    return this.client.listSessions();
+  async listSessions(
+    options: CutterDiscoveryOptions = {},
+  ): Promise<Result<CutterBridgeDiscovery, AnalysisError>> {
+    const { signal } = options;
+    if (signal?.aborted)
+      return err(cancelledBy("list_cutter_sessions", signal));
+    try {
+      const discovery = await this.client.listSessions(options);
+      if (signal?.aborted)
+        return err(cancelledBy("list_cutter_sessions", signal));
+      return ok(discovery);
+    } catch (cause) {
+      if (cause instanceof AnalysisError) return err(cause);
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "cutter",
+          "list_cutter_sessions",
+          cause instanceof Error ? cause.message : "Cutter discovery failed",
+          { cause },
+        ),
+      );
+    }
+  }
+
+  async close(): Promise<void> {
+    const pending = await this.retryCleanup();
+    try {
+      if (pending.ok) await this.client.close?.();
+      else await this.client.retryDescriptorCleanup?.();
+    } catch (cause: unknown) {
+      const failure =
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderCleanupError(
+              "cutter",
+              [],
+              {
+                reason: errorMessage(cause),
+              },
+              { cause },
+            );
+      throw pending.ok
+        ? failure
+        : analysisErrorWithCleanupDependencies(
+            pending.error,
+            failure,
+            "close_cutter",
+          );
+    }
+    if (!pending.ok) throw pending.error;
   }
 
   async execute(
@@ -85,10 +151,10 @@ export class CutterBridgeService {
     const parsed = cutterCommandInputSchema.safeParse(rawInput);
     if (!parsed.success) return err(new AnalysisInputError("cutter_command"));
     if (options.signal?.aborted)
-      return err(new AnalysisCancelledError("cutter_command"));
+      return err(cancelledBy("cutter_command", options.signal));
     const input = parsed.data;
     const cleanup = await this.retryCleanup();
-    if (!cleanup.ok) return err(cleanup.error);
+    if (!cleanup.ok) return cleanup;
     try {
       const output = await this.client.execute({
         sessionId: input.session_id,
@@ -97,9 +163,8 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           ...CUTTER_PROVIDER_IDENTITY,
           version: output.cutterVersion,
@@ -115,7 +180,7 @@ export class CutterBridgeService {
           },
           result: {
             command: input.command,
-            output: normalizedOutput,
+            output: output.output,
             execution_state: output.executionState,
             error: output.error,
             message: output.message,
@@ -125,21 +190,34 @@ export class CutterBridgeService {
             document_generation: output.documentGeneration,
             identity_status: output.identityStatus,
           },
-          rawResult: normalizedOutput,
-          subjectUnavailableReason:
-            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
+          authority: "external-service",
           limitations: [
+            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
+            ...(input.json
+              ? [
+                  "JSON integer literals outside JavaScript's safe integer range are retained as decimal strings.",
+                ]
+              : []),
             ...(output.executionState === "unknown"
               ? [
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
                 ]
               : []),
-            ...(output.outputTruncated
+            ...(output.outputTruncated === true
               ? [
                   "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+                ]
+              : output.outputTruncated === null
+                ? [
+                    "The bridge did not declare whether output was omitted, so the output may be incomplete.",
+                  ]
+                : []),
+            ...(output.documentGeneration === null
+              ? [
+                  "The bridge did not report the document generation after this command; list Cutter sessions again before selecting an expected_generation.",
                 ]
               : []),
           ],
@@ -156,36 +234,40 @@ export class CutterBridgeService {
               resources: [`cutter-session:${input.session_id}`],
             },
             partialObservation: evidence,
+            ...(output.outputLimit === undefined
+              ? {}
+              : { limit: output.outputLimit }),
           },
         );
+        const release = new AnalysisCleanupRelease();
         this.#pendingCleanup.set(output.requestId, {
           sessionId: input.session_id,
           ...(output.completionToken === undefined
             ? {}
             : { completionToken: output.completionToken }),
-          failure,
+          failure: release.bind(failure),
+          release,
         });
         return err(failure);
       }
+      if (options.signal?.aborted)
+        return err(
+          cancelledBy("cutter_command", options.signal, {
+            partialObservation: evidence,
+          }),
+        );
       return ok(evidence);
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);
-      const message =
-        cause instanceof Error
-          ? cause.message
-          : "Unknown Cutter bridge failure";
-      if (options.signal?.aborted && !message.includes("may have completed"))
-        return err(new AnalysisCancelledError("cutter_command", { cause }));
       return err(
-        message.includes("generation changed") ||
-          message.includes("unavailable or stale")
-          ? new AnalysisInputError("cutter_command", { cause })
-          : new AnalysisCapabilityUnavailableError(
-              "cutter",
-              "cutter_command",
-              message,
-              { cause },
-            ),
+        new AnalysisCapabilityUnavailableError(
+          "cutter",
+          "cutter_command",
+          cause instanceof Error
+            ? cause.message
+            : "Unknown Cutter bridge failure",
+          { cause },
+        ),
       );
     }
   }

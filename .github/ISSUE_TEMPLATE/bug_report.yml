@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in REA
+description: Report a problem in REA with observations or source evidence
 title: "[Bug] "
 labels:
   - bug
@@ -8,8 +8,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please report one primary behavior per issue. Keep observed behavior
-        separate from suspected causes, and remove credentials and private paths.
+        Report one primary behavior per issue. Keep answers concise and grounded
+        in available evidence. Distinguish observed behavior, source-derived
+        reasoning, and suspected causes; do not claim a reproduction you did not run.
+        If a narrative answer is not known, write `NOT_ENOUGH_INFO` and describe
+        what is missing. Intermittent failures and clearly labeled source-only
+        reports are welcome. Do not include credentials or sensitive target data.
 
   - type: checkboxes
     id: before-submitting
@@ -42,7 +46,7 @@ body:
     id: observed-behavior
     attributes:
       label: Observed behavior
-      description: What happened? Include the command, MCP tool, provider, target type, and conditions that matter.
+      description: Describe the actual result, including the exact command or MCP request, relevant provider/target, and supporting evidence below. Label source-only findings instead of claiming execution.
     validations:
       required: true
 
@@ -50,7 +54,7 @@ body:
     id: reproduction
     attributes:
       label: Reproduction
-      description: Give the smallest realistic command, configuration, input, or event sequence that demonstrates the problem.
+      description: Give the shortest steps you actually ran, with the relevant input or configuration. State how often they reproduced the problem when known. If reproduction is unavailable, say so and provide the observations or source reference you have.
       placeholder: |
         1. Configure or start ...
         2. Run ...
@@ -62,7 +66,7 @@ body:
     id: expected-behavior
     attributes:
       label: Expected behavior
-      description: What result, contract, invariant, recovery action, or state transition should have occurred?
+      description: State the expected result, contract, or recovery action. Cite documentation, source, or a known-good version when available; mark an unverified expectation or unknown reference clearly.
     validations:
       required: true
 
@@ -70,7 +74,7 @@ body:
     id: impact-scope
     attributes:
       label: Impact and scope
-      description: What is affected, what is not affected, and does this affect evidence integrity, process isolation, compatibility, or recovery?
+      description: Describe observed impact and frequency, including effects on evidence integrity, process isolation, compatibility, or recovery when known. Leave untested scope and severity unknown rather than guessing.
     validations:
       required: true
 
@@ -79,7 +83,7 @@ body:
     attributes:
       label: REA version
       description: Use `rea --version` or provide the source revision.
-      placeholder: 3.1.0 or git revision
+      placeholder: Exact rea --version output or source commit SHA
     validations:
       required: true
 
@@ -116,7 +120,7 @@ body:
     id: failure-stage
     attributes:
       label: Earliest failure stage
-      description: Select where the incorrect behavior first becomes observable.
+      description: Select where the incorrect behavior first becomes observable. Choose Unknown if this has not been established.
       options:
         - Request parsing or validation
         - Setup or provider admission
@@ -133,8 +137,14 @@ body:
     id: relevant-evidence
     attributes:
       label: Relevant output or evidence
-      description: Paste the smallest useful CLI output, MCP result, error, trace, or evidence excerpt. Redact sensitive values.
-      render: text
+      description: Include the smallest useful output, MCP result, error, screenshot, artifact, or exact source reference. Say how it was obtained and which claim it supports. If unavailable, write NOT_ENOUGH_INFO and explain what is missing. Redact credentials and sensitive target data.
+      placeholder: |
+        Command or MCP request actually run:
+        Relevant result, error, or artifact:
+        For source-only findings, link the file/revision and relevant code:
+        Missing evidence or remaining uncertainty:
+    validations:
+      required: true
 
   - type: textarea
     id: typed-outcome
@@ -146,10 +156,10 @@ body:
     id: analysis
     attributes:
       label: Analysis or suspected cause
-      description: Optional. Clearly mark source-derived reasoning or a hypothesis; do not present an unverified cause as fact.
+      description: Optional. Link supporting source and distinguish source-derived reasoning from a hypothesis. A root-cause analysis or proposed fix is not required.
 
   - type: textarea
     id: additional-context
     attributes:
       label: Additional context
-      description: Add links, reduced fixtures, screenshots, or a proposed regression test.
+      description: Add reduced fixtures, screenshots, or related issues. For observed regressions, include the last known good and first known bad versions when available. Label untested checks as proposals.

@@ -1,9 +1,12 @@
+import type { Node } from "@xmldom/xmldom";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
 import {
-  DOMParser,
-  type Document,
-  type Element,
-  type Node,
-} from "@xmldom/xmldom";
+  isUnqualifiedXmlElement,
+  parseXmlDocument,
+  type XmlParseFailure,
+} from "../domain/xmlDocument.js";
+import { ok, err, type Result } from "../domain/result.js";
+import { malformedInput } from "../domain/parseFailure.js";
 import {
   isMap,
   isScalar,
@@ -26,11 +29,20 @@ const metaInfoTag = {
 };
 
 /**
- * Read values from Apktool's tagged metadata document. YAML's core schema
- * distinguishes null from quoted strings; numeric values use their source
- * range so version codes retain the spelling Apktool emitted.
+ * Read the producer's metadata dialect once. Apktool 2.9.0 and later (including
+ * 3) emit an untagged, line-oriented document with Java-escaped strings; older
+ * tagged documents use YAML core semantics. Numeric values retain their source
+ * spelling.
  */
 export const parseApktoolYml = (yml: string): ApktoolMetadata => {
+  const source = yml.replace(/^\uFEFF/u, "");
+  const header = source.split(/\r\n?|\n/u, 1)[0] ?? "";
+  if (
+    /^version: (?:2\.(?:9|[1-9]\d)|3\.\d+)\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/u.test(
+      header,
+    )
+  )
+    return parseApktool3Metadata(source);
   const document = parseDocument(yml, {
     schema: "core",
     customTags: [metaInfoTag],
@@ -55,13 +67,91 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   };
 };
 
+/** Fields written by VersionInfo.write and SdkInfo.write in Apktool 3. */
+const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
+  ["versionInfo.versionName", "versionName"],
+  ["versionInfo.versionCode", "versionCode"],
+  ["sdkInfo.minSdkVersion", "minSdkVersion"],
+  ["sdkInfo.targetSdkVersion", "targetSdkVersion"],
+]);
+
+/**
+ * Apktool 3.0.3 YamlWriter, like the 2.9.0 writer it descends from, writes
+ * strings without YAML quoting or comment syntax. Read its direct mapping
+ * records before a YAML parser can discard hashes, consume quotes, or
+ * reinterpret an empty string or literal `null`.
+ */
+const parseApktool3Metadata = (source: string): ApktoolMetadata => {
+  const values = new Map<keyof ApktoolMetadata, string>();
+  const sections = new Set<string>();
+  let section: string | undefined;
+  for (const line of source.split(/\r\n?|\n/u)) {
+    if (line.trim() === "" || /^[#!]/u.test(line)) continue;
+    if (!line.startsWith(" ")) {
+      const separator = line.indexOf(":");
+      section = separator === -1 ? undefined : line.slice(0, separator);
+      if (section === "version") {
+        if (sections.has(section))
+          throw new TypeError("apktool.yml has a duplicate producer version");
+        sections.add(section);
+        continue;
+      }
+      if (section !== "versionInfo" && section !== "sdkInfo") continue;
+      if (line.slice(separator + 1).trim() !== "" || sections.has(section))
+        throw new TypeError(`apktool.yml has an invalid ${section} mapping`);
+      sections.add(section);
+      continue;
+    }
+    const record = /^  ([^ :]+):(?: (.*))?$/su.exec(line);
+    if (record === null) continue;
+    const path = `${section ?? ""}.${record[1] ?? ""}`;
+    const field = apktool3Fields.get(path);
+    if (field === undefined) continue;
+    if (values.has(field))
+      throw new TypeError(`apktool.yml has a duplicate ${path} field`);
+    const value = record[2] ?? "";
+    values.set(field, field === "versionCode" ? value : apktool3String(value));
+  }
+  return {
+    versionName: values.get("versionName") ?? null,
+    versionCode: values.get("versionCode") ?? null,
+    minSdkVersion: values.get("minSdkVersion") ?? null,
+    targetSdkVersion: values.get("targetSdkVersion") ?? null,
+  };
+};
+
+const apktool3String = (source: string): string => {
+  // The producer escapes every double quote. An unescaped opening double
+  // quote therefore belongs to a standard quoted-YAML compatibility input.
+  if (source.startsWith('"')) {
+    const document = parseDocument(source, { schema: "core", strict: true });
+    if (
+      document.errors.length === 0 &&
+      isScalar(document.contents) &&
+      typeof document.contents.value === "string"
+    )
+      return document.contents.value;
+    throw new TypeError("apktool.yml has an invalid quoted string");
+  }
+  // Every escape emitted by YamlStringEscapeUtils is also a JSON string
+  // escape, including UTF-16 surrogate pairs. Decode once, preserving a
+  // doubled backslash followed by literal `u` or `n` as source text.
+  const decoded: unknown = JSON.parse(`"${source}"`);
+  if (typeof decoded !== "string")
+    throw new TypeError("apktool.yml has an invalid Apktool 3 string");
+  return decoded;
+};
+
 /** Read the package attribute from the decoded Android manifest root. */
 export const parseManifestPackage = (manifest: string): string | null => {
-  const document = parseXml(manifest, "AndroidManifest.xml");
-  const root = document.documentElement;
-  if (root === null || root.nodeName !== "manifest")
+  const parsed = parseDecodedAndroidManifest(manifest, "allow");
+  if (parsed.ok) return parsed.value.packageName;
+  if (parsed.error.kind === "unexpected-root")
     throw new TypeError("AndroidManifest.xml root must be <manifest>");
-  return root.getAttribute("package") || null;
+  throw new TypeError(
+    `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
+    { cause: parsed.error },
+  );
 };
 
 export interface DecodedStringEntry {
@@ -77,33 +167,41 @@ export interface DecodedStringEntry {
  */
 export const parseDecodedStrings = (
   stringsXml: string,
-): {
-  entries: readonly DecodedStringEntry[];
-  unparsedCount: number;
-} => {
-  let document: Document;
-  try {
-    document = parseXml(stringsXml, "strings.xml");
-  } catch {
-    return { entries: [], unparsedCount: 1 };
-  }
-  const root = document.documentElement;
-  if (root === null || root.nodeName !== "resources")
-    return { entries: [], unparsedCount: 1 };
+): Result<
+  {
+    readonly entries: readonly DecodedStringEntry[];
+    readonly unparsedCount: number;
+  },
+  // A whole-document failure does not establish an omitted-entry count.
+  XmlParseFailure
+> => {
+  const parsed = parseXmlDocument(stringsXml, {
+    doctype: "allow",
+    lineEndings: "preserve",
+  });
+  if (!parsed.ok) return err(parsed.error);
+  const root = parsed.value.documentElement;
+  if (!isUnqualifiedXmlElement(root) || root.localName !== "resources")
+    return err(
+      malformedInput(
+        "android-string-resources",
+        "String resource document root must be <resources>",
+        { field: "documentElement" },
+      ),
+    );
 
   const entries: DecodedStringEntry[] = [];
   let unparsedCount = 0;
   const offsets = sourceLineOffsets(stringsXml);
   for (const child of childNodes(root)) {
-    if (child.nodeType !== 1) continue;
-    const element = child as Element;
-    if (element.nodeName !== "string") continue;
-    const name = element.getAttribute("name");
+    if (!isUnqualifiedXmlElement(child) || child.localName !== "string")
+      continue;
+    const name = child.getAttributeNS(null, "name");
     if (name === null || name.length === 0) {
       unparsedCount += 1;
       continue;
     }
-    const content = childNodes(element);
+    const content = childNodes(child);
     if (content.some((node) => node.nodeType !== 3 && node.nodeType !== 8)) {
       unparsedCount += 1;
       continue;
@@ -129,7 +227,7 @@ export const parseDecodedStrings = (
     }
     entries.push({ name, value: value.join("") });
   }
-  return { entries, unparsedCount };
+  return ok({ entries, unparsedCount });
 };
 
 const yamlScalar = (
@@ -144,19 +242,6 @@ const yamlScalar = (
   return range === null || range === undefined
     ? String(node.value)
     : source.slice(range[0], range[1]);
-};
-
-const parseXml = (xml: string, label: string) => {
-  const errors: string[] = [];
-  const document = new DOMParser({
-    normalizeLineEndings: (source) => source,
-    onError: (_level, message) => errors.push(message),
-  }).parseFromString(xml, "application/xml");
-  if (errors.length > 0 || document.documentElement === null)
-    throw new TypeError(
-      `${label} is not well-formed XML${errors[0] === undefined ? "" : `: ${errors[0]}`}`,
-    );
-  return document;
 };
 
 const childNodes = (node: Node): Node[] => {

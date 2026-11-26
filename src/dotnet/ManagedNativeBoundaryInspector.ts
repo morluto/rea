@@ -1,4 +1,4 @@
-import { admitManagedProjection } from "./ManagedDecodeBudget.js";
+import { admitManagedProjection } from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedNativeBoundaryInspectionSchema,
@@ -8,32 +8,40 @@ import {
 import {
   readManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   readManagedPeLayout,
+  type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedPeReader.js";
+import {
+  appendManagedParseIssues,
+  ManagedReaderFailure,
+  managedMetadataFailureStatus,
+  type ManagedMetadataHeaderFacts,
+} from "../domain/managed/managedReaderFailure.js";
 import {
   buildNativeBoundaryInspection,
   cliNative,
   nativeBoundarySummary,
   nativeImplementations,
-  parseFields,
-  parseImplMaps,
-  parseMethods,
   parseModuleRefs,
+  readReferencedFieldNames,
+  resolveImplMapMemberNames,
+  scanImplMaps,
+  scanNativeMethods,
 } from "./ManagedNativeBoundaryHelpers.js";
 
 type Inventory = ReturnType<typeof readManagedMetadataInventory>;
 
 /**
- * Report a PE whose CLI metadata is absent or cannot be admitted. `native`
- * holds the CLI header facts when the header itself was admitted; otherwise
+ * Report a PE whose CLI metadata is absent or cannot be admitted. `cli`
+ * holds the CLI header when the header itself was admitted; otherwise
  * the header is absent (`not-managed`) or unreadable (`malformed`).
  */
 const emptyInspection = (
@@ -41,11 +49,13 @@ const emptyInspection = (
   bytes: Buffer,
   classification: "not-managed" | "malformed",
   {
-    native = null,
+    cli = null,
     issues = [],
+    metadataHeader = null,
   }: {
-    readonly native?: ManagedNativeBoundaryInspection["cli_native"] | null;
+    readonly cli?: ManagedCliHeader | null;
     readonly issues?: readonly ManagedParseIssue[];
+    readonly metadataHeader?: ManagedMetadataHeaderFacts | null;
   } = {},
 ): ManagedNativeBoundaryInspection => {
   return managedNativeBoundaryInspectionSchema.parse(
@@ -58,12 +68,14 @@ const emptyInspection = (
       },
       module: null,
       metadata: {
-        status: issues.some((issue) => issue.code === "resource-limit")
+        status: issues.some(
+          (issue) => managedMetadataFailureStatus(issue) === "partial",
+        )
           ? "partial"
           : classification === "malformed"
             ? "malformed"
             : "absent",
-        version: null,
+        version: metadataHeader?.version ?? null,
         table_row_counts: {},
       },
       identity_scope: {
@@ -71,11 +83,11 @@ const emptyInspection = (
         requires_artifact_sha256: target.sha256,
         requires_mvid: null,
       },
-      cli_native: native,
+      cli_native: cliNative(cli),
       module_refs: [],
       pinvoke_imports: [],
       native_implementations: [],
-      summary: nativeBoundarySummary(native, {
+      summary: nativeBoundarySummary(cli, {
         module_ref_count: 0,
         pinvoke_import_count: 0,
         native_implementation_count: 0,
@@ -94,6 +106,7 @@ const readBoundaryInventory = (
   pe: ManagedPeLayout,
   cli: NonNullable<ManagedPeLayout["cli"]>,
   issues: ManagedParseIssue[],
+  maxRepresentationBytes?: number,
 ): {
   readonly layout: ManagedMetadataLayout;
   readonly inventory: Inventory;
@@ -107,11 +120,14 @@ const readBoundaryInventory = (
     bytes,
     metadataOffset,
     cli.metadata.size,
+    maxRepresentationBytes,
   );
+  const memberLists = readTypeMemberListFacts(bytes, layout);
   const inventory = readManagedMetadataInventory(
     bytes,
     layout,
     readManagedResourceDirectory(pe, issues),
+    memberLists,
   );
   return { layout, inventory };
 };
@@ -120,6 +136,7 @@ const readBoundaryInventory = (
 export const inspectManagedNativeBoundariesBytes = (
   bytes: Buffer,
   target: BinaryTarget,
+  maxRepresentationBytes?: number,
 ): ManagedNativeBoundaryInspection => {
   // An unmappable PE layout is invalid input for every managed operation.
   const pe = readManagedPeLayout(bytes);
@@ -134,39 +151,49 @@ export const inspectManagedNativeBoundariesBytes = (
   let layout: ManagedMetadataLayout;
   let inventory: Inventory;
   try {
-    ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli, issues));
+    ({ layout, inventory } = readBoundaryInventory(
+      bytes,
+      pe,
+      pe.cli,
+      issues,
+      maxRepresentationBytes,
+    ));
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return emptyInspection(target, bytes, "malformed", {
-      native: cliNative(pe),
+      cli: pe.cli,
       issues: [cause.issue],
+      metadataHeader: cause.metadataHeader,
     });
   }
   try {
-    const heapExtent = Math.max(layout.strings.size, layout.blob.size);
-    issues.push(...inventory.issues);
-    const moduleRefs = parseModuleRefs(bytes, layout, heapExtent, issues);
-    const members = new Map([
-      ...parseFields(bytes, layout, heapExtent, issues),
-      ...parseMethods(bytes, layout, heapExtent, issues),
-    ]);
-    const imports = parseImplMaps({
+    appendManagedParseIssues(issues, inventory.issues);
+    const moduleRefs = parseModuleRefs(bytes, layout, issues);
+    const implMaps = scanImplMaps(bytes, layout, moduleRefs);
+    const fieldNames = readReferencedFieldNames(
       bytes,
       layout,
-      heapExtent,
-      modules: moduleRefs,
-      members,
+      implMaps.referencedFieldRows,
       issues,
-    });
+    );
+    const { methodNames, methods } = scanNativeMethods(
+      bytes,
+      layout,
+      implMaps.referencedMethodRows,
+      issues,
+    );
+    appendManagedParseIssues(issues, implMaps.issues);
+    const imports = resolveImplMapMemberNames(
+      implMaps.imports,
+      fieldNames,
+      methodNames,
+    );
     const pinvokeTokens = new Set(
       imports
         .map(({ member_token }) => member_token)
         .filter((token): token is string => token !== null),
     );
-    const implementations = nativeImplementations(
-      members.values(),
-      pinvokeTokens,
-    );
+    const implementations = nativeImplementations(methods, pinvokeTokens);
     return buildNativeBoundaryInspection({
       target,
       bytes,
@@ -176,14 +203,14 @@ export const inspectManagedNativeBoundariesBytes = (
       moduleRefs,
       imports,
       implementations,
-      native: cliNative(pe),
       issues,
     });
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return emptyInspection(target, bytes, "malformed", {
-      native: cliNative(pe),
+      cli: pe.cli,
       issues: [...issues, cause.issue],
+      metadataHeader: cause.metadataHeader,
     });
   }
 };

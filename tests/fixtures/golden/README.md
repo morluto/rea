@@ -19,6 +19,16 @@ its nil conditional reference and the payload `00 01 02 ff`. The reader reports
 serialized classes as unknown and does not instantiate them. The synthetic
 malformed-reference tests remain separate.
 
+Object 3 is a plist `<data>` value in the captured XML, produced by the Swift
+fixture's `Data([0, 1, 2, 255])`. Its reviewed graph kind is `scalar`; the JSON
+`$plist_type` wrapper does not make it a serialized dictionary. This expectation
+correction updates only the graph digest in `provenance.json`, without
+recapturing or changing the original XML or its producer metadata.
+
+The graph's `archiver` is the archive's declared `$archiver`, `NSKeyedArchiver`
+for this capture. Adding that reported field likewise updates only the graph
+digest.
+
 To recapture the input on an approved macOS host:
 
 ```sh

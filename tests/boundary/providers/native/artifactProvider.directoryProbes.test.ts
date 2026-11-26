@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -20,6 +21,14 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>
 `;
 
+// Execution-free readers for the bundle's Mach-O precede the deep provider.
+const MACH_O_STATIC_READERS = [
+  "inspect_macho",
+  "inspect_signature",
+  "inspect_binary_hardening",
+  "audit_release_exposure",
+];
+
 const writeTree = async (
   root: string,
   files: Readonly<Record<string, string | Buffer>>,
@@ -32,7 +41,9 @@ const writeTree = async (
 
 const probeOperations = async (path: string): Promise<string[]> => {
   const evidence = parseEvidence(
-    await runProviderAnalysis(path, "inspect_artifact", {}),
+    await runProviderAnalysis(path, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
   const inspection = artifactInspectionResultSchema.parse(
     evidence.normalized_result,
@@ -54,8 +65,9 @@ describe("directory inspection probes", () => {
     });
 
     expect(await probeOperations(bundle)).toEqual([
-      "open_binary",
+      ...MACH_O_STATIC_READERS,
       "inspect_plist",
+      "open_binary",
     ]);
   });
 
@@ -76,8 +88,9 @@ describe("directory inspection probes", () => {
 
     expect(await probeOperations(bundle)).toEqual([
       "analyze_javascript_application",
-      "open_binary",
+      ...MACH_O_STATIC_READERS,
       "inspect_plist",
+      "open_binary",
     ]);
   });
 
@@ -95,8 +108,9 @@ describe("directory inspection probes", () => {
 
       expect(await probeOperations(bundle)).toEqual([
         "analyze_javascript_application",
-        "open_binary",
+        ...MACH_O_STATIC_READERS,
         "inspect_plist",
+        "open_binary",
       ]);
     },
   );
@@ -111,8 +125,9 @@ describe("directory inspection probes", () => {
       join(bundle, "Contents/Info.plist"),
     );
     expect(await probeOperations(bundle)).toEqual([
-      "open_binary",
+      ...MACH_O_STATIC_READERS,
       "inspect_plist",
+      "open_binary",
     ]);
   });
 
@@ -131,8 +146,9 @@ describe("directory inspection probes", () => {
     );
 
     expect(await probeOperations(bundle)).toEqual([
-      "open_binary",
+      ...MACH_O_STATIC_READERS,
       "inspect_plist",
+      "open_binary",
     ]);
   });
 });

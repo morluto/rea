@@ -1,6 +1,144 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
+it.each([
+  "module.require = replacement;",
+  "const holder = { loader: module }; holder.loader.require = replacement;",
+  "const holder = {}; holder.loader = module; holder.loader.require = replacement;",
+])(
+  "does not prove Electron exports after a delegate replacement: %s",
+  (write) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${write} const { BrowserWindow } = require("electron"); new BrowserWindow();`,
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+  },
+);
+
+it.each([
+  [
+    'const { app } = require("electron"); app.setAppPath("./other");',
+    true,
+    true,
+  ],
+  [
+    'import { app as runtime } from "electron/main"; runtime.setAppPath(path);',
+    true,
+  ],
+  [
+    'import * as electron from "electron"; electron.app.setAppPath("./other");',
+    true,
+  ],
+  [
+    'const { app } = require("electron"); const runtime = app; runtime.setAppPath("./other");',
+    true,
+    true,
+  ],
+  [
+    'const { app } = require("electron"); const copy = { ...{ app } }; copy.app.setAppPath("./other");',
+    true,
+    true,
+  ],
+  [
+    'const { app } = require("electron"); const change = app.setAppPath; change("./other");',
+    true,
+    true,
+  ],
+  ['const app = { setAppPath() {} }; app.setAppPath("./other");', false],
+  [
+    'import { app } from "electron"; function local(app) { app.setAppPath("./other"); }',
+    false,
+  ],
+  [
+    'const electron = { app: { setAppPath() {} } }; electron.app.setAppPath("./other");',
+    false,
+  ],
+])(
+  "retains Electron application path changes by binding identity: %s",
+  (source, expected, commonJs = false) => {
+    const analysis = commonJs
+      ? analyzeCommonJsStaticFixture(source)
+      : analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.app_path_changes ?? []).toEqual(
+      expected
+        ? [
+            expect.objectContaining({
+              module_key: null,
+              location: expect.any(Object),
+            }),
+          ]
+        : [],
+    );
+  },
+);
+
+it.each([
+  ['app.setAppPath.call(app, "./other");', true],
+  ['app.setAppPath.apply(app, ["./other"]);', true],
+  ['Reflect.apply(app.setAppPath, app, ["./other"]);', true],
+  [
+    'const invoke = Reflect.apply; invoke(app.setAppPath, app, ["./other"]);',
+    true,
+  ],
+  [
+    'const invoke = Reflect.apply.bind(Reflect); invoke(app.setAppPath, app, ["./other"]);',
+    true,
+  ],
+  [
+    'const invoke = Reflect.apply; Reflect.apply = () => {}; invoke(app.setAppPath, app, ["./other"]);',
+    true,
+  ],
+  ['const change = app.setAppPath.bind(app); change("./other");', true],
+  ['app["setAppPath"][`call`](app, "./other");', true],
+  [
+    'const runtime = app; runtime.setAppPath.apply(runtime, ["./other"]);',
+    true,
+  ],
+  ['const change = app.setAppPath; change.call(app, "./other");', true],
+  ['function local(app) { app.setAppPath.call(app, "./other"); }', false],
+  [
+    'const local = { setAppPath() {} }; local.setAppPath.bind(local)("./other");',
+    false,
+  ],
+  ['app.setAppPath.other(app, "./other");', false],
+  [
+    'const Reflect = { apply() {} }; Reflect.apply(app.setAppPath, app, ["./other"]);',
+    false,
+  ],
+  [
+    'Reflect.apply = () => {}; Reflect.apply(app.setAppPath, app, ["./other"]);',
+    false,
+  ],
+  [
+    'const local = { setAppPath() {} }; Reflect.apply(local.setAppPath, local, ["./other"]);',
+    false,
+  ],
+])(
+  "retains indirect application path changes by Electron identity: %s",
+  (call, expected) => {
+    const analysis = analyzeCommonJsStaticFixture(`
+    const { app } = require("electron");
+    ${call}
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.app_path_changes ?? []).toEqual(
+      expected
+        ? [
+            expect.objectContaining({
+              module_key: null,
+              location: expect.any(Object),
+            }),
+          ]
+        : [],
+    );
+  },
+);
 
 it("recovers APIs through an ES module default import of Electron", () => {
   const analysis = analyzeJavaScriptStaticSource(`
@@ -32,7 +170,7 @@ it("recovers APIs through an ES module default import of Electron", () => {
 });
 
 it("recovers APIs and sender checks written with optional chaining", () => {
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     const { contextBridge, ipcMain, utilityProcess } = require("electron");
     contextBridge?.exposeInMainWorld("api", {});
     utilityProcess?.fork("./worker.js");
@@ -74,7 +212,7 @@ it("recovers APIs and sender checks written with optional chaining", () => {
 });
 
 it("preserves empty and computed literal contextBridge member keys", () => {
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     const { contextBridge } = require("electron");
     const dynamicKey = getKey();
     contextBridge.exposeInMainWorld("api", {
@@ -104,7 +242,7 @@ it("preserves empty and computed literal contextBridge member keys", () => {
 });
 
 it("follows bundler namespace interop helpers without accepting other writes", () => {
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     var __toESM = (mod) => mod;
     var __importStar = (mod) => mod;
     let electron = require("electron");
@@ -151,7 +289,7 @@ it("does not trust unbound helper names or non-function helper values", () => {
 });
 
 it("follows stable declaration aliases but not an assigned default parameter", () => {
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     const direct = require("electron");
     const constAlias = direct;
     new constAlias.BrowserWindow({webPreferences:{preload:"./const.js"}});
@@ -174,7 +312,7 @@ it("follows stable declaration aliases but not an assigned default parameter", (
 });
 
 it("preserves one initializer across variable redeclarations without accepting writes", () => {
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     var electron;
     var electron = require("electron");
     var electron;

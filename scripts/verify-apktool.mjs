@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 
-import { ApktoolResourceAnalysisService } from "../dist/application/apktool/ApktoolResourceAnalysisService.js";
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import { createApktoolResourceAnalysisService } from "../dist/application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../dist/composition/apktool.js";
 
 const options = parseArguments(process.argv.slice(2));
@@ -16,7 +16,7 @@ if (options.help) {
 }
 
 const provider = createApktoolResourceAnalysisProvider(process.env);
-const service = new ApktoolResourceAnalysisService(provider);
+const service = createApktoolResourceAnalysisService(provider);
 let failures = 0;
 const check = (name, condition, detail = "") => {
   const mark = condition ? "ok" : "FAIL";
@@ -32,6 +32,16 @@ const run = async (operation, input) => {
     process.stdout.write(`[FAIL] ${operation} — ${result.error.message}\n`);
     failures += 1;
     return null;
+  }
+  if (operation === "decode_android_resources") {
+    const evidence = result.value;
+    const target = evidence.normalized_result.target;
+    check(
+      "resource Evidence preserves the decoded APK subject identity",
+      evidence.subject?.identity.sha256 === target.sha256 &&
+        evidence.subject?.local_path === target.path &&
+        evidence.subject?.identity.format === "apk",
+    );
   }
   return result.value.normalized_result;
 };
@@ -54,9 +64,7 @@ try {
     });
     if (decoded !== null) {
       const bytes = await stat(options.apk).then((info) => info.size);
-      const digest = createHash("sha256")
-        .update(await readFile(options.apk))
-        .digest("hex");
+      const digest = await sha256File(options.apk);
       check(
         "decoded target identity matches the file on disk",
         decoded.target.bytes === bytes && decoded.target.sha256 === digest,
@@ -93,6 +101,29 @@ try {
             Array.isArray(locale.strings),
             `${locale.strings.length} string(s)`,
           );
+
+        const selectedLocales = decoded.locales.slice(0, 2);
+        const batched = await run("decode_android_resources", {
+          path: options.apk,
+          include_strings: true,
+          locales: selectedLocales,
+        });
+        if (batched !== null) {
+          const expectedLocales = [null, ...selectedLocales];
+          const hasExpectedTables =
+            Array.isArray(batched.string_tables) &&
+            expectedLocales.every((expected) =>
+              batched.string_tables.some(
+                (table) =>
+                  table.locale === expected && table.status === "present",
+              ),
+            );
+          check(
+            "batched string tables projected with expected locales and status",
+            hasExpectedTables,
+            `${String(batched.string_tables?.length)} table(s) present`,
+          );
+        }
       }
     }
   }

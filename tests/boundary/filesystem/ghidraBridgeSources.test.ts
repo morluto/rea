@@ -1,0 +1,280 @@
+import { execFile } from "node:child_process";
+import {
+  chmod,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+
+import { GHIDRA_BRIDGE_SOURCES } from "../../../src/ghidra/GhidraBridgeSources.js";
+import {
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+} from "../../../src/ghidra/GhidraReleasePolicy.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
+
+const execute = promisify(execFile);
+
+/** A stand-in compiler proves admission and cleanup, not real Java compilation. */
+const installation = async (
+  properties = `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
+  compilerStatus = 0,
+) => {
+  const root = await createTestTempDirectory("rea-ghidra-bridge-test-");
+  const install = join(root, "Ghidra SDK");
+  await mkdir(join(install, "Ghidra/Framework/lib"), { recursive: true });
+  await writeFile(
+    join(install, "Ghidra/application.properties"),
+    properties,
+    "latin1",
+  );
+  await writeFile(join(install, "Ghidra/Framework/lib/Generic.jar"), "");
+  const javaHome = join(root, "JDK home");
+  await mkdir(join(javaHome, "bin"), { recursive: true });
+  const javac = join(javaHome, "bin/javac");
+  await writeFile(
+    javac,
+    [
+      "#!/bin/sh",
+      'printf "invoked\\n" >> "$REA_JAVAC_MARKER"',
+      'if [ "$1" = "-version" ]; then echo "javac 25.0.5"; exit 0; fi',
+      ...(compilerStatus === 0
+        ? ["exit 0"]
+        : [
+            'echo "bridge/ghidra/ReaGhidraBridge.java:1: error: cannot find symbol" >&2',
+            "exit 1",
+          ]),
+    ].join("\n"),
+  );
+  await chmod(javac, 0o755);
+  const scratchParent = join(root, "scratch");
+  await mkdir(scratchParent);
+  return {
+    scratchParent,
+    javacMarker: join(root, "javac-invocations"),
+    environment: {
+      ...process.env,
+      REA_JAVAC_MARKER: join(root, "javac-invocations"),
+      GHIDRA_INSTALL_DIR: install,
+      JAVA_HOME: javaHome,
+      TMPDIR: scratchParent,
+    },
+  };
+};
+
+type AdmissionCase = {
+  name: string;
+  properties: string;
+  compilerStatus?: number;
+  expectedVersion?: string;
+  error?: string;
+};
+const admissionCases: readonly AdmissionCase[] = [
+  {
+    name: "compiler succeeds",
+    properties: `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
+    expectedVersion: SUPPORTED_GHIDRA_VERSION,
+  },
+  {
+    name: "compiler fails",
+    properties: `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
+    compilerStatus: 1,
+    error: "bridge/ghidra/ReaGhidraBridge.java:1: error: cannot find symbol",
+  },
+  {
+    name: "colon separator",
+    properties: `application.version : ${SUPPORTED_GHIDRA_VERSION}\n`,
+    expectedVersion: SUPPORTED_GHIDRA_VERSION,
+  },
+  {
+    name: "escaped key and continued value",
+    properties: "application\\u002eversion=12.\\\n  2\n",
+    expectedVersion: "12.2",
+  },
+  {
+    name: "Latin-1 distro suffix",
+    properties: "application.version=12.2-é\n",
+    expectedVersion: "12.2-é",
+  },
+  {
+    name: "trailing version whitespace",
+    properties: "application.version=12.2 \n",
+    error: 'Observed application.version="12.2 ".',
+  },
+  {
+    name: "malformed Unicode escape",
+    properties: "application.version=12.2\nother=\\u00xx\n",
+    error: "malformed_unicode_escape",
+  },
+];
+
+// Only the stand-in executable is POSIX-specific. Real compilation runs in its
+// hosted lane; the installed provider's Properties tests cover the parser too.
+it.skipIf(process.platform === "win32").each(admissionCases)(
+  "preserves version admission and scratch cleanup: $name",
+  async ({
+    properties,
+    compilerStatus,
+    expectedVersion = SUPPORTED_GHIDRA_VERSION,
+    error,
+  }) => {
+    const fixture = await installation(properties, compilerStatus);
+    const run = execute(
+      process.execPath,
+      ["scripts/verify-ghidra-bridge-sources.mjs"],
+      {
+        cwd: process.cwd(),
+        env: fixture.environment,
+        timeout: 30_000,
+      },
+    );
+    if (error === undefined)
+      await expect(run).resolves.toMatchObject({
+        stdout: expect.stringContaining(
+          `"ghidra_version":${JSON.stringify(expectedVersion)}`,
+        ),
+      });
+    else
+      await expect(run).rejects.toMatchObject({
+        code: 1,
+        stdout: "",
+        stderr: expect.stringContaining(error),
+      });
+    expect(await readdir(fixture.scratchParent)).toEqual([]);
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  { source: GHIDRA_BRIDGE_SOURCES.prepareCom, action: "deleted" },
+  { source: GHIDRA_BRIDGE_SOURCES.applySeeds, action: "renamed" },
+  { source: "UnregisteredHelper.java", action: "added" },
+])(
+  "rejects a $action launcher source before compilation: $source",
+  async ({ source, action }) => {
+    const repository = await createTestTempDirectory("rea-ghidra-source-set-");
+    await writeFile(join(repository, "package.json"), '{"type":"module"}\n');
+    await copyScriptsWithImports(
+      ["scripts/verify-ghidra-bridge-sources.mjs"],
+      repository,
+    );
+    await cp(resolve("bridge/ghidra"), join(repository, "bridge/ghidra"), {
+      recursive: true,
+    });
+    const path = join(repository, "bridge/ghidra", source);
+    if (action === "added")
+      await writeFile(path, "class UnregisteredHelper {}\n");
+    else if (action === "deleted") await unlink(path);
+    else {
+      const className = source.slice(0, -".java".length);
+      await writeFile(
+        path,
+        (await readFile(path, "utf8")).replaceAll(
+          className,
+          `Renamed${className}`,
+        ),
+      );
+      await rename(path, join(repository, "bridge/ghidra", `Renamed${source}`));
+    }
+    const fixture = await installation();
+    await expect(
+      execute(
+        process.execPath,
+        [join(repository, "scripts/verify-ghidra-bridge-sources.mjs")],
+        {
+          cwd: repository,
+          env: fixture.environment,
+          timeout: 30_000,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        action === "added"
+          ? `Ghidra bridge sources absent from the manifest: ${source}`
+          : `Required Ghidra bridge source is missing: bridge/ghidra/${source}`,
+      ),
+    });
+    expect(await readdir(fixture.scratchParent)).toEqual([]);
+    await expect(readFile(fixture.javacMarker)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("binds the workflow SDK pin and verified compile mode to the canonical release", async () => {
+  const { jobs } = z
+    .object({
+      jobs: z.object({
+        "ghidra-bridge-sources": z.object({
+          env: z.object({
+            GHIDRA_RELEASE_URL: z.string(),
+            GHIDRA_RELEASE_SHA256: z.string(),
+          }),
+          steps: z.array(
+            z.object({ run: z.string().optional() }).passthrough(),
+          ),
+        }),
+      }),
+    })
+    .parse(
+      parseYaml(
+        await readFile(
+          resolve(".github/workflows/ghidra-bridge-sources.yml"),
+          "utf8",
+        ),
+      ),
+    );
+  const job = jobs["ghidra-bridge-sources"];
+  const pinIndex = job.steps.findIndex((step) =>
+    step.run?.includes("--check-sdk-pin"),
+  );
+  const downloadIndex = job.steps.findIndex((step) =>
+    step.run?.includes("curl "),
+  );
+  expect(pinIndex).toBeGreaterThanOrEqual(0);
+  expect(downloadIndex).toBeGreaterThan(pinIndex);
+  expect(job.steps.some((step) => step.run?.includes("--verified-sdk"))).toBe(
+    true,
+  );
+  const command = [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    "--check-sdk-pin",
+  ];
+  await expect(
+    execute(process.execPath, command, {
+      env: { ...process.env, ...job.env },
+    }),
+  ).resolves.toMatchObject({
+    stdout: `GHIDRA_JAVA_MAJOR=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n`,
+  });
+  for (const env of [
+    {
+      ...job.env,
+      GHIDRA_RELEASE_URL: job.env.GHIDRA_RELEASE_URL.replaceAll(
+        SUPPORTED_GHIDRA_VERSION,
+        "0.0.0",
+      ),
+    },
+    { ...job.env, GHIDRA_RELEASE_SHA256: "not-a-digest" },
+  ])
+    await expect(
+      execute(process.execPath, command, {
+        env: { ...process.env, ...env },
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "SDK URL and SHA256 must match verified Ghidra",
+      ),
+    });
+});

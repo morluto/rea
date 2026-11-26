@@ -175,3 +175,125 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves asserted inline options and unresolved overrides through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-asserted-window-options-");
+    const scenarios = [
+      {
+        sourceLine:
+          'new BrowserWindow(({webPreferences:{preload:"./first.js",sandbox:true}} as const));',
+        expectedPreload: "./first.js",
+        preferencesStatus: "object-literal",
+      },
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:({preload:"./first.js",sandbox:true} as const)});',
+        expectedPreload: "./first.js",
+        preferencesStatus: "object-literal",
+      },
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js" as const,sandbox:true}});',
+        expectedPreload: "./first.js",
+        preferencesStatus: "object-literal",
+      },
+      {
+        sourceLine:
+          "new BrowserWindow(({webPreferences:getPreferences()} as const));",
+        expectedPreload: null,
+        preferencesStatus: "dynamic",
+      },
+      {
+        sourceLine:
+          'new BrowserWindow(({webPreferences:{preload:"./first.js",...runtimeOptions}} as const));',
+        expectedPreload: null,
+        preferencesStatus: "object-literal",
+      },
+    ] as const;
+    const sourceLines = scenarios.map(({ sourceLine }) => sourceLine);
+    await Promise.all([
+      writeFile(
+        join(root, "main.ts"),
+        `import { BrowserWindow } from "electron";\n${sourceLines.join("\n")}\n`,
+      ),
+      writeFile(join(root, "first.js"), 'throw new Error("inert preload");\n'),
+    ]);
+
+    let document: unknown;
+    if (surface === "CLI") {
+      const response = await cli.run({
+        arguments: ["analyze-javascript-application", root, "--format", "json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      document = response.json;
+    } else {
+      const { call } = await connectLocalToolsMcp();
+      const response = await call("analyze_javascript_application", {
+        input_path: root,
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      document = response.structuredContent;
+    }
+    const { graph } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(document).normalized_result;
+    const windows = graph.nodes.filter(({ kind }) => kind === "browser-window");
+    expect(windows).toHaveLength(sourceLines.length);
+
+    for (const [index, scenario] of scenarios.entries()) {
+      const { sourceLine } = scenario;
+      const window = windows.find((node) => {
+        const location = node.observations[0]?.evidence.location;
+        return (
+          location?.available &&
+          location.value.kind === "source-range" &&
+          location.value.start.line === index + 2
+        );
+      });
+      const observation = window?.observations[0];
+      const known = scenario.expectedPreload !== null;
+      expect.soft(observation, sourceLine).toMatchObject({
+        properties: {
+          options_status: "object-literal",
+          web_preferences_status: scenario.preferencesStatus,
+          preload_path: scenario.expectedPreload,
+          preload_resolution_context: known ? "module-specifier" : null,
+        },
+        evidence: {
+          state: "observed",
+          location: {
+            available: true,
+            value: {
+              kind: "source-range",
+              source: "main.ts",
+              start: { line: index + 2, column: 0 },
+              end: { line: index + 2, column: sourceLine.length - 1 },
+            },
+          },
+        },
+      });
+      const associations = graph.edges.filter(
+        (edge) =>
+          edge.source_node_id === window?.node_id &&
+          edge.evidence.extractor.operation ===
+            "associate-browser-window-preload",
+      );
+      if (known) {
+        expect.soft(associations, sourceLine).toMatchObject([
+          {
+            relation: "loads",
+            properties: {
+              declared_path: "./first.js",
+              resolved_path: "first.js",
+            },
+          },
+        ]);
+      } else {
+        expect.soft(associations, sourceLine).toEqual([]);
+      }
+    }
+  },
+);

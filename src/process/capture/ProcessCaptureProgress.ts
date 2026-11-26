@@ -53,18 +53,19 @@ const formatProgressMessage = (
   const dispositionText =
     disposition === undefined ? "" : ` disposition=${disposition}`;
   const cleanupText =
-    cleanup === undefined
-      ? ""
-      : ` owned_process_group=${cleanup.owned_process_group.state} terminal_renderer=${cleanup.terminal_renderer.state} temporary_root=${cleanup.temporary_root.state}`;
+    cleanup !== undefined
+      ? ` owned_process_group=${cleanup.owned_process_group.state} terminal_renderer=${cleanup.terminal_renderer.state} temporary_root=${cleanup.temporary_root.state}`
+      : disposition === undefined
+        ? ""
+        : " owned_process_group=unverified terminal_renderer=unverified temporary_root=unverified";
   return `${status}${dispositionText}${cleanupText}`;
 };
 
 /** Serialize observed capture status through one rate-limited reporter. */
 export const createProcessCaptureProgressTracker = (
   progress: ProcessCaptureProgress | undefined,
-  now: () => number = monotonicProcessCaptureClock,
 ) => {
-  const started = now();
+  const started = monotonicProcessCaptureClock();
   let completed = 0;
   let live = true;
   let next: Parameters<ProcessCaptureProgress["report"]>[0] | undefined;
@@ -104,7 +105,7 @@ export const createProcessCaptureProgressTracker = (
         completed,
         total: null as null,
         message: formatProgressMessage(
-          Math.max(0, now() - started),
+          Math.max(0, monotonicProcessCaptureClock() - started),
           update.counts,
           update.disposition,
           update.cleanup,

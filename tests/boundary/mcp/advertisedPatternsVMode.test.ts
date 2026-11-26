@@ -1,41 +1,67 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
+import { advertisedSchemaPatterns } from "../../../src/contracts/advertisedDialect.js";
+import { projectPortablePattern } from "../../../src/contracts/portablePattern.js";
+import {
+  BASE64_QUARTET_LENGTH_PATTERN,
+  INVALID_BASE64_CHARACTER_PATTERN,
+  INVALID_BASE64_PADDING_PATTERN,
+  INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
+} from "../../../src/domain/stringPatterns.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-interface AdvertisedPattern {
-  readonly tool: string;
-  readonly where: string;
-  readonly pattern: string;
-}
+// Pattern portability across every profile is owned by
+// advertisedDialect.test.ts. This file keeps the composed canonical base64
+// constraint's safe advertisement after portable re-emission.
 
-const collectPatterns = (
+const advertised = (pattern: RegExp): string => {
+  const projection = projectPortablePattern(pattern.source);
+  if (projection.kind === "unexpressible")
+    throw new Error(`No portable form for ${pattern.source}`);
+  return projection.pattern;
+};
+
+const collectCanonicalBase64Leaves = (
   value: unknown,
-  where: string,
-  tool: string,
-  found: AdvertisedPattern[],
+  leaves: Record<string, unknown>[],
 ): void => {
   if (value === null || typeof value !== "object") return;
   if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      collectPatterns(entry, `${where}[${String(index)}]`, tool, found),
-    );
+    value.forEach((entry) => collectCanonicalBase64Leaves(entry, leaves));
     return;
   }
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === "pattern" && typeof entry === "string")
-      found.push({ tool, where: `${where}/pattern`, pattern: entry });
-    collectPatterns(entry, `${where}/${key}`, tool, found);
-  }
+  const record = value as Record<string, unknown>;
+  const allOf = record.allOf;
+  if (
+    Array.isArray(allOf) &&
+    allOf.some(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        "pattern" in entry &&
+        entry.pattern === advertised(BASE64_QUARTET_LENGTH_PATTERN),
+    )
+  )
+    leaves.push(record);
+  Object.values(record).forEach((entry) =>
+    collectCanonicalBase64Leaves(entry, leaves),
+  );
 };
 
-it("advertises portable NUL escapes and patterns that compile in all JS modes", async () => {
+const listAdvertisedTools = async () => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "advertised-patterns", version: "1" });
+  const server = createServer({ kind: "session", session }, {});
+  const client = new Client(
+    { name: "advertised-patterns", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -45,46 +71,49 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
+  return (await client.listTools()).tools;
+};
 
-  const advertised = (await client.listTools()).tools;
-  const patterns: AdvertisedPattern[] = [];
-  for (const tool of advertised) {
-    collectPatterns(tool.inputSchema, "inputSchema", tool.name, patterns);
-    if (tool.outputSchema !== undefined)
-      collectPatterns(tool.outputSchema, "outputSchema", tool.name, patterns);
-  }
+it("advertises base64 without rejecting valid inputs or overflowing V8", async () => {
+  const tools = await listAdvertisedTools();
+  const patterns: string[] = [];
+  const canonicalBase64Leaves: Record<string, unknown>[] = [];
+  // tools/list omits output schemas by default; a validating client checks
+  // replies against the canonical output contract, which carries the pattern.
+  for (const tool of tools)
+    for (const schema of [tool.inputSchema, canonicalOutputSchema(tool.name)]) {
+      patterns.push(
+        ...advertisedSchemaPatterns(schema).map(({ pattern }) => pattern),
+      );
+      collectCanonicalBase64Leaves(schema, canonicalBase64Leaves);
+    }
 
-  // Annex B and `u` mode accept an unescaped `-`, `/` or `[` inside a character
-  // class, so REA's own schema validation cannot observe the defect. `v` mode
-  // rejects them, and a client that compiles advertised patterns rejects the
-  // complete tools request rather than the affected call.
-  const uncompilable = patterns.flatMap((entry) =>
-    ["", "u", "v"].flatMap((flags) => {
-      try {
-        new RegExp(entry.pattern, flags);
-        return [];
-      } catch (cause: unknown) {
-        return [
-          `${entry.tool} ${entry.where} /${entry.pattern}/${flags}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        ];
-      }
-    }),
+  expect(patterns).toContain(advertised(BASE64_QUARTET_LENGTH_PATTERN));
+  for (const pattern of [
+    INVALID_BASE64_CHARACTER_PATTERN,
+    INVALID_BASE64_PADDING_PATTERN,
+    INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
+  ])
+    expect(projectPortablePattern(pattern.source)).toEqual({
+      kind: "unexpressible",
+    });
+
+  expect(canonicalBase64Leaves.length).toBeGreaterThan(0);
+  const sdkValidator = new AjvJsonSchemaValidator();
+  const validators = canonicalBase64Leaves.map((schema) =>
+    sdkValidator.getValidator(schema),
   );
-  expect(uncompilable).toEqual([]);
-
-  // RE2 and Rust validators reject look-around and backreferences, and like
-  // the NUL escape below, one such pattern refuses the complete tools request.
-  expect(
-    patterns.filter(({ pattern }) => /\(\?<?[=!]|\\[1-9]|\\k</u.test(pattern)),
-  ).toEqual([]);
-
-  // DeepSeek rejects the short NUL escape even though V8 accepts it in all
-  // three modes. Keep the shared hex spelling across the advertised catalog;
-  // actual provider acceptance is verified separately from JS compilation.
-  expect(
-    patterns.filter(
-      ({ pattern }) => pattern.includes("\\0") || pattern.includes("\\u0000"),
+  for (const value of ["", "AA==", "AQID"])
+    expect(
+      validators.map((validate) => validate(value).valid),
+      JSON.stringify(value),
+    ).toEqual(canonicalBase64Leaves.map(() => true));
+  const large = "A".repeat(8 * 1024 * 1024);
+  const base64Patterns = new Set(
+    canonicalBase64Leaves.flatMap((schema) =>
+      advertisedSchemaPatterns(schema).map(({ pattern }) => pattern),
     ),
-  ).toEqual([]);
-  expect(patterns.some(({ pattern }) => pattern.includes("\\x00"))).toBe(true);
+  );
+  for (const pattern of base64Patterns)
+    expect(new RegExp(pattern, "v").test(large)).toBe(true);
 });

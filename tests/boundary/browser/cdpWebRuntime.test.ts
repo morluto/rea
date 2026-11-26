@@ -9,6 +9,7 @@ import {
   startRuntimeBrowser,
 } from "../../fixtures/webRuntime.js";
 import type { FakeOptions } from "../../fixtures/fakeCdpBrowser.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const fixture = async (options: FakeOptions = {}) => {
   const browser = await startRuntimeBrowser(options);
@@ -32,8 +33,9 @@ const fixture = async (options: FakeOptions = {}) => {
 };
 
 describe("native runtime producer boundary", () => {
-  it("binds complete producer stacks by script ID and ignores foreign sessions without URL guessing", async () => {
+  it("preserves requests with a reused ID, joining only selected-session producer stacks", async () => {
     const { browser, provider, execution } = await fixture();
+    const redirectedUrl = `${browser.endpoint}/redirected?caller-value=retained`;
     const params = {
       requestId: "selected-request",
       frameId: "runtime-main",
@@ -44,7 +46,7 @@ describe("native runtime producer boundary", () => {
       },
       initiator: {
         type: "script",
-        producerExtension: "retain-unknown-fields",
+        producerExtension: { occurrence: 1, label: "initial" },
         stack: {
           description: "observed-sync-stack",
           callFrames: [
@@ -72,6 +74,10 @@ describe("native runtime producer boundary", () => {
         },
       },
     };
+    const redirectedInitiator = {
+      ...params.initiator,
+      producerExtension: { occurrence: 2, label: "redirected" },
+    };
     const result = await provider.observeExecution(
       { ...execution, observation_ms: 30 },
       {
@@ -88,27 +94,85 @@ describe("native runtime producer boundary", () => {
               params,
               sessionId: "session-1",
             });
+            browser.emitEvent({
+              method: "Network.requestWillBeSent",
+              params: {
+                ...params,
+                timestamp: 13,
+                request: { url: redirectedUrl, method: "GET" },
+                initiator: redirectedInitiator,
+              },
+              sessionId: "session-1",
+            });
           },
         },
       },
     );
     if (!result.ok) throw result.error;
-    expect(result.value.requests).toHaveLength(1);
-    expect(result.value.requests[0]?.reported_initiator).toEqual(
-      params.initiator,
-    );
-    expect(result.value.requests[0]?.callsites).toMatchObject([
-      { script_id: "script-b", source_association: "script_id" },
-      { script_id: "unknown-script", source_association: "unknown" },
+    const expected = {
+      request_id: "selected-request",
+      callsites: [
+        { script_id: "script-b", source_association: "script_id" },
+        { script_id: "unknown-script", source_association: "unknown" },
+      ],
+      async_parent_ids: [{ id: "async-parent", debugger_id: "other-debugger" }],
+      causal_attribution: "unknown",
+    };
+    expect(result.value.requests).toMatchObject([
+      {
+        ...expected,
+        url: params.request.url,
+        timestamp_seconds: 12.5,
+        method: "POST",
+      },
+      { ...expected, url: redirectedUrl, timestamp_seconds: 13, method: "GET" },
     ]);
-    expect(result.value.requests[0]?.async_parent_ids).toEqual([
-      { id: "async-parent", debugger_id: "other-debugger" },
-    ]);
-    expect(result.value.requests[0]?.causal_attribution).toBe("unknown");
+    expect(
+      result.value.requests.map(({ reported_initiator }) => reported_initiator),
+    ).toEqual([params.initiator, redirectedInitiator]);
   });
 });
 
 describe("runtime window and producer granularity", () => {
+  it("fails malformed frame identity and completes execution cleanup", async () => {
+    const { browser, provider, execution } = await fixture();
+    const result = await provider.observeExecution(
+      { ...execution, observation_ms: 30_000 },
+      {
+        progress: {
+          report: async (update) => {
+            if (update.completed !== 1) return;
+            browser.emitEvent({
+              method: "Page.frameNavigated",
+              sessionId: "session-1",
+              params: {
+                frame: {
+                  id: "other-frame",
+                  parentId: 7,
+                  url: "https://example.test/child",
+                },
+              },
+            });
+          },
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+    });
+    expect(
+      browser.commands.some(
+        (command) => command.method === "Profiler.stopPreciseCoverage",
+      ),
+    ).toBe(true);
+    expect(
+      browser.commands.some(
+        (command) => command.method === "Target.detachFromTarget",
+      ),
+    ).toBe(true);
+  });
+
   it("ends at document replacement and leaves coverage explicitly unavailable", async () => {
     const { browser, provider, execution } = await fixture();
     const result = await provider.observeExecution(
@@ -332,6 +396,36 @@ describe("runtime source and listener identity", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["DOM.getDocument", { root: {} }, "/root/nodeId"],
+    ["DOM.querySelector", { nodeId: -1 }, "/nodeId"],
+    ["DOM.describeNode", { node: { backendNodeId: 22 } }, "/node/nodeName"],
+    ["DOM.resolveNode", { object: { objectId: "" } }, "/object/objectId"],
+    ["DOMDebugger.getEventListeners", { listeners: "none" }, "/listeners"],
+  ] as const)(
+    "reports a malformed %s reply as a protocol error and releases the session",
+    async (method, reply, pointer) => {
+      const { browser, provider, listeners } = await fixture({
+        commandResult: (command) =>
+          command.method === method ? reply : undefined,
+      });
+      const result = await provider.inspectEventListeners(listeners);
+      if (result.ok) throw new Error("A malformed DOM reply must fail");
+      expect(result.error).toMatchObject({
+        _tag: "BrowserObservationError",
+        operation: "inspect_web_event_listeners",
+        reason: "protocol_error",
+        command: method,
+        pointer,
+      });
+      expect(
+        browser.commands.some(
+          (command) => command.method === "Target.detachFromTarget",
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("inspects listener source and releases only its owned object group", async () => {
     const { browser, provider, listeners } = await fixture();
     const result = await provider.inspectEventListeners(listeners);
@@ -425,12 +519,67 @@ describe("runtime lifecycle and invalid producer data", () => {
     });
     const result = await provider.observeExecution(execution);
     if (result.ok) throw new Error("Malformed producer coverage must fail");
-    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      operation: "observe_web_execution",
+      reason: "protocol_error",
+      command: "Profiler.takePreciseCoverage",
+      pointer: "/result",
+    });
     expect(
       browser.commands.some(
         (command) => command.method === "Profiler.stopPreciseCoverage",
       ),
     ).toBe(true);
+  });
+
+  it("rejects a malformed instrumentation start at the protocol boundary", async () => {
+    const { browser, provider, execution } = await fixture({
+      commandResult: (command) =>
+        command.method === "Profiler.startPreciseCoverage"
+          ? { timestamp: "now" }
+          : undefined,
+    });
+    const result = await provider.observeExecution(execution);
+    if (result.ok) throw new Error("Malformed instrumentation start must fail");
+    expect(result.error).toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "protocol_error",
+      command: "Profiler.startPreciseCoverage",
+      pointer: "/timestamp",
+    });
+    expect(
+      browser.commands.some(
+        (command) => command.method === "Profiler.stopPreciseCoverage",
+      ),
+    ).toBe(true);
+  });
+
+  it("limits one script whose source reply is malformed and keeps the others", async () => {
+    const { provider, execution } = await fixture({
+      commandResult: (command) =>
+        command.method === "Debugger.getScriptSource" &&
+        command.params.scriptId === "script-b"
+          ? { scriptSource: 7 }
+          : undefined,
+    });
+    const result = await provider.observeExecution(execution);
+    if (!result.ok) throw result.error;
+    const source = (scriptId: string) =>
+      result.value.sources.find(({ script_id }) => script_id === scriptId)
+        ?.source;
+    expect(source("script-a")).toMatchObject({ state: "captured" });
+    expect(source("script-b")).toEqual({
+      state: "unavailable",
+      reason: expect.stringContaining(
+        "Debugger.getScriptSource returned a malformed result at /scriptSource",
+      ),
+    });
+    expect(
+      result.value.coverage.scripts
+        .find(({ script_id }) => script_id === "script-b")
+        ?.functions[0]?.ranges.map(({ source_bounds }) => source_bounds),
+    ).toEqual(["unknown"]);
   });
 
   it("rejects a source range measured as UTF-8 bytes instead of UTF-16 units", async () => {
@@ -527,6 +676,42 @@ describe("runtime document identity and authorization failures", () => {
             ? "observe_web_execution"
             : "inspect_web_event_listeners",
       });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "target_unavailable",
+        message: expect.stringContaining("permitted HTTP(S) origin scope"),
+        remediation: { action: expect.stringContaining("allowed_origins") },
+      });
     },
   );
+
+  it("keeps runtime document-scope recovery when the producer retains the same document identity", async () => {
+    const { provider, listeners } = await fixture({
+      commandResult: ({ method }, origin, frameReads) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "runtime-main",
+                  loaderId: "document-1",
+                  url:
+                    frameReads === 1
+                      ? origin + "/app"
+                      : "https://outside.example/page",
+                },
+              },
+            }
+          : undefined,
+    });
+    const result = await provider.inspectEventListeners(listeners);
+    if (result.ok) throw new Error("Expected runtime document-scope refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringContaining("moved to an unselected origin"),
+      remediation: { action: expect.stringContaining("allowed_origins") },
+      details: {
+        operation: "inspect_web_event_listeners",
+        reason: "target_not_allowed",
+      },
+    });
+  });
 });

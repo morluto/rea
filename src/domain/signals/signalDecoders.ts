@@ -1,7 +1,19 @@
 import { z } from "zod";
 import { signalRecordingSchema } from "./signalRecording.js";
+import { boundedProducerLimitsSchema } from "../producerResourceLimits.js";
+
+/**
+ * Records one discovery page holds. Each record copies one producer line, so
+ * this bounds per-record overhead; the copied text is bounded by the admitted
+ * `producer_limits.output_bytes`.
+ */
+export const SIGNAL_DECODER_PAGE_RECORDS = 65_536;
 
 export const inspectSignalDecodersInputSchema = z.strictObject({
+  producer_limits: boundedProducerLimitsSchema
+    .unwrap()
+    .omit({ input_bytes: true })
+    .optional(),
   decoder: z
     .string()
     .regex(/^[a-zA-Z0-9_+\x2d]+$/u)
@@ -24,9 +36,7 @@ export const inspectSignalDecodersInputSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
-    .describe(
-      "Number of matching decoders or help lines to skip; defaults to 0",
-    ),
+    .describe("Number of matching decoders or help lines to skip"),
   limit: z
     .number()
     .int()
@@ -35,7 +45,7 @@ export const inspectSignalDecodersInputSchema = z.strictObject({
     .nullable()
     .default(50)
     .describe(
-      "Maximum matching decoders or help lines returned; null requests all remaining",
+      `Maximum matching decoders or help lines returned; null requests all remaining. A page holds at most ${String(SIGNAL_DECODER_PAGE_RECORDS)} records and then ends early with output_window.record_budget_reached; continue from offset + returned`,
     ),
 });
 export type InspectSignalDecodersInput = z.infer<
@@ -57,6 +67,8 @@ export const signalDecodersSchema = z
       matching: z.number().int().nonnegative(),
       returned: z.number().int().nonnegative(),
       has_more: z.boolean(),
+      /** The page ended before `limit` at the page record budget. */
+      record_budget_reached: z.boolean(),
     }),
     diagnostics: z.string(),
     tool: signalRecordingSchema.shape.tool,
@@ -68,11 +80,13 @@ export const signalDecodersSchema = z
     const w = report.output_window;
     const catalog = report.selection.decoder === null;
     const remaining = Math.max(0, w.matching - report.selection.offset);
-    const expected = Math.min(remaining, report.selection.limit ?? remaining);
+    const requested = Math.min(remaining, report.selection.limit ?? remaining);
+    const expected = Math.min(requested, SIGNAL_DECODER_PAGE_RECORDS);
     if (
       w.unit !== (catalog ? "decoders" : "help-lines") ||
       w.matching > w.examined ||
       w.returned !== expected ||
+      w.record_budget_reached !== requested > expected ||
       (catalog ? report.decoders : report.help_lines).length !== expected ||
       (catalog ? report.help_lines : report.decoders).length !== 0 ||
       w.has_more !== remaining > expected

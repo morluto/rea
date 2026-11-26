@@ -1,3 +1,9 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
+import {
+  compareJavaScriptSourcePoints,
+  javascriptSourceRangeKey,
+  javascriptSourceRangeContains,
+} from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { ElectronSenderValidationFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -7,27 +13,24 @@ import {
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
-import {
-  astObservationEvidence,
-  staticInferenceEvidence,
-} from "./JavaScriptArtifactGraphEvidence.js";
-import {
-  collectElectronIpcRecords,
-  unambiguousElectronIpcPairings,
-  type ElectronIpcRecord,
+import { staticInferenceEvidence } from "./JavaScriptArtifactGraphEvidence.js";
+import type {
+  ElectronIpcContext,
+  ElectronIpcRecord,
 } from "./ElectronBoundaryAnalysis.js";
 import {
   addElectronAstEdge,
   addElectronInferenceEdge,
+  ELECTRON_CANDIDATE_LIMITATION,
+  electronFindingEvidence,
   electronFindingSourceNode,
   electronObservationIdentity,
-  electronRangeContains,
-  electronRangeKey,
 } from "./ElectronBoundaryGraphContext.js";
 
 interface IpcGraphState {
   readonly context: JavaScriptArtifactGraphContext;
   readonly records: readonly ElectronIpcRecord[];
+  readonly ipc: ElectronIpcContext;
   readonly channels: Map<string, ApplicationNode>;
   readonly handlers: Map<string, ApplicationNode>;
   readonly sources: Map<string, ApplicationNode>;
@@ -52,10 +55,12 @@ interface ValidationObservationInput {
 /** Project IPC syntax, handler locations, validations, and exact pairings. */
 export const addElectronIpcBoundaries = (
   context: JavaScriptArtifactGraphContext,
+  ipc: ElectronIpcContext,
 ): void => {
   const state: IpcGraphState = {
     context,
-    records: collectElectronIpcRecords(context.analysis),
+    records: ipc.records,
+    ipc,
     channels: new Map(),
     handlers: new Map(),
     sources: new Map(),
@@ -80,7 +85,12 @@ const addIpcRecord = (
   );
   if (source === undefined) return;
   state.sources.set(record.key, source);
-  const channel = addChannelNode(context, record, coverage);
+  const channel = addChannelNode(
+    context,
+    record,
+    coverage,
+    state.ipc.owners.get(record.key) ?? null,
+  );
   state.channels.set(record.key, channel);
   if (record.finding.mode === "listen" || record.finding.mode === "handle") {
     const handler = addHandlerNode({
@@ -101,6 +111,7 @@ const addIpcRecord = (
     coverage,
     relation: record.finding.mode === "invoke" ? "invokes" : "sends",
     operation: "map-ipc-transmission",
+    loaderAuthority: record.finding.loader_authority,
     properties: {
       side: record.finding.side,
       operation: record.finding.operation,
@@ -111,23 +122,46 @@ const addIpcRecord = (
   });
 };
 
+const ipcChannelBasis = (finding: ElectronIpcRecord["finding"]) =>
+  finding.resolution_basis ??
+  (finding.channel !== null ? finding.channel_basis : undefined);
+
 const addChannelNode = (
   context: JavaScriptArtifactGraphContext,
   record: ElectronIpcRecord,
   coverage: JavaScriptArtifactGraphCoverage,
+  owner: string | null,
 ): ApplicationNode => {
   const { finding, file } = record;
-  const identityKey =
+  const channelKey =
     finding.channel === null
       ? `dynamic:${record.key}`
       : `literal:${finding.channel}`;
+  const identityKey =
+    finding.receiver === undefined
+      ? JSON.stringify([
+          owner === null ? ["unknown", file.path] : ["application", owner],
+          channelKey,
+        ])
+      : JSON.stringify([
+          file.path,
+          file.sha256,
+          finding.module_runtime ?? null,
+          finding.module_key,
+          finding.receiver.kind,
+          finding.receiver.owner_location,
+          channelKey,
+        ]);
   return context.accumulator.addNode({
     kind: "ipc-channel",
     identity:
-      finding.resolution_basis === "wrapper-substitution"
+      ipcChannelBasis(finding) !== undefined ||
+      finding.loader_authority === "candidate"
         ? artifactLocalIdentity(
             file.sha256,
-            "electron-inferred-ipc-channel",
+            finding.loader_authority === "candidate"
+              ? "electron-candidate-ipc-channel"
+              : "electron-inferred-ipc-channel",
             identityKey,
           )
         : electronObservationIdentity(
@@ -139,55 +173,109 @@ const addChannelNode = (
       {
         label: finding.channel ?? finding.channel_expression,
         properties: {
+          ...(finding.receiver === undefined
+            ? {}
+            : { receiver: finding.receiver }),
           side: finding.side,
           operation: finding.operation,
           mode: finding.mode,
           channel: finding.channel,
           channel_expression: finding.channel_expression,
           resolution: finding.channel === null ? "dynamic" : "literal",
+          ...(finding.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           ...(finding.invocation_location === undefined
             ? {}
             : { invocation_location: finding.invocation_location }),
         },
-        evidence: (finding.resolution_basis === "wrapper-substitution"
-          ? staticInferenceEvidence
-          : astObservationEvidence)({
-          sha256: file.sha256,
-          path: file.path,
-          range: finding.location,
-          operation: "observe-ipc-channel-expression",
-          coverage,
-          limitations:
-            finding.resolution_basis === "wrapper-substitution"
-              ? [
-                  "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified.",
-                ]
-              : finding.channel === null
-                ? [
-                    "The channel expression is dynamic; its runtime value and pairings remain unknown.",
-                  ]
-                : [],
-        }),
+        evidence: ipcChannelEvidence(file, finding, coverage),
       },
     ],
   });
+};
+
+const ipcChannelEvidence = (
+  file: ElectronIpcRecord["file"],
+  finding: ElectronIpcRecord["finding"],
+  coverage: JavaScriptArtifactGraphCoverage,
+) => {
+  const basis = ipcChannelBasis(finding);
+  const input = {
+    sha256: file.sha256,
+    path: file.path,
+    range: finding.location,
+    operation: "observe-ipc-channel-expression",
+    coverage,
+    limitations: [
+      ...(finding.receiver === undefined
+        ? []
+        : [
+            "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
+          ]),
+      ...(finding.channel === null
+        ? [
+            "The channel expression is dynamic; its runtime value and pairings remain unknown.",
+          ]
+        : []),
+    ],
+  };
+  return basis === undefined
+    ? electronFindingEvidence(input, finding.loader_authority)
+    : staticInferenceEvidence({
+        ...input,
+        ...(finding.loader_authority === "candidate"
+          ? { confidence: "low" as const }
+          : {}),
+        limitations: [
+          ...input.limitations,
+          ...(finding.loader_authority === "candidate"
+            ? [ELECTRON_CANDIDATE_LIMITATION]
+            : []),
+          basis === "wrapper-substitution"
+            ? "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified."
+            : "The channel is inferred from an exact static value at this call site; runtime registration and dispatch remain unverified.",
+        ],
+      });
 };
 
 const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
   const { context, record, source, channel, coverage } = input;
   const { finding, file } = record;
   const handlerRange = finding.handler_location ?? finding.location;
+  const basis = ipcChannelBasis(finding);
+  const handlerEvidence = {
+    sha256: file.sha256,
+    path: file.path,
+    range: handlerRange,
+    operation: "observe-ipc-handler",
+    coverage,
+  };
+  const handlerKey = `${finding.side}:${finding.operation}:${finding.channel ?? finding.channel_expression}:${javascriptSourceRangeKey(handlerRange)}`;
+  const identityKey =
+    finding.receiver === undefined
+      ? JSON.stringify([file.path, handlerKey])
+      : JSON.stringify([
+          file.path,
+          finding.module_runtime ?? null,
+          finding.module_key,
+          finding.receiver,
+          handlerKey,
+        ]);
   const handler = context.accumulator.addNode({
     kind: "ipc-handler",
     identity: artifactLocalIdentity(
       file.sha256,
       "electron-ipc-handler",
-      `${finding.side}:${finding.operation}:${finding.channel ?? finding.channel_expression}:${electronRangeKey(handlerRange)}`,
+      identityKey,
     ),
     observations: [
       {
         label: finding.channel,
         properties: {
+          ...(finding.receiver === undefined
+            ? {}
+            : { receiver: finding.receiver }),
           side: finding.side,
           operation: finding.operation,
           mode: finding.mode,
@@ -195,19 +283,32 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
           channel_expression: finding.channel_expression,
           handler_kind: finding.handler_kind,
           handler_location: finding.handler_location,
+          ...(finding.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           ...(finding.invocation_location === undefined
             ? {}
             : { invocation_location: finding.invocation_location }),
         },
-        evidence: (finding.resolution_basis === "wrapper-substitution"
-          ? staticInferenceEvidence
-          : astObservationEvidence)({
-          sha256: file.sha256,
-          path: file.path,
-          range: handlerRange,
-          operation: "observe-ipc-handler",
-          coverage,
-        }),
+        evidence:
+          basis === undefined
+            ? electronFindingEvidence(handlerEvidence, finding.loader_authority)
+            : staticInferenceEvidence({
+                ...handlerEvidence,
+                ...(finding.loader_authority === "candidate"
+                  ? { confidence: "low" as const }
+                  : {}),
+                limitations: [
+                  ...(finding.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
+                  ...(basis === "static-value"
+                    ? [
+                        "The handler's channel is inferred from the registration's exact static value.",
+                      ]
+                    : []),
+                ],
+              }),
       },
     ],
   });
@@ -220,6 +321,7 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
     relation: "contains",
     operation: "locate-ipc-handler",
     properties: { side: finding.side, operation: finding.operation },
+    loaderAuthority: finding.loader_authority,
   });
   addElectronInferenceEdge(context, {
     source: handler,
@@ -229,6 +331,7 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
     coverage,
     relation: "handles",
     operation: "map-ipc-handler-registration",
+    loaderAuthority: finding.loader_authority,
     properties: {
       channel: finding.channel,
       channel_expression: finding.channel_expression,
@@ -242,7 +345,7 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
 };
 
 const addLiteralPairings = (state: IpcGraphState): void => {
-  for (const pairing of unambiguousElectronIpcPairings(state.records)) {
+  for (const pairing of state.ipc.pairings) {
     const source = state.sources.get(pairing.transmission.key);
     const handler = state.handlers.get(pairing.handler.key);
     const coverage = coverageFor(state.context, pairing.transmission.file);
@@ -271,12 +374,21 @@ const addLiteralPairings = (state: IpcGraphState): void => {
 };
 
 const addValidationObservations = (state: IpcGraphState): void => {
+  const handlersByPath = new Map<string, ElectronIpcRecord[]>();
+  for (const record of state.records) {
+    if (record.finding.handler_location === null) continue;
+    appendToMapList(handlersByPath, record.file.path, record);
+  }
   for (const analyzed of state.context.analysis.files) {
     const { file, javascript } = analyzed;
     if (javascript === null) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
+    const fileHandlers = handlersByPath.get(file.path);
     for (const validation of javascript.electron.sender_validations) {
-      const handlerRecord = containingHandler(state.records, file, validation);
+      const handlerRecord =
+        fileHandlers === undefined
+          ? undefined
+          : containingHandler(fileHandlers, validation);
       const target =
         handlerRecord === undefined
           ? electronFindingSourceNode(
@@ -312,17 +424,23 @@ const addValidationObservation = (input: ValidationObservationInput): void => {
           mechanism: validation.mechanism,
           expected: validation.expected,
           enforcement: validation.enforcement,
+          ...(validation.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
         },
-        evidence: astObservationEvidence({
-          sha256: file.sha256,
-          path: file.path,
-          range: validation.location,
-          operation: "observe-ipc-sender-validation-candidate",
-          coverage,
-          limitations: [
-            "A comparison or string check is visible, but static syntax alone does not prove rejection, ordering, or complete sender validation.",
-          ],
-        }),
+        evidence: electronFindingEvidence(
+          {
+            sha256: file.sha256,
+            path: file.path,
+            range: validation.location,
+            operation: "observe-ipc-sender-validation-candidate",
+            coverage,
+            limitations: [
+              "A comparison or string check is visible, but static syntax alone does not prove rejection, ordering, or complete sender validation.",
+            ],
+          },
+          validation.loader_authority,
+        ),
       },
     ],
   });
@@ -330,41 +448,41 @@ const addValidationObservation = (input: ValidationObservationInput): void => {
 
 const containingHandler = (
   records: readonly ElectronIpcRecord[],
-  file: JavaScriptArtifactFile,
   validation: ElectronSenderValidationFinding,
-): ElectronIpcRecord | undefined =>
-  records
-    .filter(
-      (record) =>
-        record.file.path === file.path &&
-        record.finding.handler_location !== null &&
-        electronRangeContains(
-          record.finding.handler_location,
-          validation.location,
-        ),
+): ElectronIpcRecord | undefined => {
+  let selected: ElectronIpcRecord | undefined;
+  for (const record of records) {
+    const location = record.finding.handler_location;
+    if (
+      location === null ||
+      !javascriptSourceRangeContains(location, validation.location)
     )
-    .sort(
-      (left, right) =>
-        rangeMagnitude(left.finding.handler_location) -
-        rangeMagnitude(right.finding.handler_location),
-    )[0];
-
-const rangeMagnitude = (
-  range: ElectronIpcRecord["finding"]["handler_location"],
-): number =>
-  range === null
-    ? Number.MAX_SAFE_INTEGER
-    : (range.end.line - range.start.line) * 1_000_000 +
-      range.end.column -
-      range.start.column;
+      continue;
+    const previous = selected?.finding.handler_location;
+    // Parsed handler ranges nest: the innermost starts latest, then ends
+    // earliest. Columns have no fixed upper bound in minified JavaScript.
+    if (
+      previous == null ||
+      compareJavaScriptSourcePoints(location.start, previous.start) > 0 ||
+      (compareJavaScriptSourcePoints(location.start, previous.start) === 0 &&
+        compareJavaScriptSourcePoints(location.end, previous.end) < 0)
+    )
+      selected = record;
+  }
+  return selected;
+};
 
 const coverageFor = (
   context: JavaScriptArtifactGraphContext,
   file: JavaScriptArtifactFile,
 ): JavaScriptArtifactGraphCoverage | undefined => {
-  const javascript = context.analysis.files.find(
-    ({ file: candidate }) => candidate.path === file.path,
-  )?.javascript;
+  const analyzed =
+    context.analyzedFilesByPath !== undefined
+      ? context.analyzedFilesByPath.get(file.path)
+      : context.analysis.files.find(
+          ({ file: candidate }) => candidate.path === file.path,
+        );
+  const javascript = analyzed?.javascript;
   return javascript === null || javascript === undefined
     ? undefined
     : javascriptAnalysisCoverage(javascript);

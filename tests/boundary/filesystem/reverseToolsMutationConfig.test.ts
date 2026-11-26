@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -16,24 +17,45 @@ const runNode = (source: string, ...arguments_: string[]): string =>
   );
 
 describe("reverse-tools mutation configuration", () => {
-  it("loads nonempty targets from both actual Stryker configs", () => {
+  it("loads nonempty targets and distinct report destinations from both actual Stryker configs", () => {
     const result = runNode(
       `const [mainUrl, semanticsUrl] = process.argv.slice(1);
        const main = await import(mainUrl);
        const semantics = await import(semanticsUrl);
-       process.stdout.write(JSON.stringify({
-         main: main.default.mutate.length,
-         semantics: semantics.default.mutate.length,
-       }));`,
+       process.stdout.write(JSON.stringify([main.default, semantics.default].map(config => ({
+         targets: config.mutate.length,
+         json: config.jsonReporter?.fileName,
+         html: config.htmlReporter?.fileName,
+         dryRunOnly: config.dryRunOnly ?? false,
+         reporters: config.reporters,
+       }))));`,
       pathToFileURL(join(root, "stryker.config.mjs")).href,
       pathToFileURL(join(root, "stryker.semantics.config.mjs")).href,
     );
-    const targets = JSON.parse(result) as {
-      main: number;
-      semantics: number;
-    };
-    expect(targets.main).toBeGreaterThan(0);
-    expect(targets.semantics).toBeGreaterThan(0);
+    const configs = z
+      .array(
+        z.object({
+          targets: z.number().int().positive(),
+          json: z.string().regex(/^reports\/mutation\/.+\.json$/u),
+          html: z.string().regex(/^reports\/mutation\/.+\.html$/u),
+          dryRunOnly: z.literal(false),
+          reporters: z.array(z.string()),
+        }),
+      )
+      .length(2)
+      .parse(JSON.parse(result));
+    expect(
+      new Set(
+        configs.flatMap(({ json, html }) => [
+          resolve(root, json),
+          resolve(root, html),
+        ]),
+      ).size,
+    ).toBe(4);
+    for (const config of configs)
+      expect(config.reporters).toEqual(
+        expect.arrayContaining(["json", "html"]),
+      );
   });
 
   it("fails closed when an owned mutation method is missing", async () => {

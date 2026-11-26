@@ -1,8 +1,17 @@
-import { mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+import {
+  ensureGeneratedFile,
+  regularFilePaths,
+} from "./lib/generated-file.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
+const { addSkillManifestToolCount } = await importVerifierSource(
+  new URL("../src/domain/skillManifest.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const arguments_ = new Set(process.argv.slice(2));
 for (const argument of arguments_)
@@ -17,29 +26,24 @@ const current = (
   await readFile(join(sourceRoot, "SKILL.md"), "utf8")
 ).replaceAll("\r\n", "\n");
 const cacheBust = String(Date.now());
-const { CATALOG_IDENTITY } = await import(
-  `${pathToFileURL(join(root, "dist/catalogIdentity.js")).href}?${cacheBust}`
+const { DEFAULT_CATALOG_IDENTITY } = await import(
+  `${pathToFileURL(join(root, "dist/contracts/catalog/catalogIdentity.js")).href}?${cacheBust}`
 );
 const { PRODUCT_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/identity.js")).href}?${cacheBust}`
 );
-if (/^\s{2}(?:tool_count|catalog_digest):/mu.test(current))
-  throw new Error(
-    "Catalog metadata belongs in the generated skill, not the authored source",
-  );
-const versionLine = /^ {2}version: "[^"\r\n]+"$/mu;
-if (!versionLine.test(current))
-  throw new Error("Missing authored skill version");
 // A shipped skill must run the version it ships with, not whatever `@latest` resolves to.
 const latestSpecifier = PRODUCT_IDENTITY.packageSpecifier;
 const pinnedSpecifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
-const source = current
-  .replace(
-    versionLine,
-    `$&\n  tool_count: ${String(CATALOG_IDENTITY.counts.mcp_tools)}`,
-  )
-  .replaceAll(latestSpecifier, pinnedSpecifier);
-const paths = await filePaths(sourceRoot);
+const generated = addSkillManifestToolCount(
+  current,
+  DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
+);
+if (!generated.ok) throw generated.error;
+const source = generated.value.replaceAll(latestSpecifier, pinnedSpecifier);
+const invalidSkillEntry = (path) =>
+  `Skill bundle requires regular files or directories: ${path}`;
+const paths = await regularFilePaths(sourceRoot, invalidSkillEntry);
 // Rebuild this owned output directory so removed references cannot survive a build.
 if (!check) await rm(outputRoot, { recursive: true, force: true });
 for (const relativePath of paths) {
@@ -60,28 +64,9 @@ for (const relativePath of paths) {
 }
 if (
   check &&
-  JSON.stringify(await filePaths(outputRoot)) !== JSON.stringify(paths)
+  JSON.stringify(await regularFilePaths(outputRoot, invalidSkillEntry)) !==
+    JSON.stringify(paths)
 )
   throw new Error(
     "Generated skill file inventory drifted; run npm run docs:generate",
   );
-
-async function filePaths(directory, prefix = "") {
-  const paths = [];
-  for (const entry of (await readdir(directory, { withFileTypes: true })).sort(
-    (left, right) =>
-      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
-  )) {
-    const relativePath = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory())
-      paths.push(
-        ...(await filePaths(join(directory, entry.name), relativePath)),
-      );
-    else if (entry.isFile()) paths.push(relativePath);
-    else
-      throw new Error(
-        `Skill bundle requires regular files or directories: ${relativePath}`,
-      );
-  }
-  return paths;
-}

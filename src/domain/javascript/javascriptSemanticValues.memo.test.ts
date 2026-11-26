@@ -2,13 +2,21 @@ import { expect, it, vi } from "vitest";
 
 import {
   analyzeJavaScriptSemantics,
-  indexJavaScriptBindingsSteps,
+  indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
+import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { SemanticDependencyProofs } from "./javascriptSemanticDependencies.js";
+import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -24,15 +32,169 @@ const property = (
   return result;
 };
 
+it("reuses dependency-aware read snapshots across a reconvergent value chain", () => {
+  const measure = (depth: number) => {
+    const source = `let a0=1;${Array.from(
+      { length: depth },
+      (_, index) => `let a${index + 1}=a${index}+a${index};`,
+    ).join(
+      "",
+    )}const saved=a${depth};${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
+    const parsed = parseJavaScriptSource(source, "saved-chain.js");
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let step = steps.next();
+    while (step.done !== true) step = steps.next();
+    const state = step.value;
+    const saved = [...state.bindingsById.values()].find(
+      ({ name }) => name === "saved",
+    );
+    if (saved === undefined) throw new Error("Missing saved binding");
+    const binding = vi.spyOn(SemanticDependencyProofs.prototype, "binding");
+    try {
+      expect(evaluateSemanticBinding(saved, state)).toEqual({
+        status: "literal",
+        value: 2 ** depth,
+      });
+      return binding.mock.calls.length;
+    } finally {
+      binding.mockRestore();
+    }
+  };
+  const small = measure(8);
+  const large = measure(12);
+  expect(small).toBeGreaterThan(0);
+  expect(large).toBeLessThan(3 * small);
+});
+
+it("preserves the remaining depth budget when reusing a read snapshot", () => {
+  const depth = 12;
+  const nesting =
+    JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth - depth;
+  const source = `let a0=1;${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("")}
+const root={shallow:a${depth},deep:${"[".repeat(nesting)}a${depth}${"]".repeat(nesting)},after:a${depth}};
+${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
+  const parsed = parseJavaScriptSource(source, "snapshot-depth.js");
+  if (parsed === null) throw new Error("Expected parsed source");
+  const steps = indexJavaScriptBindingsSteps(parsed.program);
+  let step = steps.next();
+  while (step.done !== true) step = steps.next();
+  const state = step.value;
+  const root = [...state.bindingsById.values()].find(
+    ({ name }) => name === "root",
+  );
+  if (root === undefined) throw new Error("Missing root binding");
+  const result = evaluateSemanticBinding(root, state);
+  for (const key of ["shallow", "after"])
+    expect(property(result, key)).toEqual({
+      status: "literal",
+      value: 2 ** depth,
+    });
+  let leaf = property(result, "deep");
+  while (leaf.status === "array") {
+    const item = leaf.items[0];
+    if (item === undefined) throw new Error("Missing nested item");
+    leaf = item.value;
+  }
+  expect(leaf).toMatchObject({
+    status: "unknown",
+    resourceLimit: "expression-depth",
+  });
+});
+
+it("bounds reconvergent read work when the expression depth budget is exhausted", () => {
+  const depth = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth;
+  const source = `let a0=1;${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("")}
+const saved=a${depth};${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
+  const parsed = parseJavaScriptSource(source, "snapshot-limit.js");
+  if (parsed === null) throw new Error("Expected parsed source");
+  const steps = indexJavaScriptBindingsSteps(parsed.program);
+  let step = steps.next();
+  while (step.done !== true) step = steps.next();
+  const state = step.value;
+  const saved = [...state.bindingsById.values()].find(
+    ({ name }) => name === "saved",
+  );
+  if (saved === undefined) throw new Error("Missing saved binding");
+  const original = SemanticDependencyProofs.prototype.binding;
+  let visits = 0;
+  const binding = vi
+    .spyOn(SemanticDependencyProofs.prototype, "binding")
+    .mockImplementation(function (this: SemanticDependencyProofs, name) {
+      if (++visits > 16 * depth)
+        throw new Error("Unbounded snapshot dependency evaluation");
+      return original.call(this, name);
+    });
+  try {
+    expect(evaluateSemanticBinding(saved, state)).toMatchObject({
+      status: "unknown",
+      resourceLimit: "expression-depth",
+    });
+  } finally {
+    binding.mockRestore();
+  }
+});
+
 it.each([false, true])(
-  "recomputes a shared cyclic value under a different active ancestor (prewarmed: %s)",
+  "isolates captured parameter values from the assigned binding cache (prewarmed: %s)",
   (prewarmed) => {
     const parsed = parseJavaScriptSource(
+      `export function read(x) {
+        const earlier = x;
+        x = 2;
+        const later = x;
+        return { earlier, later };
+      }`,
+      "captured-parameter.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let step = steps.next();
+    while (step.done !== true) step = steps.next();
+    const state = step.value;
+    const bindings = new Map(
+      [...state.bindingsById.values()].map((binding) => [
+        binding.name,
+        binding,
+      ]),
+    );
+    const assigned = bindings.get("x");
+    const earlier = bindings.get("earlier");
+    const later = bindings.get("later");
+    if (assigned === undefined || earlier === undefined || later === undefined)
+      throw new Error("Missing capture bindings");
+    if (prewarmed)
+      expect(evaluateSemanticBinding(assigned, state)).toEqual({
+        status: "literal",
+        value: 2,
+      });
+    expect(evaluateSemanticBinding(earlier, state).status).toBe("unknown");
+    expect(evaluateSemanticBinding(later, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+    expect(evaluateSemanticBinding(assigned, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+  },
+);
+
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "keeps forward object references unknown across read snapshots (prewarmed: %s, rebound: %s)",
+  (prewarmed, rebound) => {
+    const parsed = parseJavaScriptSource(
       `
-const a = { shared: common, own: "a" };
-const b = { shared: common, own: "b" };
+${rebound ? "let" : "const"} a = { shared: common, own: "a" };
+${rebound ? "let" : "const"} b = { shared: common, own: "b" };
 const common = { a, b };
 const result = { first: a, second: b };
+${rebound ? "a=0; b=0;" : ""}
 `,
       "cycles.js",
     );
@@ -50,49 +212,62 @@ const result = { first: a, second: b };
         if (entry.name === "a" || entry.name === "b")
           evaluateSemanticBinding(entry, state);
     const value = evaluateSemanticBinding(binding, state);
-    const firstCommon = property(property(value, "first"), "shared");
-    const secondCommon = property(property(value, "second"), "shared");
-    expect(property(firstCommon, "a").status).toBe("cycle");
-    expect(property(property(firstCommon, "b"), "own")).toEqual({
-      status: "literal",
-      value: "b",
-    });
-    expect(property(secondCommon, "b").status).toBe("cycle");
-    expect(property(property(secondCommon, "a"), "own")).toEqual({
-      status: "literal",
-      value: "a",
-    });
+    // These object initializers read common before its lexical declaration.
+    // Expanding them into an abstract cycle would invent a runtime value.
+    for (const [side, own] of [
+      ["first", "a"],
+      ["second", "b"],
+    ] as const) {
+      const object = property(value, side);
+      expect(property(object, "shared")).toEqual({
+        status: "unknown",
+        reason: "Binding common has no proven initializer at this read.",
+      });
+      expect(property(object, "own")).toEqual({
+        status: "literal",
+        value: own,
+      });
+    }
   },
 );
 
-it("invalidates retained alias values at the producing mutation boundary", () => {
-  const parsed = parseJavaScriptSource(
-    "const target = { value: 1 }; const alias = target; const root = { alias };",
-    "mutation.js",
-  );
-  if (parsed === null) throw new Error("Expected parsed source");
-  const steps = indexJavaScriptBindingsSteps(parsed.program);
-  let step = steps.next();
-  while (step.done !== true) step = steps.next();
-  const state = step.value;
-  const target = [...state.bindingsById.values()].find(
-    ({ name }) => name === "target",
-  );
-  const root = [...state.bindingsById.values()].find(
-    ({ name }) => name === "root",
-  );
-  if (target === undefined || root === undefined)
-    throw new Error("Missing binding");
-  expect(
-    property(property(evaluateSemanticBinding(root, state), "alias"), "value"),
-  ).toEqual({ status: "literal", value: 1 });
-  target.memberWrites.push({ path: ["value"], node: undefined });
-  clearSemanticValueCaches(state);
-  expect(
-    property(property(evaluateSemanticBinding(root, state), "alias"), "value")
-      .status,
-  ).toBe("unknown");
-});
+it.each([
+  ["const", ""],
+  ["let", "target={value:2};"],
+])(
+  "invalidates retained %s alias values at the producing mutation boundary",
+  (kind, later) => {
+    const parsed = parseJavaScriptSource(
+      `${kind} target = { value: 1 }; const alias = target; const root = { alias }; ${later}`,
+      "mutation.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const steps = indexJavaScriptBindingsSteps(parsed.program);
+    let step = steps.next();
+    while (step.done !== true) step = steps.next();
+    const state = step.value;
+    const target = [...state.bindingsById.values()].find(
+      ({ name }) => name === "target",
+    );
+    const root = [...state.bindingsById.values()].find(
+      ({ name }) => name === "root",
+    );
+    if (target === undefined || root === undefined)
+      throw new Error("Missing binding");
+    expect(
+      property(
+        property(evaluateSemanticBinding(root, state), "alias"),
+        "value",
+      ),
+    ).toEqual({ status: "literal", value: 1 });
+    target.memberWrites.push({ path: ["value"], node: undefined });
+    clearSemanticValueCaches(state);
+    expect(
+      property(property(evaluateSemanticBinding(root, state), "alias"), "value")
+        .status,
+    ).toBe("unknown");
+  },
+);
 
 const balancedOr = (names: string[]): string => {
   if (names.length === 1) return names[0]!;
@@ -199,7 +374,13 @@ const root = ${balancedOr(aliases)};
 });
 
 it("uses immutable exact identity proofs and shares unchanged union branches", () => {
-  const proofs = new SemanticDependencyProofs(["a", "b", "c", "d", "e"]);
+  const proofs = SemanticDependencyProofs.forBindings([
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+  ]);
   const a = proofs.binding("a");
   const b = proofs.binding("b");
   const c = proofs.binding("c");
@@ -218,10 +399,203 @@ it("uses immutable exact identity proofs and shares unchanged union branches", (
   expect(proofs.has(undefined, "a")).toBe(false);
   expect(proofs.intersects(abc, new Map([["d", 0]]))).toBe(false);
   expect(proofs.intersects(abc, new Map([["c", 0]]))).toBe(true);
-  const single = new SemanticDependencyProofs(["only"]);
+  const single = SemanticDependencyProofs.forBindings(["only"]);
   expect(single.has(single.binding("only"), "only")).toBe(true);
   expect(single.has(undefined, "only")).toBe(false);
   expect(() => proofs.binding("unindexed")).toThrow(
     "Unindexed semantic dependency",
   );
 });
+
+it("preserves exact union membership through repeated overlapping proof pairs", () => {
+  const names = ["a", "b", "c", "d", "e"];
+  const proofs = SemanticDependencyProofs.forBindings(names);
+  const subsets = Array.from({ length: 2 ** names.length }, (_, mask) => {
+    const members = names.filter((_, index) => (mask & (1 << index)) !== 0);
+    return {
+      members,
+      proof: members.reduce<ReturnType<typeof proofs.binding>>(
+        (proof, name) => proofs.union(proof, proofs.binding(name)),
+        undefined,
+      ),
+    };
+  });
+  for (const first of subsets)
+    for (const second of subsets) {
+      const expected = new Set([...first.members, ...second.members]);
+      for (const union of [
+        proofs.union(first.proof, second.proof),
+        proofs.union(second.proof, first.proof),
+        proofs.union(first.proof, second.proof),
+      ])
+        expect(names.filter((name) => proofs.has(union, name))).toEqual(
+          [...expected].sort(),
+        );
+      expect(names.filter((name) => proofs.has(first.proof, name))).toEqual(
+        first.members,
+      );
+      expect(names.filter((name) => proofs.has(second.proof, name))).toEqual(
+        second.members,
+      );
+    }
+});
+
+it("shares identity layout without retaining unions across query lifetimes", () => {
+  const layout = SemanticDependencyProofs.forBindings(["a", "b", "c"]);
+  const first = layout.forQuery();
+  const second = layout.forQuery();
+  const a = first.binding("a");
+  const b = first.binding("b");
+  const ab = first.union(a, b);
+  expect(first.union(a, b)).toBe(ab);
+  expect(first.union(b, a)).toBe(ab);
+  expect(second.binding("a")).toBe(a);
+  const fresh = second.union(a, b);
+  expect(fresh).not.toBe(ab);
+  expect(["a", "b", "c"].map((name) => second.has(fresh, name))).toEqual([
+    true,
+    true,
+    false,
+  ]);
+});
+
+it("releases query union ownership when state-owned values are invalidated", () => {
+  const parsed = parseJavaScriptSource(
+    "const a=1; const result=a+a;",
+    "queries.js",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const steps = indexJavaScriptBindingsSteps(parsed.program);
+  let step = steps.next();
+  while (step.done !== true) step = steps.next();
+  const state = step.value;
+  const result = [...state.bindingsById.values()].find(
+    ({ name }) => name === "result",
+  );
+  if (result === undefined) throw new Error("Missing result binding");
+  const union = SemanticDependencyProofs.prototype.union;
+  const owners = new Set<SemanticDependencyProofs>();
+  const spy = vi
+    .spyOn(SemanticDependencyProofs.prototype, "union")
+    .mockImplementation(function (
+      this: SemanticDependencyProofs,
+      first,
+      second,
+    ) {
+      owners.add(this);
+      return union.call(this, first, second);
+    });
+  try {
+    expect(evaluateSemanticBinding(result, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+    expect(owners.size).toBe(1);
+    const firstOwners = new Set(owners);
+    owners.clear();
+    clearSemanticValueCaches(state);
+    expect(evaluateSemanticBinding(result, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+    expect(owners.size).toBe(1);
+    expect([...owners].some((owner) => firstOwners.has(owner))).toBe(false);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it.each([false, true])(
+  "keeps array read-presence snapshots query-owned (prewarmed: %s)",
+  (prewarmed) => {
+    const reads = 16;
+    const items = Array.from({ length: 128 }, (_, index) => index).join(",");
+    const parsed = parseJavaScriptSource(
+      `const config=[${items}]; let selected;${"[selected]=config;".repeat(reads)} config[0]=999;`,
+      "array-presence.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    const state = index.bindings;
+    const binding = [...state.bindingsById.values()].find(
+      ({ name }) => name === "config",
+    );
+    if (binding === undefined) throw new Error("Missing source binding");
+
+    // Track aggregate values only in snapshots owned by the analysis state.
+    const stateCaptures = new WeakSet<object>();
+    const stateSnapshots = new WeakSet<object>();
+    let aggregateAccesses = 0;
+    const observeOwner = (owner: object, key: unknown, value: unknown) => {
+      if (key === state && value instanceof WeakMap) stateCaptures.add(value);
+      if (stateCaptures.has(owner) && value instanceof Map)
+        stateSnapshots.add(value);
+    };
+    const observeAggregate = (owner: object, key: unknown, value: unknown) => {
+      if (
+        stateSnapshots.has(owner) &&
+        key === binding.bindingId &&
+        value !== null &&
+        typeof value === "object" &&
+        "status" in value &&
+        value.status === "array"
+      )
+        aggregateAccesses += 1;
+    };
+    const weakGet = WeakMap.prototype.get;
+    const weakSet = WeakMap.prototype.set;
+    const mapGet = Map.prototype.get;
+    const mapSet = Map.prototype.set;
+    try {
+      WeakMap.prototype.get = function (key) {
+        const value = weakGet.call(this, key);
+        observeOwner(this, key, value);
+        return value;
+      };
+      WeakMap.prototype.set = function (key, value) {
+        observeOwner(this, key, value);
+        return weakSet.call(this, key, value);
+      };
+      Map.prototype.get = function (key) {
+        const value = mapGet.call(this, key);
+        observeAggregate(this, key, value);
+        return value;
+      };
+      Map.prototype.set = function (key, value) {
+        observeAggregate(this, key, value);
+        return mapSet.call(this, key, value);
+      };
+      if (prewarmed) {
+        traverseJavaScriptAst(parsed.program, {
+          enter: (node) => {
+            if (
+              node.type === "AssignmentExpression" &&
+              node.left.type === "ArrayPattern"
+            )
+              evaluateSemanticExpression(node.right, state, node.right);
+          },
+        });
+        expect(aggregateAccesses).toBeGreaterThan(0);
+        aggregateAccesses = 0;
+      }
+      const operations = collectJavaScriptSemanticObjects(
+        parsed.program,
+        state,
+        [],
+      ).filter(({ kind }) => kind === "destructure");
+      expect(operations).toHaveLength(reads);
+      expect(
+        operations.every(({ sourcePresence }) => sourcePresence === "present"),
+      ).toBe(true);
+      expect(aggregateAccesses).toBe(0);
+    } finally {
+      WeakMap.prototype.get = weakGet;
+      WeakMap.prototype.set = weakSet;
+      Map.prototype.get = mapGet;
+      Map.prototype.set = mapSet;
+    }
+  },
+);

@@ -18,6 +18,8 @@ const config = {
   concurrency: 2,
   timeoutMS: 30000,
   reporters: ["clear-text", "progress", "html", "json"],
+  jsonReporter: { fileName: "reports/mutation/reverse-tools-semantics.json" },
+  htmlReporter: { fileName: "reports/mutation/reverse-tools-semantics.html" },
 };
 
 export default {
@@ -33,15 +35,18 @@ export default {
         text: "response.current_file === undefined",
       },
     ]),
-    ...mutationRanges("src/rizin/RizinDebugSessionManager.ts", [
+    ...mutationRanges("src/rizin/RizinDebugFrames.ts", [
       {
-        kind: "declaration",
-        name: "isRizinCommandDeadlineExpired",
+        kind: "expression",
+        text: "remaining <= 0",
       },
       {
         kind: "declaration",
-        name: "createRizinCommandTimeoutError",
+        name: "snapshot",
+        withinBlockWithBinding: "output",
       },
+    ]),
+    ...mutationRanges("src/rizin/RizinDebugEvidence.ts", [
       {
         kind: "declaration",
         name: "createRizinCommandTimeoutEvidence",

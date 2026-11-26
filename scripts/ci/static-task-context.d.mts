@@ -15,4 +15,5 @@ export function recordStaticTaskContext(options?: {
   root?: string;
   npmCli?: string;
   outputDirectory?: string;
+  script?: string;
 }): Promise<StaticTaskContext>;

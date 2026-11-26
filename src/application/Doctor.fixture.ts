@@ -1,5 +1,6 @@
-import { CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { ok } from "../domain/result.js";
 import type { DoctorHost } from "./Doctor.js";
 
 /** Healthy recording host for focused doctor and projection tests. */
@@ -9,12 +10,23 @@ export const createDoctorHostFixture = (
   platform: "darwin",
   homeDirectory: "/fixture/home",
   architecture: "x64",
-  runtime: { id: "node", version: "24.18.0" },
+  runtime: { id: "node", version: "24.22.1" },
   macosVersion: () => Promise.resolve("14.0"),
   linuxDistribution: () => Promise.resolve(undefined),
-  validTarget: (path) => Promise.resolve(path.includes("Hopper")),
+  inspectTarget: async (path) => {
+    throw new Error(`Unexpected target check for ${path}`);
+  },
   executable: (path) => Promise.resolve(path.includes("Hopper")),
-  supportedLinuxHopper: () => Promise.resolve(true),
+  inspectLinuxHopper: () =>
+    Promise.resolve(
+      ok({
+        sha256: "0".repeat(64),
+        version: "fixture",
+        primaryFingerprint: "0".repeat(40),
+        signingFingerprint: "1".repeat(40),
+        source: "signed_package_cache" as const,
+      }),
+    ),
   linuxDemoRuntimeCheck: () =>
     Promise.resolve({
       name: "hopper-demo-runtime",
@@ -26,8 +38,25 @@ export const createDoctorHostFixture = (
   installedSkillIdentity: () =>
     Promise.resolve({
       version: PRODUCT_IDENTITY.skillVersion,
-      toolCount: CATALOG_IDENTITY.counts.mcp_tools,
+      toolCount: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
       canonical: true,
     }),
   ...overrides,
 });
+
+/** The explicit scope's checks; an audit-wide report has none. */
+export const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
+export const ubuntu2404Distribution: DoctorHost["linuxDistribution"] = () =>
+  Promise.resolve({
+    id: "ubuntu",
+    versionId: "24.04",
+    packageFamily: "deb",
+    hopperSetupSupported: true,
+  });

@@ -1,0 +1,277 @@
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  ArtifactOperationError,
+  integrityCheckMeansChanged,
+} from "../domain/artifactOperationError.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+  type ArtifactFilePrimaryFacts,
+} from "./ArtifactFileOperation.js";
+import {
+  completedStableArtifactObservation,
+  type CompletedStableArtifact,
+} from "./StableArtifactObservation.js";
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisInputError,
+  AnalysisTargetFailureError,
+  cancelledBy,
+  carriedReason,
+  type AnalysisCancelledError,
+  type CancelledOptions,
+} from "../domain/analysisErrorCore.js";
+
+/**
+ * A reader's integrity failure, keeping the check it named. Only a check whose
+ * failure means the target changed during the read is a selected-artifact
+ * change, which an unchanged retry can clear. Any other check, such as a
+ * session target that no longer matches its admitted identity, fails the same
+ * way on every unchanged retry and keeps the reader's own recovery. `options`
+ * replaces the default cause (the failure itself), for example with a cleanup
+ * wrapper around it.
+ */
+export const readerIntegrityFailure = (
+  operation: string,
+  path: string,
+  failure: ArtifactReaderFailure,
+  options: AnalysisErrorOptions = {},
+): AnalysisArtifactChangedError | ArtifactOperationError =>
+  integrityCheckMeansChanged(failure.integrityCheck)
+    ? new AnalysisArtifactChangedError(operation, path, failure.message, {
+        cause: failure,
+        ...options,
+        integrityCheck: failure.integrityCheck,
+      })
+    : new ArtifactOperationError(
+        operation,
+        "integrity",
+        failure.details,
+        failure.message,
+        {
+          cause: failure,
+          ...options,
+          ...(failure.userMessage === undefined
+            ? {}
+            : { userMessage: failure.userMessage }),
+          ...(failure.integrityCheck === undefined
+            ? {}
+            : { integrityCheck: failure.integrityCheck }),
+        },
+      );
+
+/** Carry the artifact reader's observed abort reason into the analysis error. */
+export const artifactFileCancellationError = (
+  operation: string,
+  failure: ArtifactReaderFailure,
+  options?: CancelledOptions,
+): AnalysisCancelledError =>
+  cancelledBy(
+    operation,
+    carriedReason(artifactFileCancellationCause(failure)),
+    options,
+  );
+
+/** Preserve ownership classification for stable-file identity and cancellation. */
+export const projectOwnedArtifactIdentityFailure = (
+  facts: ArtifactFilePrimaryFacts,
+  operation: string,
+  path: string,
+): AnalysisError | undefined => {
+  const { cause, origin } = facts;
+  if (
+    origin !== "owned-or-classified" ||
+    !(cause instanceof ArtifactReaderFailure)
+  )
+    return undefined;
+  if (cause.reason === "integrity")
+    return readerIntegrityFailure(operation, path, cause);
+  if (cause.reason === "cancelled")
+    return artifactFileCancellationError(operation, cause);
+  return undefined;
+};
+
+/** The request field that selected a file: a name, or a path into the request. */
+export type RequestField = string | readonly (string | number)[];
+
+/** Keep a selected parser refusal's established path and structured input projection. */
+export const projectOwnedArtifactInputFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  operation: string,
+  path: string,
+  field: RequestField = "path",
+): AnalysisError | undefined => {
+  if (
+    origin !== "owned-or-classified" ||
+    !(cause instanceof ArtifactReaderFailure)
+  )
+    return undefined;
+  // A format owner's malformed, truncated or unsupported bytes keep its facts
+  // and are a target refusal; the request that selected the file is not at
+  // fault. The reader records those facts only for its own target reason, so
+  // a cancelled read whose opaque abort reason happens to be a parser failure
+  // stays a cancellation.
+  if (cause.parseFailure !== undefined)
+    return new AnalysisTargetFailureError(operation, path, cause.parseFailure, {
+      cause,
+    });
+  // Only a path-kind refusal (a symlink, directory or other non-regular file)
+  // is the caller's selection. Byte faults without parsed facts are left to
+  // the reader's own artifact-operation classification.
+  if (cause.reason === "path")
+    return stableArtifactInputFailure(cause, operation, field);
+  return undefined;
+};
+
+const requestFieldPath = (field: RequestField): (string | number)[] =>
+  typeof field === "string" ? [field] : [...field];
+
+/** Project filesystem errors that identify a refused or unreadable selected file. */
+export const projectSelectedArtifactFileFailure = (
+  cause: unknown,
+  operation: string,
+  path: string,
+  description: string,
+  field: RequestField = "path",
+  options: AnalysisErrorOptions = {},
+): AnalysisError | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
+  if (cause.code === "EACCES" || cause.code === "EPERM")
+    return new AnalysisAccessDeniedError(operation, path, cause.code, {
+      ...options,
+      cause,
+    });
+  if (isSelectedRegularFileError(cause))
+    return new AnalysisInputError(operation, { ...options, cause }, [
+      {
+        path: requestFieldPath(field),
+        reason: "invalid_value",
+        message: `Selected ${description} could not be read (${String(cause.code)}): ${path}.`,
+      },
+    ]);
+  return undefined;
+};
+
+/** Explain the selected image read budget and its fixed upper bound. */
+export const imageFileSizeRemediation = (
+  selectedBytes: number,
+  maximumBytes: number,
+): string =>
+  selectedBytes >= maximumBytes
+    ? `The image exceeds the ${String(maximumBytes)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
+    : `Raise max_file_bytes above ${String(selectedBytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
+
+/** Name an observed regular-file retry that admission will validate again. */
+export const regularFileSymlinkRecovery = (resolvedPath: string): string =>
+  `Retry with the resolved regular file path ${resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`;
+
+/** Offer the verified regular-file target after a selected symlink is rejected. */
+export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
+  cause.reason === "path" && cause.resolvedPath !== undefined
+    ? {
+        remediationAction: regularFileSymlinkRecovery(cause.resolvedPath),
+        conformsToInputContract: true,
+      }
+    : {};
+
+/** Report a rejected artifact path with its source-provided recovery. */
+export const stableArtifactInputFailure = (
+  cause: ArtifactReaderFailure,
+  operation: string,
+  field: RequestField = "path",
+  options: AnalysisErrorOptions = {},
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    { ...options, cause, ...stableArtifactInputRecovery(cause) },
+    [
+      {
+        path: requestFieldPath(field),
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ],
+  );
+
+const artifactCleanupFailure = (
+  cause: ArtifactReaderFailure,
+  providerId: string,
+  operation: string,
+): ProviderCleanupError | undefined => {
+  if (cause.cleanup === undefined) return undefined;
+  return new ProviderCleanupError(
+    providerId,
+    cause.cleanup.resources,
+    { reason: cause.cleanup.reason },
+    { cause, operation },
+  );
+};
+
+/** Build the provider cleanup error and bind it to the reader's exact leases. */
+export const artifactFileCleanupError = (
+  cause: unknown,
+  providerId: string,
+  operation: string,
+): ProviderCleanupError | undefined => {
+  if (!(cause instanceof ArtifactReaderFailure)) return undefined;
+  const error = artifactCleanupFailure(cause, providerId, operation);
+  if (error !== undefined) bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Preserve the original close failure when the reader has no cleanup evidence. */
+export const projectArtifactCloseFailure = (
+  cause: unknown,
+  providerId: string,
+  operation: string,
+): unknown => artifactFileCleanupError(cause, providerId, operation) ?? cause;
+
+/** Close a provider's descriptor scope and preserve its cleanup leases on failure. */
+export const closeArtifactResources = async (
+  close: () => Promise<void>,
+  provider: { readonly id: string },
+  operation: string,
+): Promise<void> => {
+  try {
+    await close();
+  } catch (cause: unknown) {
+    throw projectArtifactCloseFailure(cause, provider.id, operation);
+  }
+};
+
+/** Keep the primary failure and bind any descriptor cleanup to its returned error. */
+export const withArtifactCleanupFailure = (
+  cause: ArtifactReaderFailure,
+  primary: AnalysisError,
+  providerId: string,
+  operation: string,
+): AnalysisError => {
+  const cleanup = artifactCleanupFailure(cause, providerId, operation);
+  if (cleanup === undefined) return primary;
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */
+export const projectStableArtifactFailure = (
+  cause: unknown,
+  primary: AnalysisError,
+  path: string,
+  providerId: string,
+  operation: string,
+  snapshot?: CompletedStableArtifact,
+): AnalysisError => {
+  const observation = completedStableArtifactObservation(cause, path, snapshot);
+  if (observation !== undefined) primary.retainPartialObservation(observation);
+  if (!(cause instanceof ArtifactReaderFailure)) return primary;
+  return withArtifactCleanupFailure(cause, primary, providerId, operation);
+};

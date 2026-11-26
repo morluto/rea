@@ -1,0 +1,454 @@
+import { Budget } from "../domain/budget.js";
+import type { FileHandle } from "node:fs/promises";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
+  assertArtifactReadActive,
+} from "../resources/index.js";
+import { readArtifactFileBytes } from "./ArtifactFileRange.js";
+import { decodeLz4Block } from "../compression/Lz4Block.js";
+import {
+  BinaryReader,
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../domain/binaryContainer.js";
+import { setImmediate } from "node:timers/promises";
+import {
+  hasUnityFsHeader,
+  readUnityFsHeaderFacts,
+  UNITYFS_COMPRESSION_LZ4,
+  UNITYFS_COMPRESSION_LZ4HC,
+  UNITYFS_COMPRESSION_NONE,
+  UNITYFS_FLAG_BLOCKS_INFO_AT_END,
+  UNITYFS_FLAG_COMPRESSION_MASK,
+  UNITYFS_FORMAT_VERSION_MAX,
+  UNITYFS_FORMAT_VERSION_MIN,
+  UNITYFS_HEADER_PREFIX_BYTES,
+  unityFsLayoutFlags,
+} from "../domain/unityfsFormat.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+
+/** Per-decode resource limits, not format limits. Plain blocks are streamed. */
+const MAX_BLOCK_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
+const MAX_BLOCK_ENCODED_BYTES =
+  MAX_BLOCK_UNCOMPRESSED_BYTES +
+  Math.floor(MAX_BLOCK_UNCOMPRESSED_BYTES / 255) +
+  16;
+const MAX_TABLE_BYTES = 16 * 1024 * 1024;
+const DIRECTORY_BUDGET_BYTES = 64 * 1024 * 1024;
+
+const directoryLimit = (): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    "limit",
+    "UnityFS directory exceeds its 16 MiB buffer or 64 MiB representation budget",
+    { boundary: "memory" },
+  );
+
+const UTF8 = strictUtf8Decoder("preserve");
+
+export interface UnityFsHeader {
+  readonly formatVersion: number;
+  readonly playerVersion: string;
+  readonly engineVersion: string;
+  readonly declaredSize: number;
+  readonly flags: number;
+  readonly compressedBlocksInfoSize: number;
+  readonly uncompressedBlocksInfoSize: number;
+  readonly blocksInfoAtEnd: boolean;
+  readonly compression: number;
+  readonly layout:
+    | {
+        readonly status:
+          | "encrypted"
+          | "unsupported-compression"
+          | "unsupported-layout";
+      }
+    | {
+        readonly status: "available";
+        readonly blocksInfoOffset: number;
+        readonly afterHeader: number;
+        readonly dataPadding: boolean;
+      };
+}
+
+export interface UnityFsBlock {
+  readonly uncompressedSize: number;
+  readonly compressedSize: number;
+  readonly flags: number;
+  readonly compression: number;
+  /** Prefix count lets range consumers identify unsupported content in O(1). */
+  readonly unavailableCount: number;
+  /** Cumulative compressed byte offset inside the data area. */
+  readonly compressedStart: number;
+  /** Cumulative uncompressed byte offset inside the virtual stream. */
+  readonly streamStart: number;
+}
+
+export interface UnityFsNode {
+  readonly offset: number;
+  readonly size: number;
+  readonly flags: number;
+  readonly path: string;
+}
+
+export interface UnityFsBlocksInfo {
+  readonly dataHash: string;
+  readonly blocks: readonly UnityFsBlock[];
+  readonly nodes: readonly UnityFsNode[];
+  readonly dataStart: number;
+}
+
+export const unityFsFormatFailure = (detail: string): ArtifactReaderFailure =>
+  malformedArtifact("unityfs", `UnityFS is malformed: ${detail}`);
+
+const unityFsTruncatedFailure = (detail: string): ArtifactReaderFailure =>
+  truncatedArtifact("unityfs", `UnityFS is malformed: ${detail}`);
+
+const align16 = (value: number): number => (value + 15) & ~15;
+
+/** Decode header fields once; unsupported content does not erase observed headers. */
+export const readUnityFsHeader = async (
+  handle: FileHandle,
+  size: number,
+  signal?: AbortSignal,
+): Promise<UnityFsHeader | undefined> => {
+  const prefix = await readArtifactFileBytes(
+    "unityfs",
+    handle,
+    0,
+    Math.min(size, UNITYFS_HEADER_PREFIX_BYTES),
+    size,
+    signal,
+  );
+  if (prefix.length < 20 || !hasUnityFsHeader(prefix)) return undefined;
+  const facts = readUnityFsHeaderFacts(prefix);
+  if (facts === undefined)
+    throw unityFsFormatFailure("header is truncated or exceeds its bounds");
+  if (
+    facts.formatVersion < UNITYFS_FORMAT_VERSION_MIN ||
+    facts.formatVersion > UNITYFS_FORMAT_VERSION_MAX
+  )
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `UnityFS format ${String(facts.formatVersion)} is unsupported; ${String(UNITYFS_FORMAT_VERSION_MIN)}-${String(UNITYFS_FORMAT_VERSION_MAX)} are supported`,
+    );
+  if (facts.declaredSize > BigInt(size))
+    throw unityFsTruncatedFailure("declared size exceeds the file");
+  if (facts.declaredSize < BigInt(facts.afterFixed))
+    throw unityFsFormatFailure("declared size excludes the header");
+  const declaredSize = Number(facts.declaredSize);
+  if (facts.compressedBlocksInfoSize > declaredSize - facts.afterFixed)
+    throw unityFsFormatFailure(
+      "declared blocks-info exceeds the bundle extent",
+    );
+  const blocksInfoAtEnd = (facts.flags & UNITYFS_FLAG_BLOCKS_INFO_AT_END) !== 0;
+  const compression = facts.flags & UNITYFS_FLAG_COMPRESSION_MASK;
+  const common = {
+    formatVersion: facts.formatVersion,
+    playerVersion: facts.playerVersion,
+    engineVersion: facts.engineVersion,
+    declaredSize,
+    flags: facts.flags,
+    compressedBlocksInfoSize: facts.compressedBlocksInfoSize,
+    uncompressedBlocksInfoSize: facts.uncompressedBlocksInfoSize,
+    blocksInfoAtEnd,
+    compression,
+  };
+  const layout = unityFsLayoutFlags(
+    facts.formatVersion,
+    facts.engineVersion,
+    facts.flags,
+  );
+  if (layout.encrypted === true)
+    return { ...common, layout: { status: "encrypted" } };
+  if (
+    layout.encrypted === undefined ||
+    layout.headerAligned === undefined ||
+    layout.dataPadding === undefined
+  )
+    return { ...common, layout: { status: "unsupported-layout" } };
+  if (
+    compression !== UNITYFS_COMPRESSION_NONE &&
+    compression !== UNITYFS_COMPRESSION_LZ4 &&
+    compression !== UNITYFS_COMPRESSION_LZ4HC
+  )
+    return { ...common, layout: { status: "unsupported-compression" } };
+  const position = layout.headerAligned
+    ? align16(facts.afterFixed)
+    : facts.afterFixed;
+  if (position > declaredSize)
+    throw unityFsFormatFailure("declared size excludes the padded header");
+  const blocksInfoOffset = blocksInfoAtEnd
+    ? declaredSize - facts.compressedBlocksInfoSize
+    : position;
+  if (
+    blocksInfoOffset < position ||
+    facts.compressedBlocksInfoSize > declaredSize - blocksInfoOffset
+  )
+    throw unityFsFormatFailure(
+      "declared blocks-info exceeds the bundle extent",
+    );
+  return {
+    ...common,
+    layout: {
+      status: "available",
+      afterHeader: position,
+      blocksInfoOffset,
+      dataPadding: layout.dataPadding,
+    },
+  };
+};
+
+const decodeBlocksInfoTable = async (
+  header: UnityFsHeader,
+  compressed: Buffer,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  const compression = header.compression;
+  if (compression === UNITYFS_COMPRESSION_NONE) {
+    if (compressed.length !== header.uncompressedBlocksInfoSize)
+      throw unityFsFormatFailure(
+        "plain directory size disagrees with its declaration",
+      );
+    return compressed;
+  }
+  if (
+    compression === UNITYFS_COMPRESSION_LZ4 ||
+    compression === UNITYFS_COMPRESSION_LZ4HC
+  )
+    return decodeUnityFsLz4(
+      compressed,
+      header.uncompressedBlocksInfoSize,
+      signal,
+    );
+  throw new ArtifactReaderFailure(
+    "unavailable",
+    `UnityFS blocks-info compression ${String(compression)} is unsupported`,
+  );
+};
+
+/** Translate decoder failures once, without erasing cancellation or resource reasons. */
+export const decodeUnityFsLz4 = async (
+  encoded: Buffer,
+  expected: number,
+  signal?: AbortSignal,
+): Promise<Buffer> => {
+  try {
+    return await decodeLz4Block(
+      encoded,
+      expected,
+      MAX_BLOCK_UNCOMPRESSED_BYTES,
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof BinaryResourceFailure)
+      throw new ArtifactReaderFailure(
+        "limit",
+        "UnityFS LZ4 exceeds the decoder memory budget",
+        { cause, boundary: "memory" },
+      );
+    if (cause instanceof BinaryFormatFailure)
+      throw malformedArtifact(
+        "unityfs",
+        "UnityFS is malformed: LZ4 block does not decode to its declared size",
+        { cause, field: "block" },
+      );
+    throw cause;
+  }
+};
+
+const parseBlocks = async (
+  table: BinaryReader,
+  dataBytes: number,
+  budget: Budget,
+  signal?: AbortSignal,
+): Promise<UnityFsBlock[]> => {
+  if (table.bytes.length < 24)
+    throw unityFsTruncatedFailure("blocks-info table is truncated");
+  const blockCount = table.u32(16);
+  if (20 + blockCount * 10 + 4 > table.bytes.length)
+    throw unityFsFormatFailure("declared block count exceeds the table");
+  // Includes array slots, numeric fields and the retained lookup representation.
+  budget.charge(blockCount * 256, directoryLimit);
+  const blocks: UnityFsBlock[] = [];
+  let cursor = 20;
+  let compressedStart = 0;
+  let streamStart = 0;
+  let unavailableCount = 0;
+  for (let index = 0; index < blockCount; index++) {
+    if (index % 256 === 0) await setImmediate();
+    assertArtifactReadActive(signal);
+    const uncompressedSize = table.u32(cursor);
+    const compressedSize = table.u32(cursor + 4);
+    const flags = table.u16(cursor + 8);
+    if (compressedSize > dataBytes - compressedStart)
+      throw unityFsFormatFailure(
+        "declared data area exceeds the bundle extent",
+      );
+    const compression = flags & UNITYFS_FLAG_COMPRESSION_MASK;
+    cursor += 10;
+    const lz4 =
+      compression === UNITYFS_COMPRESSION_LZ4 ||
+      compression === UNITYFS_COMPRESSION_LZ4HC;
+    if (
+      lz4 &&
+      (uncompressedSize > MAX_BLOCK_UNCOMPRESSED_BYTES ||
+        compressedSize > MAX_BLOCK_ENCODED_BYTES)
+    )
+      throw new ArtifactReaderFailure(
+        "limit",
+        "UnityFS LZ4 block exceeds its 64 MiB decoded or bounded encoded buffer budget",
+        { boundary: "memory" },
+      );
+    if (
+      compression === UNITYFS_COMPRESSION_NONE &&
+      compressedSize !== uncompressedSize
+    )
+      throw unityFsFormatFailure(
+        "plain block size disagrees with its declaration",
+      );
+    if (
+      uncompressedSize > 0 &&
+      compression !== UNITYFS_COMPRESSION_NONE &&
+      !lz4
+    )
+      unavailableCount++;
+    if (compression !== UNITYFS_COMPRESSION_NONE && compressedSize === 0)
+      throw unityFsFormatFailure("compressed block declares no bytes");
+    blocks.push({
+      uncompressedSize,
+      compressedSize,
+      flags,
+      compression,
+      unavailableCount,
+      compressedStart,
+      streamStart,
+    });
+    compressedStart += compressedSize;
+    streamStart += uncompressedSize;
+  }
+  return blocks;
+};
+
+const parseNodes = async (
+  table: BinaryReader,
+  blocks: readonly UnityFsBlock[],
+  budget: Budget,
+  signal?: AbortSignal,
+): Promise<UnityFsNode[]> => {
+  let cursor = 20 + blocks.length * 10;
+  if (cursor + 4 > table.bytes.length)
+    throw unityFsFormatFailure("node count is missing from the table");
+  const nodeCount = table.u32(cursor);
+  cursor += 4;
+  if (cursor + nodeCount * 21 > table.bytes.length)
+    throw unityFsFormatFailure("declared node count exceeds the table");
+  // Covers parsed rows plus the reader's owned entries/map; paths are charged separately.
+  budget.charge(nodeCount * 512, directoryLimit);
+  const streamSize =
+    blocks.length === 0
+      ? 0
+      : (blocks[blocks.length - 1]?.streamStart ?? 0) +
+        (blocks[blocks.length - 1]?.uncompressedSize ?? 0);
+  const nodes: UnityFsNode[] = [];
+  for (let index = 0; index < nodeCount; index++) {
+    if (index % 256 === 0) await setImmediate();
+    assertArtifactReadActive(signal);
+    if (cursor + 20 > table.bytes.length)
+      throw unityFsTruncatedFailure("node fixed fields are truncated");
+    const offsetBig = table.word(cursor, 64);
+    const sizeBig = table.word(cursor + 8, 64);
+    const flags = table.u32(cursor + 16);
+    cursor += 20;
+    const nameEnd = table.bytes.indexOf(0, cursor);
+    if (nameEnd === -1) throw unityFsFormatFailure("node path is unterminated");
+    // UTF-16 plus repeated JSON-escaped source/canonical path projections.
+    budget.charge((nameEnd - cursor) * 24, directoryLimit);
+    const name = table.range(cursor, nameEnd - cursor, "UnityFS node path");
+    let path: string;
+    try {
+      path = UTF8.decode(name);
+    } catch (cause: unknown) {
+      throw malformedArtifact(
+        "unityfs",
+        "UnityFS node path is not valid UTF-8",
+        {
+          cause,
+          offset: cursor,
+          field: "node-path",
+        },
+      );
+    }
+    cursor = nameEnd + 1;
+    // Preserve the source spelling; ArtifactPaths owns destination validation.
+    if (path.length === 0) throw unityFsFormatFailure("empty member path");
+    if (
+      offsetBig > BigInt(streamSize) ||
+      sizeBig > BigInt(streamSize) - offsetBig
+    )
+      throw unityFsFormatFailure(`member exceeds the stream: ${path}`);
+    nodes.push({
+      offset: Number(offsetBig),
+      size: Number(sizeBig),
+      flags,
+      path,
+    });
+  }
+  return nodes;
+};
+
+export const readUnityFsBlocksInfo = async (
+  handle: FileHandle,
+  header: UnityFsHeader,
+  signal?: AbortSignal,
+): Promise<UnityFsBlocksInfo> => {
+  const layout = header.layout;
+  if (layout.status !== "available")
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      "UnityFS directory layout is unavailable",
+    );
+  if (
+    header.compressedBlocksInfoSize > MAX_TABLE_BYTES ||
+    header.uncompressedBlocksInfoSize > MAX_TABLE_BYTES
+  )
+    throw directoryLimit();
+  const unalignedDataStart = header.blocksInfoAtEnd
+    ? layout.afterHeader
+    : layout.blocksInfoOffset + header.compressedBlocksInfoSize;
+  const dataStart = layout.dataPadding
+    ? align16(unalignedDataStart)
+    : unalignedDataStart;
+  const dataEnd = header.blocksInfoAtEnd
+    ? layout.blocksInfoOffset
+    : header.declaredSize;
+  if (dataStart < 0 || dataStart > dataEnd)
+    throw unityFsFormatFailure("declared data area exceeds the bundle extent");
+  const budget = new Budget(DIRECTORY_BUDGET_BYTES);
+  budget.charge(header.compressedBlocksInfoSize, directoryLimit);
+  if (header.compression !== UNITYFS_COMPRESSION_NONE)
+    budget.charge(header.uncompressedBlocksInfoSize, directoryLimit);
+  const compressed = await readArtifactFileBytes(
+    "unityfs",
+    handle,
+    layout.blocksInfoOffset,
+    header.compressedBlocksInfoSize,
+    header.declaredSize,
+    signal,
+  );
+  const table = new BinaryReader(
+    await decodeBlocksInfoTable(header, compressed, signal),
+    false,
+    "unityfs",
+  );
+  const blocks = await parseBlocks(table, dataEnd - dataStart, budget, signal);
+  const nodes = await parseNodes(table, blocks, budget, signal);
+  return {
+    dataHash: table.range(0, 16, "UnityFS data hash").toString("hex"),
+    blocks,
+    nodes,
+    dataStart,
+  };
+};

@@ -1,0 +1,172 @@
+import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/client";
+
+import * as artifact from "../../scripts/lib/artifact-e2e.mjs";
+import { createOwnedMcpStdioTransport } from "../../scripts/lib/owned-mcp-stdio.mjs";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+
+const [mode, target] = process.argv.slice(2);
+assert.ok(
+  [
+    "corrupt",
+    "reconnect",
+    "duplicate-first",
+    "duplicate-last",
+    "override",
+    "cancel-finalization",
+    "failure-cancel-finalization",
+  ].includes(mode),
+);
+assert.equal(typeof target, "string");
+
+// Isolate the fault to this child client. The server, resource admission and
+// advertised schema are real; alter only the reply before tool validation.
+const controller = new AbortController();
+if (mode === "cancel-finalization" || mode === "failure-cancel-finalization") {
+  const close = Client.prototype.close;
+  Client.prototype.close = async function () {
+    const settled = close.call(this);
+    controller.abort(new Error("cancelled during final cleanup"));
+    return settled;
+  };
+}
+
+const request = Client.prototype.request;
+let catalogRequests = 0;
+let corruptedReplies = 0;
+let toolCalls = 0;
+const toolTimeouts = [];
+Client.prototype.request = async function (input, options) {
+  if (input.method === "tools/list") catalogRequests++;
+  if (input.method === "tools/call") {
+    toolCalls++;
+    toolTimeouts.push(options?.timeout ?? null);
+  }
+  const result = await request.call(this, input, options);
+  if (input.method === "tools/list") {
+    if (mode === "duplicate-first" || mode === "duplicate-last") {
+      const listed = result.tools.find(
+        (tool) => tool.name === "open_bundle_resources",
+      );
+      assert.ok(listed);
+      const duplicate = {
+        ...listed,
+        outputSchema: { type: "object", required: ["__rea_wrong_schema"] },
+      };
+      return {
+        ...result,
+        tools:
+          mode === "duplicate-first"
+            ? [duplicate, ...result.tools]
+            : [...result.tools, duplicate],
+      };
+    }
+  }
+  if (
+    mode !== "corrupt" ||
+    input.method !== "tools/call" ||
+    input.params.name !== "open_bundle_resources"
+  )
+    return result;
+  assert.equal(
+    typeof result.structuredContent?.result?.canonical_path,
+    "string",
+    "The real reply omitted the field selected for fault injection",
+  );
+  corruptedReplies++;
+  return {
+    ...result,
+    structuredContent: {
+      ...result.structuredContent,
+      result: { ...result.structuredContent.result, canonical_path: 777 },
+    },
+  };
+};
+
+const status = async (client, options) => {
+  const result = await artifact.artifactMcpCall(
+    client,
+    { name: "binary_session", arguments: {} },
+    options,
+  );
+  assert.notEqual(result.isError, true, JSON.stringify(result));
+};
+
+async function reconnect() {
+  const client = new Client({ name: "artifact-binding-probe", version: "1" });
+  for (const warmReuse of [true, false]) {
+    const transport = await createOwnedMcpStdioTransport({
+      command: process.execPath,
+      arguments: [
+        fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
+        "mcp",
+      ],
+      hostEnvironment: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        REA_LOG_LEVEL: "silent",
+      },
+      expectedCommand: null,
+    });
+    await withVerifierCleanup(async () => {
+      await client.connect(transport);
+      const before = catalogRequests;
+      if (warmReuse) {
+        await Promise.all([
+          status(client, { timeout: 12_345 }),
+          status(client),
+        ]);
+        await status(client);
+      } else {
+        await status(client);
+      }
+      assert.equal(
+        catalogRequests - before,
+        1,
+        "Expected one catalog read per connection",
+      );
+    }, [() => client.close(), () => transport.close()]);
+  }
+}
+
+let error;
+try {
+  if (mode === "reconnect") await reconnect();
+  else
+    await artifact.withBundleResourcesMcp(
+      target,
+      async (client) => {
+        if (mode === "failure-cancel-finalization")
+          throw new Error("work failed before cancellation");
+        if (mode === "override")
+          await artifact.artifactMcpCall(
+            client,
+            { name: "binary_session", arguments: {} },
+            {
+              toolDefinition: {
+                name: "binary_session",
+                inputSchema: { type: "object" },
+                outputSchema: { type: "object" },
+              },
+            },
+          );
+      },
+      { signal: controller.signal },
+    );
+} catch (cause) {
+  error = {
+    name: cause instanceof Error ? cause.name : "unknown",
+    message: cause instanceof Error ? cause.message : String(cause),
+    code: cause?.code ?? null,
+  };
+}
+process.stdout.write(
+  JSON.stringify({
+    accepted: error === undefined,
+    catalogRequests,
+    corruptedReplies,
+    toolCalls,
+    toolTimeouts,
+    error: error ?? null,
+  }) + "\n",
+);

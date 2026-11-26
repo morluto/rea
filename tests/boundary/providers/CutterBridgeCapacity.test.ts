@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
-import { cutterDiscoverySchema } from "../../../src/contracts/cutterToolContracts.js";
+import { cutterDiscoverySchema } from "../../../src/domain/cutterDiscovery.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const descriptor = async (directory: string, port: number): Promise<string> => {

@@ -1,0 +1,279 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
+import { lstat, open } from "node:fs/promises";
+import {
+  projectStableArtifactFailure,
+  closeArtifactResources,
+  readStableArtifact,
+  type StableArtifactFileSystem,
+  type StableArtifactSnapshot,
+  artifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import {
+  windowsShortcutBudgetLimit,
+  type InspectWindowsShortcutInput,
+  type WindowsShortcutBudget,
+} from "../../domain/native/windowsShortcut.js";
+import { err, ok } from "../../domain/result.js";
+import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
+import {
+  WindowsShortcutResourceFailure,
+  type WindowsShortcutSelectedBoundary,
+} from "./WindowsShortcut.errors.js";
+import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
+
+const OPERATION = "inspect_windows_shortcut";
+
+/** A path that starts with two separators: UNC, extended UNC, or another device path. */
+const HOST_PREFIXED_PATH = /^[\\/]{2}/u;
+/** An extended or device form of a drive path, such as `\\?\C:\x`, which stays on this host. */
+const LOCAL_DRIVE_DEVICE_PATH = /^[\\/]{2}[?.][\\/][A-Za-z]:(?:[\\/]|$)/u;
+
+/**
+ * A path Windows could open through a remote host. Even `lstat` on such a path
+ * can reach an SMB server and offer the caller's credentials, so this is decided
+ * from the text alone. A mapped network drive looks like a local drive here.
+ * POSIX hosts read repeated leading slashes as one local root.
+ */
+const namesNetworkShare = (path: string, platform: NodeJS.Platform): boolean =>
+  platform === "win32" &&
+  HOST_PREFIXED_PATH.test(path) &&
+  !LOCAL_DRIVE_DEVICE_PATH.test(path);
+
+/**
+ * `lstat` and `open` only. Without `realpath`, a rejected symlink's destination
+ * is never resolved, so a link pointing at a UNC path cannot reach an SMB host.
+ */
+const LINK_BLIND_FILE_SYSTEM: StableArtifactFileSystem = {
+  lstat: (path) => lstat(path, { bigint: true }),
+  open,
+};
+
+/** Where a Windows path's ancestors begin: past a drive root or device prefix. */
+const WINDOWS_PATH_ROOT = /^(?:[\\/]{2}[?.][\\/])?(?:[A-Za-z]:)?[\\/]*/u;
+/** A `\\?\` path, which Windows opens as spelled, without removing `.` or `..`. */
+const LITERAL_DEVICE_PATH = /^[\\/]{2}\?[\\/]/u;
+/** One path component and the separators the caller wrote after it. */
+const WINDOWS_PATH_COMPONENT = /([^\\/]+)([\\/]*)/gu;
+
+/**
+ * The ancestor directories Windows reaches when it opens `path`, spelled as
+ * the caller wrote them. Win32 removes `.` and `..` components before opening
+ * a path, so `C:\alias\..\real\a.lnk` reaches only `C:\real`, and `..`
+ * cannot climb above an absolute root. A `\\?\` path skips that
+ * normalization, so its components are walked as written. A relative path
+ * keeps a leading `..` that has nothing to remove.
+ *
+ * Only the normalized components are retained, which is linear in the path.
+ * Each ancestor is built from the running prefix as the walk reaches it, so a
+ * deep path never holds every parent spelling at once.
+ */
+function* windowsAncestors(path: string): Generator<string, void, undefined> {
+  const root = WINDOWS_PATH_ROOT.exec(path)?.[0] ?? "";
+  const literal = LITERAL_DEVICE_PATH.test(root);
+  const absolute = /[\\/]$/u.test(root);
+  const kept: { readonly name: string; readonly spelled: string }[] = [];
+  for (const [spelled, name = ""] of path
+    .slice(root.length)
+    .matchAll(WINDOWS_PATH_COMPONENT)) {
+    if (!literal && name === ".") continue;
+    if (!literal && name === "..") {
+      const last = kept.at(-1);
+      if (last !== undefined && last.name !== "..") {
+        kept.pop();
+        continue;
+      }
+      if (absolute) continue;
+    }
+    kept.push({ name, spelled });
+  }
+  // The final component is the shortcut itself, not an ancestor.
+  let prefix = root;
+  for (const { name, spelled } of kept.slice(0, -1)) {
+    yield prefix + name;
+    prefix += spelled;
+  }
+}
+
+/**
+ * The first ancestor directory of a Windows path that is a symbolic link or
+ * junction, walked from the root down. Each `lstat` reaches only directories
+ * already checked, so a link to a UNC path is found before anything follows it.
+ * An ancestor that cannot be read ends the walk and leaves the error to the reader.
+ * The caller's signal is checked before each read.
+ */
+const linkedWindowsAncestor = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<string | undefined> => {
+  for (const ancestor of windowsAncestors(path)) {
+    assertArtifactReadActive(signal);
+    try {
+      if ((await LINK_BLIND_FILE_SYSTEM.lstat(ancestor)).isSymbolicLink())
+        return ancestor;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+/** Portable Shell Link reader over one bounded, identity-checked regular file. */
+export class WindowsShortcutProvider implements WindowsShortcutPort {
+  readonly identity = WINDOWS_SHORTCUT_PROVIDER;
+  readonly #resources = new ArtifactResourceScope();
+
+  constructor(
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  ) {}
+
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      WINDOWS_SHORTCUT_PROVIDER,
+      OPERATION,
+    );
+  }
+
+  async inspect(
+    input: InspectWindowsShortcutInput,
+    options?: ExecutionOptions,
+  ) {
+    if (namesNetworkShare(input.path, this.platform))
+      return err(
+        new AnalysisInputError(OPERATION, {}, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `Selected shortcut is on a network share, which this offline operation does not open: ${input.path}. Copy it to a local path first.`,
+          },
+        ]),
+      );
+    let completed: StableArtifactSnapshot | undefined;
+    try {
+      return await this.#resources.run(async () => {
+        // Inside the admission, so close() waits for the walk's reads too.
+        const linkedAncestor =
+          this.platform === "win32"
+            ? await linkedWindowsAncestor(input.path, options?.signal)
+            : undefined;
+        if (linkedAncestor !== undefined)
+          return err(
+            new AnalysisInputError(OPERATION, {}, [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: `Selected shortcut path passes through a directory link or junction, which this offline operation does not follow: ${linkedAncestor}. Select the shortcut by a path without links.`,
+                observed: { linked_ancestor: linkedAncestor },
+              },
+            ]),
+          );
+        const snapshot = await readStableArtifact(
+          input.path,
+          input.max_file_bytes,
+          options?.signal,
+          LINK_BLIND_FILE_SYSTEM,
+          this.#resources,
+        );
+        completed = snapshot;
+        assertArtifactReadActive(options?.signal);
+        const report = await parseWindowsShortcut(
+          snapshot.bytes,
+          {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          input,
+          options?.signal,
+        );
+        assertArtifactReadActive(options?.signal);
+        return ok(report);
+      });
+    } catch (cause) {
+      const failure = windowsShortcutFailure(cause, input);
+      if (completed !== undefined)
+        failure.retainPartialObservation(
+          fileSnapshotPartialObservationSchema.parse({
+            kind: "file-snapshot-hash",
+            path: input.path,
+            sha256: completed.sha256,
+            bytes: completed.bytes.length,
+          }),
+        );
+      return err(failure);
+    }
+  }
+}
+
+/** The schema field of each boundary the parser names. */
+const SELECTED_BUDGETS = {
+  id_list_items: "max_id_list_items",
+  extra_data_blocks: "max_extra_data_blocks",
+  string_bytes: "max_string_bytes",
+} as const satisfies Record<
+  WindowsShortcutSelectedBoundary,
+  WindowsShortcutBudget
+>;
+
+const windowsShortcutFailure = (
+  cause: unknown,
+  input: InspectWindowsShortcutInput,
+): AnalysisError => {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: WINDOWS_SHORTCUT_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "shortcut",
+      recognise: (failure) => {
+        if (failure instanceof WindowsShortcutResourceFailure) {
+          const { name, maximum } = failure.failure.limit;
+          const argument = SELECTED_BUDGETS[name];
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            path: input.path,
+            retryable: false,
+            limit: windowsShortcutBudgetLimit(argument, maximum),
+          });
+        }
+        return undefined;
+      },
+      fileSize: (failure) =>
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          failure.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            cause: failure,
+            retryable: false,
+            limit: windowsShortcutBudgetLimit(
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
+          },
+        ),
+    }),
+  );
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
+    WINDOWS_SHORTCUT_PROVIDER.id,
+    OPERATION,
+  );
+};

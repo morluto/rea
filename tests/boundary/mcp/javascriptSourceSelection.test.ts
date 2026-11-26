@@ -1,22 +1,42 @@
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createPackageWithOptions } from "@electron/asar";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeJavaScriptSourceSelectionFixture } from "../../fixtures/javascriptSourceSelection.js";
+import {
+  asarHeaderBytes,
+  prependAsarJsonWhitespace,
+} from "../../fixtures/asarHeader.js";
+import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const createSelectionClient = () => {
-  const client = new Client({
-    name: "javascript-source-selection",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-source-selection",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -24,11 +44,89 @@ const createSelectionClient = () => {
     env: {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
+      // Exact advertised constraints require the complete schema profile.
     },
     stderr: "pipe",
   });
   return { client, transport };
 };
+
+it("resolves ESM whitespace specifiers through the public application tool", async () => {
+  const root = await createTestTempDirectory("rea-esm-whitespace-mcp-");
+  const rawSpecifier = "./feature\tname.js";
+  const encodedSpecifier = "./feature%09name.js";
+  await writeFixtureFiles(root, {
+    "main.mjs": `import ${JSON.stringify(rawSpecifier)};\nimport ${JSON.stringify(encodedSpecifier)};\n`,
+    "featurename.js": "export const plain = 1;\n",
+    "feature\tname.js": "export const value = 1;\n",
+  });
+  const { client, transport } = createSelectionClient();
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { detail: "complete", input_path: root },
+    });
+    expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(output.structuredContent).normalized_result,
+    );
+    expect(result.graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            specifier: rawSpecifier,
+            resolved_path: "featurename.js",
+          }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            specifier: encodedSpecifier,
+            resolved_path: "feature\tname.js",
+          }),
+        }),
+      ]),
+    );
+  } finally {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  }
+});
+
+it("retains missing ASAR native-addon inventory through the public application tool", async () => {
+  const { archive, addon } = await createStrippedAsarAddon();
+  await rm(join(`${archive}.unpacked`, addon));
+  const { client, transport } = createSelectionClient();
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { detail: "complete", input_path: archive },
+    });
+    expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(output.structuredContent).normalized_result,
+    );
+    expect(result.graph.coverage.status).toBe("partial");
+    expect(
+      result.graph.nodes.some(
+        (node) =>
+          node.kind === "native-addon" &&
+          node.observations.some(
+            ({ label, properties }) =>
+              label === addon && properties.availability === "unavailable",
+          ),
+      ),
+    ).toBe(true);
+  } finally {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  }
+});
 
 it("advertises exact source selection and retains its scope through summary, Evidence retrieval and invalid-input recovery", async () => {
   const root = await createTestTempDirectory("rea-js-selected-mcp-");
@@ -47,7 +145,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(schema);
+    }).compile(canonicalInputSchema("analyze_javascript_application"));
     expect(validate({ input_path: root, source_paths: ["main.mjs"] })).toBe(
       true,
     );
@@ -62,14 +160,12 @@ it("advertises exact source selection and retains its scope through summary, Evi
       },
     });
     expect(selected.isError, JSON.stringify(selected.content)).not.toBe(true);
-    if (definition?.outputSchema === undefined)
+    if (definition === undefined)
       throw new Error("Missing advertised application output contract");
     const validateOutput = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(
-      z.record(z.string(), z.unknown()).parse(definition.outputSchema),
-    );
+    }).compile(canonicalOutputSchema(definition.name));
     expect(
       validateOutput(selected.structuredContent),
       JSON.stringify(validateOutput.errors),
@@ -124,7 +220,7 @@ it("advertises exact source selection and retains its scope through summary, Evi
     ]) {
       const invalid = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: root, source_paths },
+        arguments: { detail: "complete", input_path: root, source_paths },
       });
       expect(invalid.isError).toBe(true);
       const text = invalid.content.find((item) => item.type === "text");
@@ -142,7 +238,11 @@ it("advertises exact source selection and retains its scope through summary, Evi
     }
     const next = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: root, source_paths: ["main.mjs"] },
+      arguments: {
+        detail: "complete",
+        input_path: root,
+        source_paths: ["main.mjs"],
+      },
     });
     expect(next.isError).not.toBe(true);
     expect(
@@ -152,10 +252,12 @@ it("advertises exact source selection and retains its scope through summary, Evi
     ).toBe(1);
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
 
 it("selects nested ASAR paths and distinguishes missing inventoried bytes from invalid paths", async () => {
   const root = await createTestTempDirectory("rea-js-selected-containers-");
@@ -166,10 +268,13 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     const nestedRoot = await createTestTempDirectory(
       "rea-js-nested-selection-",
     );
-    await createPackageWithOptions(root, join(nestedRoot, "nested.asar"), {});
+    const nestedArchive = join(nestedRoot, "nested.asar");
+    await createPackageWithOptions(root, nestedArchive, {});
+    await prependAsarJsonWhitespace(nestedArchive, " \t\r\n".repeat(3_001));
     const nested = await client.callTool({
       name: "analyze_javascript_application",
       arguments: {
+        detail: "complete",
         input_path: nestedRoot,
         source_paths: ["nested.asar/main.mjs"],
       },
@@ -203,7 +308,11 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     await rm(join(unpacked + ".unpacked", "main.mjs"));
     const unavailable = await client.callTool({
       name: "analyze_javascript_application",
-      arguments: { input_path: unpacked, source_paths: ["main.mjs"] },
+      arguments: {
+        detail: "complete",
+        input_path: unpacked,
+        source_paths: ["main.mjs"],
+      },
     });
     expect(unavailable.isError).toBe(true);
     const unavailableText = unavailable.content.find(
@@ -219,7 +328,93 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     });
     await client.ping();
   } finally {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   }
-}, 60_000);
+});
+
+it("accepts ASAR headers with long legal JSON whitespace through the public application tool", async () => {
+  const root = await createTestTempDirectory("rea-js-asar-whitespace-mcp-");
+  await writeJavaScriptSourceSelectionFixture(root);
+  const archive = join(
+    await createTestTempDirectory("rea-js-asar-whitespace-mcp-output-"),
+    "app.asar",
+  );
+  await createPackageWithOptions(root, archive, {});
+  await prependAsarJsonWhitespace(archive, `${" ".repeat(9_001)}\r\n\t`);
+  const { client, transport } = createSelectionClient();
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: {
+        detail: "complete",
+        input_path: archive,
+        source_paths: ["main.mjs"],
+      },
+    });
+    expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(output.structuredContent).normalized_result,
+    );
+    expect(result.statistics).toMatchObject({
+      nested_asar_containers: 0,
+      parsed_javascript_files: 1,
+      parse_failures: 0,
+    });
+    expect(
+      result.semantic_graph.nodes.some(
+        ({ kind, label }) => kind === "function" && label === "selected",
+      ),
+    ).toBe(true);
+    expect(result.root_artifact_sha256).toBe(
+      createHash("sha256")
+        .update(await readFile(archive))
+        .digest("hex"),
+    );
+  } finally {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  }
+});
+
+it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP", async () => {
+  const archive = join(
+    await createTestTempDirectory("rea-js-asar-padding-mcp-"),
+    "opaque.asar",
+  );
+  await writeFile(
+    archive,
+    asarHeaderBytes("  ", {
+      padding: Buffer.from('{"files":{"main.mjs":{"size":0,"offset":"0"}}}'),
+    }),
+  );
+  const { client, transport } = createSelectionClient();
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { detail: "complete", input_path: archive },
+    });
+    expect(output.isError).toBe(true);
+    const message = output.content.find((item) => item.type === "text");
+    if (message?.type !== "text")
+      throw new Error("Missing invalid ASAR response");
+    expect(JSON.parse(message.text)).toMatchObject({
+      error: {
+        code: "unsupported_target",
+        details: { path: archive, failure_kind: "unsupported" },
+      },
+    });
+    await client.ping();
+  } finally {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  }
+});

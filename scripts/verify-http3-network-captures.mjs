@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -24,7 +25,11 @@ import {
   publishAttempt,
   finishProducerGroups,
 } from "./lib/http3-verifier-lifecycle.mjs";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpEvidenceBundle,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 const root = process.argv[2];
 const inspectExisting = process.argv[3] === "--inspect-existing";
@@ -41,7 +46,7 @@ assert.ok(
 );
 assert.ok(
   mitmdump && isAbsolute(mitmdump),
-  "Select caller-supplied mitmdump 12.2.3",
+  "Select caller-supplied mitmdump 12.3.1",
 );
 if (!inspectExisting)
   assert.ok(
@@ -54,10 +59,12 @@ const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const client = new Client({
-  name: "real-http3-capture-verifier",
-  version: "1",
-});
+const client = completeEvidenceClient(
+  new Client({
+    name: "real-http3-capture-verifier",
+    version: "1",
+  }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -99,6 +106,8 @@ async function cli(input, name) {
       arguments: [
         entrypoint,
         "inspect-web-network-capture",
+        "--detail",
+        "complete",
         input.capture_path,
         input.format,
         "--json",
@@ -134,14 +143,11 @@ async function mcp(input, name) {
     join(directory, `${name}.mcp.reply.json`),
     JSON.stringify(reply, null, 2),
   );
-  const value = JSON.parse(mcpTextValue(reply));
-  assert.notEqual(reply.isError, true, mcpTextValue(reply));
+  const evidence = requireMcpOutput(reply, contract.name, contract);
   assert.ok(
     validateOutput(reply.structuredContent),
     JSON.stringify(validateOutput.errors),
   );
-  const evidence = contract.outputSchema.parse(value);
-  assert.deepEqual(reply.structuredContent, value);
   retainedEvidence.push(evidence);
   return evidence;
 }
@@ -157,11 +163,11 @@ async function inspect(name) {
   for (const evidence of [cliResult, mcpResult]) {
     assert.equal(evidence.authority, "historical-reference");
     assert.equal(evidence.confidence, "observed");
-    assert.equal(evidence.provider.version, "12.2.3");
+    assert.equal(evidence.provider.version, "12.3.1");
     assert.equal(evidence.normalized_result.runtime_attribution, "unknown");
     assert.deepEqual(evidence.provider, evidence.normalized_result.decoder);
     assert.equal(
-      evidence.subject.digest.sha256,
+      evidence.subject.identity.sha256,
       digest(await readFile(input.capture_path)),
     );
   }
@@ -212,11 +218,11 @@ try {
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === contract.name,
   );
-  assert.ok(advertised?.outputSchema, "Missing named advertised schema");
+  assert.ok(advertised, "Missing named advertised schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(advertised.inputSchema));
-  assert.ok(ajv.validateSchema(advertised.outputSchema));
-  validateOutput = ajv.compile(advertised.outputSchema);
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(advertised.name)));
+  validateOutput = ajv.compile(canonicalOutputSchema(advertised.name));
   const inputValidator = ajv.compile(advertised.inputSchema);
   assert.ok(
     inputValidator({
@@ -288,10 +294,8 @@ try {
     name: "get_evidence_bundle",
     arguments: {},
   });
-  assert.notEqual(bundleReply.isError, true, mcpTextValue(bundleReply));
-  const bundle = JSON.parse(mcpTextValue(bundleReply)).result;
+  const bundle = requireMcpEvidenceBundle(bundleReply);
   const records = bundle.records;
-  assert.ok(Array.isArray(records), "Evidence bundle omitted its records");
   for (const evidence of retainedEvidence) {
     const retained = records.find(
       (record) => record.evidence_id === evidence.evidence_id,
@@ -375,6 +379,7 @@ try {
 }
 const report = {
   run_id: run.run_id,
+  input_mode: inspectExisting ? "existing-captures" : "producer-attempt",
   status: primaryError || cleanupFailures.length ? "failed" : "passed",
   finished_at: new Date().toISOString(),
   ...(primaryError
@@ -388,8 +393,13 @@ const report = {
   verifier,
   producer_audit: producerAudit,
   scope:
-    "Real Linux reverse HTTP/3, mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
+    "Linux reverse HTTP/3 capture verification for mitmproxy 12.3.1, aioquic 1.2.0 and guest cURL",
   limitations: [
+    ...(inspectExisting
+      ? [
+          "Existing capture producer provenance was not authenticated by this attempt.",
+        ]
+      : []),
     "No local/WireGuard, browser, QUIC v2, migration, 0-RTT, mTLS or replay claim.",
     "No HAR, interruption, certificate-failure or body-completeness coverage in this profile.",
   ],

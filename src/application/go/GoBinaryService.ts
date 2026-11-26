@@ -1,110 +1,89 @@
-import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { GoBinaryPort } from "./GoBinaryPort.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
 import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+  machoSelectionAnswersArchitecture,
+  metadataReportSubjectFormat,
+} from "../../domain/apple/machoTargetSelection.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { GoBinaryPort } from "../../ports/go/GoBinaryPort.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import {
   goBinarySchema,
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import type { Result } from "../../domain/result.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_go_binary";
-const architectureForSubject = (architecture: string) => {
-  switch (architecture) {
-    case "386":
-      return "x86";
-    case "amd64":
-      return "x86_64";
-    default:
-      return BINARY_ARCHITECTURES.find(
-        (supported) => supported === architecture,
-      );
-  }
-};
 
 /** Shared exact input validation and artifact-bound Evidence for CLI and MCP. */
 export class GoBinaryService {
   constructor(readonly provider: GoBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
+    retention?: AnalysisViewRetention,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
-    const input = inspectGoBinaryInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const inspected = await this.provider.inspect(input.data, options);
-    if (!inspected.ok) return inspected;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
-    const report = goBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
-          "Go build-information reader returned malformed metadata or changed the selected artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = architectureForSubject(value.architecture);
-    return ok(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          sha256: value.artifact.sha256,
-          format: value.format === "macho" ? "mach-o" : value.format,
-          ...(architecture === undefined ? {} : { architecture }),
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectGoBinaryInputSchema,
+        outputSchema: goBinarySchema,
+        provider: this.provider,
+        retainCompletedReport: true,
+        invalidOutputMessage:
+          "Go build-information reader returned malformed metadata or changed the selected artifact or slice identity.",
+        toParameters: ({ detail: _detail, ...providerInput }) => providerInput,
+        selectRetainedView: ({ detail }) =>
+          detail === "summary" ? { kind: "summary" } : undefined,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          machoSelectionAnswersArchitecture(
+            report.selected_slice,
+            parameters.architecture,
+          ),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = binaryMetadataArchitecture(value.architecture);
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              sha256: value.artifact.sha256,
+              format: metadataReportSubjectFormat(value),
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: [
+                { kind: "artifact-path", path: value.artifact.path },
+                ...(value.build_info === null
+                  ? []
+                  : [
+                      {
+                        kind: "file-offset-range" as const,
+                        start: value.build_info.header_offset,
+                        end: value.build_info.header_offset + 32,
+                      },
+                    ]),
+              ],
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.data,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: [
-            { kind: "artifact-path", path: value.artifact.path },
-            ...(value.build_info === null
-              ? []
-              : [
-                  {
-                    kind: "file-offset-range" as const,
-                    start: value.build_info.header_offset,
-                    end: value.build_info.header_offset + 32,
-                  },
-                ]),
-          ],
-        },
-      ),
+      },
+      rawInput,
+      options,
+      retention,
     );
   }
 }

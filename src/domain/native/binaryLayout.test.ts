@@ -1,5 +1,12 @@
 import { expect, it } from "vitest";
-import { binaryLayoutSchema, type BinaryLayout } from "./binaryLayout.js";
+import {
+  binaryLayoutPayloadSchema,
+  binaryLayoutSchema,
+  safeParseProjectedBinaryLayout,
+  safeParseOwnedBinaryLayout,
+  type BinaryLayout,
+} from "./binaryLayout.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
 
 const report = () => ({
   artifact: { path: "/fixture.elf", sha256: "a".repeat(64), bytes: 128 },
@@ -60,6 +67,102 @@ const report = () => ({
   limitations: [],
 });
 
+it("projects an admitted layout without copying its parsed arrays", () => {
+  const { artifact, diagnostics, ...source } = report();
+  const payload = binaryLayoutPayloadSchema.parse(source);
+  const projected = safeParseProjectedBinaryLayout(payload, {
+    artifact,
+    diagnostics,
+  });
+  if (!projected.success) throw projected.error;
+  expect(projected.data).toEqual(
+    binaryLayoutSchema.parse({ ...payload, artifact, diagnostics }),
+  );
+  expect(projected.data.sections).toBe(payload.sections);
+  expect(projected.data.segments).toBe(payload.segments);
+  expect(projected.data.symbols).toBe(payload.symbols);
+  expect(projected.data.relocations).toBe(payload.relocations);
+});
+
+it.each(["envelope", "invariants"] as const)(
+  "preserves full layout validation issue paths, messages and order for %s",
+  (failure) => {
+    const { artifact, diagnostics, ...source } = report();
+    const envelope =
+      failure === "envelope"
+        ? {
+            artifact: { ...artifact, bytes: -1 },
+            diagnostics: { ...diagnostics, truncated: "invalid" },
+          }
+        : { artifact, diagnostics };
+    if (failure === "invariants") {
+      source.entry_point.meaning = "absent";
+      source.sections[0]!.index = 2;
+      source.sections[0]!.header_location.offset = "0x80";
+    }
+    const payload = binaryLayoutPayloadSchema.parse(source);
+    const projected = safeParseProjectedBinaryLayout(payload, envelope);
+    const full = binaryLayoutSchema.safeParse({ ...payload, ...envelope });
+    if (projected.success || full.success)
+      throw new Error("Expected both paths to reject the same layout");
+    const compareIssues = (issues: typeof full.error.issues) =>
+      issues.map(({ code, path, message }) => ({ code, path, message }));
+    expect(compareIssues(projected.error.issues)).toEqual(
+      compareIssues(full.error.issues),
+    );
+    expect(full.error.issues.length).toBeGreaterThan(1);
+  },
+);
+
+it("reuses an exact validated immutable layout without a second retained copy", () => {
+  const value = freezeJsonSnapshot(report());
+  const parsed = safeParseOwnedBinaryLayout(value);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) throw parsed.error;
+  expect(parsed.data).toBe(value);
+  expect(safeParseOwnedBinaryLayout(value)).toEqual(parsed);
+  expect(parsed.data).toEqual(binaryLayoutSchema.parse(value));
+  expect(Reflect.set(value.sections[0]!, "index", 5)).toBe(false);
+});
+
+it.each(["mutable", "shallow-frozen"])(
+  "revalidates a changed %s layout instead of caching its former validity",
+  (kind) => {
+    const value = report();
+    if (kind === "shallow-frozen") Object.freeze(value);
+    const first = safeParseOwnedBinaryLayout(value);
+    if (!first.success) throw first.error;
+    expect(first.data).not.toBe(value);
+    value.sections[0]!.header_location.offset = "0x80";
+    const invalid = safeParseOwnedBinaryLayout(value);
+    expect(invalid.success).toBe(false);
+    expect(invalid).toEqual(binaryLayoutSchema.safeParse(value));
+  },
+);
+
+it("does not treat an invalid sealed layout as valid on repeated reads", () => {
+  const value = report();
+  value.sections[0]!.index = 10;
+  freezeJsonSnapshot(value);
+  expect(safeParseOwnedBinaryLayout(value).success).toBe(false);
+  expect(safeParseOwnedBinaryLayout(value).success).toBe(false);
+});
+
+it("does not borrow hidden fields that the format parser removed", () => {
+  const value = report();
+  Object.defineProperty(value, "not_in_parsed_result", {
+    value: { unvalidated: true },
+    enumerable: false,
+  });
+  freezeJsonSnapshot(value);
+  for (let repeat = 0; repeat < 2; repeat += 1) {
+    const parsed = safeParseOwnedBinaryLayout(value);
+    if (!parsed.success) throw parsed.error;
+    expect(parsed.data).not.toBe(value);
+    expect(Object.hasOwn(parsed.data, "not_in_parsed_result")).toBe(false);
+  }
+});
+
 it("retains high linked values and NOBITS without inventing file backing", () => {
   const value = binaryLayoutSchema.parse(report());
   expect(value.entry_point.reported_value).toBe("0x20000000000001");
@@ -67,8 +170,42 @@ it("retains high linked values and NOBITS without inventing file backing", () =>
   expect(value.runtime_load_base).toBeNull();
 });
 
+const useNumericSectionTypes = (value: BinaryLayout, problem: string) => {
+  if (!problem.startsWith("numeric-")) return;
+  const [table, owner, strings] = [
+    value.sections[1],
+    value.sections[2],
+    value.sections[3],
+  ];
+  if (table === undefined || owner === undefined || strings === undefined)
+    throw new Error("section missing");
+  table.type = 2; // SHT_SYMTAB
+  owner.type = 4; // SHT_RELA
+  strings.type = 3; // SHT_STRTAB
+  if (problem === "numeric-invalid-string-link") table.link = 0;
+};
+
+it.each([
+  [{ machine: "EM_AARCH64", bits: 64, byte_order: "little" }, true],
+  [{ machine: "EM_AARCH64", bits: 64, byte_order: "big" }, false],
+  [{ machine: "EM_AARCH64", bits: 32, byte_order: "little" }, false],
+  [{ machine: "EM_386", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "big" }, true],
+  [{ machine: "EM_X86_64", bits: 32, byte_order: "little" }, false],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "big" }, false],
+  [{ machine: "EM_386", bits: 64, byte_order: "little" }, false],
+  [{ machine: "EM_MIPS", bits: 64, byte_order: "big" }, false],
+])("admits only profiled architecture %j: %s", (architecture, admitted) => {
+  expect(
+    binaryLayoutSchema.safeParse({ ...report(), architecture }).success,
+  ).toBe(admitted);
+});
+
 it.each([
   "file-backed-outside",
+  "false-no-file-backing",
   "header-outside",
   "wrong-index",
   "noncanonical-base64",
@@ -79,9 +216,10 @@ it.each([
   const section = value.sections[0];
   if (section === undefined) throw new Error("section missing");
   if (problem === "file-backed-outside") section.file_backing = "file";
+  if (problem === "false-no-file-backing") section.type = "SHT_PROGBITS";
   if (problem === "header-outside") section.header_location.offset = "0x80";
   if (problem === "wrong-index") section.index = 1;
-  if (problem === "wrong-machine") value.architecture.machine = "EM_AARCH64";
+  if (problem === "wrong-machine") value.architecture.machine = "EM_RISCV";
   if (problem === "outside-elf64")
     value.entry_point.reported_value = "0x10000000000000000";
   if (problem === "noncanonical-base64") section.name.bytes_base64 = "AR==";
@@ -99,6 +237,8 @@ it.each([
     false,
   ],
   ["PT_NULL", "0x1", "file", null, false],
+  [0, "0x1", "none", null, true],
+  [0, "0x1", "file", null, false],
   [
     "PT_NULL",
     "0x1",
@@ -163,6 +303,7 @@ it.each([
 
 it.each([
   "valid",
+  "numeric-relr",
   "byte-length",
   "section-identity",
   "decoded-order",
@@ -170,10 +311,10 @@ it.each([
 ])(
   "retains original packed bytes and derived offset provenance: %s",
   (problem) => {
-    const value = report();
+    const value = binaryLayoutSchema.parse(report());
     const section = value.sections[0];
     if (section === undefined) throw new Error("section missing");
-    section.type = "SHT_RELR";
+    section.type = problem === "numeric-relr" ? 19 : "SHT_RELR";
     section.file_backing = "file";
     section.offset = "0x60";
     section.size = "0x8";
@@ -197,12 +338,14 @@ it.each([
         ...value,
         packed_relative_relocations: [table],
       }).success,
-    ).toBe(problem === "valid");
+    ).toBe(problem === "valid" || problem === "numeric-relr");
   },
 );
 
 it.each([
   "valid",
+  "numeric-types",
+  "numeric-invalid-string-link",
   "zero-symbol",
   "zero-without-table",
   "missing-table",
@@ -222,6 +365,9 @@ it.each([
   "wrong-unknown-target",
   "missing-string-table",
   "wrong-string-table-kind",
+  "elf32-symbol-entry",
+  "elf32-undersized-symbol-entry",
+  "elf64-elf32-sized-symbol-entry",
 ])("validates relocation symbol reference semantics: %s", (problem) => {
   const value = binaryLayoutSchema.parse(report());
   value.artifact.bytes = 512;
@@ -287,8 +433,8 @@ it.each([
   };
   const table = value.sections[1];
   const owner = value.sections[2];
-  if (table === undefined || owner === undefined)
-    throw new Error("table or relocation owner missing");
+  if (!table || !owner) throw new Error("table or relocation owner missing");
+  useNumericSectionTypes(value, problem);
   if (problem.startsWith("zero")) {
     relocation.symbol_index = 0;
     relocation.symbol_reference_meaning = "zero-symbol-value";
@@ -305,6 +451,17 @@ it.each([
   if (problem === "owner-link-mismatch") owner.link = 0;
   if (problem === "wrong-meaning")
     relocation.symbol_reference_meaning = "zero-symbol-value";
+  // Elf32_Sym is 16 bytes and Elf64_Sym 24; the minimum follows the ELF class.
+  if (problem.includes("elf32")) {
+    if (problem.startsWith("elf32"))
+      value.architecture = {
+        machine: "EM_386",
+        bits: 32,
+        byte_order: "little",
+      };
+    table.size = "0x20";
+    table.entry_size = problem.includes("undersized") ? "0xc" : "0x10";
+  }
   if (problem.includes("target")) {
     value.image_type = "ET_REL";
     value.entry_point.meaning = "not-applicable";
@@ -352,11 +509,13 @@ it.each([
   expect(binaryLayoutSchema.safeParse(value).success).toBe(
     [
       "valid",
+      "numeric-types",
       "zero-symbol",
       "zero-without-table",
       "valid-section-target",
       "undefined-target",
       "inactive-target",
+      "elf32-symbol-entry",
     ].includes(problem),
   );
 });

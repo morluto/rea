@@ -5,6 +5,7 @@ import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   type JavaScriptSemanticGraphInput,
   type JavaScriptSemanticGraphNode,
+  type JavaScriptSemanticEvidenceReference,
 } from "../../src/domain/javascript/javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticFingerprint,
@@ -89,18 +90,19 @@ export const unknownSemanticGraphTestEvidence =
     evidence_ids: [],
   });
 
-const fixtureNode = (
+export const fixtureNode = (
   kind: (typeof JAVASCRIPT_SEMANTIC_NODE_KINDS)[number],
   role: string,
-  properties: Record<string, JsonValue> = {},
   evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
+  properties: Record<string, JsonValue> = {},
+  modulePath = "bundle.js",
 ): JavaScriptSemanticGraphNode =>
   createJavaScriptSemanticGraphNode(
     {
       kind,
       identity: {
         artifact_sha256: SHA,
-        module_path: "bundle.js",
+        module_path: modulePath,
         source_range: {
           start: { line: 1, column: role.length },
           end: { line: 1, column: role.length + 1 },
@@ -120,23 +122,15 @@ export const semanticFixtureInput = (
   withUnknown = false,
 ): JavaScriptSemanticGraphInput => {
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
-  const module = fixtureNode("module", "module", {}, evidenceContexts);
-  const literal = fixtureNode(
-    "literal",
-    "literal",
-    { value: "TOKEN" },
-    evidenceContexts,
-  );
-  const binding = fixtureNode("binding", "binding", {}, evidenceContexts);
-  const callable = fixtureNode("function", "function", {}, evidenceContexts);
-  const request = fixtureNode(
-    "request",
-    "request",
-    {
-      endpoint: "https://example.invalid/v1",
-    },
-    evidenceContexts,
-  );
+  const module = fixtureNode("module", "module", evidenceContexts);
+  const literal = fixtureNode("literal", "literal", evidenceContexts, {
+    value: "TOKEN",
+  });
+  const binding = fixtureNode("binding", "binding", evidenceContexts);
+  const callable = fixtureNode("function", "function", evidenceContexts);
+  const request = fixtureNode("request", "request", evidenceContexts, {
+    endpoint: "https://example.invalid/v1",
+  });
   const relations = [
     createJavaScriptSemanticGraphRelation(
       {
@@ -250,3 +244,31 @@ export const semanticFixtureGraph = (
   withUnknown = false,
 ): JavaScriptSemanticGraph =>
   createJavaScriptSemanticGraph(semanticFixtureInput(withUnknown));
+
+/** Resolve one fact's compact provenance without changing its stored shape. */
+export const resolveJavaScriptSemanticEvidence = (
+  graph: Pick<JavaScriptSemanticGraph, "evidence_contexts">,
+  reference: JavaScriptSemanticEvidenceReference,
+): ApplicationGraphEvidence => {
+  const context = graph.evidence_contexts.find(
+    ({ context_id }) => context_id === reference.context_id,
+  );
+  if (context === undefined)
+    throw new TypeError("Semantic evidence reference names an absent context");
+  const { context_id: _contextId, ...evidenceContext } = context;
+  return { ...evidenceContext, location: reference.location };
+};
+
+export const registryForGraph = (
+  graph: JavaScriptSemanticGraph,
+): JavaScriptSemanticEvidenceContextRegistry => {
+  const registry = new JavaScriptSemanticEvidenceContextRegistry();
+  for (const { evidence: reference } of [
+    ...graph.nodes,
+    ...graph.relations,
+    ...graph.unknowns,
+    ...graph.fingerprints,
+  ])
+    registry.intern(resolveJavaScriptSemanticEvidence(graph, reference));
+  return registry;
+};

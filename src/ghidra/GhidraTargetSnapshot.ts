@@ -1,16 +1,30 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { open, rm, type FileHandle } from "node:fs/promises";
-import { extname, join } from "node:path";
-import { Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { open } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
+import {
+  withArtifactRegularFile,
+  withArtifactFileHandle,
+  assertArtifactReadActive,
+  mapArtifactFileFailure,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  readArtifactFileChunks,
+} from "../resources/index.js";
+import {
+  NonRegularFileReadError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
 } from "../domain/analysisErrorCore.js";
-import { windowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import {
+  WindowsSnapshotCancelledError,
+  windowsPrivateRuntime,
+} from "../windows/WindowsPrivateRuntime.js";
 
 /** Immutable target copy admitted to one ephemeral Ghidra import. */
 export interface GhidraTargetSnapshot {
@@ -27,21 +41,24 @@ export const createGhidraTargetSnapshot = async (
   options: {
     readonly signal?: AbortSignal;
     readonly platform?: NodeJS.Platform;
+    readonly resourceScope?: ArtifactResourceScope;
   } = {},
 ): Promise<GhidraTargetSnapshot> => {
   if (!/^[a-f0-9]{64}$/u.test(expectedSha256))
     throw new TypeError("Ghidra target SHA-256 commitment is invalid");
-  const suffix = safeExtension(sourcePath);
-  const snapshotPath = join(
-    runtimeRoot,
-    `target-${expectedSha256.slice(0, 12)}${suffix}`,
-  );
-  if ((options.platform ?? process.platform) === "win32") {
-    const observed = await windowsPrivateRuntime(runtimeRoot).snapshot(
-      sourcePath,
-      `target-${expectedSha256.slice(0, 12)}${suffix}`,
-      options.signal,
-    );
+  const snapshotFileName = ghidraSnapshotFileName(sourcePath, expectedSha256);
+  const snapshotPath = join(runtimeRoot, snapshotFileName);
+  if ((options.platform ?? HOST_PLATFORM.platform) === "win32") {
+    const observed = await windowsPrivateRuntime(runtimeRoot)
+      .snapshot(sourcePath, snapshotFileName, options.signal)
+      .catch((cause: unknown) => {
+        if (cause instanceof WindowsSnapshotCancelledError)
+          throw new ArtifactReaderFailure("cancelled", cause.message, {
+            cause,
+            cancellation: { reason: cause.reason },
+          });
+        throw cause;
+      });
     if (observed.sha256 !== expectedSha256)
       throw new AnalysisArtifactChangedError(
         "open_binary",
@@ -54,74 +71,111 @@ export const createGhidraTargetSnapshot = async (
       admission: { source: observed.source, snapshot: observed.snapshot },
     };
   }
-  let source: FileHandle | undefined;
-  let destination: FileHandle | undefined;
+  const resources = options.resourceScope ?? new ArtifactResourceScope();
   try {
-    source = await openSnapshotSource(sourcePath);
-    if (!(await source.stat()).isFile())
-      throw new AnalysisArtifactChangedError(
-        "open_binary",
+    return await resources.run(() =>
+      withArtifactRegularFile(
         sourcePath,
-        "The selected Ghidra source is no longer a regular file",
-      );
-    destination = await open(snapshotPath, "wx", 0o600);
-    await destination.chmod(0o600);
-    const hash = createHash("sha256");
-    const digest = new Transform({
-      transform(chunk: unknown, _encoding, done) {
-        if (!Buffer.isBuffer(chunk)) {
-          done(new TypeError("Ghidra snapshot stream must contain bytes"));
-          return;
-        }
-        hash.update(chunk);
-        done(null, chunk);
-      },
-    });
-    await pipeline(
-      source.createReadStream(),
-      digest,
-      destination.createWriteStream(),
-      options.signal === undefined ? {} : { signal: options.signal },
+        resources,
+        options.signal,
+        async ({ handle: source }) => {
+          const initial = await source.stat({ bigint: true });
+          assertArtifactReadActive(options.signal);
+          return await withArtifactFileHandle(
+            snapshotPath,
+            await open(snapshotPath, "wx", 0o600),
+            resources,
+            options.signal,
+            async (destination) => {
+              await destination.chmod(0o600);
+              const hash = createHash("sha256");
+              const input = readArtifactFileChunks(source, {
+                end: initial.size,
+                signal: options.signal,
+              });
+              for await (const chunk of input) {
+                assertArtifactReadActive(options.signal);
+                // writeFile completes the entire supplied chunk at the current
+                // descriptor offset. Only this owner closes either descriptor.
+                await destination.writeFile(chunk);
+                hash.update(chunk);
+                assertArtifactReadActive(options.signal);
+              }
+              const coverage = input.readCoverage();
+              const observed = hash.digest("hex");
+              const after = await source.stat({ bigint: true });
+              if (
+                coverage.kind !== "complete" ||
+                coverage.bytes !== initial.size ||
+                !sameRegularFileState(initial, after) ||
+                observed !== expectedSha256
+              )
+                throw new AnalysisArtifactChangedError(
+                  "open_binary",
+                  sourcePath,
+                  `Ghidra target snapshot digest or source identity changed: expected ${expectedSha256}, observed ${observed}`,
+                );
+              assertArtifactReadActive(options.signal);
+              return { path: snapshotPath, sha256: observed };
+            },
+          );
+        },
+        "follow",
+      ),
     );
-    const observedSha256 = hash.digest("hex");
-    if (observedSha256 !== expectedSha256)
-      throw new AnalysisArtifactChangedError(
-        "open_binary",
-        sourcePath,
-        `Ghidra target snapshot digest mismatch: expected ${expectedSha256}, observed ${observedSha256}`,
-      );
-    return { path: snapshotPath, sha256: observedSha256 };
   } catch (cause: unknown) {
-    if (destination !== undefined)
-      await rm(snapshotPath, { force: true }).catch((cause: unknown) => {
-        // best-effort cleanup: snapshot removal must not mask the copy failure.
-        void cause;
-      });
-    throw cause;
-  } finally {
-    await Promise.all([source?.close(), destination?.close()]);
+    // The private runtime owns partial snapshot entries. Its owner removes the
+    // tree after every retained descriptor settles; do not unlink a raw name.
+    throw mapArtifactFileFailure(cause, classifySnapshotFailure);
   }
 };
 
-const openSnapshotSource = async (path: string): Promise<FileHandle> => {
-  try {
-    // A path replaced by a FIFO must not block startup before its type is checked.
-    return await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-  } catch (cause: unknown) {
-    const code =
-      cause instanceof Error && "code" in cause ? cause.code : undefined;
-    if (code === "EACCES" || code === "EPERM")
-      throw new AnalysisAccessDeniedError("open_binary", path, code, { cause });
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP")
-      throw new AnalysisArtifactChangedError(
-        "open_binary",
-        path,
-        `The selected Ghidra source could not be opened (${code})`,
-        { cause },
-      );
-    throw cause;
-  }
+const classifySnapshotFailure = (cause: unknown): unknown => {
+  if (cause instanceof NonRegularFileReadError)
+    return new AnalysisArtifactChangedError(
+      "open_binary",
+      cause.path,
+      "The selected Ghidra source is no longer a regular file",
+      { cause },
+    );
+  if (!(cause instanceof Error) || !("code" in cause)) return cause;
+  const path =
+    "path" in cause && typeof cause.path === "string"
+      ? cause.path
+      : "Ghidra snapshot file";
+  if (cause.code === "EACCES" || cause.code === "EPERM")
+    return new AnalysisAccessDeniedError("open_binary", path, cause.code, {
+      cause,
+    });
+  if (
+    cause.code === "ENOENT" ||
+    cause.code === "ENOTDIR" ||
+    cause.code === "ELOOP"
+  )
+    return new AnalysisArtifactChangedError(
+      "open_binary",
+      path,
+      `The selected Ghidra file could not be opened (${cause.code})`,
+      { cause },
+    );
+  return cause;
 };
+
+/**
+ * Filename Ghidra's loader receives for one immutable snapshot.
+ *
+ * ComLoader accepts a provider name only when it ends in `.com`. Node's
+ * `extname` treats a basename of `.com` as a dotfile with no extension, so
+ * that name is preserved explicitly. Selection uses this same filename.
+ */
+export const ghidraSnapshotFileName = (
+  sourcePath: string,
+  sha256: string,
+): string =>
+  `target-${sha256.slice(0, 12)}${ghidraSnapshotExtension(sourcePath)}`;
+
+const ghidraSnapshotExtension = (sourcePath: string): string =>
+  /^\.com$/iu.test(basename(sourcePath)) ? ".com" : safeExtension(sourcePath);
 
 const safeExtension = (path: string): string => {
   const extension = extname(path);

@@ -1,20 +1,40 @@
+import {
+  admitEvidenceRecordFormat,
+  EVIDENCE_FORMAT_REVISION,
+  evidenceFormatSchema,
+} from "./evidenceFormat.js";
+import { isDeepStrictEqual } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
+
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
+import {
+  binaryTargetIdentity,
+  directoryTargetIdentitySchema,
+  type DirectoryTargetIdentity,
+  fileTargetSelectionSchema,
+  nonFileTargetIdentitySchema,
+  sessionTargetIdentitySchema,
+  unknownTargetIdentitySchema,
+  type NonFileTargetIdentity,
+  sameTargetIdentity,
+  type FileTargetIdentity,
+  type FileTargetSelection,
+  type TargetIdentity,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
+import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
-  BINARY_ARCHITECTURES,
-  type BinaryArchitecture,
-  type BinaryTarget,
-} from "./binaryTargetTypes.js";
-import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
@@ -23,14 +43,19 @@ import {
 } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
+  canBorrowParsedJsonSnapshot,
+  immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import {
-  relationshipCoverageSchema,
-  type RelationshipCoverage,
+  evidenceRelationshipCoverageSchema,
+  type EvidenceRelationshipCoverage,
 } from "./relationshipCoverage.js";
+
+/** Predicate shared by ordinary provider analysis observations. */
+export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
@@ -38,52 +63,67 @@ export const providerSchema = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectFormatSchema = z.enum([
-  "hopper",
-  "analysis-database",
-  "mach-o",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
-  "directory",
-  "file",
-  "unknown",
-  "mach-o-universal",
-  "javascript-bundle",
-  "entitlements",
-]);
-const subjectBaseSchema = z.strictObject({
+/** Formats whose identity carries each selection kind. */
+const SELECTION_FORMATS: Readonly<
+  Record<FileTargetSelection["kind"], readonly string[]>
+> = {
+  "entry-point": ["raw-binary", "gamecube-dol"],
+  "esp-flash": ["esp-flash-image"],
+  "universal-slice": ["mach-o-universal"],
+};
+/** The file identity an Evidence subject commits to, with its format-owned declaration. */
+const subjectIdentitySchema = withEvidenceSubjectDeclaration(
+  z.strictObject({
+    kind: z.literal("file"),
+    sha256: digestSchema,
+    selection: fileTargetSelectionSchema.nullable(),
+  }),
+).superRefine((identity, context) => {
+  if (
+    identity.selection !== null &&
+    !SELECTION_FORMATS[identity.selection.kind].includes(identity.format)
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["selection"],
+      message: `A ${identity.selection.kind} selection does not apply to format ${identity.format}`,
+    });
+});
+const fileSubjectSchema = z.strictObject({
+  /** The committed target identity; the remaining members are display facts. */
+  identity: subjectIdentitySchema,
   name: z.string().min(1),
-  digest: z.strictObject({ sha256: digestSchema }),
   local_path: nulFreeStringSchema,
 });
-// The format owns the architecture claim, including nested Evidence subjects.
-const subjectSchema = z.discriminatedUnion("format", [
-  subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
-    architecture: z.enum(BINARY_ARCHITECTURES).exclude(["6502"]).nullable(),
-  }),
-  subjectBaseSchema.extend({
-    format: z.literal("raw-binary"),
-    architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
-  }),
+/** A directory named by its complete root digest, with the same display facts as a file. */
+const directorySubjectSchema = z.strictObject({
+  identity: directoryTargetIdentitySchema,
+  name: z.string().min(1),
+  local_path: nulFreeStringSchema,
+});
+/** A debugger session whose launch file is validated like a file subject. */
+const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
+  target: z.discriminatedUnion("kind", [
+    subjectIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
+});
+/** A subject that names no local path (a URL, process, session, or unknown target) has no display facts. */
+const nonFileSubjectSchema = z.strictObject({
+  identity: z.discriminatedUnion("kind", [
+    nonFileTargetIdentitySchema,
+    sessionSubjectIdentitySchema,
+  ]),
+  name: z.null(),
+  local_path: z.null(),
+});
+const subjectSchema = z.union([
+  fileSubjectSchema,
+  directorySubjectSchema,
+  nonFileSubjectSchema,
 ]);
+/** The Evidence subject, for persistence formats that embed one. */
+export const evidenceSubjectSchema = subjectSchema;
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
@@ -96,16 +136,17 @@ export const evidenceLocationSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
   z.strictObject({
     kind: z.literal("file-offset"),
-    offset: z.number().int().min(0),
+    offset: z.int().min(0),
   }),
   z.strictObject({
     kind: z.literal("file-offset-range"),
-    start: z.number().int().min(0),
-    end: z.number().int().min(0),
+    start: z.int().min(0),
+    end: z.int().min(0),
   }),
 ]);
 
-const evidenceAuthoritySchema = z.enum([
+/** Source authority vocabulary owned by Evidence and reused by its consumers. */
+export const evidenceAuthoritySchema = z.enum([
   "shipped-artifact",
   "controlled-replay",
   "historical-reference",
@@ -119,23 +160,42 @@ const executionEnvironmentSchema = z.strictObject({
   architecture: z.string().min(1),
   isolation: z.enum(["none", "process", "container", "virtual-machine"]),
 });
+const callerInputPathsSchema = z.record(
+  nulFreeStringSchema,
+  z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
+);
+/** Caller-selected auxiliary paths, retaining ordered repeated options. */
+export type CallerInputPaths = Readonly<
+  Record<string, string | readonly string[]>
+>;
 
 const evidenceBaseSchema = z
   .object({
     evidence_id: prefixedDigestSchema("ev"),
-    subject: subjectSchema.nullable(),
+    /** Selects the reader; not part of the committed content. */
+    evidence_format: evidenceFormatSchema,
+    subject: subjectSchema,
     provider: providerSchema,
     analysis_profile: analysisProfileSchema.nullable(),
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
     parameters: jsonObjectSchema,
+    /** Verbatim selected path; present only when the request selected one directly. */
+    caller_input_path: nulFreeStringSchema
+      .exactOptional()
+      .describe("Verbatim direct-request path; not part of semantic identity."),
+    caller_input_paths: callerInputPathsSchema
+      .exactOptional()
+      .describe(
+        "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
+      ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
+    relationship_coverage: evidenceRelationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     evidence_links: z.array(prefixedDigestSchema("ev")),
   })
@@ -168,6 +228,15 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
+/** Strict Evidence parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceSchema = evidenceBaseSchema
+  .safeExtend({
+    parameters: detachedJsonObjectSchema,
+    raw_result: detachedJsonValueSchema.nullable(),
+    normalized_result: detachedJsonValueSchema,
+  })
+  .superRefine(validateAnalysisProfileProvider);
+
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {
     const { evidence_id: evidenceId, ...withoutId } = evidence;
@@ -194,65 +263,218 @@ const immutableResultSchema = z
     if (issue !== undefined)
       context.addIssue({ code: "custom", message: issue });
   });
+const immutableResultEvidenceSchema = evidenceSchema.safeExtend({
+  normalized_result: immutableResultSchema,
+});
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Candidate local artifact identity validated by the Evidence subject schema. */
 export interface EvidenceSubjectTarget {
   readonly path: string;
+  /** The file's SHA-256, or a directory's complete tree digest. */
   readonly sha256: string;
-  readonly format: z.infer<typeof subjectSchema>["format"];
+  readonly format: z.infer<typeof subjectIdentitySchema>["format"];
   readonly architecture?: BinaryArchitecture;
+  /**
+   * What the observation selected inside the bytes. Null selects nothing: the
+   * observation covers the whole file even when a session opened one slice of
+   * it. Absent also selects nothing, except that a session binds a subject
+   * naming its open target's bytes to that target's selection.
+   */
+  readonly selection?: FileTargetSelection | null;
+  /**
+   * Present only for a directory named by its complete tree digest: the
+   * digest's algorithm and version. `sha256` is then that digest and
+   * `format` is `directory`. Absent, the target is a file.
+   */
+  readonly tree?: DirectoryTreeAlgorithm;
+  /** Preserve an existing Evidence subject's display name when deriving observations. */
+  readonly name?: string;
 }
+
+/** The tree digest algorithm a directory subject names. */
+export type DirectoryTreeAlgorithm = Pick<
+  DirectoryTargetIdentity,
+  "algorithm" | "version"
+>;
+
+/** What a producer names as an Evidence subject: a file or directory target, or an identity without a local path such as a URL or an explicit unknown. */
+export type EvidenceSubjectInput =
+  | EvidenceSubjectTarget
+  | BinaryTarget
+  | NonFileTargetIdentity;
+
+type FileEvidenceSubject = z.infer<typeof fileSubjectSchema>;
+type DirectoryEvidenceSubject = z.infer<typeof directorySubjectSchema>;
+
+/** Whether a subject names a file. */
+const isFileSubject = (
+  subject: Evidence["subject"] | undefined,
+): subject is FileEvidenceSubject => subject?.identity.kind === "file";
+
+/** Whether a subject names a local file or directory; only those have display facts. */
+const isLocalSubject = (
+  subject: Evidence["subject"] | undefined,
+): subject is FileEvidenceSubject | DirectoryEvidenceSubject =>
+  subject?.identity.kind === "file" || subject?.identity.kind === "directory";
+
+/** Preserve the complete file or directory subject when deriving a new Evidence observation. */
+export const evidenceSubjectTarget = (
+  subject: Evidence["subject"] | undefined,
+): EvidenceSubjectTarget | undefined => {
+  if (!isLocalSubject(subject)) return undefined;
+  const { identity } = subject;
+  if (identity.kind === "directory")
+    return {
+      path: subject.local_path,
+      sha256: identity.sha256,
+      format: "directory",
+      tree: { algorithm: identity.algorithm, version: identity.version },
+      name: subject.name,
+    };
+  return {
+    path: subject.local_path,
+    sha256: identity.sha256,
+    format: identity.format,
+    name: subject.name,
+    ...(identity.architecture === null
+      ? {}
+      : { architecture: identity.architecture }),
+    ...(identity.selection === null ? {} : { selection: identity.selection }),
+  };
+};
+
+/** Name the same subject in a derived observation: the file or directory target, or the same identity without a local path. */
+export const evidenceSubjectInput = (
+  subject: Evidence["subject"],
+): EvidenceSubjectInput =>
+  evidenceSubjectTarget(subject) ?? (subject.identity as NonFileTargetIdentity);
+
+/** The one projection of a producer's subject input into its target identity. */
+export const evidenceSubjectTargetIdentity = (
+  target: EvidenceSubjectTarget | BinaryTarget,
+): FileTargetIdentity | DirectoryTargetIdentity => {
+  if ("kind" in target) return binaryTargetIdentity(target);
+  if (target.tree === undefined)
+    return {
+      kind: "file",
+      sha256: target.sha256,
+      format: target.format,
+      architecture: target.architecture ?? null,
+      selection: target.selection ?? null,
+    };
+  if (
+    target.format !== "directory" ||
+    target.architecture !== undefined ||
+    (target.selection ?? null) !== null
+  )
+    throw new TypeError(
+      "A directory subject names only its tree digest; it has no format other than directory, architecture or selection",
+    );
+  return {
+    kind: "directory",
+    algorithm: target.tree.algorithm,
+    version: target.tree.version,
+    sha256: target.sha256,
+  };
+};
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
   subject: EvidenceSubjectTarget,
-  target: EvidenceSubjectTarget,
+  target: EvidenceSubjectTarget | BinaryTarget,
 ): EvidenceSubjectTarget =>
-  subject.sha256 === target.sha256 &&
-  subject.format === target.format &&
-  (subject.architecture ?? null) === (target.architecture ?? null)
+  sameTargetIdentity(
+    evidenceSubjectTargetIdentity(subject),
+    evidenceSubjectTargetIdentity(target),
+  )
     ? { ...subject, path: target.path }
     : subject;
 
-type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
+/** The one builder of a persisted Evidence subject from a producer's target. */
+export const evidenceSubject = (
+  target: EvidenceSubjectInput,
+): Evidence["subject"] =>
+  subjectSchema.parse(
+    "path" in target
+      ? {
+          identity: evidenceSubjectTargetIdentity(target),
+          name:
+            ("name" in target ? target.name : undefined) ??
+            (basename(target.path) || "artifact"),
+          local_path: target.path,
+        }
+      : { identity: target, name: null, local_path: null },
+  );
+/** The target identity an Evidence record commits to; absent only for a partial record. */
+export const evidenceTargetIdentity = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): TargetIdentity | null => evidence.subject?.identity ?? null;
+
+/** The file identity an Evidence record names, when its subject is a file. */
+export const evidenceFileTarget = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): FileTargetIdentity | undefined => {
+  const identity = evidenceTargetIdentity(evidence);
+  return identity?.kind === "file" ? identity : undefined;
+};
+
+/** The content identity a local file or directory subject commits to. */
+export const evidenceLocalTarget = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): FileTargetIdentity | DirectoryTargetIdentity | undefined => {
+  const identity = evidenceTargetIdentity(evidence);
+  return identity?.kind === "file" || identity?.kind === "directory"
+    ? identity
+    : undefined;
+};
+
+/** Display facts beside the subject identity; never part of the Evidence ID. */
+export const evidenceSubjectDisplay = (evidence: {
+  readonly subject?: Evidence["subject"] | undefined;
+}): { readonly name: string; readonly local_path: string } | undefined => {
+  const subject = evidence.subject;
+  return isLocalSubject(subject)
+    ? { name: subject.name, local_path: subject.local_path }
+    : undefined;
+};
+
+export type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
-export interface EvidenceProvider {
-  readonly id: string;
-  readonly name: string;
-  readonly version: string | null;
-}
+export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;
 
-export interface EvidenceObservation {
+/** Payloads admitted and snapshotted by the ordinary Evidence constructor. */
+export interface EvidenceObservationInput {
   readonly predicateType?: string;
   readonly operation: string;
-  readonly parameters: Readonly<Record<string, JsonValue>>;
-  readonly result: JsonValue;
+  readonly parameters: unknown;
+  readonly result: unknown;
   readonly analysisProfile?: AnalysisProfileCommitment;
-  readonly rawResult?: JsonValue;
+  readonly rawResult?: unknown;
   readonly confidence?: "observed" | "derived" | "inferred";
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
   readonly limitations?: readonly string[];
-  readonly relationshipCoverage?: RelationshipCoverage;
-  /** Reason the subject identity is unavailable, when no target identity is supplied. */
-  readonly subjectUnavailableReason?: string;
+  readonly relationshipCoverage?: EvidenceRelationshipCoverage;
   readonly locations?: readonly EvidenceLocation[];
   readonly evidenceLinks?: readonly string[];
 }
 
+/** Producer facts that already promise JSON, including cooperative Evidence input. */
+export interface EvidenceObservation extends EvidenceObservationInput {
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly result: JsonValue;
+  readonly rawResult?: JsonValue;
+}
+
 type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
-const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
-  subject:
-    evidence.subject === null
-      ? null
-      : {
-          digest: evidence.subject.digest,
-          format: evidence.subject.format,
-          architecture: evidence.subject.architecture,
-        },
+/** Content committed by an Evidence ID, excluding local request/display metadata. */
+export const evidenceSemanticContent = (
+  evidence: EvidenceWithoutId,
+): Record<string, JsonValue> => ({
+  subject: evidence.subject.identity,
   provider: evidence.provider,
   analysis_profile: evidence.analysis_profile,
   predicate_type: evidence.predicate_type,
@@ -264,16 +486,14 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   authority: evidence.authority,
   environment: evidence.environment,
   limitations: evidence.limitations,
-  ...(evidence.relationship_coverage === null
-    ? {}
-    : { relationship_coverage: evidence.relationship_coverage }),
+  relationship_coverage: evidence.relationship_coverage,
   locations: evidence.locations,
   evidence_links: evidence.evidence_links,
 });
 
-/** Hash semantic content, including raw results and excluding display-subject fields. */
+/** Hash semantic content, including raw results and excluding local metadata. */
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
-  `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
+  `ev_${digestCanonicalValue(evidenceSemanticContent(evidence), "Evidence")}`;
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
@@ -282,12 +502,51 @@ export const parseEvidence = (input: unknown): Evidence => {
       ? immutableEvidenceSnapshots.get(input)
       : undefined;
   if (immutable !== undefined) return immutable;
+  admitEvidenceRecordFormat(input);
   return authenticatedEvidenceSchema.parse(input);
 };
 
+/** Evidence owns all presentation metadata excluded from its semantic identity. */
+export const evidenceDisplayMetadataAgree = (
+  left: Evidence,
+  right: Evidence,
+): boolean =>
+  left.subject?.name === right.subject?.name &&
+  left.subject?.local_path === right.subject?.local_path &&
+  left.caller_input_path === right.caller_input_path &&
+  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
+
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
-export const immutableEvidence = (input: unknown): Evidence =>
-  rememberImmutableEvidence(parseEvidence(input));
+export const immutableEvidence = (input: unknown): Evidence => {
+  const parsed = parseEvidence(input);
+  return rememberImmutableEvidence(
+    canBorrowParsedJsonSnapshot(input, parsed) ? input : parsed,
+  );
+};
+
+/**
+ * Authenticate a record already validated and exclusively owned by
+ * `evidenceSchema`, avoiding a second schema parse and deep clone.
+ */
+export const authenticateParsedEvidence = (
+  record: Evidence,
+  seal: boolean,
+): Evidence => {
+  const immutable = immutableEvidenceSnapshots.get(record);
+  if (immutable !== undefined) return immutable;
+  admitEvidenceRecordFormat(record);
+  const { evidence_id: evidenceId, ...withoutId } = record;
+  if (computeEvidenceId(withoutId) !== evidenceId)
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["evidence_id"],
+        message: "Evidence semantic identifier does not match its record",
+      },
+    ]);
+  if (!seal) return record;
+  return rememberImmutableEvidence(freezeOwnedJsonTreeSnapshot(record));
+};
 
 /** Rebind display path metadata when an authenticated record names this target. */
 export const rebindEvidenceToTargetPath = (
@@ -295,22 +554,19 @@ export const rebindEvidenceToTargetPath = (
   target: EvidenceSubjectTarget,
 ): Evidence => {
   const subject = evidence.subject;
-  if (subject === null) return evidence;
-  const rebound = rebindEvidenceSubjectTargetPath(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
-        ? {}
-        : { architecture: subject.architecture }),
-    },
-    target,
-  );
-  if (rebound.path === subject.local_path) return evidence;
+  if (!isLocalSubject(subject)) return evidence;
+  if (
+    !sameTargetIdentity(subject.identity, evidenceSubjectTargetIdentity(target))
+  )
+    return evidence;
+  if (
+    target.path === subject.local_path &&
+    (target.name === undefined || target.name === subject.name)
+  )
+    return evidence;
   const reboundSubject = subjectSchema.parse({
     ...subject,
-    name: basename(target.path) || "artifact",
+    name: target.name ?? (basename(target.path) || "artifact"),
     local_path: target.path,
   });
   const reboundEvidence = { ...evidence, subject: reboundSubject };
@@ -319,11 +575,52 @@ export const rebindEvidenceToTargetPath = (
   // The original authenticated Evidence owns immutable payloads. Only the
   // small display subject and envelope are new, so preserve those payloads
   // without reparsing a potentially large analysis result.
-  Object.freeze(reboundSubject.digest);
-  Object.freeze(reboundSubject);
-  Object.freeze(reboundEvidence);
-  immutableEvidenceSnapshots.set(reboundEvidence, reboundEvidence);
-  return reboundEvidence;
+  return rememberReboundEvidence(evidence, reboundEvidence);
+};
+
+/** Bind the exact selected request path without changing semantic identity or stored history. */
+export const withEvidenceCallerInputPath = (
+  evidence: Evidence,
+  rawPath: string | undefined,
+  additionalPaths?: CallerInputPaths,
+): Evidence => {
+  const callerInputPath =
+    rawPath === undefined ? undefined : nulFreeStringSchema.parse(rawPath);
+  const owned = immutableEvidence(evidence);
+  const paths =
+    additionalPaths === undefined
+      ? undefined
+      : callerInputPathsSchema.parse(additionalPaths);
+  const samePaths =
+    paths === undefined || isDeepStrictEqual(owned.caller_input_paths, paths);
+  if (
+    (callerInputPath === undefined ||
+      owned.caller_input_path === callerInputPath) &&
+    samePaths
+  )
+    return owned;
+  // The authenticated source owns its immutable payloads. Only this small
+  // envelope changes, so replay does not copy a document-sized result.
+  const rebound = {
+    ...owned,
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
+    ...(paths === undefined ? {} : { caller_input_paths: paths }),
+  };
+  return rememberReboundEvidence(owned, rebound);
+};
+
+/** Carry the source's sealing proof before sealing only the changed envelope. */
+const rememberReboundEvidence = (
+  source: Evidence,
+  rebound: Evidence,
+): Evidence => {
+  // Each own member belongs to an authenticated immutable source. Register
+  // these shared roots so sealing the envelope never walks their payloads.
+  for (const key of Object.keys(source))
+    immutableJsonSnapshotMember(source, key);
+  return rememberImmutableEvidence(rebound);
 };
 
 /** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
@@ -336,27 +633,44 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   return evidence;
 };
 
-/** Build deterministic Evidence from an immutable artifact subject. */
+/** Ownership policy for the freshly parsed Evidence snapshot. */
+export interface EvidenceCreationOptions {
+  readonly immutable?: boolean;
+  /** Selected spelling is recorded only when this target matches the subject. */
+  readonly callerTarget?: BinaryTarget | null | undefined;
+}
+
+/** Admit payloads into deterministic Evidence bound to an immutable artifact subject. */
 export const createEvidence = (
-  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  target: EvidenceSubjectInput,
   provider: EvidenceProvider,
-  observation: EvidenceObservation,
+  observation: EvidenceObservationInput,
+  options?: EvidenceCreationOptions,
 ): Evidence => {
   const { normalized, sharedResult } = normalizeEvidenceObservation(
     target,
     provider,
     observation,
+    options?.callerTarget,
   );
   const evidence = {
     ...normalized,
     evidence_id: computeEvidenceId(normalized),
   };
-  return sharedResult ? rememberImmutableEvidence(evidence) : evidence;
+  // Seal this already parsed, exclusively owned snapshot without authenticating
+  // or copying its payload again, including later partial-error delivery.
+  if (sharedResult || options?.immutable === true) {
+    // The normalizer's JSON parser clones mutable payloads into trees and only
+    // borrows previously sealed roots. No graph-sized sealing scratch is needed.
+    freezeOwnedJsonTreeSnapshot(evidence);
+    immutableEvidenceSnapshots.set(evidence, evidence);
+  }
+  return evidence;
 };
 
 /** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */
 export function* createImmutableEvidenceSteps(
-  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  target: EvidenceSubjectInput,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
 ): Generator<void, Evidence> {
@@ -373,7 +687,7 @@ export function* createImmutableEvidenceSteps(
     observation,
   );
   const digest = yield* canonicalJsonDigestSteps(
-    semanticProjection(normalized),
+    evidenceSemanticContent(normalized),
   );
   return rememberImmutableEvidence({
     ...normalized,
@@ -381,71 +695,77 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
-const normalizeEvidenceObservation = (
-  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+/** Borrow input collections for admission. */
+export const evidenceEnvelopeForAdmission = (
+  target: EvidenceSubjectInput,
   provider: EvidenceProvider,
-  observation: EvidenceObservation,
+  observation: EvidenceObservationInput,
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) => {
-  const subject =
-    target === undefined
-      ? null
-      : {
-          name: basename(target.path) || "artifact",
-          digest: { sha256: target.sha256 },
-          format: target.format,
-          architecture: target.architecture ?? null,
-          local_path: target.path,
-        };
-  const semantic = {
-    subject:
-      subject === null
-        ? null
-        : {
-            digest: subject.digest,
-            format: subject.format,
-            architecture: subject.architecture,
-          },
+  const subject = evidenceSubject(target);
+  const callerInputPath =
+    callerTarget?.callerInputPath !== undefined &&
+    isFileSubject(subject) &&
+    subject.local_path === callerTarget.path &&
+    sameTargetIdentity(subject.identity, binaryTargetIdentity(callerTarget))
+      ? callerTarget.callerInputPath
+      : undefined;
+  return {
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
+    evidence_id: `ev_${"0".repeat(64)}`,
+    evidence_format: EVIDENCE_FORMAT_REVISION,
+    subject,
     provider: {
       id: provider.id,
       name: provider.name,
       version: provider.version,
     },
     analysis_profile: observation.analysisProfile ?? null,
-    predicate_type: observation.predicateType ?? "rea.analysis",
+    predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
     parameters: observation.parameters,
     raw_result: observation.rawResult ?? null,
     normalized_result: observation.result,
     confidence: observation.confidence ?? "observed",
-    authority: observation.authority ?? "shipped-artifact",
+    // Only a subject that names an identified target can support shipment
+    // authority; an unknown target names no artifact and claims none.
+    authority:
+      observation.authority ??
+      (subject.identity.kind === "unknown"
+        ? "analyst-inference"
+        : "shipped-artifact"),
     environment: observation.environment ?? null,
-    limitations: [
-      ...(target === undefined
-        ? [
-            observation.subjectUnavailableReason ??
-              "Artifact identity is unavailable for this observation.",
-          ]
-        : []),
-      ...(observation.limitations ?? []),
-    ],
+    limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
       ? { relationship_coverage: null }
       : { relationship_coverage: observation.relationshipCoverage }),
-    locations: [...(observation.locations ?? [])],
-    evidence_links: [...(observation.evidenceLinks ?? [])],
-  } satisfies JsonValue;
+    locations: observation.locations ?? [],
+    evidence_links: observation.evidenceLinks ?? [],
+  };
+};
+
+const normalizeEvidenceObservation = (
+  target: EvidenceSubjectInput,
+  provider: EvidenceProvider,
+  observation: EvidenceObservationInput,
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
+) => {
+  const envelope = evidenceEnvelopeForAdmission(
+    target,
+    provider,
+    observation,
+    callerTarget,
+  );
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
   const selectedSchema = sharedResult
-    ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
+    ? immutableResultEvidenceSchema
     : evidenceSchema;
-  const normalized = selectedSchema.parse({
-    ...semantic,
-    evidence_id: `ev_${"0".repeat(64)}`,
-    subject,
-  });
+  const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only
   // its derived identifier changes here; parsing again clones the full payload
   // and recomputes the same digest while the previous snapshot is still live.

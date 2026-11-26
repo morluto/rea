@@ -1,19 +1,20 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import * as t from "@babel/types";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import {
   symbolicTruth,
   symbolicVariants,
   type SymbolicValue,
 } from "./javascriptSymbolicValues.js";
 
-const resolverFor = (source: string) => {
+const resolverFor = (source: string, indexMemberMutationFacts?: () => void) => {
   const parsed = parseJavaScriptSource(source);
   if (parsed === null) throw new Error("symbolic source fixture did not parse");
   const state = completeSemanticSteps(
@@ -21,7 +22,12 @@ const resolverFor = (source: string) => {
   );
   return {
     parsed,
-    resolver: new JavaScriptSymbolicBindings(state, parsed.program),
+    resolver: new JavaScriptSymbolicBindings(
+      state,
+      parsed.program,
+      undefined,
+      indexMemberMutationFacts,
+    ),
   };
 };
 
@@ -32,8 +38,9 @@ const inspectFixture = (
     resolver: JavaScriptSymbolicBindings,
     node: t.CallExpression,
   ) => SymbolicValue = (resolver, node) => resolver.evaluate(node.arguments[0]),
+  indexMemberMutationFacts?: () => void,
 ) => {
-  const { parsed, resolver } = resolverFor(source);
+  const { parsed, resolver } = resolverFor(source, indexMemberMutationFacts);
   const values: SymbolicValue[] = [];
   traverseJavaScriptAst(parsed.program, {
     enter: (node) => {
@@ -48,6 +55,26 @@ const inspectFixture = (
   return { parsed, resolver, values };
 };
 
+it("requests member-mutation facts only for a late initializer proof", () => {
+  const indexMemberMutationFacts = vi.fn();
+  inspectFixture(
+    `function run() { inspect(format("value")); }
+    var format = value => value;
+    run();`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).toHaveBeenCalledOnce();
+
+  indexMemberMutationFacts.mockClear();
+  inspectFixture(
+    `const value = "ready"; inspect(value);`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).not.toHaveBeenCalled();
+});
+
 const inspectedValues = (source: string): SymbolicValue[] =>
   inspectFixture(source).values;
 
@@ -58,6 +85,54 @@ const inspectOne = (source: string): SymbolicValue => {
   if (value === undefined) throw new Error("inspect call result missing");
   return value;
 };
+
+it("bounds a late loader proof across 15,000 aliases", () => {
+  const aliases = Array.from({ length: 15_000 }, (_, index) =>
+    index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
+  ).join("\n");
+  const { resolver, values } = inspectFixture(`
+    function run() { inspect(load); }
+    ${aliases}
+    var load = a14999;
+  `);
+
+  expect(values).toEqual([expect.objectContaining({ kind: "unknown" })]);
+  expect(resolver.unresolvedLoader).toBe(true);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("bounds a late loader proof across 15,000 expression nodes", () => {
+  // Build the accepted AST directly so this tests the resolver's depth bound
+  // independently of the source parser's own stack capacity.
+  let initializer: t.Expression = t.identifier("value0");
+  for (let index = 1; index < 15_000; index += 1)
+    initializer = t.binaryExpression(
+      "+",
+      initializer,
+      t.identifier(`value${index}`),
+    );
+  const read = t.identifier("load");
+  const program = t.program([
+    t.functionDeclaration(
+      t.identifier("run"),
+      [],
+      t.blockStatement([
+        t.expressionStatement(
+          t.callExpression(t.identifier("inspect"), [read]),
+        ),
+      ]),
+    ),
+    t.variableDeclaration("var", [
+      t.variableDeclarator(t.identifier("load"), initializer),
+    ]),
+  ]);
+  const state = completeSemanticSteps(indexJavaScriptBindingsSteps(program));
+  const resolver = new JavaScriptSymbolicBindings(state, program);
+
+  expect(resolver.evaluate(read)).toMatchObject({ kind: "unknown" });
+  expect(resolver.unresolvedLoader).toBe(true);
+  expect(resolver.truncated).toBe(true);
+});
 
 it("substitutes numeric modules, named exports and captured wrapper arguments", () => {
   const { resolver, values } = inspectFixture(`(() => {
@@ -82,6 +157,7 @@ it("substitutes numeric modules, named exports and captured wrapper arguments", 
   const env = resolver.bind(fn, []);
   expect(resolver.evaluate(fn.node.body.callee, env)).toEqual({
     kind: "external",
+    loaderAuthority: "candidate",
     path: ["electron", "ipcRenderer", "send"],
   });
   expect(resolver.arguments(fn.node.body, env)[0]).toEqual({
@@ -127,7 +203,11 @@ it("checks block lexical initializers against their containing function call", (
       );
     },
   });
-  expect(resolved).toEqual({ kind: "external", path: ["electron"] });
+  expect(resolved).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("keeps same-factory reads before initialization unresolved", () => {
@@ -236,8 +316,16 @@ it("keeps function declarations hoisted and checks closures at invocation", () =
     inspect(localRead());
   `);
   expect(inspected[0]).toMatchObject({ kind: "function" });
-  expect(inspected[1]).toEqual({ kind: "external", path: ["electron"] });
-  expect(inspected[2]).toEqual({ kind: "external", path: ["electron"] });
+  expect(inspected[1]).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
+  expect(inspected[2]).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("keeps a synchronous cross-function callback before initialization unresolved", () => {
@@ -288,7 +376,11 @@ it("uses completed activation provenance for a returned closure", () => {
       const value = require("electron");
       return () => value;
     }`);
-  expect(result).toEqual({ kind: "external", path: ["electron"] });
+  expect(result).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("does not treat statements after a returned closure as initialized", () => {
@@ -314,6 +406,144 @@ it("does not treat statements after a returned module factory as initialized", (
     load(9);
   })();`);
   expect(result).toMatchObject({ kind: "unknown" });
+});
+
+it("retains the guard on a factory's completed fallthrough activation", () => {
+  const value = inspectOne(`(() => {
+    const modules = {
+      5(module, exports) {
+        { if (flag) return; }
+        const electron = require("electron");
+        exports.read = () => electron;
+      },
+      9(module, exports, load) { inspect(load(5).read()); }
+    };
+    function load(id) { const m={exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(9);
+  })();`);
+  const electron = symbolicVariants(value).filter(
+    (variant) => variant.kind === "external",
+  );
+  expect(electron).toHaveLength(1);
+  expect(electron[0]).toMatchObject({
+    path: ["electron"],
+    conditions: expect.arrayContaining([
+      {
+        node: expect.objectContaining({ type: "Identifier", name: "flag" }),
+        positive: false,
+      },
+    ]),
+  });
+  expect(
+    symbolicVariants(value).some((variant) => variant.kind === "unknown"),
+  ).toBe(true);
+});
+
+it("shares completed factory control flow across repeated loads within one analysis", () => {
+  const { parsed, resolver } = resolverFor(`(() => {
+    const modules = {
+      5(module, exports) { if (flag) return; exports.value = 42; },
+      9(module, exports, load) { ${"inspect(load(5));".repeat(64)} }
+    };
+    function load(id) { const m={exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(9);
+  })();`);
+  const evaluated = vi.spyOn(resolver, "evaluate");
+  const results: SymbolicValue[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "inspect" })
+      )
+        results.push(resolver.evaluate(node.arguments[0]));
+    },
+  });
+  expect(results).toHaveLength(64);
+  const variants = symbolicVariants(results[0]!);
+  expect(variants).toHaveLength(2);
+  expect(variants).toEqual(
+    expect.arrayContaining(
+      [true, false].map((positive) =>
+        expect.objectContaining({
+          kind: "namespace",
+          conditions: expect.arrayContaining([
+            {
+              node: expect.objectContaining({
+                type: "Identifier",
+                name: "flag",
+              }),
+              positive,
+            },
+          ]),
+        }),
+      ),
+    ),
+  );
+  for (const result of results) {
+    const actual = symbolicVariants(result);
+    expect(actual).toHaveLength(variants.length);
+    actual.forEach((variant, index) => expect(variant).toBe(variants[index]));
+  }
+  expect(
+    evaluated.mock.calls.filter(([node]) =>
+      t.isIdentifier(node, { name: "flag" }),
+    ),
+  ).toHaveLength(1);
+  expect(resolver.truncated).toBe(false);
+});
+
+it("bounds predicate expansion across many conditional factory exits", () => {
+  const { resolver, values } = inspectFixture(`(() => {
+    const modules = {
+      5(module, exports) { ${"if (flag) return;".repeat(1_600)} exports.value = 42; },
+      9(module, exports, load) { inspect(load(5)); }
+    };
+    function load(id) { const m={exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(9);
+  })();`);
+  expect(resolver.truncated).toBe(true);
+  expect(values.flatMap(symbolicVariants)).toContainEqual(
+    expect.objectContaining({
+      kind: "unknown",
+      reason: expect.stringContaining("resource limit"),
+    }),
+  );
+});
+
+it("does not borrow an unrelated activation's namespace read boundary", () => {
+  const { parsed, resolver, values } = inspectFixture(`(() => {
+    const modules = {5(module,exports){exports.stop=true;inspect(exports);if(exports.stop)return;}};
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(5);
+  })();`);
+  const namespace = values[0];
+  if (namespace?.kind !== "namespace")
+    throw new Error("namespace fixture missing");
+  let read: t.MemberExpression | undefined;
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (t.isIfStatement(node) && t.isMemberExpression(node.test))
+        read = node.test;
+    },
+  });
+  if (read === undefined) throw new Error("namespace read fixture missing");
+  expect(
+    resolver.property(namespace, "stop", {
+      node: read,
+      environment: namespace.environment,
+    }),
+  ).toMatchObject({ kind: "literal", value: true });
+  expect(
+    resolver.property(namespace, "stop", {
+      node: read,
+      environment: { ...namespace.environment, activation: {} },
+    }),
+  ).toMatchObject({
+    kind: "unknown",
+    reason: "module export read boundary is unavailable",
+  });
+  expect(resolver.truncated).toBe(false);
 });
 
 it("treats known symbolic records and loaders as truthy", () => {
@@ -511,6 +741,7 @@ it("propagates branch guards through object properties and function calls", () =
     inspect(direct.action);
     inspect(called.action);
   `);
+  expect(inspected).toHaveLength(2);
   for (const value of inspected) {
     const functions = symbolicVariants(value).filter(
       (candidate) => candidate.kind === "function",
@@ -573,4 +804,441 @@ it("completes a loaded module past a very large array without stack overflow", (
   if (namespace?.kind !== "namespace")
     throw new Error("loaded module namespace missing");
   expect(namespace.environment.completedAt).toBe(earliestReturn);
+});
+
+it("keeps async call objects truthy and unwraps only awaited results", () => {
+  const values = inspectedValues(`async function flag(){return false;}
+    inspect(flag()); inspect(!flag()); inspect(flag() ?? true);
+    inspect(await flag()); inspect(flag() || false);`);
+  expect(values[0]).toMatchObject({
+    kind: "promise",
+    value: { kind: "literal", value: false },
+  });
+  expect(values[1]).toMatchObject({ kind: "literal", value: false });
+  expect(values[2]?.kind).toBe("promise");
+  expect(values[3]).toMatchObject({ kind: "literal", value: false });
+  expect(values[4]?.kind).toBe("promise");
+});
+
+it("does not execute generator bodies to resolve initial calls", () => {
+  const { resolver, values } = inspectFixture(`function* flag(){return false;}
+    async function* asyncFlag(){return false;}
+    inspect(flag()); inspect(!flag()); inspect(asyncFlag()); inspect(flag() ?? false);`);
+  expect(values.map((value) => value.kind)).toEqual([
+    "iterator",
+    "literal",
+    "iterator",
+    "iterator",
+  ]);
+  expect(values[1]).toMatchObject({ kind: "literal", value: false });
+  expect(resolver.unresolved).toBe(false);
+});
+
+it("preserves captured initialization through async and forwarding returns", () => {
+  const { resolver, values } = inspectFixture(`function outer(){
+    const electron=require("electron");
+    async function capture(){return ()=>electron.ipcMain;}
+    return capture();
+  }
+  async function forward(){return outer();}
+  inspect(await forward());`);
+  const fn = values[0];
+  expect(fn?.kind).toBe("function");
+  if (fn?.kind !== "function") throw new Error("awaited closure missing");
+  expect(resolver.evaluate(fn.node.body, resolver.bind(fn, []))).toMatchObject({
+    kind: "external",
+    path: ["electron", "ipcMain"],
+  });
+  expect(fn.origins.length).toBeGreaterThan(0);
+});
+
+it.each([
+  "function* value(){return false;}",
+  "async function value(){return false;}",
+])(
+  "keeps opaque call-result member access explicitly unresolved: %s",
+  (declaration) => {
+    const { resolver, values } = inspectFixture(
+      `${declaration}inspect(value().next);`,
+    );
+    expect(values[0]).toMatchObject({
+      kind: "unknown",
+      reason: expect.stringContaining("members are not modeled"),
+    });
+    expect(resolver.unresolved).toBe(true);
+  },
+);
+
+it.each([
+  ["unknown spread", `{value:require("electron"),...input}`, "unknown"],
+  ["unknown descriptor", `input`, "unknown"],
+  ["negative number spread", `{value:require("electron"),...-1}`, "external"],
+  ["negative bigint spread", `{value:require("electron"),...-1n}`, "external"],
+  [
+    "ordinary method value",
+    `{value(){return require("electron")}}`,
+    "function",
+  ],
+  ["null prototype", `{__proto__:null,value:require("electron")}`, "external"],
+  [
+    "ignored primitive prototype",
+    `{__proto__:0,value:require("electron")}`,
+    "external",
+  ],
+  [
+    "function spread",
+    `{value:require("electron"),...function(){}}`,
+    "external",
+  ],
+  ["regexp spread", `{value:require("electron"),.../x/}`, "external"],
+  [
+    "interpolated string spread",
+    '{value:require("electron"),...`x${input}`}',
+    "external",
+  ],
+  ["empty array spread", `{value:require("electron"),...[]}`, "external"],
+  ["array spread", `{value:require("electron"),...[1]}`, "external"],
+  ["sparse array spread", `{value:require("electron"),...[,1]}`, "external"],
+  [
+    "unknown iterable array spread",
+    `{value:require("electron"),...[...input]}`,
+    "external",
+  ],
+  [
+    "patched defineProperty",
+    `{get:()=>replacement}`,
+    "external",
+    "Object.defineProperty=()=>{};",
+  ],
+  [
+    "literal-return no-op replacement",
+    `{enumerable:true}`,
+    "external",
+    "Object.defineProperty=(_target,_key)=>0;",
+  ],
+  [
+    "successive no-op replacements",
+    `{enumerable:true}`,
+    "external",
+    "Object.defineProperty=()=>{};Object.defineProperty=()=>{};",
+  ],
+  [
+    "literal stub with effectful parameter binding",
+    `{enumerable:true}`,
+    "unknown",
+    "Object.defineProperty=(target=mutate())=>0;",
+  ],
+  [
+    "mixed getter and spread value",
+    `{get:()=>0,...{value:require("electron")}}`,
+    "unknown",
+  ],
+  [
+    "mixed setter and value",
+    `{value:require("electron"),set:()=>{}}`,
+    "unknown",
+  ],
+  [
+    "erased descriptor assertion",
+    `({value:require("electron")} as const)`,
+    "external",
+  ],
+  ["string spread", `{value:require("electron"),..."x"}`, "external"],
+  ["accessor getter", `{get(){return replacement}}`, "unknown"],
+  ["accessor setter", `{set(value){replacement=value}}`, "unknown"],
+  ["absent accessor", `{get:undefined}`, "unknown"],
+  ["unknown key", `{value:require("electron"),[key]:replacement}`, "unknown"],
+  [
+    "getter",
+    `{value:require("electron"),get value(){return replacement}}`,
+    "unknown",
+  ],
+  [
+    "unknown spread may supply accessors",
+    `{...input,value:require("electron")}`,
+    "unknown",
+  ],
+  [
+    "known spread before value",
+    `{...{enumerable:true},value:require("electron")}`,
+    "external",
+  ],
+  ["null spread", `{value:require("electron"),...null}`, "external"],
+  ["undefined spread", `{value:require("electron"),...undefined}`, "external"],
+  ["void spread", `{value:require("electron"),...void 0}`, "external"],
+  [
+    "shadowed undefined",
+    `{value:require("electron"),...undefined}`,
+    "unknown",
+    "const undefined=input;",
+  ],
+  ["unchanged value", `{enumerable:true}`, "external"],
+])(
+  "preserves effective descriptor value uncertainty for %s",
+  (_name, descriptor, kind, setup = "") => {
+    const value = inspectOne(`(() => {
+      const modules = {
+        1(module,exports) {
+          ${setup}
+          exports.api = require("electron");
+          Object.defineProperty(exports,"api",${descriptor});
+        },
+        2(module,exports,load) { inspect(load(1).api); }
+      };
+      function load(id) {const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+      load(2);
+    })();`);
+    expect(value.kind).toBe(kind);
+    if (kind === "external")
+      expect(value).toEqual({
+        kind: "external",
+        loaderAuthority: "candidate",
+        path: ["electron"],
+      });
+  },
+);
+
+it("reads a literal prototype only from its actual prototype setter", () => {
+  expect(
+    inspectOne('inspect(({ordinary:require("electron")}).__proto__);').kind,
+  ).toBe("unknown");
+  expect(
+    inspectOne(
+      'inspect(({__proto__:require("electron"),ordinary:1}).__proto__);',
+    ),
+  ).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
+});
+
+it.each(["local", "outer"])(
+  "does not resurrect an export when the intrinsic changes %s after replacement",
+  (position) => {
+    const value = inspectOne(`(() => {
+    const modules = {
+      1(module,exports) {
+        exports.api = require("electron");
+        Object.defineProperty(exports,"api",{value:null});
+        ${position === "local" ? "Object.defineProperty=()=>{};" : ""}
+      },
+      2(module,exports,load) {inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+    ${position === "outer" ? "Object.defineProperty=()=>{};" : ""}
+  })();`);
+    expect(value.kind).not.toBe("external");
+  },
+);
+
+it("does not preserve a sender through a possibly mutating intrinsic replacement", () => {
+  const value = inspectOne(`(() => {
+    const modules={
+      1(module,exports){exports.api=require("electron");Object.defineProperty=(target,key)=>{target[key]=null;};Object.defineProperty(exports,"api",{value:require("electron")});},
+      2(module,exports,load){inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}load(2);
+  })();`);
+  expect(value.kind).toBe("unknown");
+});
+
+it("keeps a possibly repeated factory's native descriptor value unknown", () => {
+  const value = inspectOne(`(() => {
+    const modules={
+      1(module,exports){exports.api=null;Object.defineProperty(exports,"api",{value:require("electron")});Object.defineProperty=()=>{};},
+      2(module,exports,load){inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}load(2);
+  })();`);
+  expect(value.kind).toBe("unknown");
+});
+
+it("bounds recursion when spreading a self-recursive call result and querying properties", () => {
+  const { resolver, values } = inspectFixture(
+    `function f(o) { const stay = f(o); return { ...stay, c: stay.sc.startsWith("k") }; }
+     inspect(f({}));`,
+    (bindings, node) => {
+      const obj = bindings.evaluate(node.arguments[0]);
+      const sc = bindings.property(obj, "sc");
+      const c = bindings.property(obj, "c");
+      const members = bindings.members(obj);
+      const unknownMembers = bindings.unknownMembers(obj);
+      expect(sc.kind).toBe("unknown");
+      expect(c.kind).toBe("unknown");
+      expect(members).toContain("c");
+      expect(unknownMembers).toBeGreaterThan(0);
+      return obj;
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("evaluates finite recursion across returned closures and object arguments to literal results", () => {
+  const closureResult = inspectOne(`
+    function make(flag) { return function step() { return flag ? { next: make(false)() } : { value: "end" }; }; }
+    inspect(make(true)().next.value);
+  `);
+  expect(closureResult).toMatchObject({ kind: "literal", value: "end" });
+
+  const stepResult = inspectOne(`
+    function f(step) { return step ? { next: f(step.next) } : { value: "end" }; }
+    inspect(f({ next: { next: null } }).next.next.value);
+  `);
+  expect(stepResult).toMatchObject({ kind: "literal", value: "end" });
+});
+
+it("bounds recursion with fresh arguments while preserving own stable members", () => {
+  const { resolver, values } = inspectFixture(
+    `function grow(value) { return { ...grow({ value }), stable: 1 }; }
+     inspect(grow(null));`,
+    (bindings, node) => {
+      const obj = bindings.evaluate(node.arguments[0]);
+      const stable = bindings.property(obj, "stable");
+      const members = bindings.members(obj);
+      const unknownMembers = bindings.unknownMembers(obj);
+      expect(stable).toMatchObject({ kind: "literal", value: 1 });
+      expect(members).toContain("stable");
+      expect(unknownMembers).toBeGreaterThan(0);
+      // A bounded recursive read must restore depth for a later independent read.
+      expect(bindings.property(obj, "stable")).toMatchObject({
+        kind: "literal",
+        value: 1,
+      });
+      return obj;
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("keeps repeated cached queries within an independent depth budget", () => {
+  const { resolver, values } = inspectFixture(
+    'const shared = { value: "end" }; inspect(shared);',
+    (bindings, node) => {
+      for (let index = 0; index < 256; index += 1) {
+        const value = bindings.property(
+          bindings.evaluate(node.arguments[0]),
+          "value",
+        );
+        expect(value).toMatchObject({ kind: "literal", value: "end" });
+      }
+      return bindings.evaluate(node.arguments[0]);
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(false);
+});
+
+it("retains each external selection guard once across deep member reads", () => {
+  const { parsed, resolver } = resolverFor("if (guard) {};");
+  const condition = { node: parsed.program.body[0]!, positive: true as const };
+  let value: SymbolicValue = {
+    kind: "external",
+    path: ["electron"],
+    loaderAuthority: "candidate",
+    conditions: [condition],
+  };
+  for (let index = 0; index < 32; index++) {
+    value = resolver.property(value, `member${index}`);
+  }
+  expect(value).toMatchObject({
+    kind: "external",
+    loaderAuthority: "candidate",
+    conditions: [condition],
+  });
+  expect(resolver.truncated).toBe(false);
+});
+
+it.each([
+  [
+    "module property after replacement",
+    'module.exports={api:null};module.exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "module property overwritten after replacement",
+    'module.exports={api:require("electron")};module.exports.api=null;',
+    { kind: "literal", value: null },
+  ],
+  [
+    "detached exports property",
+    'module.exports={api:null};exports.api=require("electron");',
+    { kind: "literal", value: null },
+  ],
+  [
+    "rebound exports parameter",
+    'module.exports={api:null};exports={api:require("electron")};',
+    { kind: "literal", value: null },
+  ],
+  [
+    "identity-preserving module write",
+    'module.exports=module.exports;exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "identity-preserving original exports write",
+    'module.exports=exports;exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "reconnected exports parameter",
+    'module.exports={api:null};exports=module.exports;exports.api=require("electron");',
+    { kind: "external", loaderAuthority: "candidate", path: ["electron"] },
+  ],
+  [
+    "rebound module parameter",
+    'module={exports:{}};module.exports.api=require("electron");',
+    { kind: "unknown", reason: "ambiguous export writes" },
+  ],
+] as const)("retains namespace write order for %s", (_name, body, expected) => {
+  const value = inspectOne(`(() => {
+    const modules={
+      1(module,exports){${body}},
+      2(module,exports,load){inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+  })();`);
+  expect(value).toEqual(expected);
+});
+
+it("lists members added to the public module object after its replacement", () => {
+  const { resolver, values } = inspectFixture(`(() => {
+    const modules={
+      1(module,exports){module.exports={first:1};module.exports.later=2;exports.detached=3;},
+      2(module,exports,load){inspect(load(1));}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+  })();`);
+  expect(values).toHaveLength(1);
+  expect(resolver.members(values[0]!)).toEqual(["first", "later"]);
+});
+
+it("derives bridge paths from the latest public module member writes", () => {
+  const result = analyzeJavaScriptStaticSource(`(() => {
+    const modules={
+      1(module,exports){
+        const e=require("electron");
+        module.exports={action:()=>e.ipcRenderer.send("stale")};
+        module.exports.action=()=>e.ipcRenderer.send("current");
+        exports.detached=()=>e.ipcRenderer.send("detached");
+      },
+      2(module,exports,load){
+        const api=load(1);
+        require("electron").contextBridge.exposeInMainWorld("desktop",api);
+      }
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+  })();`);
+  expect(
+    result.electron.call_paths?.map(({ entry, channel }) => ({
+      entry,
+      channel,
+    })),
+  ).toEqual([{ entry: "desktop.action", channel: "current" }]);
 });

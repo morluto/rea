@@ -11,21 +11,23 @@ import {
   readStaticCheckArtifact,
   safeSha,
   selectStaticCheckArtifact,
+  STATIC_EVIDENCE_ARTIFACTS,
+  staticCheckArtifactName,
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
+import { parseAttemptJobs } from "./job-timings.mjs";
 import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const OUTPUT_DIRECTORY = join(".cache", "ci-failures");
 const BATCH_DIRECTORY = join(".cache", "ci-job-timings");
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const JOB_PAGE_SIZE = 100;
 const MAX_FAILED_RUNS = 20;
 const MAX_MAIN_CANDIDATES = 5;
 const MAX_MAIN_RUN_LOOKUPS = 100;
 const MAX_PATHS_PER_COMPARISON = 50;
 const MAX_API_REQUESTS = 250;
-
-export { classifyFailure } from "./artifacts.mjs";
 
 /** Uses only failed CI candidates present in the supplied bounded timing manifest. */
 export async function reportCiFailures({
@@ -155,13 +157,11 @@ async function analyzeFailedRun({
   for (const job of failedJobs) {
     let classification;
     try {
-      const evidence = await api.getStaticEvidence(repository, run, job);
       classification = await attributeToMain({
         repository,
         defaultBranch,
         run,
         job,
-        evidence,
         mainCandidates,
         api,
       });
@@ -186,14 +186,14 @@ async function attributeToMain({
   defaultBranch,
   run,
   job,
-  evidence,
   mainCandidates,
   api,
 }) {
   const baseSha = pullRequestBaseSha(run, repository);
-  if (baseSha === null || evidence === null)
-    return outcome("unknown", "no_matching_verified_main_failure");
   let result = outcome("unknown", "no_matching_verified_main_failure");
+  if (baseSha === null || mainCandidates.length === 0) return result;
+  const evidence = await api.getStaticEvidence(repository, run, job);
+  if (evidence === null) return result;
   const candidateFailures = [];
   for (const candidate of mainCandidates) {
     try {
@@ -342,6 +342,7 @@ export function createGitHubApi({
   token = process.env.GH_TOKEN,
   fetchImpl = fetch,
   apiRequest = createGhApiRequest(),
+  collectedJobsDirectory,
 } = {}) {
   if (!token) throw new Error("GH_TOKEN is required");
   const budget = { requests: 0, startedAt: Date.now(), limitMs: 60_000 };
@@ -358,20 +359,52 @@ export function createGitHubApi({
       );
     },
     async getJobs(repository, id, attempt) {
+      const runId = positiveId(id);
+      const runAttempt = positiveId(attempt);
+      if (collectedJobsDirectory) {
+        const path = join(
+          collectedJobsDirectory,
+          `${runId}-${runAttempt}`,
+          "jobs.json",
+        );
+        try {
+          const jobs = parseAttemptJobs(
+            await readBoundedFile(path),
+            { runId: Number(runId), runAttempt: Number(runAttempt) },
+            { requireTotalCount: true },
+          );
+          if (
+            jobs.length < JOB_PAGE_SIZE &&
+            jobs.every((job) => job.status === "completed")
+          )
+            return jobs;
+        } catch {
+          // Missing or invalid collector output falls back to the live attempt.
+        }
+      }
       const page = await request(
-        `repos/${repository}/actions/runs/${positiveId(id)}/attempts/${positiveId(attempt)}/jobs?per_page=100&page=1`,
+        `repos/${repository}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=${JOB_PAGE_SIZE}&page=1`,
       );
-      if (!Array.isArray(page.jobs) || page.jobs.length >= 100)
+      if (!Array.isArray(page.jobs) || page.jobs.length >= JOB_PAGE_SIZE)
         throw new Error("job_list_incomplete_or_malformed");
       return page.jobs;
     },
     async getStaticEvidence(repository, run, job) {
-      if (job.name !== "Static checks") return null;
-      if (run.run_attempt !== 1) return null;
-      const page = await request(
-        `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
+      const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
+      const attemptName = staticCheckArtifactName(
+        artifactName,
+        run.run_attempt,
       );
-      const artifact = selectStaticCheckArtifact(page, run, run.run_attempt);
+      if (attemptName === null) return null;
+      const page = await request(
+        `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=1&name=${encodeURIComponent(attemptName)}`,
+      );
+      const artifact = selectStaticCheckArtifact(
+        page,
+        run,
+        run.run_attempt,
+        artifactName,
+      );
       if (!artifact) return null;
       return await readStaticCheckArtifact({
         repository,
@@ -462,7 +495,7 @@ function errorCode(error) {
   return error instanceof Error ? error.message.slice(0, 160) : "unknown_error";
 }
 
-export async function writeFailureReport(
+async function writeFailureReport(
   report,
   outputDirectory = OUTPUT_DIRECTORY,
   summaryPath,
@@ -503,7 +536,9 @@ async function main() {
     process.env.CI_TIMING_MANIFEST ??
     join(BATCH_DIRECTORY, "batch-manifest.json");
   const batchManifest = JSON.parse(await readBoundedFile(batchPath));
-  const api = createGitHubApi();
+  const api = createGitHubApi({
+    collectedJobsDirectory: process.env.CI_COLLECTED_JOBS_DIRECTORY,
+  });
   await reportCiFailures({
     repository,
     defaultBranch,

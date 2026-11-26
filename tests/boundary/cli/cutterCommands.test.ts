@@ -1,44 +1,22 @@
+import { listenCutterServer } from "../../fixtures/cutterBridgeProtocol.js";
 import { createServer } from "node:net";
-import { createHmac } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createHmac, randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createCli } from "../../../src/cli.js";
 import { serveCli } from "./cliServeHarness.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
+import {
+  spawnOwnedProviderProcess,
+  ProviderProcessSupervisor,
+} from "../../../src/process/ProviderProcess.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const SESSION_ID = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
-const registeredCommands = Cli.toCommands as WeakMap<
-  object,
-  Map<string, unknown>
->;
-
-const cutterCommand = async (
-  environment: Record<string, string | undefined>,
-  args: {
-    readonly sessionId: string;
-    readonly expectedGeneration: number;
-    readonly command: string;
-  },
-): Promise<unknown> => {
-  const cli = createCli(environment);
-  const entry = registeredCommands.get(cli)?.get("cutter-command") ?? {};
-  const run = Reflect.get(entry, "run") as (...args: unknown[]) => unknown;
-  return Reflect.apply(run, undefined, [{ args, options: { json: false } }]);
-};
-
-const listen = async (
-  server: ReturnType<typeof createServer>,
-): Promise<number> => {
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("Expected an ephemeral TCP listener");
-  return address.port;
-};
+const listen = (server: ReturnType<typeof createServer>) =>
+  listenCutterServer(server, "Expected an ephemeral TCP listener");
 
 describe("Cutter CLI commands", () => {
   let directory: string | undefined;
@@ -47,43 +25,137 @@ describe("Cutter CLI commands", () => {
   afterEach(async () => {
     if (server !== undefined)
       await new Promise<void>((resolve) => server?.close(() => resolve()));
-    if (directory !== undefined)
-      await rm(directory, { recursive: true, force: true });
-    directory = undefined;
     server = undefined;
   });
 
   it("lists sessions from the selected bridge directory", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
+    directory = await createTestTempDirectory("rea-cutter-cli-test-");
 
     const result = await serveCli(["list-cutter-sessions", "--json"], {
       REA_CUTTER_BRIDGE_DIR: directory,
     });
 
     expect(result.exitCode).toBe(0);
+    // The CLI projects the shared discovery owner's limitation unchanged.
+    const limitations = cutterDiscoveryLimitations("no_live_bridge_found");
+    expect(limitations).not.toEqual([]);
     expect(JSON.parse(result.stdout)).toMatchObject({
       sessions: [],
       discovery_status: "no_live_bridge_found",
       bridge_directory: directory,
+      limitations,
     });
   });
 
+  it.skipIf(process.platform === "win32")(
+    "awaits discovery cancellation on SIGINT and returns its typed outcome with exit130",
+    async () => {
+      directory = await createTestTempDirectory("rea-cutter-cli-cancel-");
+      const sockets = new Set<import("node:net").Socket>();
+      let accepted = 0;
+      server = createServer((socket) => {
+        accepted += 1;
+        sockets.add(socket);
+        socket.on("error", () => undefined);
+        socket.on("close", () => sockets.delete(socket));
+        socket.resume();
+      });
+      const port = await listen(server);
+      for (let index = 0; index < 9; index += 1) {
+        const id = randomUUID();
+        await writeFile(
+          join(directory, `cutter-${process.pid}-${id}.json`),
+          JSON.stringify({
+            session_id: id,
+            pid: process.pid,
+            host: "127.0.0.1",
+            port,
+            token: "cli-discovery-test-transport-token",
+            document_generation: 0,
+            current_file: null,
+            cutter_version: null,
+            identity_status: "partial",
+          }),
+          { mode: 0o600 },
+        );
+      }
+      const launched = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: ["scripts/rea.mjs", "list-cutter-sessions", "--json"],
+        runId: randomUUID(),
+        hostEnvironment: {
+          ...process.env,
+          REA_CUTTER_BRIDGE_DIR: directory,
+          REA_LOG_LEVEL: "silent",
+        },
+      });
+      const supervisor = new ProviderProcessSupervisor({
+        ...launched,
+        ownsProcessLifetime: true,
+      });
+      try {
+        // Probes that time out close their sockets, so only a full concurrent
+        // wave holds eight open at once.
+        await expect.poll(() => sockets.size).toBe(8);
+        launched.process.kill("SIGINT");
+        expect(await supervisor.waitForExit(5_000)).toBe(true);
+        expect(await supervisor.waitForOutputClose(1_000)).toBe(true);
+        expect(launched.process.exitCode).toBe(130);
+        expect(launched.process.signalCode).toBeNull();
+        expect(JSON.parse(supervisor.snapshot().stdout.text)).toMatchObject({
+          code: "cancelled",
+        });
+        await expect.poll(() => sockets.size).toBe(0);
+        expect(accepted).toBe(8);
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        const stopped = await supervisor.stop();
+        expect(stopped.status).not.toBe("incomplete");
+      }
+    },
+  );
+
   it("reports an unavailable selected session for a command", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
+    directory = await createTestTempDirectory("rea-cutter-cli-test-");
 
     const result = await serveCli(
       ["cutter-command", SESSION_ID, "0", "pdi", "--json"],
       { REA_CUTTER_BRIDGE_DIR: directory },
     );
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("invalid_request");
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "cutter_command",
+        issues: [
+          {
+            // Projected from its contract, so the issue names the CLI key.
+            path: ["sessionId"],
+            message:
+              "Cutter bridge session is unavailable or stale; list sessions again and select an available session.",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("Cutter CLI command output flags", () => {
+  let directory: string | undefined;
+  let server: ReturnType<typeof createServer> | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined)
+      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    server = undefined;
   });
 
   it("returns Evidence when the selected Cutter session completes a command", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-cutter-cli-test-"));
+    directory = await createTestTempDirectory("rea-cutter-cli-test-");
     const token = "synthetic-cutter-cli-token-for-test";
     let nextConnectionOrdinal = 0;
+    const commandJsonModes: boolean[] = [];
     server = createServer((connection) => {
       const ordinal = ++nextConnectionOrdinal;
       connection.setEncoding("utf8");
@@ -109,6 +181,8 @@ describe("Cutter CLI commands", () => {
         }
         const requestBytes = String(frame.request);
         const request = JSON.parse(requestBytes) as Record<string, unknown>;
+        if (request.kind === "command")
+          commandJsonModes.push(request.json === true);
         if (
           frame.proof !==
           createHmac("sha256", token)
@@ -172,12 +246,50 @@ describe("Cutter CLI commands", () => {
       { mode: 0o600 },
     );
 
-    const result = await cutterCommand(
+    const result = await serveCli(
+      ["cutter-command", SESSION_ID, "000", "pdi", "--json-output"],
       { REA_CUTTER_BRIDGE_DIR: directory },
-      { sessionId: SESSION_ID, expectedGeneration: 0, command: "pdi" },
     );
 
-    expect(JSON.stringify(result)).toContain("rea.cutter.command-observation");
-    expect(JSON.stringify(result)).toContain('"answer":42');
+    expect(result.exitCode).toBe(0);
+    expect(commandJsonModes).toEqual([true]);
+    expect(result.stdout).toContain("answer: 42");
+
+    const formatted = await serveCli(
+      ["cutter-command", SESSION_ID, "0", "pdi", "--json"],
+      { REA_CUTTER_BRIDGE_DIR: directory },
+    );
+    expect(formatted.exitCode).toBe(0);
+    expect(commandJsonModes).toEqual([true, false]);
+    expect(() => JSON.parse(formatted.stdout)).not.toThrow();
+
+    for (const [flags, expected] of [
+      [["--json-output=true"], true],
+      [["--json-output=false"], false],
+      [["--json", "--json-output=false"], false],
+      [["--json", "--json-output=true"], true],
+      [["--json-output=false", "--json"], false],
+      [["--json-output=true", "--json"], true],
+    ] as const) {
+      const selected = await serveCli(
+        ["cutter-command", SESSION_ID, "0", "pdi", ...flags],
+        { REA_CUTTER_BRIDGE_DIR: directory },
+      );
+      expect(selected.exitCode).toBe(0);
+      expect(commandJsonModes.at(-1)).toBe(expected);
+      if (flags.some((flag) => flag === "--json"))
+        expect(() => JSON.parse(selected.stdout)).not.toThrow();
+    }
+
+    const commandsBeforeRejectedFlags = commandJsonModes.length;
+    for (const flag of ["--json=true", "--json=false"]) {
+      const rejected = await serveCli(
+        ["cutter-command", SESSION_ID, "0", "pdi", flag],
+        { REA_CUTTER_BRIDGE_DIR: directory },
+      );
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stdout).toContain("Unknown flag: --json");
+    }
+    expect(commandJsonModes).toHaveLength(commandsBeforeRejectedFlags);
   });
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export const WINDOWS_GHIDRA_BYTE_SEARCH_FIXTURE = Object.freeze({
+const WINDOWS_GHIDRA_BYTE_SEARCH_FIXTURE = Object.freeze({
   pattern: "a0 ?? c0",
   mask: "f0 ff f0",
   startFileOffset: 0x380,
@@ -18,13 +18,12 @@ export function writeWindowsGhidraByteSearchFixture(bytes) {
 export async function verifyWindowsGhidraByteSearch({
   invoke,
   sourceBytes,
-  architecture,
+  imageBase,
   sourceOwnedFixture = true,
   fallbackAddress,
   fallbackFileOffset,
   runCliPage,
 }) {
-  const imageBase = architecture === "x86" ? 0x400000n : 0x140000000n;
   const query = sourceOwnedFixture
     ? {
         pattern: WINDOWS_GHIDRA_BYTE_SEARCH_FIXTURE.pattern,

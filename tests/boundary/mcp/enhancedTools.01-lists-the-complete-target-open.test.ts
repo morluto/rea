@@ -1,38 +1,35 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { observed as ok } from "../../fixtures/analysisExecution.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { ok as resultOk } from "../../../src/domain/result.js";
-import { err } from "../../../src/domain/result.js";
+import {
+  createFixtureProviderIdentity,
+  observed as ok,
+} from "../../fixtures/analysisExecution.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
-    createAnalysisExecution(
-      value,
-      {
-        id: "fixture",
-        name: "Fixture analysis provider",
-        version: "1",
+    createAnalysisExecution(value, createFixtureProviderIdentity(), {
+      subject: {
+        path: "/fixture.app",
+        sha256: "a".repeat(64),
+        format: "mach-o",
+        architecture: "arm64",
       },
-      {
-        subject: {
-          path: "/fixture.app",
-          sha256: "a".repeat(64),
-          format: "mach-o",
-          architecture: "arm64",
-        },
-      },
-    ),
+    }),
   );
 
 const functionDossier = {
@@ -62,19 +59,24 @@ const functionDossier = {
   limitations: [],
 };
 
+const capabilityUnavailable = (operation: string, message: string) =>
+  Promise.resolve(
+    err(new AnalysisCapabilityUnavailableError("fixture", operation, message)),
+  );
+
 const fixturePort = (): AnalysisOperationPort => ({
   // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
     switch (name) {
+      case "read_binary_inventory_summary":
+        return capabilityUnavailable(
+          name,
+          "This fixture exercises composed overview",
+        );
       case "inspect_native_dispatch_metadata":
-        return Promise.resolve(
-          err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              name,
-              "No byte reader or exact native seed in this symbol-only fixture",
-            ),
-          ),
+        return capabilityUnavailable(
+          name,
+          "No byte reader or exact native seed in this symbol-only fixture",
         );
       case "procedure_address": {
         const procedure = inventory(PROCEDURES).find(
@@ -142,6 +144,11 @@ const fixturePort = (): AnalysisOperationPort => ({
           ok(typeof procedure === "string" ? `pseudo:${procedure}` : "invalid"),
         );
       }
+      case "procedure_info":
+        return capabilityUnavailable(
+          name,
+          "This fixture does not report function bodies",
+        );
       case "procedure_callees": {
         const procedure = arguments_.procedure;
         return Promise.resolve(
@@ -204,7 +211,6 @@ const fixturePort = (): AnalysisOperationPort => ({
 });
 
 const resources: Array<{ close(): Promise<void> }> = [];
-
 afterEach(async () => {
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
@@ -213,13 +219,11 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "enhanced-test", version: "1.0.0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
+  return connectFixtureClient(
+    server,
+    { name: "enhanced-test", version: "1.0.0" },
+    resources,
+  );
 };
 
 // oxlint-disable-next-line max-lines-per-function -- keep the complete production registration checks together.
@@ -246,6 +250,7 @@ describe("enhanced MCP tools", () => {
   // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.
   it("executes all enhanced tools through production registration", async () => {
     const client = await connect();
+    const outputParent = await createTestTempDirectory("rea-decompile-all-");
     const calls = [
       ["get_objc_classes", { pattern: "Fixture" }],
       ["get_objc_protocols", {}],
@@ -254,22 +259,48 @@ describe("enhanced MCP tools", () => {
       ["analyze_swift_types", { category: "classes", pattern: "Fixture" }],
       ["find_xrefs_to_name", { name: "entry" }],
       ["binary_overview", {}],
-      ["analyze_function", { procedure: "0x1" }],
+      // This server retains no Evidence, so the complete dossier is the deliverable shape.
+      ["analyze_function", { procedure: "0x1", detail: "complete" }],
       ["inspect_native_api", { procedure: "0x1" }],
       ["trace_feature", { query: "hello" }],
       ["trace_call_path", { start: "0x1", goal: "0x2" }],
       ["trace_native_ui_action", { action: "missing-selector" }],
       ["inspect_native_dispatch_metadata", { max_records: 100 }],
       ["trace_native_values", { procedure: "0x1" }],
+      ["decompile_all", { output_directory: join(outputParent, "out") }],
     ] as const;
+    const functionProgress: {
+      progress: number;
+      message?: string | undefined;
+    }[] = [];
     const results = await Promise.all(
       calls.map(async ([name, arguments_]) =>
-        jsonResult(await client.callTool({ name, arguments: arguments_ })),
+        jsonResult(
+          await client.callTool(
+            { name, arguments: arguments_ },
+            name === "analyze_function"
+              ? { onprogress: (update) => functionProgress.push(update) }
+              : undefined,
+          ),
+        ),
       ),
     );
+    expect(functionProgress[0]?.message).toBe("analyze_function: started");
+    expect(functionProgress.at(-1)?.message).toBe(
+      "analyze_function: completed",
+    );
+    functionProgress.forEach(({ progress }, index) => {
+      expect(progress).toBeGreaterThan(
+        functionProgress[index - 1]?.progress ?? 0,
+      );
+    });
     expect(results[0]).toMatchObject({
-      count: 1,
-      classes: [{ address: "0x10", name: "_OBJC_CLASS_$_Fixture" }],
+      count: 2,
+      classes: [
+        { address: "0x10", name: "_OBJC_CLASS_$_Fixture" },
+        { address: "0x11", name: "_OBJC_CLASS_$_Fixture" },
+      ],
+      identity_coverage: { status: "unknown" },
     });
     expect(results[1]).toMatchObject({
       count: 1,
@@ -307,6 +338,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
         ],
@@ -319,6 +351,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
           {
@@ -329,6 +362,7 @@ describe("enhanced MCP tools", () => {
             relationship_coverage: {
               status: "unknown",
               reason: "Provider did not report relationship coverage.",
+              limited_directions: ["callees"],
             },
           },
         ],
@@ -414,14 +448,112 @@ describe("enhanced MCP tools", () => {
         ]),
       },
     });
+    // A fixed adapter has no session to retain source Evidence for the trace.
     expect(results[13]).toMatchObject({
-      target_sha256: "a".repeat(64),
-      decompilations: 1,
-      unknowns: [
-        expect.objectContaining({
-          reason: "Provider has no native def-use model",
-        }),
-      ],
+      error: {
+        code: "capability_unavailable",
+        details: {
+          operation: "trace_native_values",
+        },
+      },
     });
+    expect(results[14]).toMatchObject({
+      counts: { selected: 6, written: 6, failed: 0, excluded: 0 },
+      layout_status: "address",
+    });
+    expect(JSON.stringify(results[14])).not.toContain("pseudo:");
   });
 });
+
+it("retains unlocated provider symbols through the advertised native dispatch MCP contract", async () => {
+  const ordinary = fixturePort();
+  const client = await connect({
+    execute: (operation, parameters, options) =>
+      operation === "list_names"
+        ? Promise.resolve(
+            targetObservation([
+              { address: "", value: "$s4Test7MyClassC" },
+              { address: "", value: "-[Fixture buildTapped:]" },
+            ]),
+          )
+        : ordinary.execute(operation, parameters, options),
+  });
+  const response = await client.callTool({
+    name: "inspect_native_dispatch_metadata",
+    arguments: { max_records: 100 },
+  });
+  expect(response.isError).not.toBe(true);
+  expect(jsonResult(response)).toMatchObject({
+    provider: { id: "fixture" },
+    target_sha256: "a".repeat(64),
+    result: {
+      swift_symbols: [
+        {
+          mangled_name: "$s4Test7MyClassC",
+          address: null,
+          evidence: [{ reported_address: "", location: { address: null } }],
+        },
+      ],
+      objc_dispatch_implementations: [
+        { implementation_address: null, evidence: [{ reported_address: "" }] },
+      ],
+      objc_classes: [
+        {
+          name: "Fixture",
+          methods: [{ selector: "buildTapped:", address: null }],
+        },
+      ],
+    },
+  });
+});
+
+it.each([
+  { addresses: ["0x2000", "0x3000"], candidates: 2, numeric: null },
+  { addresses: ["ram:0x2000", "rom:0x2000"], candidates: 2, numeric: null },
+  { addresses: ["0x2000", "0X002000"], candidates: 1, numeric: 8192 },
+  {
+    addresses: ["overlay%2f1:0x2000", "overlay%2F1:0X002000"],
+    candidates: 1,
+    numeric: null,
+  },
+])(
+  "retains implementation identity and source spelling through MCP: $addresses",
+  async ({ addresses, candidates, numeric }) => {
+    const ordinary = fixturePort();
+    const client = await connect({
+      execute: (operation, parameters, options) =>
+        operation === "list_names"
+          ? Promise.resolve(
+              targetObservation(
+                addresses.map((address) => ({
+                  address,
+                  value: "-[Fixture buildTapped:]",
+                })),
+              ),
+            )
+          : ordinary.execute(operation, parameters, options),
+    });
+    const response = await client.callTool({
+      name: "inspect_native_dispatch_metadata",
+      arguments: {},
+    });
+    expect(
+      response.isError,
+      JSON.stringify(response.structuredContent),
+    ).not.toBe(true);
+    const result = nativeDispatchMetadataResultSchema.parse(
+      jsonResult(response),
+    ).result;
+    expect(result.objc_dispatch_implementations).toHaveLength(candidates);
+    expect(result.objc_classes[0]?.methods).toMatchObject([
+      { selector: "buildTapped:", address: numeric },
+    ]);
+    expect(
+      result.objc_dispatch_implementations
+        .flatMap(({ evidence }) =>
+          evidence.map(({ location }) => location.address),
+        )
+        .sort(),
+    ).toEqual([...addresses].sort());
+  },
+);

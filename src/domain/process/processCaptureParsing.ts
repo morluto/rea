@@ -1,39 +1,21 @@
-import {
-  processCaptureSchema,
-  type UnverifiedProcessCapture,
-} from "./processCapture.js";
+import { z } from "zod";
 
-declare class ProcessCaptureProof {
-  private readonly verified: never;
-}
+import { processCaptureSchema } from "./processCapture.js";
+
+declare const processCaptureProof: unique symbol;
+const verifiedProcessCaptureSchema =
+  processCaptureSchema.brand<typeof processCaptureProof>();
 
 /** Semantically verified process capture value. */
-export type ProcessCapture = UnverifiedProcessCapture & ProcessCaptureProof;
+export type ProcessCapture = z.output<typeof verifiedProcessCaptureSchema>;
 
-const verifiedCaptures = new WeakSet<UnverifiedProcessCapture>();
+/** Parse a boundary value while retaining Zod's expected validation failure. */
+export const safeParseProcessCapture = (input: unknown) =>
+  verifiedProcessCaptureSchema.safeParse(input);
 
-const isVerifiedCapture = (
-  capture: UnverifiedProcessCapture,
-): capture is ProcessCapture => verifiedCaptures.has(capture);
-
-const attachProof = (capture: UnverifiedProcessCapture): ProcessCapture => {
-  verifiedCaptures.add(capture);
-  if (isVerifiedCapture(capture)) return capture;
-  throw new TypeError("Process Capture proof ownership failed");
-};
-
-/** Parse unknown input and reject invalid commitments or semantics. */
-export const parseProcessCapture = (input: unknown): ProcessCapture => {
-  const parsed = processCaptureSchema.safeParse(input);
-  if (parsed.success) return attachProof(parsed.data);
-  const issues = parsed.error.issues.flatMap((issue) =>
-    issue.code === "custom"
-      ? [{ path: issue.path.join("."), message: issue.message }]
-      : [],
-  );
-  if (issues.length > 0)
-    throw new TypeError(
-      `Invalid process capture: ${issues.map(({ path, message }) => `${path}: ${message}`).join("; ")}`,
-    );
-  throw parsed.error;
-};
+/**
+ * Parse unknown input and reject invalid commitments or semantics. Failures
+ * throw the schema's ZodError so structural and semantic issues stay together.
+ */
+export const parseProcessCapture = (input: unknown): ProcessCapture =>
+  verifiedProcessCaptureSchema.parse(input);
