@@ -261,6 +261,7 @@
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** preserve explicit null output ([#13342](https://github.com/morluto/rea/issues/13342)) ([d4f78cb](https://github.com/morluto/rea/commit/d4f78cb5922d9fd83222514dda85db8bf5287f1b))
 * **cli:** register Kilo in linked worktrees of bare repositories ([#13285](https://github.com/morluto/rea/issues/13285)) ([27657b7](https://github.com/morluto/rea/commit/27657b7420a765d13f6e58e212c2b897900b5154))
+* **cli:** reject invalid inline values and honor requested output on terminals ([#14763](https://github.com/morluto/rea/issues/14763)) ([2bf347d](https://github.com/morluto/rea/commit/2bf347dee664793c013038514b3524edff463127))
 * **cli:** reject nonnumeric output slice bounds ([#13344](https://github.com/morluto/rea/issues/13344)) ([9a6ee71](https://github.com/morluto/rea/commit/9a6ee7188697c5e99616dbb75154ce2cdbc79af7))
 * **cli:** report retained MCP registration backups on typed failures ([#13268](https://github.com/morluto/rea/issues/13268)) ([c1a1de9](https://github.com/morluto/rea/commit/c1a1de9bfb385e1ba15519779fd0680bd737ebfd))
 * **cli:** spell a target failure's recovery with CLI commands and options ([#14289](https://github.com/morluto/rea/issues/14289)) ([299c592](https://github.com/morluto/rea/commit/299c592b636de2080f6ce123e5fbc58effce45f2))
