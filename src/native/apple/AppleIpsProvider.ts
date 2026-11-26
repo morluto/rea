@@ -13,11 +13,6 @@ import {
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   type AppleIps,
-  MAX_INSPECT_APPLE_IPS_FRAMES,
-  MAX_INSPECT_APPLE_IPS_IMAGES,
-  MAX_INSPECT_APPLE_IPS_REGISTERS,
-  MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-  MAX_INSPECT_APPLE_IPS_THREADS,
   appleIpsBudgetLimit,
   type AppleIpsBudget,
   type InspectAppleIpsInput,
@@ -185,40 +180,14 @@ export class AppleIpsProvider implements AppleIpsPort {
   }
 }
 
+/** The schema field of each boundary the parser names. */
 const SELECTED_BUDGETS = {
-  threads: {
-    argument: "max_threads",
-    maximum: MAX_INSPECT_APPLE_IPS_THREADS,
-    unit: "entries",
-  },
-  frames: {
-    argument: "max_frames",
-    maximum: MAX_INSPECT_APPLE_IPS_FRAMES,
-    unit: "entries",
-  },
-  images: {
-    argument: "max_images",
-    maximum: MAX_INSPECT_APPLE_IPS_IMAGES,
-    unit: "entries",
-  },
-  registers: {
-    argument: "max_registers",
-    maximum: MAX_INSPECT_APPLE_IPS_REGISTERS,
-    unit: "entries",
-  },
-  integer_text: {
-    argument: "max_integer_text_bytes",
-    maximum: MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
-    unit: "UTF-16 bytes",
-  },
-} as const satisfies Record<
-  AppleIpsSelectedBoundary,
-  {
-    readonly argument: AppleIpsBudget;
-    readonly maximum: number;
-    readonly unit: string;
-  }
->;
+  threads: "max_threads",
+  frames: "max_frames",
+  images: "max_images",
+  registers: "max_registers",
+  integer_text: "max_integer_text_bytes",
+} as const satisfies Record<AppleIpsSelectedBoundary, AppleIpsBudget>;
 
 const isSelectedBoundary = (
   boundary: string,
@@ -239,7 +208,7 @@ const resourceRecovery = ({ name, maximum }: LimitRef) =>
   isSelectedBoundary(name)
     ? {
         retryable: false,
-        limit: appleIpsBudgetLimit(SELECTED_BUDGETS[name].argument, maximum),
+        limit: appleIpsBudgetLimit(SELECTED_BUDGETS[name], maximum),
       }
     : fixedAllowanceOptions(
         `The IPS ${name.replaceAll("_", " ")} allowance`,
