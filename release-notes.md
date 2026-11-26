@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **trace:** PlaywrightTracePort.inspect takes the resolved limits, and trace archive and nesting refusals report details.limit instead of a fixed_ceiling refusal.
 * **native:** refusals at the structural budget report reported_limits.boundary "max_structure_bytes" instead of "structure".
 * **metadata:** NTFS and Maven report refusals report details.limit instead of a fixed_ceiling refusal, and parseMavenGradleMetadata and the inspect_ntfs_journal input contract gain the new controls.
 * **flutter:** Flutter size, inventory and candidate refusals report details.limit instead of a fixed_ceiling refusal, and the inspect_dart_aot abi selector admits labels up to 65,521 characters.
@@ -107,6 +108,7 @@
 * **setup:** discover project-scoped MCP registrations in doctor and … ([#7283](https://github.com/morluto/rea/issues/7283)) ([63c50ec](https://github.com/morluto/rea/commit/63c50ecfc0a849d3298c44b1ce06e2e759f1303c))
 * **tools:** add optional limit and offset paging to find_xrefs_to_name ([#13858](https://github.com/morluto/rea/issues/13858)) ([1d4fadc](https://github.com/morluto/rea/commit/1d4fadceb2720b2db9a2a0674e95385117238d81))
 * **tools:** add optional max_depth and max_nodes bounds to get_call_graph and trace_call_path ([#13828](https://github.com/morluto/rea/issues/13828)) ([d0560b1](https://github.com/morluto/rea/commit/d0560b1b88c3257b802b80ef4c36719c9734b996))
+* **trace:** give Playwright trace import per-call trace_limits ([#14628](https://github.com/morluto/rea/issues/14628)) ([98d83d0](https://github.com/morluto/rea/commit/98d83d07870f43a583f3fe8ff1d2d49d932c8f2e))
 * **uefi:** record the owning FFS file of extracted payloads ([465079c](https://github.com/morluto/rea/commit/465079cb41d9cb4a6aa992c6533b8e6d617db440))
 * **views:** page byte-entropy blocks and runs; budget xrefs and nupkg delivery ([#14599](https://github.com/morluto/rea/issues/14599)) ([f764105](https://github.com/morluto/rea/commit/f7641050c7336e93bcf56653e5a3946bf0f60af3))
 * **web:** deduplicate bundle findings across scripts by value and mechanism ([#11354](https://github.com/morluto/rea/issues/11354)) ([23970fc](https://github.com/morluto/rea/commit/23970fc63f1c6f41ee03539216c236f85ae15593))
