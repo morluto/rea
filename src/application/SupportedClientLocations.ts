@@ -531,25 +531,36 @@ export const fxLocation = ({
   const value = env.FX_HOME;
   const pathApi = platform === "win32" ? win32 : posix;
   if (!value) {
-    const directory = join(home, ".fx");
+    const directory = pathApi.join(home, ".fx");
     return ok({
-      configPath: join(directory, "mcp.json"),
+      configPath: pathApi.join(directory, "mcp.json"),
       markerPath: directory,
     });
   }
-  const trimmed = value.replace(/\/+$/u, "");
+  const trimmed = value.replace(/[\\/]+$/u, "");
   // fx opens FX_HOME as written, so `.` and `..` resolve through links on the
   // filesystem. Refusing them keeps REA's file and its root/home check on the
   // folder fx opens, so the private profile mode can never land on home.
   const dotSegment = trimmed
     .split(/[\\/]/u)
     .some((segment) => segment === "." || segment === "..");
+  const normalizedTrimmed =
+    platform === "win32" ? trimmed.replaceAll("/", "\\") : trimmed;
+  const normalizedHome =
+    platform === "win32"
+      ? home.replaceAll("/", "\\").replace(/[\\/]+$/u, "")
+      : home.replace(/\/+$/u, "");
+  const isSameHome =
+    platform === "win32"
+      ? normalizedTrimmed.toLowerCase() === normalizedHome.toLowerCase()
+      : normalizedTrimmed === normalizedHome;
   if (
     !pathApi.isAbsolute(value) ||
     trimmed.length === 0 ||
     dotSegment ||
-    pathApi.parse(trimmed).root === trimmed ||
-    trimmed === home.replace(/[\\/]+$/u, "")
+    pathApi.parse(normalizedTrimmed).root === normalizedTrimmed ||
+    pathApi.parse(value).root === value ||
+    isSameHome
   )
     return err({
       path: value,
@@ -557,8 +568,8 @@ export const fxLocation = ({
         "FX_HOME must be an absolute path without . or .. segments, other than the root and home folders. Repair FX_HOME before configuring fx; no settings were written.",
     });
   return ok({
-    configPath: pathApi.join(trimmed, "mcp.json"),
-    markerPath: trimmed,
+    configPath: pathApi.join(normalizedTrimmed, "mcp.json"),
+    markerPath: normalizedTrimmed,
   });
 };
 
