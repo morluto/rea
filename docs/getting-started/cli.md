@@ -465,6 +465,16 @@ rea extract-artifact ./installer.iso --json
 See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
 names, multi-extent and interleaved files, and what is not decoded.
 
+Inventory and extract a uClinux bFLT flat executable:
+
+```sh
+rea inspect-artifact ./busybox.bflt --detail summary --evidence_output busybox.json --json
+rea extract-artifact ./busybox.bflt --json
+```
+
+See [uClinux bFLT flat executables](../bflt-executables.md) for header facts,
+segments, gzip and gzdata bodies, and the limitations kept beside the facts.
+
 Inventory and extract a Qualcomm MBN boot image or an ELF image with a hash segment:
 
 ```sh
