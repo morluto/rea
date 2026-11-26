@@ -451,9 +451,11 @@ it("retains the original record when duplicate metadata exceeds capacity", () =>
   if (refused.ok) return;
   expect(projectAnalysisError(refused.error)).toMatchObject({
     code: "resource_constraint",
-    partial_observation: {
-      kind: "retained-evidence",
-      evidence_id: original.evidence_id,
+    details: {
+      partial_observation: {
+        kind: "retained-evidence",
+        evidence_id: original.evidence_id,
+      },
     },
   });
   expect(ledger.get(original.evidence_id)).toEqual(original);

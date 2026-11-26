@@ -11,8 +11,14 @@ import {
   type AnalysisExecution,
   type CapabilityDescriptor,
 } from "../../ports/AnalysisProvider.js";
-import { ok } from "../../domain/result.js";
+import { ok, err } from "../../domain/result.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { executeWithNativeSymbolSelection } from "../NativeSymbolSelection.js";
 import { parseConfig } from "../../config/parseConfig.js";
+import {
+  executeComposedWorkflow,
+  createWorkflowEvidence,
+} from "../WorkflowEvidence.js";
 import { runDirectAnalysis } from "../DirectAnalysis.js";
 import {
   summarizeOverBudgetEvidence,
@@ -35,7 +41,7 @@ const fixture = (id: string) => {
   const profile = createAnalysisProfile(identity, { fixture: true });
   const calls: string[] = [];
   const capability = (
-    operation: "address_name" | "read_bytes",
+    operation: "address_name" | "read_bytes" | "list_names" | "xrefs",
   ): CapabilityDescriptor => ({
     provider: identity,
     operation,
@@ -55,10 +61,32 @@ const fixture = (id: string) => {
   const provider: AnalysisProvider = {
     identity: () => identity,
     resolveAnalysisProfile: async () => ok({ profile }),
-    capabilities: () => [capability("address_name"), capability("read_bytes")],
+    capabilities: () => [
+      capability("address_name"),
+      capability("read_bytes"),
+      capability("list_names"),
+      capability("xrefs"),
+    ],
     createClient: () => ({
-      execute: async (operation) => {
+      execute: async (operation, parameters) => {
         calls.push(operation);
+        if (operation === "list_names")
+          return ok(
+            createAnalysisExecution(
+              [{ address: "0x1000", value: "entry" }],
+              identity,
+            ),
+          );
+        if (operation === "xrefs")
+          return parameters.address === "0x1000"
+            ? ok(createAnalysisExecution([], identity))
+            : err(
+                new AnalysisInputError(
+                  operation,
+                  { conformsToInputContract: true },
+                  [{ path: ["address"], reason: "invalid_value" }],
+                ),
+              );
         return ok(createAnalysisExecution(operation, identity));
       },
       close: async () => ok(null),
@@ -308,4 +336,121 @@ it("keeps native CLI materialization provenance and the exact caller path", asyn
   expect(result.value.provider_selection?.selection_source).toBe("request");
   expect(result.value.caller_input_path).toBe(path);
   expect(session.activeTarget()).toBeUndefined();
+});
+
+it.each(["ghidra", "managed-static"])(
+  "preserves %s provenance when a workflow materializes a noncacheable source",
+  async (id) => {
+    const [path] = await createBinarySessionTargets();
+    const { session } = fixture(id);
+    try {
+      const opened = await session.open(path, { providerId: id });
+      if (!opened.ok) throw opened.error;
+      const parameters = { address: "0x1000", length: 1 };
+      let issued: AnalysisExecution | undefined;
+      const composed = await executeComposedWorkflow(
+        session,
+        async (observed) => {
+          const result = await observed.execute("read_bytes", parameters, {
+            retainEvidence: true,
+          });
+          if (!result.ok) return result;
+          issued = result.value;
+          return ok({ source: result.value.evidenceId ?? null });
+        },
+      );
+      if (!composed.ok) throw composed.error;
+      expect(composed.sourceEvidence).toHaveLength(1);
+      const source = composed.sourceEvidence![0]!;
+      expect(source.operation).toBe("read_bytes");
+      expect(source.provider_selection?.selection_source).toBe(
+        id === "ghidra" ? "request" : undefined,
+      );
+      expect(composed.value.evidenceLinks).toContain(source.evidence_id);
+      expect(session.exportEvidenceBundle().records).toHaveLength(0);
+      if (issued === undefined)
+        throw new Error("Expected the workflow's completed execution");
+      const rematerialized = completedOperationEvidence(
+        "read_bytes",
+        parameters,
+        issued,
+        { target: opened.value },
+      );
+      if (!rematerialized.ok) throw rematerialized.error;
+      expect(rematerialized.value.provider_selection).toEqual(
+        source.provider_selection,
+      );
+      expect(rematerialized.value.evidence_id).toBe(source.evidence_id);
+      expect(session.recordEvidence(source).ok).toBe(true);
+      const derived = createWorkflowEvidence({
+        target: opened.value,
+        operation: "trace_call_path",
+        parameters: {},
+        result: composed.value.result,
+        upstreamProfile: session.analysisProfile() ?? undefined,
+        upstreamEvidenceLinks: composed.value.evidenceLinks ?? [],
+        upstreamLimitations: composed.value.limitations,
+      });
+      expect(derived.provider_selection).toBeUndefined();
+      expect(derived.evidence_links).toContain(source.evidence_id);
+      expect(session.recordEvidence(derived).ok).toBe(true);
+      expect(
+        session
+          .exportEvidenceBundle()
+          .records.find((record) => record.evidence_id === source.evidence_id)
+          ?.provider_selection,
+      ).toEqual(source.provider_selection);
+    } finally {
+      await session.dispose();
+    }
+  },
+);
+
+it("preserves native selection when a named query is rebound without reusing the address record", async () => {
+  const [path] = await createBinarySessionTargets();
+  const { session } = fixture("ghidra");
+  try {
+    const opened = await session.open(path, { providerId: "ghidra" });
+    if (!opened.ok) throw opened.error;
+    const parameters = { address: "entry", document: "fixture" };
+    const executed = await executeWithNativeSymbolSelection(
+      session,
+      "xrefs",
+      parameters,
+      (resolved) => session.execute("xrefs", resolved),
+    );
+    if (!executed.ok) throw executed.error;
+    const materialized = completedOperationEvidence(
+      "xrefs",
+      parameters,
+      executed.value,
+      {
+        target: opened.value,
+        admitRecovery: session.admitRecoveryObservation.bind(session),
+        evidenceById: session.evidenceForAnalysis.bind(session),
+      },
+    );
+    if (!materialized.ok) throw materialized.error;
+    expect(materialized.value.parameters).toEqual(parameters);
+    expect(materialized.value.provider_selection?.selection_source).toBe(
+      "request",
+    );
+    expect(
+      materialized.value.limitations.some((text) =>
+        text.includes('REA resolved "entry"'),
+      ),
+    ).toBe(true);
+    const addressRecord = session
+      .exportEvidenceBundle()
+      .records.find(
+        (record) =>
+          record.operation === "xrefs" &&
+          record.parameters.address === "0x1000",
+      );
+    expect(addressRecord).toBeDefined();
+    expect(materialized.value.evidence_id).not.toBe(addressRecord?.evidence_id);
+    expect(materialized.value.evidence_id).toBe(executed.value.evidenceId);
+  } finally {
+    await session.dispose();
+  }
 });

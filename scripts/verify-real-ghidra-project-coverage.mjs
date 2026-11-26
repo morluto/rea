@@ -189,13 +189,29 @@ export async function verifyProjectCoverage(run) {
         ],
       })),
     });
+    // GhidraProjectHistory preserves saved Program reports, not this run's work.
+    const isProjectHistory = (evidence) =>
+      evidence.provider.id === "ghidra" &&
+      evidence.operation === "health" &&
+      evidence.parameters.facet === "historical-project-analysis-reports" &&
+      evidence.normalized_result?.origin === "caller-project";
     const assertSelection = (evidence, selection) => {
       const selected = selection.candidates.find(
         (candidate) => candidate.selected,
       );
       assert.ok(selected);
-      if (evidence.provider.id === selected.provider.id)
-        assert.deepEqual(evidence.provider_selection, selection);
+      if (isProjectHistory(evidence))
+        assert.equal(
+          evidence.provider_selection,
+          undefined,
+          `${evidence.operation} ${evidence.evidence_id} must preserve historical provenance absence`,
+        );
+      else if (evidence.provider.id === selected.provider.id)
+        assert.deepEqual(
+          evidence.provider_selection,
+          selection,
+          `${evidence.operation} ${evidence.evidence_id} must retain its native provider selection`,
+        );
       else {
         assert.equal(evidence.provider_selection, undefined);
         assert.ok(
@@ -354,6 +370,13 @@ export async function verifyProjectCoverage(run) {
           (record) => record.provider.id === "ghidra",
         ))
           assertSelection(native, selection);
+        assert.ok(
+          exported.records.some(
+            (record) =>
+              record.provider.id === "ghidra" && !isProjectHistory(record),
+          ),
+          "Expected a fresh native observation",
+        );
         const reachesNativeSource = (evidence) => {
           const pending = [...evidence.evidence_links];
           const seen = new Set();
@@ -363,7 +386,8 @@ export async function verifyProjectCoverage(run) {
             seen.add(id);
             const source = exportedById.get(id);
             if (source === undefined) continue;
-            if (source.provider.id === "ghidra") return true;
+            if (source.provider.id === "ghidra" && !isProjectHistory(source))
+              return true;
             pending.push(...source.evidence_links);
           }
           return false;
@@ -487,7 +511,8 @@ export async function verifyProjectCoverage(run) {
           assert.equal(selection.selection_source, "environment");
           assert.notEqual(
             selection.selection_source,
-            exportedNative[0].provider_selection.selection_source,
+            exportedNative.find((record) => !isProjectHistory(record))
+              .provider_selection.selection_source,
           );
           await call(activeImport, "import_evidence_bundle", {
             path: bundlePath,
