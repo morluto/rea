@@ -276,6 +276,7 @@ export interface ArtifactReader {
     | "esp-image"
     | "uf2"
     | "dfuse"
+    | "bflt"
     | "esp-flash-image"
     | "fit"
     | "ntfs-mft"

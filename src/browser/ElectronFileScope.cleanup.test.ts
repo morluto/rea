@@ -79,6 +79,7 @@ import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRu
 import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
 import {
   authorizedElectronFile,
+  ElectronFileScope,
   mapElectronFileAuthorizationFailure,
   retryElectronFileCleanup,
 } from "./ElectronFileScope.js";
@@ -274,15 +275,19 @@ it("keeps an earlier read failure primary over a later abort and close failure",
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
 
-it("retries a failed ASAR descriptor lease during provider shutdown", async () => {
+it("leaves another owner's retained ASAR descriptor to that owner's retry", async () => {
   const location = await asarPage();
   handleState.failCloseCount = 1;
-  await expect(authorizedElectronFile(location)).rejects.toBeInstanceOf(
-    ArtifactReaderFailure,
-  );
+  const files = new ElectronFileScope();
+  await expect(
+    authorizedElectronFile(location, undefined, undefined, undefined, files),
+  ).rejects.toBeInstanceOf(ArtifactReaderFailure);
 
+  // A provider's shutdown retries only the descriptors it owns.
   await new CdpElectronProvider().close();
+  expect(handleState.events).toEqual(["open", "close"]);
 
+  await files.retryCleanup();
   expect(handleState.events).toEqual(["open", "close", "close"]);
 });
 

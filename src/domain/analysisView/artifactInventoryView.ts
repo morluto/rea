@@ -324,6 +324,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "esp-image" ||
     inventory.manifest.root_format === "uf2" ||
     inventory.manifest.root_format === "dfuse" ||
+    inventory.manifest.root_format === "bflt" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
     inventory.manifest.root_format === "nds" ||

@@ -257,11 +257,6 @@
     }
   },
   "src/native/dwarf/DwarfUnitsProvider.ts": {
-    "\"The PE section-name decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 65,536-byte per-name COFF string-table decode is a resource policy; the aggregate is max_structure_bytes."
-    },
     "\"The retained DWARF section bound\"": {
       "class": "derived",
       "reason": "Retained file-backed sections cannot exceed the admitted image size; the bound is the selected file and grows with it."
@@ -299,13 +294,6 @@
       "class": "pending",
       "issue": 14235,
       "reason": "The ELF dynamic table entry count is a resource policy; symbol-table excess already degrades to unresolved rows."
-    }
-  },
-  "src/native/initializers/NativeInitializersProvider.ts": {
-    "\"The native initializer structural allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     }
   },
   "src/native/parsers/lipo.ts": {

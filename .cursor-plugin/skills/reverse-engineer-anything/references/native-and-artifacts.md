@@ -985,6 +985,15 @@ unavailable hashes, so extract other files by `occurrence_ids`. Rock Ridge,
 UDF, and El Torito boot images are not decoded. See
 [ISO 9660 disc images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/iso9660-images.md).
 
+uClinux bFLT flat executables (`bFLT` magic, any filename) use the same
+inspection and extraction workflows. The header does not name a CPU, so the
+root architecture stays unknown. Header facts are big-endian declarations;
+relocations are listed, not applied. `text.bin` (header included), `data.bin`
+and `relocations.bin` are extractable. gzip and gzdata bodies are inflated
+under `artifact_limits.expanded_bytes`; revision 2 bodies are read as stored.
+Open `text.bin` as a raw binary with a chosen architecture. See
+[uClinux bFLT flat executables](https://github.com/morluto/rea/blob/main/docs/bflt-executables.md).
+
 Nintendo DS ROMs (`nds`) are detected from the header (logo CRC `0xCF56`,
 unit code, ARM9 offset, and a matching logo or header CRC), not the filename,
 and use the same inspection and extraction workflows. `root_format_metadata`
