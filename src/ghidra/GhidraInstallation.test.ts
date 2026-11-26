@@ -526,25 +526,65 @@ describe("Ghidra Windows installation commitment", () => {
     });
   });
 
-  it.each([
-    {
-      name: "PATH-only JDK",
-      path: "C:\\Windows\\System32;C:\\Java\\jdk-25\\bin",
-      expected: "C:\\Java\\jdk-25\\bin\\java.exe",
-    },
-    {
-      name: "relative PATH entry",
-      path: "jdk-25\\bin",
-      expected: "java.exe",
-    },
-  ])(
-    "selects the Windows Java launcher from $name",
-    async ({ path, expected }) => {
-      const probed: string[] = [];
+  it("probes an absolute Windows JDK launcher from PATH", async () => {
+    const probed: string[] = [];
+    const javaExe = "C:\\Java\\jdk-25\\bin\\java.exe";
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: {
+          PATH: "C:\\Windows\\System32;C:\\Java\\jdk-25\\bin",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        },
+        installDir: WINDOWS_INSTALL,
+        platform: "win32",
+        architecture: "x64",
+      },
+      {
+        platform: "win32",
+        architecture: "x64",
+        readText: (candidate) =>
+          candidate === WINDOWS_PROPERTIES
+            ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
+            : undefined,
+        executable: (candidate) =>
+          candidate === javaExe ||
+          candidate === WINDOWS_HEADLESS ||
+          candidate === WINDOWS_DECOMPILER,
+        probeJava: (command) => {
+          probed.push(command);
+          return javaProbeOk<GhidraJavaObservation>({
+            ...JAVA,
+            home: "C:\\Java\\jdk-25",
+            osName: "Windows 11",
+          });
+        },
+      },
+    );
+    // The owned-process launcher admits only an absolute executable path, so a
+    // JDK on PATH must not reach it as a bare command name.
+    expect(probed).toEqual([javaExe]);
+    expect(inspection).toMatchObject({
+      status: "available",
+      javaCommand: javaExe,
+    });
+  });
+
+  it("never selects a Java launcher from a relative PATH entry", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-relative-java-");
+    const relativeBin = join(root, "jdk-25", "bin");
+    await mkdir(relativeBin, { recursive: true });
+    await writeFile(join(relativeBin, "java.exe"), "");
+    // The search resolves relative entries against the working directory, so
+    // this path is exactly what a working-directory lookup would offer.
+    const launcherUnderCwd = join(relativeBin, "java.exe");
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const probed: string[] = [];
+    try {
       const inspection = await inspectGhidraInstallation(
         {
           resourceOwner: inspectionResources.owner,
-          environment: { PATH: path, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          environment: { PATH: "jdk-25\\bin", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
           installDir: WINDOWS_INSTALL,
           platform: "win32",
           architecture: "x64",
@@ -556,8 +596,11 @@ describe("Ghidra Windows installation commitment", () => {
             candidate === WINDOWS_PROPERTIES
               ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
               : undefined,
+          // Accepting the resolved candidate keeps this a control: only a search
+          // that skips relative entries can stay on the bare command.
           executable: (candidate) =>
-            candidate === expected ||
+            candidate === launcherUnderCwd ||
+            candidate === "java.exe" ||
             candidate === WINDOWS_HEADLESS ||
             candidate === WINDOWS_DECOMPILER,
           probeJava: (command) => {
@@ -570,15 +613,12 @@ describe("Ghidra Windows installation commitment", () => {
           },
         },
       );
-      // The owned-process launcher admits only an absolute executable path, so
-      // a JDK on PATH must not reach it as a bare command name.
-      expect(probed).toEqual([expected]);
-      expect(inspection).toMatchObject({
-        status: "available",
-        javaCommand: expected,
-      });
-    },
-  );
+      expect(probed).toEqual(["java.exe"]);
+      expect(inspection).toMatchObject({ javaCommand: "java.exe" });
+    } finally {
+      cwd.mockRestore();
+    }
+  });
 });
 
 describe("Ghidra installation rejection diagnostics", () => {
