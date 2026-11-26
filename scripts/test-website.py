@@ -372,6 +372,13 @@ class WebsiteSearchChecks(unittest.TestCase):
 class WebsiteMaintenanceChecks(unittest.TestCase):
     """Exercise contributor edits and the static preview through real consumers."""
 
+    def test_home_navigation_starts_closed(self):
+        document = Document((ROOT / "website/public/index.html").read_text(encoding="utf-8"))
+        menus = [node for node in document.nodes if "home-page-nav" in node.attrs.get("class", "").split()]
+        self.assertEqual([node.tag for node in menus], ["details"])
+        self.assertNotIn("open", menus[0].attrs)
+        self.assertIn("data-home-nav", menus[0].attrs)
+
     def test_electron_guide_renderer_matches_download(self):
         public = ROOT / "website/public"
         source = (public / "guides/javascript/index.html").read_text(encoding="utf-8")
