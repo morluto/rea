@@ -77,6 +77,7 @@ import {
 } from "./javascript/javascriptAnalysisResourceControls.js";
 import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
 import { YARA_SETTING_BOUNDS } from "./yara/yaraMatches.js";
+import { BOUNDED_PRODUCER_LIMITS } from "./producerResourceLimits.js";
 import {
   DEFAULT_ARTIFACT_MEMBER_COUNT,
   MAXIMUM_ARTIFACT_READER_COUNT,
@@ -628,6 +629,33 @@ export const ANALYSIS_SETTINGS = {
     provider: "pwntools",
     operations: ["inspect_binary_layout", "inspect_recorded_crash"],
     parameter: "producer_limits.input_bytes",
+  },
+  // Session default for omitted producer_limits.output_bytes. Producers whose
+  // own default or maximum differs keep that default until this setting is
+  // set, then clamp an explicit value to their maximum.
+  "producer.output_bytes": {
+    updateMode: "runtime",
+    environment: "REA_PRODUCER_OUTPUT_BYTES",
+    defaultValue: BOUNDED_PRODUCER_LIMITS.output_bytes,
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "producer",
+    relatedProviders: [
+      "tshark-capture",
+      "sigrok-recording",
+      "apktool",
+      "rea-artifact-graph",
+    ],
+    operations: [
+      "inspect_packet_capture",
+      "decode_signal_recording",
+      "inspect_signal_decoders",
+      "decode_android_resources",
+      "inspect_asset_catalog",
+    ],
+    parameter: "producer_limits.output_bytes",
   },
   "windows.change_time_drift_ms": {
     updateMode: "runtime",

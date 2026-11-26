@@ -37,11 +37,24 @@ export const dwarfUnitsFileLimit = (effectiveValue: number) =>
     DWARF_UNITS_FILE_BYTES,
     effectiveValue,
   );
-/** Hard ceiling on decompressed DWARF debug bytes for one image. */
+/** `max_decompressed_bytes` when omitted: decompressed DWARF debug bytes for one image. */
 export const MAX_DWARF_DECOMPRESSED_SECTION_BYTES = 268435456;
-/** Display name of that fixed decompressed-section allowance. */
-export const DWARF_DECOMPRESSED_SECTION_ALLOWANCE =
-  "The DWARF decompressed section allowance";
+
+/** `max_decompressed_bytes`: decompressed DWARF sections are retained in memory. */
+export const DWARF_DECOMPRESSED_BUDGET = {
+  minimum: 1,
+  maximum: 1024 * 1024 * 1024,
+  default_value: MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+
+/** The `max_decompressed_bytes` control that stopped a DWARF decode. */
+export const dwarfDecompressedLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_decompressed_bytes",
+    DWARF_DECOMPRESSED_BUDGET,
+    effectiveValue,
+  );
 /** Maximum compile-unit rows returned in one call. */
 export const MAX_INSPECT_DWARF_UNITS_LIMIT = 256;
 /** Default page size. */
@@ -257,6 +270,11 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
     "Absolute filesystem path to an ELF, Mach-O, or PE image",
   ),
   max_structure_bytes: maxStructureBytesSchema,
+  max_decompressed_bytes: parameterBudgetSchema(
+    DWARF_DECOMPRESSED_BUDGET,
+  ).describe(
+    "Maximum DWARF section decompression budget in bytes for one image, charging the larger of declared uncompressed size and compressed payload bytes per section including failed attempts (default 256 MiB)",
+  ),
   max_file_bytes: parameterBudgetSchema(DWARF_UNITS_FILE_BYTES).describe(
     "Maximum stable artifact bytes to read (default 64 MiB)",
   ),

@@ -36,6 +36,7 @@ import {
 } from "./windowsChangeTimeSettle.js";
 import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
 import { YARA_SETTING_SEEDS } from "./yaraSettingSeeds.js";
+import { producerOutputBytesSchema } from "./producerOutputBytesSeed.js";
 import { zstandardMaxFramesSchema } from "../domain/compression/zstandardFrameAllowance.js";
 import {
   agentResultBudgetBytesSchema,
@@ -71,6 +72,7 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
     REA_KUNA_PROJECT_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_KUNA_TIMEOUT_MS: providerStartupTimeoutSchema,
     REA_PWNTOOLS_MAX_INPUT_BYTES: pwntoolsInputBytesSchema,
+    REA_PRODUCER_OUTPUT_BYTES: producerOutputBytesSchema,
     REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema,
     REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: windowsChangeTimeSettlePollMsSchema,
     REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:

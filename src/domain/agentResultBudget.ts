@@ -168,7 +168,12 @@ export type AgentBudgetRecovery =
   | { readonly kind: "session" }
   | { readonly kind: "evidence-file"; readonly path: string | undefined }
   /** The CLI's private retained-Evidence cache, by default. */
-  | { readonly kind: "cache-file"; readonly path: string }
+  | {
+      readonly kind: "cache-file";
+      readonly path: string | undefined;
+      /** Set when an oversized cache file remained on disk after removal failed. */
+      readonly reason?: string;
+    }
   /** Nothing was written; `reason` says why when retention was attempted. */
   | { readonly kind: "not-retained"; readonly reason?: string };
 
@@ -243,7 +248,9 @@ const recoveryNote = (recovery: AgentBudgetRecovery): string => {
   if (recovery.kind === "evidence-file")
     return "It is in the --evidence_output bundle: rea inspect-analysis-view with next.arguments pages its exact JSON. Pass --detail complete for all of it inline.";
   if (recovery.kind === "cache-file")
-    return `It was saved to REA's private retained-Evidence cache, named by its Evidence ID: rea inspect-analysis-view with next.arguments pages its exact JSON. The cache keeps at most ${CLI_RETAINED_EVIDENCE_SETTING} bytes in total and removes records unused for 7 days. Pass --detail complete for all of it inline, --evidence_output <path> to save it elsewhere, or --no-retain to write nothing.`;
+    return recovery.reason === undefined
+      ? `It was saved to REA's private retained-Evidence cache, named by its Evidence ID: rea inspect-analysis-view with next.arguments pages its exact JSON. The cache keeps at most ${CLI_RETAINED_EVIDENCE_SETTING} bytes in total and removes records unused for 7 days. Pass --detail complete for all of it inline, --evidence_output <path> to save it elsewhere, or --no-retain to write nothing.`
+      : `The saved bundle exceeded ${CLI_RETAINED_EVIDENCE_SETTING} and could not be removed (see retention_failure), so it remains in REA's private retained-Evidence cache: rea inspect-analysis-view with next.arguments pages its exact JSON.`;
   return `This invocation retained nothing and wrote nothing (no --evidence_output, and --no-retain, ${CLI_RETAINED_EVIDENCE_SETTING} 0, or a failed save named by retention_failure): rerun the same command with rerun.complete (--detail complete) for all of it inline, or with rerun.retained (--evidence_output ${EVIDENCE_OUTPUT_PLACEHOLDER}) to save it for inspect-analysis-view.`;
 };
 
@@ -283,7 +290,8 @@ export const agentBudgetDelivery = (input: {
           },
         }),
     ...(recovery.kind === "not-retained" ? { rerun: RERUN_ARGUMENTS } : {}),
-    ...(recovery.kind === "not-retained" && recovery.reason !== undefined
+    ...((recovery.kind === "not-retained" || recovery.kind === "cache-file") &&
+    recovery.reason !== undefined
       ? { retention_failure: recovery.reason }
       : {}),
     note: `Complete ${input.operation} Evidence ${evidenceId} is ${String(completeBytes)} bytes (about ${String(estimatedJsonTokens(completeBytes))} tokens, estimated at ${String(ESTIMATED_JSON_BYTES_PER_TOKEN)} bytes per token), over the agent result budget of ${String(budget.bytes)} bytes (${AGENT_RESULT_BUDGET_SETTING}, source ${budget.source}), so its summary was delivered. Nothing was truncated. ${recoveryNote(recovery)}`,

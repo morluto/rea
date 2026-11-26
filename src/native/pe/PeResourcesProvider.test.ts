@@ -17,6 +17,7 @@ const inspect = async (
   input: {
     readonly max_file_bytes?: number;
     readonly max_entries?: number;
+    readonly max_metadata_bytes?: number;
   } = {},
 ) => {
   const provider = new PeResourcesProvider();
@@ -176,7 +177,7 @@ describe("PE resource provider budget reporting", () => {
   });
 });
 
-it("names the fixed PE metadata allowance instead of host memory", async () => {
+it("names max_metadata_bytes instead of host memory", async () => {
   const root = await createTestTempDirectory("rea-pe-metadata-budget-");
   const path = join(root, "resource.exe");
   const name = "n".repeat(200);
@@ -205,11 +206,18 @@ it("names the fixed PE metadata allowance instead of host memory", async () => {
       maximum: 8 * 1024 * 1024,
       maximum_metadata_bytes: 8 * 1024 * 1024,
     },
-    refusal: {
-      kind: "fixed_ceiling",
-      allowance_kind: "parser",
-      limit: 8 * 1024 * 1024,
-      unit: "bytes",
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_metadata_bytes",
+      effective_value: 8 * 1024 * 1024,
+      default_value: 8 * 1024 * 1024,
     },
+    refusal: { kind: "adjustable_budget", control: "max_metadata_bytes" },
   });
+  expect(projected.details?.limit).not.toHaveProperty("required_value");
+  const raised = await inspect(path, {
+    max_metadata_bytes: 32 * 1024 * 1024,
+    max_entries: 65536,
+  });
+  if (!raised.ok) throw raised.error;
 });

@@ -17,7 +17,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { elf, fat, thinMach } from "../domain/binaryTarget.fixture.js";
@@ -524,6 +524,115 @@ describe("Ghidra Windows installation commitment", () => {
       javaCommand: `C:\\Java\\jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\\bin\\java.exe`,
       providerVersion: SUPPORTED_GHIDRA_VERSION,
     });
+  });
+
+  it.each([
+    {
+      key: "PATH",
+      javaHome: "C:\\Java\\jdk-25",
+      path: "C:\\Windows\\System32;C:\\Java\\jdk-25\\bin",
+    },
+    {
+      key: "Path",
+      javaHome: "C:\\Java Tools;Local\\jdk-25",
+      path: 'C:\\Windows\\System32;"C:\\Java Tools;Local\\jdk-25\\bin"',
+    },
+  ])(
+    "commits an absolute Windows JDK launcher from $key",
+    async ({ key, javaHome, path }) => {
+      const probed: string[] = [];
+      const javaExe = `${javaHome}\\bin\\java.exe`;
+      const inspection = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {
+            [key]: path,
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          },
+          installDir: WINDOWS_INSTALL,
+          platform: "win32",
+          architecture: "x64",
+        },
+        {
+          platform: "win32",
+          architecture: "x64",
+          readText: (candidate) =>
+            candidate === WINDOWS_PROPERTIES
+              ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
+              : undefined,
+          executable: (candidate) =>
+            candidate === javaExe ||
+            candidate === WINDOWS_HEADLESS ||
+            candidate === WINDOWS_DECOMPILER,
+          probeJava: (command) => {
+            probed.push(command);
+            return javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              home: javaHome,
+              osName: "Windows 11",
+            });
+          },
+        },
+      );
+      // The owned-process launcher admits only an absolute executable path, so a
+      // JDK on PATH must not reach it as a bare command name.
+      expect(probed).toEqual([javaExe]);
+      expect(inspection).toMatchObject({
+        status: "available",
+        javaCommand: javaExe,
+        javaHome,
+      });
+    },
+  );
+
+  it("never selects a Java launcher from a relative PATH entry", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-relative-java-");
+    const relativeBin = join(root, "jdk-25", "bin");
+    await mkdir(relativeBin, { recursive: true });
+    await writeFile(join(relativeBin, "java.exe"), "");
+    // The search resolves relative entries against the working directory, so
+    // this path is exactly what a working-directory lookup would offer.
+    const launcherUnderCwd = win32.resolve(root, "jdk-25", "bin", "java.exe");
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const probed: string[] = [];
+    try {
+      const inspection = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: { PATH: "jdk-25\\bin", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          installDir: WINDOWS_INSTALL,
+          platform: "win32",
+          architecture: "x64",
+        },
+        {
+          platform: "win32",
+          architecture: "x64",
+          readText: (candidate) =>
+            candidate === WINDOWS_PROPERTIES
+              ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
+              : undefined,
+          // Accepting the resolved candidate keeps this a control: only a search
+          // that skips relative entries can stay on the bare command.
+          executable: (candidate) =>
+            candidate === launcherUnderCwd ||
+            candidate === "java.exe" ||
+            candidate === WINDOWS_HEADLESS ||
+            candidate === WINDOWS_DECOMPILER,
+          probeJava: (command) => {
+            probed.push(command);
+            return javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              home: "C:\\Java\\jdk-25",
+              osName: "Windows 11",
+            });
+          },
+        },
+      );
+      expect(probed).toEqual(["java.exe"]);
+      expect(inspection).toMatchObject({ javaCommand: "java.exe" });
+    } finally {
+      cwd.mockRestore();
+    }
   });
 });
 

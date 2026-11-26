@@ -1,5 +1,6 @@
 import { analysisViewPageFields } from "./analysisViewPageFields.js";
-import { countValues, sortedCountEntries } from "./analysisViewCounts.js";
+import { countValues } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {

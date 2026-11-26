@@ -36,7 +36,7 @@ import {
   webMcpDiscoverySchema,
 } from "../domain/webMcpDiscovery.js";
 import {
-  browserCaptureComparisonInputSchema,
+  browserCaptureComparisonRequestSchema,
   browserCaptureComparisonSchema,
 } from "../domain/browserCaptureComparison.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
@@ -213,7 +213,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata("inspect_web_page", browserEvidenceEffects),
     description:
-      'Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target\'s current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence. Omitted detail returns the capture inline when it fits the agent result budget, else retains it and returns counts; page dom, accessibility, console, network, scripts or resources with inspect_analysis_view view {kind: "web-page", collection}. complete or summary forces that shape; compare_web_captures needs the complete capture.',
+      'Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target\'s current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence. Omitted detail returns the capture inline when it fits the agent result budget, else retains it and returns counts; page dom, accessibility, console, network, scripts or resources with inspect_analysis_view view {kind: "web-page", collection}. complete or summary forces that shape; compare_web_captures accepts either evidence_id.',
     kind: "browser-provider",
     inputSchema: inspectWebPageRequestSchema,
     outputSchema: inspectionOutputSchema,
@@ -303,9 +303,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     cli: true,
     ...toolContractMetadata("compare_web_captures", evidenceEffects),
     description:
-      "Compare two passive page inspections or two recorded browser scenarios. For passive captures, pass before/after with each complete inspect_web_page normalized_result in inspection and optional complete discover_webmcp_tools normalized_result in webmcp. For scenarios, pass complete normalized_result objects as before_scenario/after_scenario; use exactly one input group. Returns artifact differences and alignment failures. Scenario steps align by exact IDs; optional literal normalization is recorded. HTTP requests and ordered WebSocket streams are compared without inventing stable identities for same-URL connections. Missing or truncated Evidence never proves equality.",
+      'Compare two passive page inspections or two recorded browser scenarios. For passive captures, pass before/after with each inspect_web_page capture in inspection and an optional discover_webmcp_tools result in webmcp. For scenarios, pass before_scenario/after_scenario capture_browser_scenario results; use exactly one input group. Each capture is its complete normalized_result or {kind: "retained-evidence", evidence_id} naming the retained producer Evidence or its inspect_analysis_view summary, so a summarized capture need not be resent. Returns artifact differences and alignment failures. Scenario steps align by exact IDs; optional literal normalization is recorded. HTTP requests and ordered WebSocket streams are compared without inventing stable identities for same-URL connections. Missing or truncated Evidence never proves equality.',
     kind: "browser-provider",
-    inputSchema: browserCaptureComparisonInputSchema,
+    inputSchema: browserCaptureComparisonRequestSchema,
     outputSchema: captureDiffOutputSchema,
     examples: [
       {
