@@ -18,6 +18,11 @@ import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { forgetPendingMcpRequest } from "./ErrorEvidenceTransport.js";
+import { currentMcpToolRequest } from "./McpToolRequest.js";
+import { TargetContentTransport } from "./environment/targetContentTransport.js";
+import { TARGET_CONTENT_RESULT_META } from "./toolResultEncoding.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { ok } from "../domain/result.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createToolResultDelivery } from "./toolResult.js";
@@ -968,6 +973,175 @@ describe("unknown MCP tool remediation", () => {
       ).rejects.toThrow("disabled");
     } finally {
       await Promise.all([client.close(), serving.close()]);
+    }
+  });
+});
+
+describe("duplicate in-flight request IDs", () => {
+  it("rejects duplicate in-flight tools/call request IDs without orphaning BinarySession admission", async () => {
+    const records = new InvestigationRecords();
+    const server = new EvidenceMcpServer(
+      { name: "duplicate-id-test", version: "1" },
+      { capabilities: {} },
+      (evidence) => records.recordEvidence(evidence),
+      createToolResultDelivery(4096),
+    );
+    const handler = phaseGate();
+    const calls = new Set<Promise<unknown>>();
+    const session = {
+      withAdmittedAnalysis: (
+        _op: string,
+        _signal: AbortSignal | undefined,
+        run: (analysis: never) => Promise<unknown>,
+      ) => {
+        const p = run({} as never).then((value) => ok(value));
+        calls.add(p);
+        void p.finally(() => calls.delete(p));
+        return p;
+      },
+    } as unknown as BinarySessionPort;
+    let invocations = 0;
+    server.registerTool(
+      "admitted_tool",
+      { inputSchema: z.strictObject({}) },
+      async () => {
+        invocations += 1;
+        const req = currentMcpToolRequest();
+        if (req === undefined) throw new Error("Missing McpToolRequest");
+        await req.admit(session, "admitted_tool", undefined, async () => {
+          await handler.hold();
+          return "done";
+        });
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const received: unknown[] = [];
+    clientTransport.onmessage = (message) => received.push(message);
+    const serving = serveStdio(() => server, { transport: serverTransport });
+    const testLifetime = createDeferred<void>();
+    try {
+      await clientTransport.start();
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "dup-client", version: "1" },
+        },
+      });
+      await expect
+        .poll(() =>
+          received.some(
+            (m) =>
+              typeof m === "object" && m !== null && "id" in m && m.id === 0,
+          ),
+        )
+        .toBe(true);
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: { name: "admitted_tool", arguments: {} },
+      });
+      await handler.reached(testLifetime.promise, "first admitted_tool call");
+
+      // Duplicate in-flight id:42 must be rejected directly without overwriting callA.
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "tools/call",
+        params: { name: "admitted_tool", arguments: {} },
+      });
+      await expect
+        .poll(() =>
+          received.some(
+            (m) =>
+              typeof m === "object" &&
+              m !== null &&
+              "id" in m &&
+              m.id === 42 &&
+              "error" in m,
+          ),
+        )
+        .toBe(true);
+      expect(invocations).toBe(1);
+
+      handler.release();
+      await expect
+        .poll(() =>
+          received.some(
+            (m) =>
+              typeof m === "object" &&
+              m !== null &&
+              "id" in m &&
+              m.id === 42 &&
+              "result" in m,
+          ),
+        )
+        .toBe(true);
+      // Admission settled cleanly (no orphaned McpToolRequest).
+      await Promise.all([...calls]);
+      expect(calls.size).toBe(0);
+    } finally {
+      testLifetime.resolve();
+      handler.release();
+      await Promise.all([clientTransport.close(), serving.close()]);
+    }
+  });
+
+  it("TargetContentTransport preserves target-content metadata across overlapping request IDs", async () => {
+    const [clientTransport, rawServerTransport] =
+      InMemoryTransport.createLinkedPair();
+    const wrapped = new TargetContentTransport(rawServerTransport);
+    const receivedByServer: unknown[] = [];
+    const receivedByClient: unknown[] = [];
+    wrapped.onmessage = (m) => receivedByServer.push(m);
+    clientTransport.onmessage = (m) => receivedByClient.push(m);
+    await Promise.all([clientTransport.start(), wrapped.start()]);
+    try {
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "a", arguments: {} },
+      });
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name: "b", arguments: {} },
+      });
+      await expect.poll(() => receivedByServer.length).toBe(2);
+
+      await wrapped.send({
+        jsonrpc: "2.0",
+        id: 7,
+        result: { content: [{ type: "text", text: "first" }] },
+      });
+      await wrapped.send({
+        jsonrpc: "2.0",
+        id: 7,
+        result: { content: [{ type: "text", text: "second" }] },
+      });
+      await expect.poll(() => receivedByClient.length).toBe(2);
+      for (const message of receivedByClient) {
+        expect(isJSONRPCResultResponse(message as never)).toBe(true);
+        const result = (message as JSONRPCResultResponse).result as {
+          _meta?: Record<string, unknown>;
+        };
+        expect(result._meta).toMatchObject(TARGET_CONTENT_RESULT_META);
+      }
+    } finally {
+      await Promise.all([clientTransport.close(), wrapped.close()]);
     }
   });
 });
