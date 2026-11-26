@@ -38,8 +38,10 @@ export const immutableJsonSnapshotMember = (
   return member;
 };
 
-/** Match a completed snapshot to its parsed representation without recursion. */
-export const canBorrowParsedJsonSnapshot = <Parsed extends JsonValue>(
+/** Match a completed snapshot to its parsed representation without recursion.
+ * Parsed schemas may permit optional undefined members; only exact JSON matches borrow.
+ */
+export const canBorrowParsedJsonSnapshot = <Parsed>(
   source: unknown,
   parsed: Parsed,
 ): source is Parsed => {
@@ -132,6 +134,88 @@ export const freezeJsonSnapshot = <T extends JsonValue>(value: T): T => {
   for (const item of objects) Object.freeze(item);
   // Register the requested root, rather than retaining weak entries for every
   // nested object. Sealing an Evidence or bundle skips previously sealed roots.
+  if (typeof value === "object" && value !== null)
+    immutableSnapshots.add(value);
+  return value;
+};
+
+type OwnedTreeFrame =
+  | { readonly kind: "array"; readonly value: unknown[]; index: number }
+  | {
+      readonly kind: "object";
+      readonly value: object;
+      readonly keys: readonly string[];
+      index: number;
+    };
+
+/**
+ * Seal a freshly parsed, exclusively owned JSON tree. Its parser has removed
+ * aliases, accessors and hidden properties; existing sealed subtrees may be shared.
+ * Keep only the active ancestry rather than retaining every completed object.
+ * Unlike general graph sealing, failure can leave this provisional tree frozen.
+ */
+export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
+  value: T,
+): T => {
+  const frames: OwnedTreeFrame[] = [];
+  const ancestors = new Set<object>();
+  const enter = (item: unknown): void => {
+    if (isImmutableJsonSnapshot(item)) return;
+    if (typeof item !== "object" || item === null)
+      throw new TypeError("Immutable JSON snapshots require JSON values");
+    if (isProxy(item))
+      throw new TypeError("Immutable JSON snapshots cannot contain proxies");
+    if (ancestors.has(item))
+      throw new TypeError(
+        "Immutable JSON snapshots cannot contain circular references",
+      );
+    const isArray = Array.isArray(item);
+    const prototype: unknown = Object.getPrototypeOf(item);
+    if (!isArray && prototype !== Object.prototype && prototype !== null)
+      throw new TypeError("Immutable JSON snapshots require ordinary objects");
+    ancestors.add(item);
+    if (isArray) frames.push({ kind: "array", value: item, index: 0 });
+    else
+      frames.push({
+        kind: "object",
+        value: item,
+        keys: Object.keys(item),
+        index: 0,
+      });
+  };
+  enter(value);
+  while (frames.length > 0) {
+    const frame = frames[frames.length - 1]!;
+    if (frame.kind === "array") {
+      if (frame.index < frame.value.length) {
+        const descriptor = Object.getOwnPropertyDescriptor(
+          frame.value,
+          frame.index,
+        );
+        if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+          throw new TypeError("Owned JSON trees require dense data arrays");
+        frame.index += 1;
+        enter(descriptor.value);
+      } else {
+        Object.freeze(frame.value);
+        ancestors.delete(frame.value);
+        frames.pop();
+      }
+    } else if (frame.index < frame.keys.length) {
+      const key = frame.keys[frame.index]!;
+      const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+        throw new TypeError(
+          "Immutable JSON snapshots cannot contain accessors",
+        );
+      frame.index += 1;
+      enter(descriptor.value);
+    } else {
+      Object.freeze(frame.value);
+      ancestors.delete(frame.value);
+      frames.pop();
+    }
+  }
   if (typeof value === "object" && value !== null)
     immutableSnapshots.add(value);
   return value;

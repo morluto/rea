@@ -1,13 +1,28 @@
 import { z } from "zod";
 import { packetCaptureSchema } from "./packetCapture.js";
+import {
+  BOUNDED_PRODUCER_LIMITS,
+  boundedProducerLimitsSchema,
+} from "../producerResourceLimits.js";
+
+/** TShark 4.6.9 emits a 22.3 MB glossary, so discovery retains more output than a capture. */
+export const PACKET_FIELD_PRODUCER_LIMITS = {
+  ...BOUNDED_PRODUCER_LIMITS,
+  output_bytes: 32 * 1024 * 1024,
+} as const;
 
 export const inspectPacketFieldsInputSchema = z.strictObject({
+  producer_limits: boundedProducerLimitsSchema
+    .unwrap()
+    .omit({ input_bytes: true })
+    .optional()
+    .describe(
+      "Per-call producer budgets; defaults match packet capture except output_bytes defaults to 32 MiB for the complete field glossary. No capture input is read. Tighter inherited OS limits still win; no restart. Does not raise the separate page record budget.",
+    ),
   kind: z
     .enum(["protocols", "fields"])
     .default("protocols")
-    .describe(
-      "Return protocol registrations or field definitions; defaults to protocols",
-    ),
+    .describe("Return protocol registrations or field definitions"),
   protocol: z
     .string()
     .min(1)
@@ -30,7 +45,7 @@ export const inspectPacketFieldsInputSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
-    .describe("Number of matching records to skip; defaults to 0"),
+    .describe("Number of matching records to skip"),
   limit: z
     .number()
     .int()
@@ -39,7 +54,7 @@ export const inspectPacketFieldsInputSchema = z.strictObject({
     .nullable()
     .default(50)
     .describe(
-      "Maximum matches returned; null requests all remaining within the record budget",
+      "Maximum matches returned; null requests all remaining. A page whose records exceed the 8 MiB record budget ends early with output_window.record_budget_reached; continue from offset + returned",
     ),
 });
 export type InspectPacketFieldsInput = z.infer<
@@ -66,6 +81,8 @@ export const packetFieldsCatalogSchema = z
       matching: z.number().int().nonnegative(),
       returned: z.number().int().nonnegative(),
       has_more: z.boolean(),
+      /** The page ended before `limit` because its records filled the record budget. */
+      record_budget_reached: z.boolean(),
     }),
     diagnostics: z.string(),
     tool: packetCaptureSchema.shape.tool,
@@ -79,12 +96,14 @@ export const packetFieldsCatalogSchema = z
   .superRefine((report, context) => {
     const w = report.output_window;
     const remaining = Math.max(0, w.matching - report.selection.offset);
-    const expected = Math.min(remaining, report.selection.limit ?? remaining);
+    const requested = Math.min(remaining, report.selection.limit ?? remaining);
     if (
       w.matching > w.examined ||
-      w.returned !== expected ||
-      report.records.length !== expected ||
-      w.has_more !== remaining > expected ||
+      (w.record_budget_reached
+        ? w.returned < 1 || w.returned >= requested
+        : w.returned !== requested) ||
+      report.records.length !== w.returned ||
+      w.has_more !== remaining > w.returned ||
       report.records.some(
         (row) =>
           row.kind !==

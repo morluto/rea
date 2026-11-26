@@ -8,8 +8,15 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
-import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import {
+  unknownSemanticEvidence,
+  builtinSemanticNode,
+  builtinSemanticRelation,
+} from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  projectSemanticResultBindings,
+  type SemanticFlowProjectionContext,
+} from "./JavaScriptSemanticGraphFlowProjection.js";
 
 interface ChildUnknownInput {
   readonly context: SemanticFlowProjectionContext;
@@ -59,13 +66,13 @@ const addChildProcessNode = (
       spawn.ownerCallableId === null
         ? null
         : (context.callableNodes.get(spawn.ownerCallableId)?.node_id ?? null),
-    properties: {
+    ...builtinSemanticNode(context.file, spawn, {
       argv_count: spawn.argvCount,
       command: spawn.command,
       environment_supplied: spawn.environmentSupplied,
       method: spawn.method,
       stdio_mode: spawn.stdioMode,
-    },
+    }),
   });
 
 const projectSpawn = (
@@ -74,30 +81,38 @@ const projectSpawn = (
   child: JavaScriptSemanticGraphNode,
 ): void => {
   const callSite = context.callSiteAt(spawn.location);
+  const authority = builtinSemanticRelation(
+    context.file,
+    spawn,
+    spawn.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const candidateEvidence = authority.evidence;
   addSemanticGraphRelation(context.state, {
     source: callSite,
     target: child,
     relation: "spawns",
-    resolution: spawn.resolution === "complete" ? "resolved" : "candidate",
+    ...authority,
+    ...(candidateEvidence === undefined
+      ? {}
+      : {
+          properties: { builtin_authority: "candidate" },
+        }),
   });
-  for (const projected of spawn.projectedResultBindings)
-    addSemanticGraphRelation(context.state, {
-      source: child,
-      target: context.bindingNodes.get(projected.bindingId),
-      relation: "destructures",
-      resolution:
-        projected.resolution === "complete" ? "resolved" : "candidate",
-      properties: {
-        projection_path: [...projected.projectionPath],
-        projection_resolution: projected.resolution,
-      },
-    });
+  projectSemanticResultBindings(
+    context,
+    child,
+    spawn.projectedResultBindings,
+    candidateEvidence,
+  );
   if (spawn.argvCount !== null)
     addSemanticGraphRelation(context.state, {
       source: callSite,
       target: child,
       relation: "supplies-argv",
-      resolution: "resolved",
+      resolution: candidateEvidence === undefined ? "resolved" : "candidate",
+      ...(candidateEvidence === undefined
+        ? {}
+        : { evidence: candidateEvidence }),
       properties: { argument_count: spawn.argvCount },
     });
   if (spawn.environmentSupplied)
@@ -105,14 +120,21 @@ const projectSpawn = (
       source: callSite,
       target: child,
       relation: "supplies-env",
-      resolution: "resolved",
+      resolution: candidateEvidence === undefined ? "resolved" : "candidate",
+      ...(candidateEvidence === undefined
+        ? {}
+        : { evidence: candidateEvidence }),
     });
   const stdio = addStdioNode(context, spawn, child);
   addSemanticGraphRelation(context.state, {
     source: child,
     target: stdio,
     relation: "connects-stdio",
-    resolution: spawn.stdioMode === "dynamic" ? "candidate" : "resolved",
+    resolution:
+      candidateEvidence !== undefined || spawn.stdioMode === "dynamic"
+        ? "candidate"
+        : "resolved",
+    ...(candidateEvidence === undefined ? {} : { evidence: candidateEvidence }),
   });
   if (spawn.stdioMode === "dynamic")
     addChildUnknown({
@@ -123,6 +145,16 @@ const projectSpawn = (
       reason: "unknown-value",
       detail: `Static ${spawn.method} stdio options remain unresolved.`,
       candidateNodeIds: [],
+    });
+  if (candidateEvidence !== undefined)
+    addChildUnknown({
+      context,
+      node: child,
+      location: spawn.location,
+      relationKinds: ["spawns"],
+      detail:
+        "The child-process identity is conditional on loader or mutation facts.",
+      candidateNodeIds: [child.node_id],
     });
   if (spawn.resolution !== "complete")
     addChildUnknown({
@@ -146,7 +178,9 @@ const addStdioNode = (
     location: spawn.location,
     label: spawn.stdioMode,
     functionNodeId: child.function_node_id,
-    properties: { mode: spawn.stdioMode },
+    ...builtinSemanticNode(context.file, spawn, {
+      mode: spawn.stdioMode,
+    }),
   });
 
 const projectInteraction = (
@@ -154,6 +188,12 @@ const projectInteraction = (
   interaction: JavaScriptSemanticChildProcessInteraction,
   processNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
+  const authority = builtinSemanticRelation(
+    context.file,
+    interaction,
+    interaction.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const candidateEvidence = authority.evidence;
   const children = interaction.linkedProcessIds.flatMap((identifier) => {
     const child = processNodes.get(identifier);
     return child === undefined ? [] : [child];
@@ -172,8 +212,12 @@ const projectInteraction = (
           : interaction.eventName === "exit"
             ? "listens-exit"
             : "listens-error",
-      resolution:
-        interaction.resolution === "complete" ? "resolved" : "candidate",
+      ...authority,
+      ...(candidateEvidence === undefined
+        ? {}
+        : {
+            properties: { builtin_authority: "candidate" },
+          }),
     });
   if (interaction.resolution !== "complete")
     addChildUnknown({
@@ -206,10 +250,10 @@ const addChildListenerNode = (
         ? null
         : (context.callableNodes.get(interaction.ownerCallableId)?.node_id ??
           null),
-    properties: {
+    ...builtinSemanticNode(context.file, interaction, {
       event_name: interaction.eventName,
       method: interaction.method,
-    },
+    }),
   });
 
 const addSignalNode = (
@@ -226,7 +270,9 @@ const addSignalNode = (
         ? null
         : (context.callableNodes.get(interaction.ownerCallableId)?.node_id ??
           null),
-    properties: { signal_name: interaction.signalName },
+    ...builtinSemanticNode(context.file, interaction, {
+      signal_name: interaction.signalName,
+    }),
   });
 
 const addChildUnknown = (input: ChildUnknownInput): void => {

@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -16,6 +17,7 @@ import {
 } from "../../../src/application/SetupClientConfiguration.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -42,8 +44,10 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
         ).replaceAll("\n", "\r\n")}\r\n`;
         await mkdir(dirname(client.configPath), { recursive: true });
         await writeFile(client.configPath, original);
-        const currentCommandPath = join(home, "rea");
-        const command = [currentCommandPath, "mcp"];
+        const currentCommandPath = CURRENT_ENTRYPOINT_PATH;
+        if (currentCommandPath === undefined)
+          throw new Error("test runner entrypoint is unavailable");
+        const command = [process.execPath, currentCommandPath, "mcp"];
         expect(await inspectClientConfiguration(client, {}, command)).toEqual({
           status: "update",
           backupPath: `${client.configPath}.rea.backup`,
@@ -58,11 +62,17 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
           },
         );
         const updated = await readFile(client.configPath, "utf8");
+        if (client.format === "copilot_cli") {
+          // Copilot consumes strict JSON: source comments/BOM are grammar, not metadata.
+          expect(() => JSON.parse(updated)).not.toThrow();
+        } else {
+          expect(
+            updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
+          ).toBe(true);
+        }
         expect(
-          updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
-        ).toBe(true);
-        expect(
-          parseClientConfiguration(updated, client.format).document,
+          expectResultValue(parseClientConfiguration(updated, client.format))
+            .document,
         ).toEqual({
           label: "left\uFEFFright",
           [serversKey]: {
@@ -88,6 +98,7 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
             config_path: client.configPath,
             state: "aligned",
             command,
+            command_identity: "owned",
             remediation: null,
           },
         ]);
@@ -96,10 +107,18 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
             status: "unchanged",
           },
         );
-        expect(await readFile(client.configPath)).toEqual(Buffer.from(updated));
-        expect(await readFile(`${client.configPath}.rea.backup`)).toEqual(
-          Buffer.from(original),
-        );
+        expect(
+          Buffer.compare(
+            await readFile(client.configPath),
+            Buffer.from(updated),
+          ),
+        ).toBe(0);
+        expect(
+          Buffer.compare(
+            await readFile(`${client.configPath}.rea.backup`),
+            Buffer.from(original),
+          ),
+        ).toBe(0);
       },
     );
   },
@@ -112,12 +131,21 @@ it.each(['\uFEFF{"servers": {"rea": @}}', '\uFEFF{"setting":\uFEFFtrue}'])(
       "rea-client-config-bom-invalid-",
     );
     const configPath = join(home, "mcp.json");
-    const client = { name: "vscode", format: "vscode", configPath } as const;
+    const client = {
+      name: "vscode",
+      registrationProfile: supportedClientRegistrationProfile("vscode"),
+      format: "vscode",
+      configPath,
+    } as const;
     await writeFile(configPath, original);
     const invalidOffset = original.includes("@") ? original.indexOf("@") : 12;
-    expect(() => parseClientConfiguration(original, client.format)).toThrow(
-      `Invalid JSON/JSONC at offset ${invalidOffset}: InvalidSymbol`,
-    );
+    expect(parseClientConfiguration(original, client.format)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "syntax",
+        detail: `Invalid JSON/JSONC at offset ${invalidOffset}: InvalidSymbol`,
+      },
+    });
 
     expect(
       await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
@@ -125,7 +153,9 @@ it.each(['\uFEFF{"servers": {"rea": @}}', '\uFEFF{"setting":\uFEFFtrue}'])(
     expect(
       await configureClientConfiguration(client, {}, ["rea", "mcp"]),
     ).toEqual({ status: "failed", reason: "readback" });
-    expect(await readFile(configPath)).toEqual(Buffer.from(original));
+    expect(
+      Buffer.compare(await readFile(configPath), Buffer.from(original)),
+    ).toBe(0);
     expect(await readdir(home)).toEqual(["mcp.json"]);
   },
 );
@@ -154,7 +184,9 @@ it("preserves BOM-prefixed JSONC values and comments through update and removal"
     await configureClientConfiguration(client, {}, updatedCommand),
   ).toMatchObject({ status: "configured" });
   const updated = await readFile(client.configPath, "utf8");
-  expect(parseClientConfiguration(updated, client.format).servers).toEqual({
+  expect(
+    expectResultValue(parseClientConfiguration(updated, client.format)).servers,
+  ).toEqual({
     other: { command: "other\uFEFFtool" },
     rea: clientRegistrationEntry(client.format, updatedCommand, {}),
   });
@@ -168,12 +200,19 @@ it("preserves BOM-prefixed JSONC values and comments through update and removal"
   expect(removed).toContain("\r\n  // Keep prefix \uFEFF comment.\r\n");
   expect(removed).toContain("\r\n  // Keep suffix comment.\r\n");
   expect(removed).toContain("// Keep this unrelated registration.");
-  expect(parseClientConfiguration(removed, client.format).document).toEqual(
-    parseClientConfiguration(original, client.format).document,
+  expect(
+    expectResultValue(parseClientConfiguration(removed, client.format))
+      .document,
+  ).toEqual(
+    expectResultValue(parseClientConfiguration(original, client.format))
+      .document,
   );
-  expect(await readFile(`${client.configPath}.rea.backup`)).toEqual(
-    Buffer.from(original),
-  );
+  expect(
+    Buffer.compare(
+      await readFile(`${client.configPath}.rea.backup`),
+      Buffer.from(original),
+    ),
+  ).toBe(0);
 });
 
 it.each(["", "\n  \n", "\uFEFF"])(
@@ -187,7 +226,7 @@ it.each(["", "\n  \n", "\uFEFF"])(
       throw new Error("missing Antigravity JSON config");
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(client.configPath, original);
-    const command = [join(home, "rea"), "mcp"];
+    const command = ["rea", "mcp"];
 
     expect(await inspectClientConfiguration(client, {}, command)).toEqual({
       status: "update",

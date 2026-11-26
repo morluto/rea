@@ -9,6 +9,7 @@ import {
   createJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
+import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "./javascriptApplicationGraphSchemas.js";
 import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVersionComparison.js";
 import { applicationVersionComparisonResultSchema } from "./javascriptApplicationVersionComparisonSchemas.js";
 
@@ -20,6 +21,9 @@ const graph = (
     content?: string;
     permission?: string;
     relation?: "handles" | "invokes";
+    candidate?: boolean;
+    candidateExtra?: boolean;
+    noEdge?: boolean;
   } = {},
 ) => {
   const evidence = {
@@ -72,15 +76,32 @@ const graph = (
     schema: "JavaScriptApplicationGraph",
     root_node_ids: [module.node_id],
     nodes: [module, channel],
-    edges: [
-      createJavaScriptApplicationEdge({
-        source_node_id: module.node_id,
-        target_node_id: channel.node_id,
-        relation: options.relation ?? "handles",
-        properties: {},
-        evidence,
-      }),
-    ],
+    edges: options.noEdge
+      ? []
+      : [
+          createJavaScriptApplicationEdge({
+            source_node_id: module.node_id,
+            target_node_id: channel.node_id,
+            relation: options.relation ?? "handles",
+            properties: options.candidate
+              ? { pairing_basis: IPC_COVERAGE_LIMITED_PAIRING_BASIS }
+              : {},
+            evidence,
+          }),
+          ...(options.candidateExtra
+            ? [
+                createJavaScriptApplicationEdge({
+                  source_node_id: module.node_id,
+                  target_node_id: channel.node_id,
+                  relation: "handles" as const,
+                  properties: {
+                    pairing_basis: IPC_COVERAGE_LIMITED_PAIRING_BASIS,
+                  },
+                  evidence,
+                }),
+              ]
+            : []),
+        ],
     coverage,
     limitations:
       coverage.status === "complete"
@@ -113,6 +134,52 @@ const partialCoverage: JavaScriptApplicationGraph["coverage"] = {
   status: "partial",
   omitted_count: null,
 };
+
+it("keeps candidate edges uncertain against missing and definite counterparts", () => {
+  const candidate = graph("a".repeat(64), 10, partialCoverage, {
+    candidate: true,
+  });
+  const absent = graph("b".repeat(64), 50, partialCoverage, {
+    noEdge: true,
+    permission: "changed",
+  });
+  const definite = graph("b".repeat(64), 50, partialCoverage, {
+    permission: "changed",
+  });
+  for (const [left, right] of [
+    [candidate, absent],
+    [candidate, definite],
+    [definite, candidate],
+  ] as const) {
+    const result = compare(left, right);
+    const channel = result.items.find(
+      ({ node_kind }) => node_kind === "ipc-channel",
+    );
+    expect(channel).toMatchObject({
+      status: "changed",
+      dimensions: ["location", "properties"],
+      limitations: expect.arrayContaining([
+        "Incomplete source coverage leaves some candidate relationships unconfirmed.",
+      ]),
+    });
+  }
+});
+
+it("retains an independent definite relationship change beside candidate edges", () => {
+  const result = compare(
+    graph("a".repeat(64), 10, partialCoverage, { candidateExtra: true }),
+    graph("b".repeat(64), 50, partialCoverage, {
+      relation: "invokes",
+      candidateExtra: true,
+      permission: "changed",
+    }),
+  );
+  const channel = result.items.find((item) => item.node_kind === "ipc-channel");
+  expect(channel).toMatchObject({
+    status: "changed",
+    dimensions: ["location", "properties", "relationships"],
+  });
+});
 
 it("keeps relocated exact modules and inferred channels unchanged while retaining both coordinates", () => {
   const left = graph("a".repeat(64), 10, completeCoverage),
@@ -187,34 +254,31 @@ it("still classifies complete relationship changes beside relocation as changed"
     expect(item.dimensions).toEqual(["location", "relationships"]);
 });
 
-it("retains definite content changes under partial coverage alongside relocation", () => {
+it("retains independent content and property changes beside relocation under partial coverage", () => {
   const result = compare(
     graph("a".repeat(64), 10, completeCoverage),
-    graph("b".repeat(64), 50, partialCoverage, { content: "e".repeat(64) }),
+    graph("b".repeat(64), 50, partialCoverage, {
+      content: "e".repeat(64),
+      permission: "changed",
+    }),
   );
+  expect(result.summary).toEqual({
+    unchanged: 0,
+    added: 0,
+    removed: 0,
+    changed: 2,
+    unknown: 0,
+  });
   expect(
-    result.items.find((item) => item.node_kind === "javascript-module"),
+    result.items.find(({ node_kind }) => node_kind === "javascript-module"),
   ).toMatchObject({
     status: "changed",
     dimensions: ["content", "location", "properties"],
   });
   expect(
-    result.items.find((item) => item.node_kind === "ipc-channel")?.status,
-  ).toBe("unknown");
-});
-
-it("retains definite property changes beside relocation", () => {
-  const result = compare(
-    graph("a".repeat(64), 10, completeCoverage),
-    graph("b".repeat(64), 50, partialCoverage, { permission: "changed" }),
-  );
-  expect(
-    result.items.find((item) => item.node_kind === "ipc-channel"),
+    result.items.find(({ node_kind }) => node_kind === "ipc-channel"),
   ).toMatchObject({
     status: "changed",
     dimensions: ["location", "properties"],
   });
-  expect(
-    result.items.find((item) => item.node_kind === "javascript-module")?.status,
-  ).toBe("unknown");
 });

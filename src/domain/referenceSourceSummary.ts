@@ -15,6 +15,9 @@ const outlineEntry = (entry: Entry) => {
     content_state: entry.content_state,
     classifications: entry.classifications,
     limitations: entry.limitations,
+    ...(entry.local_diagnostics === undefined
+      ? {}
+      : { local_diagnostics: entry.local_diagnostics }),
   };
 };
 

@@ -1,16 +1,54 @@
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseExpression } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
-import { parserPluginsForPath } from "./javascriptSourceParser.js";
-import {
-  staticPath,
-  staticPathResolutionContext,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import type { JavaScriptStaticPathContext } from "./javascriptStaticAnalysisTypes.js";
+
+it.each([
+  ['path.join(__dirname, "page.html")', "page.html", "source-directory"],
+  ['path.resolve(__dirname, "page.html")', "page.html", "source-directory"],
+  ['__dirname + "/page.html"', "page.html", "source-directory"],
+  ['path.join("pages", "page.html")', "pages/page.html", undefined],
+  ['path.join("prefix", __dirname, "page.html")', null, undefined],
+  ['path.join(__dirname, __dirname, "page.html")', null, undefined],
+  ["path.join(__dirname, runtimePage)", null, undefined],
+] as const)(
+  "retains the owned renderer path base for %s",
+  (expression, path, base) => {
+    const analysis = analyzeCommonJsStaticFixture(
+      `const path=require('node:path');const{BrowserWindow}=require('electron');new BrowserWindow().loadFile(${expression});`,
+    );
+    if (path === null) {
+      expect(analysis.role_paths).toEqual([]);
+      expect(
+        analysis.analysis_coverage.semantics.unknown_findings,
+      ).toBeGreaterThan(0);
+    } else {
+      expect(analysis.role_paths).toMatchObject([
+        { role: "renderer", path, resolution_context: "filesystem-expression" },
+      ]);
+      expect(analysis.role_paths[0]?.path_base).toBe(base);
+    }
+  },
+);
+
+it.each(["loadFile", "loadURL"])(
+  "reports an unresolved proven BrowserWindow %s expression",
+  (method) => {
+    const analysis = analyzeCommonJsStaticFixture(
+      `const{BrowserWindow}=require('electron');new BrowserWindow().${method}(runtimePage);`,
+    );
+    expect(analysis.role_paths).toEqual([]);
+    expect(
+      analysis.analysis_coverage.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+    expect(analysis.limitations).toContain(
+      "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
+    );
+  },
+);
 
 const absoluteParts = [
   ["/app", "/shared/preload.js"],
@@ -27,6 +65,22 @@ const anchoredExpressions = [
   ['path[`resolve`](__dirname, "preload.js")', "preload.js"],
   ['path.posix.resolve("ignored", __dirname, "preload.js")', "preload.js"],
   ['path.resolve("/ignored", __dirname, "preload.js")', "preload.js"],
+  ['path.resolve(runtimeBase, "/app/preload.js")', "/app/preload.js"],
+  ['path.resolve(runtimeBase, __dirname, "preload.js")', "preload.js"],
+  ['path.resolve(...parts, "/app/preload.js")', "/app/preload.js"],
+  ['path.resolve(42, "/app/preload.js")', "/app/preload.js"],
+  [
+    'path.resolve(new URL("./", import.meta.url), __dirname, "preload.js")',
+    "preload.js",
+  ],
+  [
+    'path.resolve(new URL("./", import.meta.url), dirname(fileURLToPath(import.meta.url)), "preload.js")',
+    "preload.js",
+  ],
+  [
+    'path.posix.resolve(new URL("./", import.meta.url), "/app", "preload.js")',
+    "/app/preload.js",
+  ],
   [
     'path.posix.resolve("ignored", dirname(fileURLToPath(import.meta.url)), "preload.js")',
     "preload.js",
@@ -54,17 +108,16 @@ const unknownExpressions = [
   '(path[method] as typeof path.join)(__dirname, "preload.js")',
   '((useJoin ? path.join : path.resolve) as typeof path.join)(__dirname, "preload.js")',
   'fileURLToPath(new (runtimeURL as typeof URL)("./preload.js", import.meta.url))',
+  'path.join("ignored", __dirname, "preload.js")',
+  'path.join(__dirname, __dirname, "preload.js")',
+  'path.join(__dirname, path.join(__dirname, "preload.js"))',
   "path.resolve()",
   "path.posix.resolve()",
   'path.resolve("sub", "../preload.js")',
   'path.resolve("", "")',
-  'path.resolve(runtimeBase, "/app/preload.js")',
   'path.resolve("/app", runtimeFile)',
-  'path.resolve(runtimeBase, __dirname, "preload.js")',
   "path.resolve(__dirname, runtimeFile)",
-  'path.resolve(...parts, "/app/preload.js")',
   'path.resolve("/app", ...parts)',
-  'path.resolve(42, "/app/preload.js")',
   'path.resolve("/app", null)',
   "path.resolve(`/app/${runtimeFile}`)",
   'path.win32.resolve("/app", "/shared/preload.js")',
@@ -73,6 +126,23 @@ const unknownExpressions = [
   'resolve("/app", "preload.js")',
   '__dirname + "preload.js"',
   'path.dirname(__filename) + "preload.js"',
+  'new URL("./pre%2Fload.js", import.meta.url)',
+  'path.join(new URL("./", import.meta.url), "preload.js")',
+  'path.resolve(new URL("./", import.meta.url), "preload.js")',
+  'path.join(__dirname, new URL("./pre%2Fload.js", import.meta.url))',
+  'path.resolve(__dirname, new URL("./", import.meta.url), "preload.js")',
+  'path.resolve("/app", new URL("./", import.meta.url), "preload.js")',
+  'new URL("./remote-base.js", location.href)',
+  "path.join()",
+  'path.join("/app", runtimeFile)',
+  "path.join(...parts)",
+  'fileURLToPath("file:///app/%2Fpreload.js")',
+  'fileURLToPath("file:///app/%5Cpreload.js")',
+  'fileURLToPath("file:///app/%")',
+  'fileURLToPath("file:///C:/app/preload.js")',
+  'fileURLToPath("file://remote/share/preload.js")',
+  'fileURLToPath("file:///app/preload.js", options)',
+  "fileURLToPath(selectedUrl)",
 ];
 
 const pathValueExpressions = [
@@ -202,7 +272,7 @@ describe("inert JavaScript path resolution", () => {
     [
       'path.join("sub", "../preload.js")',
       posix.join("sub", "../preload.js"),
-      "module-specifier",
+      "filesystem-expression",
     ],
     [
       'path.join(__dirname, "preload.js")',
@@ -225,23 +295,17 @@ describe("inert JavaScript path resolution", () => {
       "filesystem-expression",
     ],
     [
-      'path.join("ignored", __dirname, "preload.js")',
-      "ignored/preload.js",
-      "filesystem-expression",
-    ],
-    [
       'path.join(dirname(fileURLToPath(import.meta.url)), "preload.js")',
       "preload.js",
       "filesystem-expression",
     ],
-    ['join("sub", "preload.js")', "sub/preload.js", "module-specifier"],
+    ['join("sub", "preload.js")', "sub/preload.js", "filesystem-expression"],
     ["path.join(__dirname)", ".", "filesystem-expression"],
   ] as const)("preserves join behavior in %s", (expression, path, context) => {
     assertPathProjection(expression, path, context);
   });
 
   it.each(unknownExpressions)("keeps unsupported %s unknown", (expression) => {
-    expect(staticPath(parsePathExpression(expression))).toBeUndefined();
     const { analysis, windowExpression, utilityExpression } =
       analyzePathConsumers(expression);
     expect(analysis.parse_status).toBe("partial");
@@ -302,14 +366,6 @@ describe("inert JavaScript path resolution", () => {
       }),
     ]);
   });
-
-  it.each([
-    "path.join()",
-    'path.join("/app", runtimeFile)',
-    "path.join(...parts)",
-  ])("preserves unresolved join syntax in %s", (expression) =>
-    expect(staticPath(parsePathExpression(expression))).toBeUndefined(),
-  );
 });
 
 it.each([
@@ -324,37 +380,47 @@ it.each([
   );
 });
 
-it.each([
-  'fileURLToPath("file:///app/%2Fpreload.js")',
-  'fileURLToPath("file:///app/%5Cpreload.js")',
-  'fileURLToPath("file:///app/%")',
-  'fileURLToPath("file:///C:/app/preload.js")',
-  'fileURLToPath("file://remote/share/preload.js")',
-  'fileURLToPath("file:///app/preload.js", options)',
-  "fileURLToPath(selectedUrl)",
-])("leaves platform-dependent or invalid %s unknown", (expression) =>
-  expect(staticPath(parsePathExpression(expression))).toBeUndefined(),
-);
+it("decodes a source-relative file URL once before composing a filesystem path", () => {
+  assertPathProjection(
+    'fileURLToPath(new URL("./pre%252Fload.js", import.meta.url))',
+    "./pre%2Fload.js",
+    "filesystem-expression",
+  );
+  assertPathProjection(
+    'path.join(dirname(fileURLToPath(import.meta.url)), "pre%2Fload.js")',
+    "pre%2Fload.js",
+    "filesystem-expression",
+  );
+});
 
-const parsePathExpression = (expression: string) =>
-  parseExpression(expression, {
-    sourceType: "module",
-    plugins: parserPluginsForPath("preload.ts"),
-  });
+it("retains Worker URL references through their separate URL-aware producer", () => {
+  const specifier = "./worker%252Fentry.js?version=1#worker";
+  const analysis = analyzeCommonJsStaticFixture(`
+    import { Worker } from "node:worker_threads";
+    new Worker(new URL(${JSON.stringify(specifier)}, import.meta.url));
+  `);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.parse_error_count).toBe(0);
+  expect(
+    analysis.references
+      .filter(({ kind }) => kind === "worker")
+      .map(({ specifier, expression }) => ({ specifier, expression })),
+  ).toEqual([{ specifier, expression: null }]);
+  expect(analysis.role_paths).toEqual([]);
+});
 
 const analyzePathConsumers = (expression: string) => {
   const property = `preload: ${expression}`;
-  const genericPrefix = "const options = { ";
+  const genericPrefix =
+    'import path, {dirname,join} from "node:path"; import url, {fileURLToPath} from "node:url"; const options = { ';
   const windowPrefix = "new BrowserWindow({ webPreferences: { ";
   const windowExpression = `${windowPrefix}${property} } })`;
   const utilityExpression = `utilityProcess.fork(${expression})`;
   return {
-    property,
-    genericPrefix,
-    windowPrefix,
     windowExpression,
     utilityExpression,
-    analysis: analyzeJavaScriptStaticSource(
+    analysis: analyzeCommonJsStaticFixture(
       `${genericPrefix}${property} }; const { BrowserWindow, utilityProcess } = require("electron");\n${windowExpression};\n${utilityExpression};`,
     ),
   };
@@ -365,34 +431,20 @@ const assertPathProjection = (
   path: string,
   context: JavaScriptStaticPathContext,
 ) => {
-  const node = parsePathExpression(expression);
-  expect(staticPath(node)).toBe(path);
-  expect(staticPathResolutionContext(node)).toBe(context);
-  const {
-    analysis,
-    property,
-    genericPrefix,
-    windowPrefix,
-    windowExpression,
-    utilityExpression,
-  } = analyzePathConsumers(expression);
+  const { analysis, windowExpression, utilityExpression } =
+    analyzePathConsumers(expression);
   expect(analysis.parse_status).toBe("complete");
   expect(analysis.parse_error_count).toBe(0);
-  expect(analysis.role_paths).toEqual(
-    (
-      [
-        [1, genericPrefix.length],
-        [2, windowPrefix.length],
-      ] as const
-    ).map(([line, column]) => ({
+  expect(analysis.role_paths).toEqual([
+    {
       role: "preload",
       path,
       resolution_context: context,
-      mechanism: "property:preload",
+      mechanism: "BrowserWindow:webPreferences.preload",
       module_key: null,
-      location: lineRange(line, column, column + property.length),
-    })),
-  );
+      location: lineRange(2, 0, windowExpression.length),
+    },
+  ]);
   expect(analysis.electron.browser_windows).toEqual([
     {
       options_status: "object-literal",

@@ -13,6 +13,10 @@ import {
   isGhidraEeTarget,
 } from "./GhidraEeProfile.js";
 import { ghidraProcessorUnsupportedReason } from "./GhidraPspProfile.js";
+import {
+  ghidraMipsProfileMismatchReason,
+  ghidraMipsProfileParameters,
+} from "./GhidraMipsProfile.js";
 
 // The declaration ee-gcc writes for a retail PlayStation 2 executable:
 // MIPS III, R5900, EABI64, no ABI flags record, no GNU attributes.
@@ -119,5 +123,27 @@ describe("PlayStation 2 EE profile", () => {
     expect(
       ghidraEeLanguageOverride(target({ flags: 0x70001001 })),
     ).toBeUndefined();
+  });
+
+  it("binds the committed EE lane, not the generic MIPS lane, at open", () => {
+    const value = target();
+    const lane = ghidraEeProfileParameters(value);
+    const committed = { ...ghidraMipsProfileParameters(value), ...lane };
+    expect(
+      ghidraMipsProfileMismatchReason(value, committed, false, lane),
+    ).toBeNull();
+    // Without the extension lane the generic expectation refuses the profile.
+    expect(
+      ghidraMipsProfileMismatchReason(value, committed, false),
+    ).not.toBeNull();
+    // A generic-lane commitment does not satisfy the EE expectation.
+    expect(
+      ghidraMipsProfileMismatchReason(
+        value,
+        ghidraMipsProfileParameters(value),
+        false,
+        lane,
+      ),
+    ).not.toBeNull();
   });
 });

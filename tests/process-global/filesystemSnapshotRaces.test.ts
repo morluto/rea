@@ -17,7 +17,6 @@ const race = vi.hoisted(() => ({
     | "cancel_directory_close"
     | "",
   target: "",
-  followup: false,
   opened: false,
   closeCompleted: false,
   controller: undefined as AbortController | undefined,
@@ -35,9 +34,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         return original.readlink(...args);
       }
       if (path === race.target && race.mode === "readlink_eio")
-        throw Object.assign(new Error("injected unexpected readlink failure"), {
-          code: "EIO",
-        });
+        throw race.reason;
       if (path === race.target && race.mode === "readlink_eacces")
         throw Object.assign(new Error("injected denied readlink"), {
           code: "EACCES",
@@ -61,14 +58,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const target = await original.readlink(...args);
       if (path === race.target) {
         if (race.mode === "lstat_missing") {
-          race.followup = true;
           await original.rm(path);
         } else if (race.mode === "lstat_identity_changed") {
           const replacement = `${path}.replacement`;
           await original.symlink("replacement-target", replacement);
           await original.rm(path);
           await original.rename(replacement, path);
-          race.followup = true;
         } else if (race.mode === "cancel_readlink") {
           race.controller?.abort(race.reason);
         }
@@ -77,15 +72,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
     lstat: async (...args: Parameters<typeof original.lstat>) => {
       const path = args[0];
-      if (
-        path === race.target &&
-        (race.mode === "lstat_missing" ||
-          race.mode === "lstat_identity_changed") &&
-        race.followup
-      ) {
-        race.followup = false;
-        return original.lstat(...args);
-      }
       if (
         path === race.target &&
         race.mode === "directory_missing" &&
@@ -103,44 +89,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (args[0] === race.target && race.mode === "directory_missing")
         race.opened = true;
       if (args[0] === race.target && race.mode === "cancel_directory_close") {
-        const iterator = directory[Symbol.asyncIterator]();
-        let closed = false;
-        const closeBeforeCancel = async () => {
-          if (closed) return;
-          closed = true;
-          try {
-            await directory.close();
-          } catch (cause: unknown) {
-            if (
-              !(cause instanceof Error) ||
-              !("code" in cause) ||
-              cause.code !== "ERR_DIR_CLOSED"
-            )
-              throw cause;
-          }
+        const closing: { close(): Promise<void> } = directory;
+        const close = closing.close.bind(directory);
+        vi.spyOn(closing, "close").mockImplementation(async () => {
+          await close();
           race.closeCompleted = true;
           race.controller?.abort(race.reason);
-        };
-        const wrappedIterator = {
-          [Symbol.asyncIterator]() {
-            return this;
-          },
-          async next() {
-            const next = await iterator.next();
-            if (next.done) await closeBeforeCancel();
-            return next;
-          },
-          async return() {
-            const result = await iterator.return?.();
-            await closeBeforeCancel();
-            return result ?? { done: true, value: undefined };
-          },
-        };
-        return new Proxy(directory, {
-          get(target, property, receiver) {
-            if (property === Symbol.asyncIterator) return () => wrappedIterator;
-            return Reflect.get(target, property, receiver);
-          },
         });
       }
       // The selected directory's next lstat is snapshotRoots' post-enumeration
@@ -150,22 +104,54 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
+import {
+  processScenarioSchema,
+  type ProcessScenario,
+} from "../../src/domain/process/processScenario.js";
 import { classifyFilesystemEffects } from "../../src/process/capture/ProcessFilesystemEffects.js";
-import { snapshotRoots } from "../../src/process/capture/FilesystemSnapshot.js";
+import {
+  snapshotRoots,
+  ProcessCaptureSnapshotFailure,
+} from "../../src/process/capture/FilesystemSnapshot.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const resetRace = () => {
   race.mode = "";
   race.target = "";
-  race.followup = false;
   race.opened = false;
   race.closeCompleted = false;
   race.controller = undefined;
   race.reason = undefined;
 };
 
-afterEach(resetRace);
+afterEach(() => {
+  resetRace();
+  vi.restoreAllMocks();
+});
+
+const expectCancelledSnapshot = async (
+  scenario: ProcessScenario,
+  controller: AbortController,
+): Promise<void> => {
+  const cause = await snapshotRoots(scenario, controller.signal).catch(
+    (failure: unknown) => failure,
+  );
+  expect(controller.signal.aborted).toBe(true);
+  expect(cause).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+  const failure = cause as ProcessCaptureSnapshotFailure;
+  expect(failure.cause).toBe(controller.signal.reason);
+  expect(failure.userCategory).toBe("cancelled");
+  expect(failure.snapshot).toMatchObject({
+    truncated: true,
+    completeRoots: [],
+    coverage: { enumeration_truncated: true },
+  });
+  expect(failure.snapshot?.files).toContainEqual(
+    expect.objectContaining({ path: "root_0:.", type: "directory" }),
+  );
+  expect(failure.cleanupLeases).toEqual([]);
+  expect(failure.cleanupIncomplete).toBe(false);
+};
 
 const withTemporaryRoot = async <Value>(
   prefix: string,
@@ -193,7 +179,7 @@ const entryUnavailable = async (
     const link = join(root, "z-link");
     await writeFile(sibling, "retain this sibling");
     await symlink("missing-target", link);
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -255,7 +241,7 @@ it.skipIf(process.platform === "win32")(
       const link = join(root, "z-link");
       await writeFile(sibling, "retain this sibling");
       await symlink("original-target", link);
-      const scenario = parseProcessScenario({
+      const scenario = processScenarioSchema.parse({
         executable: process.execPath,
         working_directory: root,
         filesystem_observation_paths: [root],
@@ -290,7 +276,7 @@ it("retains siblings and marks child absence unknown when directory revalidation
     await writeFile(sibling, "retain this sibling");
     await mkdir(directory);
     await writeFile(join(directory, "child"), "child observed before race");
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -324,7 +310,7 @@ it.skipIf(process.platform === "win32")(
     withTemporaryRoot("rea-snapshot-cancel-race-", async (root) => {
       const link = join(root, "link");
       await symlink("missing-target", link);
-      const scenario = parseProcessScenario({
+      const scenario = processScenarioSchema.parse({
         executable: process.execPath,
         working_directory: root,
         filesystem_observation_paths: [root],
@@ -335,9 +321,7 @@ it.skipIf(process.platform === "win32")(
       race.target = link;
       race.controller = controller;
       race.reason = reason;
-      await expect(snapshotRoots(scenario, controller.signal)).rejects.toBe(
-        reason,
-      );
+      await expectCancelledSnapshot(scenario, controller);
     }),
 );
 
@@ -347,7 +331,7 @@ it.skipIf(process.platform === "win32")(
     withTemporaryRoot("rea-snapshot-cancel-missing-", async (root) => {
       const link = join(root, "link");
       await symlink("missing-target", link);
-      const scenario = parseProcessScenario({
+      const scenario = processScenarioSchema.parse({
         executable: process.execPath,
         working_directory: root,
         filesystem_observation_paths: [root],
@@ -358,31 +342,27 @@ it.skipIf(process.platform === "win32")(
       race.target = link;
       race.controller = controller;
       race.reason = reason;
-      await expect(snapshotRoots(scenario, controller.signal)).rejects.toBe(
-        reason,
-      );
+      await expectCancelledSnapshot(scenario, controller);
     }),
 );
 
-it("observes cancellation after the selected directory iterator closes", async () =>
+it("observes cancellation after the selected directory handle closes", async () =>
   withTemporaryRoot("rea-snapshot-directory-close-cancel-", async (root) => {
     const directory = join(root, "selected");
     await mkdir(directory);
     await writeFile(join(directory, "child"), "observed child");
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [directory],
     });
     const controller = new AbortController();
-    const reason = new Error("cancel after directory iterator close");
+    const reason = new Error("cancel after directory handle close");
     race.mode = "cancel_directory_close";
     race.target = directory;
     race.controller = controller;
     race.reason = reason;
-    await expect(snapshotRoots(scenario, controller.signal)).rejects.toBe(
-      reason,
-    );
+    await expectCancelledSnapshot(scenario, controller);
     expect(race.closeCompleted).toBe(true);
   }));
 
@@ -395,7 +375,7 @@ it("releases buffered names after a failed directory revalidation before visitin
     await writeFile(join(firstRoot, "a-child"), "first");
     await writeFile(join(firstRoot, "b-child"), "second");
     await writeFile(join(secondRoot, "child"), "retain this root");
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: parent,
       filesystem_observation_paths: [firstRoot, secondRoot],
@@ -419,15 +399,30 @@ it.skipIf(process.platform === "win32")(
     withTemporaryRoot("rea-snapshot-eio-control-", async (root) => {
       const link = join(root, "link");
       await symlink("missing-target", link);
-      const scenario = parseProcessScenario({
+      const scenario = processScenarioSchema.parse({
         executable: process.execPath,
         working_directory: root,
         filesystem_observation_paths: [root],
       });
       race.mode = "readlink_eio";
       race.target = link;
-      await expect(snapshotRoots(scenario)).rejects.toMatchObject({
-        code: "EIO",
+      const reason = Object.assign(
+        new Error("injected unexpected readlink failure"),
+        { code: "EIO" },
+      );
+      race.reason = reason;
+      const cause = await snapshotRoots(scenario).catch(
+        (failure: unknown) => failure,
+      );
+      expect(cause).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+      const failure = cause as ProcessCaptureSnapshotFailure;
+      expect(failure.cause).toBe(reason);
+      expect(failure.cause).toMatchObject({ code: "EIO" });
+      expect(failure.userCategory).toBeUndefined();
+      expect(failure.snapshot).toMatchObject({
+        truncated: true,
+        completeRoots: [],
+        coverage: { enumeration_omissions: [] },
       });
     }),
 );

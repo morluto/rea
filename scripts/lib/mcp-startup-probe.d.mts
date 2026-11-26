@@ -1,15 +1,10 @@
-interface McpStartupPolicy {
-  readonly initializeBudgetMs: number;
-  readonly toolsListBudgetMs: number;
-  readonly firstCatalogBudgetMs: number;
-  readonly doctorDeadlineMs: number;
-}
+import type { McpStartupBudgets } from "../../src/config/mcpStartupBudgets.js";
 
 interface McpProcessOptions {
   readonly command: string;
   readonly args: readonly string[];
   readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly policy: McpStartupPolicy;
+  readonly policy: McpStartupBudgets;
 }
 
 interface McpModuleProfileOptions extends McpProcessOptions {

@@ -1,16 +1,18 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
+import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { ElectronCallPath } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { sha256Text } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
-import {
-  collectElectronIpcRecords,
-  unambiguousElectronIpcPairings,
-  type ElectronIpcRecord,
+import { electronCallPathId } from "./ElectronCallPathIdentity.js";
+import type {
+  ElectronIpcContext,
+  ElectronIpcRecord,
 } from "./ElectronBoundaryAnalysis.js";
 import {
   addElectronInferenceEdge,
+  ELECTRON_CANDIDATE_LIMITATION,
   electronFindingSourceNode,
-  electronRangeKey,
 } from "./ElectronBoundaryGraphContext.js";
 import {
   artifactLocalIdentity,
@@ -30,13 +32,14 @@ interface ProjectedPath {
 /** Retain context-specific wrapper paths, then join only unique IPC records. */
 export const addElectronCallPaths = (
   context: JavaScriptArtifactGraphContext,
+  ipc: ElectronIpcContext,
 ): void => {
   const projected: ProjectedPath[] = [];
   for (const { file, javascript } of context.analysis.files) {
     if (javascript === null) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
     for (const path of javascript.electron.call_paths ?? []) {
-      const pathId = sha256Text(JSON.stringify(path));
+      const pathId = electronCallPathId(file.path, path);
       const nodes = path.steps.map((step, index) =>
         context.accumulator.addNode({
           kind: "javascript-expression",
@@ -63,6 +66,9 @@ export const addElectronCallPaths = (
                 module_runtime: step.module_runtime,
                 conditions: path.conditions,
                 resolution: "candidate",
+                ...(path.loader_authority === "candidate"
+                  ? { loader_authority: "candidate" }
+                  : {}),
               },
               evidence: staticInferenceEvidence({
                 sha256: file.sha256,
@@ -70,8 +76,14 @@ export const addElectronCallPaths = (
                 range: step.location,
                 operation: "substitute-electron-wrapper",
                 coverage,
+                ...(path.loader_authority === "candidate"
+                  ? { confidence: "low" as const }
+                  : {}),
                 limitations: [
                   "Lexical wrapper substitution is a static candidate; guards, runtime overrides and execution remain unverified.",
+                  ...(path.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
                 ],
               }),
             },
@@ -97,6 +109,7 @@ export const addElectronCallPaths = (
           coverage,
           relation: "contains",
           operation: "locate-electron-wrapper-path",
+          loaderAuthority: path.loader_authority,
           properties: {
             path_id: pathId,
             entry: path.entry,
@@ -122,6 +135,7 @@ export const addElectronCallPaths = (
             ? "maps_to"
             : "calls",
           operation: "trace-electron-wrapper-path",
+          loaderAuthority: path.loader_authority,
           properties: {
             path_id: pathId,
             entry: path.entry,
@@ -137,17 +151,39 @@ export const addElectronCallPaths = (
       projected.push({ file, path, coverage, nodes });
     }
   }
-  for (const { transmission, handler } of unambiguousElectronIpcPairings(
-    collectElectronIpcRecords(context.analysis),
-  )) {
-    const sources = projected.filter(
-      (p) => p.path.entry_kind === "bridge-member" && matches(p, transmission),
+  const projectedByKey = indexProjectedPaths(projected);
+  const wrapperCandidates = [
+    ...ipc.pairings.map((pairing) => ({ ...pairing, coverageLimited: false })),
+    ...ipc.states.flatMap(({ transmission, coverageLimitedCandidate }) =>
+      coverageLimitedCandidate === null
+        ? []
+        : [
+            {
+              transmission,
+              handler: coverageLimitedCandidate,
+              coverageLimited: true,
+            },
+          ],
+    ),
+  ];
+  for (const { transmission, handler, coverageLimited } of wrapperCandidates) {
+    const sources = lookupProjectedPaths(
+      projectedByKey,
+      "bridge-member",
+      transmission,
     );
-    const targets = projected.filter(
-      (p) => p.path.entry_kind === "ipc-handler" && matches(p, handler),
+    const targets = lookupProjectedPaths(
+      projectedByKey,
+      "ipc-handler",
+      handler,
     );
     for (const from of sources)
       for (const to of targets) {
+        if (
+          from.path.loader_authority === "candidate" ||
+          to.path.loader_authority === "candidate"
+        )
+          continue;
         const source = from.nodes.at(-1),
           target = to.nodes[0];
         if (!source || !target) continue;
@@ -162,18 +198,72 @@ export const addElectronCallPaths = (
           operation: "join-electron-wrapper-paths",
           properties: {
             channel: transmission.finding.channel,
-            pairing_basis: "unique-exact-literal-channel",
+            pairing_basis: coverageLimited
+              ? IPC_COVERAGE_LIMITED_PAIRING_BASIS
+              : "unique-exact-literal-channel",
             resolution: "candidate",
             handler_path: to.file.path,
             bridge_conditions: from.path.conditions,
             handler_conditions: to.path.conditions,
           },
-          limitations: [
-            "The unique static channel match does not establish runtime registration, sender acceptance, or dispatch.",
-          ],
+          limitations: coverageLimited
+            ? [
+                "Incomplete source coverage may hide competing handlers; uniqueness of this observed channel match cannot be established.",
+                "The match does not establish runtime registration, sender acceptance, or dispatch.",
+              ]
+            : [
+                "The unique static channel match does not establish runtime registration, sender acceptance, or dispatch.",
+              ],
         });
       }
   }
+};
+
+type ProjectedPathIndex = Readonly<
+  Record<
+    "bridge-member" | "ipc-handler",
+    ReadonlyMap<string, ReadonlyMap<string, readonly ProjectedPath[]>>
+  >
+>;
+
+const indexProjectedPaths = (
+  projected: readonly ProjectedPath[],
+): ProjectedPathIndex => {
+  const indexed: Record<
+    "bridge-member" | "ipc-handler",
+    Map<string, Map<string, ProjectedPath[]>>
+  > = {
+    "bridge-member": new Map(),
+    "ipc-handler": new Map(),
+  };
+  for (const entry of projected) {
+    const { entry_kind: entryKind, channel } = entry.path;
+    if (
+      channel === null ||
+      (entryKind !== "bridge-member" && entryKind !== "ipc-handler")
+    )
+      continue;
+    let byChannel = indexed[entryKind].get(entry.file.path);
+    if (byChannel === undefined) {
+      byChannel = new Map();
+      indexed[entryKind].set(entry.file.path, byChannel);
+    }
+    appendToMapList(byChannel, channel, entry);
+  }
+  return indexed;
+};
+
+const lookupProjectedPaths = (
+  indexed: ProjectedPathIndex,
+  entryKind: "bridge-member" | "ipc-handler",
+  record: ElectronIpcRecord,
+): ProjectedPath[] => {
+  const channel = record.finding.channel;
+  if (channel === null) return [];
+  const candidates = indexed[entryKind].get(record.file.path)?.get(channel);
+  return candidates === undefined
+    ? []
+    : candidates.filter((entry) => matches(entry, record));
 };
 
 const matches = (
@@ -191,13 +281,15 @@ const matches = (
     path.steps.some(
       (step) =>
         step.kind === sourceStepKind &&
-        electronRangeKey(step.location) === electronRangeKey(finding.location),
+        javascriptSourceRangeKey(step.location) ===
+          javascriptSourceRangeKey(finding.location),
     ) &&
     (invocation === undefined ||
       path.steps.some(
         (step) =>
           (step.kind === "call" || step.kind === "exposure") &&
-          electronRangeKey(step.location) === electronRangeKey(invocation),
+          javascriptSourceRangeKey(step.location) ===
+            javascriptSourceRangeKey(invocation),
       ))
   );
 };

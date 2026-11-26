@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { knownCoverage } from "../coverageAccumulator.js";
+import {
+  bundleResourceBoundResultSchema,
+  type BundleResourceRoot,
+} from "./bundleResourceRoot.js";
 import {
   createPlistNumberProjection,
   type PlistNumberLiterals,
@@ -21,18 +26,24 @@ export const interfaceBuilderDocumentSchema = z.strictObject({
   relative_path: z.string().min(1),
   archive_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   document_kind: z.enum(["nib", "storyboard_scene"]),
-  object_count: z.number().int().nonnegative(),
-  connection_count: z.number().int().nonnegative(),
+  object_count: z.int().nonnegative(),
+  connection_count: z.int().nonnegative(),
   hierarchy_complete: z.boolean(),
 });
 
 /** Normalized read-only Interface Builder graph with archive provenance. */
-export const interfaceBuilderAnalysisSchema = z.strictObject({
-  target_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  documents: z.array(interfaceBuilderDocumentSchema).max(64),
-  graph: nativeInvestigationGraphSchema,
-  limitations: z.array(z.string()),
-});
+export const interfaceBuilderAnalysisSchema = bundleResourceBoundResultSchema(
+  z.string().regex(/^[a-f0-9]{64}$/u),
+  {
+    documents: z.array(interfaceBuilderDocumentSchema).max(64),
+    graph: nativeInvestigationGraphSchema,
+    limitations: z.array(z.string()),
+  },
+);
+
+export type InterfaceBuilderAnalysis = z.output<
+  typeof interfaceBuilderAnalysisSchema
+>;
 
 export interface InterfaceBuilderDocumentInput {
   readonly relativePath: string;
@@ -50,7 +61,8 @@ type InvestigationEdge = z.infer<typeof nativeInvestigationEdgeSchema>;
 
 /** Build the graph returned by the static Interface Builder archive decoder. */
 export const buildInterfaceBuilderAnalysis = (input: {
-  readonly targetSha256: string;
+  readonly targetSha256: string | null;
+  readonly resourceRoot?: BundleResourceRoot;
   readonly toolVersion: string;
   readonly documents: readonly InterfaceBuilderDocumentInput[];
   readonly limits: z.output<typeof interfaceBuilderLimitsSchema>;
@@ -155,6 +167,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     let connectionEdgeCount = 0;
     let hierarchyEdgeCount = 0;
     let documentOmittedConnections = 0;
+    let connectionObjectLimit = false;
     let documentOmittedHierarchyEdges = 0;
     let hierarchyTruncated = false;
     const objectNodeId = (objectId: string): string =>
@@ -183,6 +196,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       else connectionEdgeCount += 1;
     };
     const connect = (
+      category: "hierarchy" | "connection",
       id: string,
       from: string,
       to: string | null,
@@ -190,7 +204,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       description: string,
       reason?: string,
     ) => {
-      const isHierarchy = relation === "contains" && id.includes(":hierarchy:");
+      const isHierarchy = category === "hierarchy";
       if (!nodes.has(from)) {
         truncated = true;
         if (isHierarchy) {
@@ -199,6 +213,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         } else {
           omittedConnections += 1;
           documentOmittedConnections += 1;
+          connectionObjectLimit = true;
         }
         return;
       }
@@ -207,6 +222,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       if (unresolvedEndpoint) {
         truncated = true;
         if (isHierarchy) hierarchyTruncated = true;
+        else connectionObjectLimit = true;
       }
       const edgeTo = unresolvedEndpoint ? null : to;
       const edgeReason = unresolvedEndpoint
@@ -288,6 +304,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           )
             hierarchyTruncated = true;
           connect(
+            "hierarchy",
             graphId("hierarchy", [parentId, childId]),
             parentId,
             childId,
@@ -314,8 +331,13 @@ export const buildInterfaceBuilderAnalysis = (input: {
           attributes: { interface_builder_object_id: item.source_id },
           evidence: evidenceFor(`connection source ${item.source_id}`),
         });
-      const destinationId =
-        item.destination_id === null ? null : objectNodeId(item.destination_id);
+      let destinationId: string | null = null;
+      if (item.destination_id !== null) {
+        const id = objectNodeId(item.destination_id);
+        // A decoded local object can still be omitted by the graph budget.
+        if (objectIds.has(item.destination_id) || nodes.has(id))
+          destinationId = id;
+      }
       if (item.kind === "action") {
         const actionId = graphId("action", [item.id]);
         const selectorId =
@@ -335,6 +357,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           evidence: evidenceFor(`action ${item.id}`),
         });
         connect(
+          "connection",
           graphId("action-edge", [item.id, "source"]),
           sourceId,
           actionId,
@@ -351,6 +374,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
             evidence: evidenceFor(`selector ${item.label}`),
           });
           connect(
+            "connection",
             graphId("action-edge", [item.id, "selector"]),
             actionId,
             selectorId,
@@ -358,23 +382,15 @@ export const buildInterfaceBuilderAnalysis = (input: {
             `selector ${item.label}`,
           );
         }
-        if (destinationId === null || !nodes.has(destinationId))
-          connect(
-            graphId("action-edge", [item.id, "destination"]),
-            actionId,
-            null,
-            "target_action",
-            `action destination ${item.destination_id ?? "missing"}`,
-            "destination_object_missing_or_external",
-          );
-        else
-          connect(
-            graphId("action-edge", [item.id, "destination"]),
-            actionId,
-            destinationId,
-            "target_action",
-            `action destination ${item.destination_id}`,
-          );
+        connect(
+          "connection",
+          graphId("action-edge", [item.id, "destination"]),
+          actionId,
+          destinationId,
+          "target_action",
+          `action destination ${item.destination_id ?? "missing"}`,
+          "destination_object_missing_or_external",
+        );
       } else if (item.kind === "outlet") {
         const outletId = graphId("outlet", [item.id]);
         addNode({
@@ -386,49 +402,35 @@ export const buildInterfaceBuilderAnalysis = (input: {
           evidence: evidenceFor(`outlet ${item.id}`),
         });
         connect(
+          "connection",
           graphId("outlet-edge", [item.id, "source"]),
           sourceId,
           outletId,
           "contains",
           `outlet source ${item.source_id}`,
         );
-        if (destinationId === null || !nodes.has(destinationId))
-          connect(
-            graphId("outlet-edge", [item.id, "destination"]),
-            outletId,
-            null,
-            "outlet_to",
-            `outlet ${item.label ?? item.id}`,
-            "destination_object_missing_or_external",
-          );
-        else
-          connect(
-            graphId("outlet-edge", [item.id, "destination"]),
-            outletId,
-            destinationId,
-            "outlet_to",
-            `outlet ${item.label ?? item.id}`,
-          );
+        connect(
+          "connection",
+          graphId("outlet-edge", [item.id, "destination"]),
+          outletId,
+          destinationId,
+          "outlet_to",
+          `outlet ${item.label ?? item.id}`,
+          "destination_object_missing_or_external",
+        );
       } else if (item.kind === "segue") {
-        if (destinationId === null || !nodes.has(destinationId))
-          connect(
-            graphId("segue", [index]),
-            sourceId,
-            null,
-            "segue_to",
-            `segue ${item.label ?? item.id}`,
-            "destination_scene_missing",
-          );
-        else
-          connect(
-            graphId("segue", [index]),
-            sourceId,
-            destinationId,
-            "segue_to",
-            `segue ${item.label ?? item.id}`,
-          );
+        connect(
+          "connection",
+          graphId("segue", [index]),
+          sourceId,
+          destinationId,
+          "segue_to",
+          `segue ${item.label ?? item.id}`,
+          "destination_scene_missing",
+        );
       } else {
         connect(
+          "connection",
           graphId("unknown-connection", [index]),
           sourceId,
           null,
@@ -453,6 +455,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
     // no connection record, so its coverage is partial with its own reason
     // rather than absent or truncated.
     const connectionsUnresolved = parsed.unresolvedConnections > 0;
+    const unsupportedConnections = parsed.connections.some(
+      ({ kind }) => kind === "other",
+    );
     omittedObjects +=
       parsed.omittedObjects +
       Math.max(0, parsed.objects.length - documentObjectCount);
@@ -488,7 +493,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     coverage.push(
       {
         facet: `objects:${document.relativePath}`,
-        status: objectsTruncated ? "partial" : "complete",
+        status: knownCoverage(!objectsTruncated, "object_limit_reached"),
         reason: objectsTruncated ? "object_limit_reached" : null,
         examined: documentObjectCount,
         omitted:
@@ -500,15 +505,20 @@ export const buildInterfaceBuilderAnalysis = (input: {
         status:
           connectionsTruncated ||
           documentOmittedConnections > 0 ||
-          connectionsUnresolved
+          connectionObjectLimit ||
+          connectionsUnresolved ||
+          unsupportedConnections
             ? "partial"
             : "complete",
-        reason:
-          connectionsTruncated || documentOmittedConnections > 0
+        reason: connectionObjectLimit
+          ? "object_limit_reached"
+          : connectionsTruncated || documentOmittedConnections > 0
             ? "connection_limit_reached"
             : connectionsUnresolved
               ? "connection_unresolved"
-              : null,
+              : unsupportedConnections
+                ? "unsupported_connection_type"
+                : null,
         examined: Math.min(
           parsed.connections.length,
           input.limits.max_connections,
@@ -575,6 +585,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
     });
   return interfaceBuilderAnalysisSchema.parse({
     target_sha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resource_root: input.resourceRoot }),
     documents: summaries,
     graph: {
       target_sha256: input.targetSha256,
@@ -603,9 +616,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
 
 /** Hard limits shared by Interface Builder archive aggregation and tracing. */
 export const interfaceBuilderLimitsSchema = z.strictObject({
-  max_documents: z.number().int().min(1).max(64).default(64),
-  max_objects: z.number().int().min(1).max(20_000).default(20_000),
-  max_connections: z.number().int().min(1).max(40_000).default(40_000),
+  max_documents: z.int().min(1).max(64).default(64),
+  max_objects: z.int().min(1).max(20_000).default(20_000),
+  max_connections: z.int().min(1).max(40_000).default(40_000),
   trace: nativeInvestigationTraceLimitsSchema.default({
     max_depth: 8,
     max_nodes: 250,

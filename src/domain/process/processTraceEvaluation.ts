@@ -1,3 +1,4 @@
+import { countValues } from "../valueCounts.js";
 import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -131,6 +132,34 @@ type FiniteTraceEvaluation =
       readonly locationIndexes: readonly number[];
     };
 
+/** Distinguish pure omissions from displaced successors, without relaxing the language. */
+const finiteTraceOmissions = (
+  ids: readonly string[],
+  tokens: Extract<
+    ProcessTraceSpecification["language"],
+    { kind: "finite_traces" }
+  >["variants"][number]["trace"],
+): readonly string[] | undefined => {
+  let observed = 0;
+  const missing: string[] = [];
+  for (const token of tokens) {
+    const remaining = countValues(
+      typeof token === "string" ? [token] : token.unordered,
+    );
+    while (observed < ids.length) {
+      const id = ids[observed];
+      const count = id === undefined ? 0 : (remaining.get(id) ?? 0);
+      if (id === undefined || count === 0) break;
+      if (count === 1) remaining.delete(id);
+      else remaining.set(id, count - 1);
+      observed++;
+    }
+    for (const [id, count] of remaining)
+      for (let index = 0; index < count; index++) missing.push(id);
+  }
+  return observed === ids.length && missing.length > 0 ? missing : undefined;
+};
+
 /** Match variants once, retaining the best-prefix mismatch for attribution. */
 const evaluateFiniteTrace = (
   ids: readonly string[],
@@ -167,9 +196,7 @@ const evaluateFiniteTrace = (
     for (const token of variant.trace) {
       const expected = typeof token === "string" ? [token] : token.unordered;
       const actual = ids.slice(offset, offset + expected.length);
-      const remaining = new Map<string, number>();
-      for (const eventId of expected)
-        remaining.set(eventId, (remaining.get(eventId) ?? 0) + 1);
+      const remaining = countValues(expected);
       const unexpected: Array<{ readonly id: string; readonly index: number }> =
         [];
       for (const [index, eventId] of actual.entries()) {
@@ -187,7 +214,12 @@ const evaluateFiniteTrace = (
         unexpected.length > 0 ||
         actual.length < expected.length
       ) {
-        recordMismatch(offset, missing, unexpected);
+        const omitted = finiteTraceOmissions(ids, variant.trace);
+        recordMismatch(
+          offset,
+          omitted ?? missing,
+          omitted === undefined ? unexpected : [],
+        );
         mismatched = true;
         break;
       }

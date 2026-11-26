@@ -72,7 +72,10 @@ async function verifyNavigation(
     assert.ok(local.description.includes(local.stack_displacement));
     assert.doesNotMatch(local.description, /object at 0x/u);
   }
-  const dossier = await call("analyze_function", { procedure: address });
+  const dossier = await call("analyze_function", {
+    procedure: address,
+    detail: "complete",
+  });
   assert.deepEqual(dossier.procedure.locals, info.locals);
   assert.equal(dossier.procedure.classification, null);
   assert.equal(dossier.procedure.body.available, false);

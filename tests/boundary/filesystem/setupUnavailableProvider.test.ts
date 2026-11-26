@@ -1,6 +1,6 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { systemSetupHost } from "../../../src/application/SetupHost.js";
@@ -10,17 +10,9 @@ import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
 describe("setup with configured but unavailable providers", () => {
   it("preserves Hopper settings and makes the second setup perform no writes", async () => {
     const root = await createTestTempDirectory("rea-setup-unavailable-");
-    roots.push(root);
     const client = supportedClients(root, "darwin", {}).find(
       (candidate) => candidate.name === "cursor",
     );
@@ -30,7 +22,6 @@ describe("setup with configured but unavailable providers", () => {
     await writeFile(client.configPath, original);
     const environment = { HOPPER_LAUNCHER_PATH: "/custom/Hopper" };
     const doctor = createDoctorHostFixture({
-      validTarget: () => Promise.resolve(false),
       executable: () => Promise.resolve(false),
       clientRegistrations: () =>
         readClientRegistrationStatuses(root, undefined, {

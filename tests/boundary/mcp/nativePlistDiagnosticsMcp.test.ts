@@ -14,8 +14,9 @@ it.skipIf(process.platform !== "darwin")(
     await writeFile(program, thinMach(0xfeedfacf, 0x100000c));
     await mkdir(join(root, "Contents"));
     const path = join(root, "Contents/Info.plist");
-    const source =
-      "<plist><dict><key>number</key><integer> 42 </integer></dict></plist>";
+    // Malformed OpenStep remains conversion-only; supported XML now reads its
+    // original source and keeps malformed scalar literals as explicit unknowns.
+    const source = "{ number = ;";
     await writeFile(path, source);
     const { call } = await connectLocalToolsMcp({
       HOME: root,
@@ -51,19 +52,18 @@ it.skipIf(process.platform !== "darwin")(
     }
     const selectedTarget = await call("open_binary", { path });
     expect(selectedTarget.isError).not.toBe(true);
+    // The caller sent no `path`, so the failure names the open target rather
+    // than an input issue on a field the caller never supplied.
     const direct = parseMcpToolError(await call("inspect_plist", {})).error;
     expect(direct).toMatchObject({
-      code: "invalid_request",
+      code: "target_unavailable",
       details: {
-        issues: [
-          {
-            path: ["path"],
-            message: expect.stringContaining("Property List error:"),
-          },
-        ],
+        path,
+        reason: expect.stringContaining("Property List error:"),
         captured_output: { exit_code: 1, truncated: false },
       },
     });
+    expect(direct.details).not.toHaveProperty("issues");
     expect(await readFile(path, "utf8")).toBe(source);
   },
 );

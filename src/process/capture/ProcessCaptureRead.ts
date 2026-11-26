@@ -3,7 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import {
   ProcessCaptureError,
   describeProcessCaptureExecutionFailure,
@@ -11,12 +11,14 @@ import {
 import { OwnedDirectoryHandle } from "../../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
+  OwnedRegularFileOperationFailure,
   RegularFileCancelled,
   RegularFileCleanupFailure,
   withOwnedFileHandle,
   type RegularFileOperationOutcome,
 } from "../../filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../../filesystem/RegularFile.js";
+import { FileReadCancelled } from "../../filesystem/readFileHandleChunks.js";
 
 /** The capture's existing scope retains exact leases without admitting work. */
 export interface ProcessCaptureCleanupRetainer {
@@ -35,7 +37,9 @@ export class ProcessCaptureReadFailure<
   readonly outcome: RegularFileOperationOutcome<Value>;
   readonly cleanupLeases: readonly AnalysisCleanupLease[];
   readonly cleanupCause: unknown;
+  readonly operationFailure: OwnedRegularFileOperationFailure | undefined;
   readonly retention: CloseRetention;
+  /** An observed abort is independent of whether cancellation caused the read failure. */
   readonly cancellation: Cancellation | undefined;
 
   constructor(options: {
@@ -45,28 +49,46 @@ export class ProcessCaptureReadFailure<
     readonly cleanupLease?: AnalysisCleanupLease;
     readonly retention?: CloseRetention;
     readonly completionCancellation?: Cancellation | undefined;
+    readonly operationFailure?: OwnedRegularFileOperationFailure | undefined;
     readonly signal: AbortSignal | undefined;
   }) {
+    const operationFailure =
+      options.operationFailure ??
+      (options.outcome.kind === "failed" &&
+      options.outcome.cause instanceof OwnedRegularFileOperationFailure
+        ? options.outcome.cause
+        : undefined);
+    const outcome: RegularFileOperationOutcome<Value> =
+      operationFailure !== undefined && options.outcome.kind === "failed"
+        ? { kind: "failed", cause: operationFailure.operationCause }
+        : options.outcome;
     const cleanupLeases =
       options.cleanupLease === undefined ? [] : [options.cleanupLease];
-    const cancellation =
-      options.outcome.kind === "failed"
-        ? operationCancellation(options.outcome.cause, options.signal)
+    const primaryCancellation =
+      outcome.kind === "failed"
+        ? operationFailure === undefined
+          ? operationCancellation(outcome.cause)
+          : undefined
         : options.completionCancellation;
+    const cancellation =
+      primaryCancellation ??
+      (options.signal?.aborted === true
+        ? { reason: options.signal.reason }
+        : undefined);
     const primary =
-      cancellation !== undefined
-        ? cancellation.reason
-        : options.outcome.kind === "failed"
-          ? options.outcome.cause
+      primaryCancellation !== undefined
+        ? primaryCancellation.reason
+        : outcome.kind === "failed"
+          ? outcome.cause
           : options.cleanupCause;
     const cleanupCause = options.cleanupCause;
     const cleanupReason =
       describeProcessCaptureExecutionFailure(cleanupCause) ??
       "descriptor close rejected without a value";
     const reasons = [
-      ...(options.outcome.kind === "failed"
+      ...(outcome.kind === "failed"
         ? [
-            describeProcessCaptureExecutionFailure(options.outcome.cause) ??
+            describeProcessCaptureExecutionFailure(outcome.cause) ??
               "read rejected without a value",
           ]
         : []),
@@ -78,7 +100,7 @@ export class ProcessCaptureReadFailure<
       `Process capture read failed for ${options.path}${reasons.length === 0 ? "" : `: ${reasons.join("; ")}`}`,
       {
         cause: primary,
-        ...(cancellation === undefined
+        ...(primaryCancellation === undefined
           ? {}
           : {
               userCategory: "cancelled" as const,
@@ -97,9 +119,10 @@ export class ProcessCaptureReadFailure<
       },
     );
     this.path = options.path;
-    this.outcome = options.outcome;
+    this.outcome = outcome;
     this.cleanupLeases = cleanupLeases;
     this.cleanupCause = cleanupCause;
+    this.operationFailure = operationFailure;
     this.retention = options.retention ?? { kind: "not_requested" };
     this.cancellation = cancellation;
     if (cleanupLeases.length > 0)
@@ -107,11 +130,11 @@ export class ProcessCaptureReadFailure<
   }
 }
 
-const operationCancellation = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): Cancellation | undefined => {
-  if (cause instanceof RegularFileOperationCancelled)
+const operationCancellation = (cause: unknown): Cancellation | undefined => {
+  if (
+    cause instanceof RegularFileOperationCancelled ||
+    cause instanceof FileReadCancelled
+  )
     return { reason: cause.reason };
   if (
     cause instanceof ProcessCaptureError &&
@@ -120,12 +143,6 @@ const operationCancellation = (
     return {
       reason: Object.hasOwn(cause, "cause") ? cause.cause : cause,
     };
-  if (
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error && cause.name === "AbortError"))
-  )
-    return { reason: signal.reason };
   return undefined;
 };
 
@@ -159,6 +176,7 @@ export const withProcessCaptureFile = async <Value>(
         cleanupCause: cause.cleanupCause,
         cleanupLease,
         retention: cause.retention,
+        operationFailure: cause.operationFailure,
         ...(cause.completionCancellation === undefined
           ? {}
           : { completionCancellation: cause.completionCancellation }),

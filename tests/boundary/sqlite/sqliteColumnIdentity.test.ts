@@ -13,7 +13,8 @@ const sample = async (encoding: string, malformed = false) => {
   try {
     db.exec(`PRAGMA encoding='${encoding}';
       CREATE TABLE t("col" TEXT, "�ol" TEXT);
-      INSERT INTO t VALUES ('first-column','replacement-column');`);
+      INSERT INTO t VALUES ('first-column','replacement-column');
+      CREATE TABLE json_each(value TEXT);`);
   } finally {
     db.close();
   }
@@ -66,7 +67,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       }),
     ).toThrow(
       expect.objectContaining({
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(
           "column name contains malformed UTF-8",
         ),
@@ -109,6 +110,6 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         schema_scope: "selected_table",
         columns: ["�ol"],
       }),
-    ).toThrow(expect.objectContaining({ reason: "format" }));
+    ).toThrow(expect.objectContaining({ reason: "malformed" }));
   },
 );

@@ -1,32 +1,82 @@
 import type {
-  FileState,
   FilesystemCheckpoint,
   ProcessFilesystemSnapshot,
 } from "../../domain/process/processCapture.js";
 import { sep } from "node:path";
 
+type UnobservedSubtree = NonNullable<
+  ProcessFilesystemSnapshot["coverage"]["unobserved_subtrees"]
+>[number];
+
+interface IndexedAbsenceSnapshot {
+  readonly completeRoots: ReadonlySet<string>;
+  readonly subtreesByPath:
+    | ReadonlyMap<
+        string,
+        { readonly subtree: UnobservedSubtree; readonly index: number }
+      >
+    | undefined;
+}
+
+const indexAbsenceSnapshot = (
+  snapshot: ProcessFilesystemSnapshot,
+): IndexedAbsenceSnapshot => {
+  const subtrees = snapshot.coverage.unobserved_subtrees;
+  let subtreesByPath:
+    | Map<
+        string,
+        { readonly subtree: UnobservedSubtree; readonly index: number }
+      >
+    | undefined;
+  if (subtrees !== undefined) {
+    subtreesByPath = new Map();
+    for (let index = 0; index < subtrees.length; index += 1) {
+      const subtree = subtrees[index]!;
+      if (!subtreesByPath.has(subtree.path))
+        subtreesByPath.set(subtree.path, { subtree, index });
+    }
+  }
+  return {
+    completeRoots: new Set(snapshot.completeRoots),
+    subtreesByPath,
+  };
+};
+
 const unobservedAbsenceReason = (
   path: string,
   phase: "before" | "after",
-  completeRoots: ReadonlySet<string>,
-  filesByPath: ReadonlyMap<string, FileState>,
+  indexed: IndexedAbsenceSnapshot,
 ): string | undefined => {
   const alias = path.slice(0, path.indexOf(":"));
-  if (!completeRoots.has(alias))
+  if (!indexed.completeRoots.has(alias))
     return `The ${phase} snapshot did not exhaust path enumeration under ${alias}; absence remains unknown.`;
   const rootPath = `${alias}:.`;
-  if (path !== rootPath && filesByPath.get(rootPath)?.type === "symlink")
-    return `The ${phase} snapshot did not follow the symbolic link at ${rootPath}; descendant absence remains unknown.`;
-  for (
-    let index = path.lastIndexOf(sep);
-    index > 0;
-    index = path.lastIndexOf(sep, index - 1)
-  ) {
-    const parent = path.slice(0, index);
-    if (filesByPath.get(parent)?.type === "symlink")
-      return `The ${phase} snapshot did not follow the symbolic link at ${parent}; descendant absence remains unknown.`;
+  if (path === rootPath) return undefined;
+  const subtreesByPath = indexed.subtreesByPath;
+  if (subtreesByPath === undefined)
+    return `The ${phase} snapshot has no subtree coverage facts; descendant absence remains unknown.`;
+  if (subtreesByPath.size === 0) return undefined;
+  let best:
+    | { readonly subtree: UnobservedSubtree; readonly index: number }
+    | undefined;
+  const consider = (
+    entry:
+      | { readonly subtree: UnobservedSubtree; readonly index: number }
+      | undefined,
+  ): void => {
+    if (entry !== undefined && (best === undefined || entry.index < best.index))
+      best = entry;
+  };
+  if (path.startsWith(`${alias}:`)) consider(subtreesByPath.get(rootPath));
+  const exact = subtreesByPath.get(path);
+  if (exact?.subtree.reason === "observer_owned") consider(exact);
+  for (let cut = path.lastIndexOf(sep); cut !== -1;) {
+    consider(subtreesByPath.get(path.slice(0, cut)));
+    cut = cut > 0 ? path.lastIndexOf(sep, cut - 1) : -1;
   }
-  return undefined;
+  return best === undefined
+    ? undefined
+    : `The ${phase} snapshot did not observe the subtree at ${best.subtree.path} (${best.subtree.reason}); descendant absence remains unknown.`;
 };
 
 /** Classify effects only from observed path absence, metadata, and content hashes. */
@@ -36,8 +86,8 @@ export const classifyFilesystemEffects = (
 ): FilesystemCheckpoint["effects"] => {
   const beforeByPath = new Map(before.files.map((file) => [file.path, file]));
   const afterByPath = new Map(after.files.map((file) => [file.path, file]));
-  const beforeCompleteRoots = new Set(before.completeRoots);
-  const afterCompleteRoots = new Set(after.completeRoots);
+  let beforeIndexed: IndexedAbsenceSnapshot | undefined;
+  let afterIndexed: IndexedAbsenceSnapshot | undefined;
   return [...new Set([...beforeByPath.keys(), ...afterByPath.keys()])]
     .sort()
     .map((path) => {
@@ -48,15 +98,13 @@ export const classifyFilesystemEffects = (
           ? unobservedAbsenceReason(
               path,
               "before",
-              beforeCompleteRoots,
-              beforeByPath,
+              (beforeIndexed ??= indexAbsenceSnapshot(before)),
             )
           : afterFile === null
             ? unobservedAbsenceReason(
                 path,
                 "after",
-                afterCompleteRoots,
-                afterByPath,
+                (afterIndexed ??= indexAbsenceSnapshot(after)),
               )
             : undefined;
       if (reason !== undefined)
@@ -87,8 +135,11 @@ export const classifyFilesystemEffects = (
       const metadataChanged =
         beforeFile.type !== afterFile.type ||
         beforeFile.mode !== afterFile.mode ||
-        beforeFile.size !== afterFile.size ||
-        beforeFile.symlink_target !== afterFile.symlink_target;
+        beforeFile.size !== afterFile.size;
+      const beforeTarget =
+        beforeFile.type === "symlink" ? beforeFile.symlink_target_hex : null;
+      const afterTarget =
+        afterFile.type === "symlink" ? afterFile.symlink_target_hex : null;
       if (
         !metadataChanged &&
         beforeFile.type === "file" &&
@@ -106,7 +157,9 @@ export const classifyFilesystemEffects = (
       return {
         path,
         status:
-          metadataChanged || beforeFile.sha256 !== afterFile.sha256
+          metadataChanged ||
+          beforeTarget !== afterTarget ||
+          beforeFile.sha256 !== afterFile.sha256
             ? "modified"
             : "unchanged",
         before: beforeFile,

@@ -1,34 +1,38 @@
-import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import {
   ghidraProcessorExtensionSchema,
   inspectGhidraProcessorExtension,
   resolveGhidraProcessorExtension,
+  type GhidraProcessorExtension,
   type GhidraProcessorExtensionSpec,
-} from "./GhidraPspExtension.js";
+} from "./GhidraProcessorExtension.js";
+
+const LANGUAGES = "data/languages";
 
 /** The caller-installed PlayStation 2 extension that registers r5900:LE:32:default. */
-export const GHIDRA_EE_EXTENSION: GhidraProcessorExtensionSpec = {
-  id: "ghidra-emotionengine-reloaded",
-  label: "EE",
-  failureCode: "EE_EXTENSION_UNAVAILABLE",
-  required: [
-    "Module.manifest",
-    "extension.properties",
-    "data/languages/emotionengine.ldefs",
-    "data/languages/r5900.slaspec",
-    "data/languages/r5900.pspec",
-    "data/languages/r5900.cspec",
-  ],
-};
+export const GHIDRA_EE_EXTENSION: GhidraProcessorExtensionSpec<"ghidra-emotionengine-reloaded"> =
+  {
+    id: "ghidra-emotionengine-reloaded",
+    profile: "EE",
+    unavailableCode: "EE_EXTENSION_UNAVAILABLE",
+    required: [
+      "Module.manifest",
+      "extension.properties",
+      `${LANGUAGES}/emotionengine.ldefs`,
+      `${LANGUAGES}/r5900.slaspec`,
+      `${LANGUAGES}/r5900.pspec`,
+      `${LANGUAGES}/r5900.cspec`,
+    ],
+  };
 
 export const ghidraEeExtensionSchema = ghidraProcessorExtensionSchema(
-  z.literal(GHIDRA_EE_EXTENSION.id),
+  "ghidra-emotionengine-reloaded",
 );
-export type GhidraEeExtension = z.infer<typeof ghidraEeExtensionSchema>;
+export type GhidraEeExtension =
+  GhidraProcessorExtension<"ghidra-emotionengine-reloaded">;
 
 /** Read-only fingerprint of the installed extension; no home scanning or installation. */
 export const inspectGhidraEeExtension = (
@@ -43,7 +47,7 @@ export const inspectGhidraEeExtension = (
     ghidraVersion,
     resources,
     signal,
-  ) as Promise<GhidraEeExtension>;
+  );
 
 /** Resolve prerequisites before opening or admitting cached EE analysis. */
 export const resolveGhidraEeExtension = (
@@ -56,4 +60,4 @@ export const resolveGhidraEeExtension = (
     installation,
     resources,
     signal,
-  ) as Promise<Result<GhidraEeExtension, AnalysisError>>;
+  );

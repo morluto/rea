@@ -18,6 +18,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** A thin little-endian arm64 MH_EXECUTE header with no load commands. */
 const machoHeader = (): Buffer => {
@@ -32,6 +33,12 @@ const tracer: NativeCallTracer & { calls: number } = {
   calls: 0,
   trace(request) {
     this.calls++;
+    expect(request.input.environment).toEqual(
+      JSON.parse(
+        '{"__proto__":"selected literal value","constructor":"ordinary value"}',
+      ),
+    );
+    expect(Object.hasOwn(request.input.environment, "__proto__")).toBe(true);
     return Promise.resolve(
       ok({
         debugger: {
@@ -61,7 +68,16 @@ const tracer: NativeCallTracer & { calls: number } = {
           breakpoints: request.input.breakpoints.map((_, index) => ({
             index,
             location_count: 1,
-            locations: [],
+            locations: [
+              {
+                load_address: "0x1000",
+                file_address: "0x1000",
+                module: "Tool",
+                module_path: request.executable,
+                symbol: "open",
+                source_location: { file_path: null, line: 23, column: null },
+              },
+            ],
           })),
           events: [],
           resource_limit_reached: false,
@@ -74,6 +90,7 @@ const tracer: NativeCallTracer & { calls: number } = {
             stderr_complete: true,
           },
           other_stops: [],
+          unattributed_breakpoint_stops: 0,
         },
         stdout: { text: "", bytes: 0, truncated: false, complete: true },
         stderr: { text: "", bytes: 0, truncated: false, complete: true },
@@ -97,7 +114,10 @@ it("routes observe_native_calls through MCP with schema-checked input and output
     ),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-calls-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "native-calls-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -113,6 +133,9 @@ it("routes observe_native_calls through MCP with schema-checked input and output
       arguments: {
         breakpoints: [{ kind: "function", name: "open" }],
         duration_ms: 1000,
+        environment: JSON.parse(
+          '{"__proto__":"selected literal value","constructor":"ordinary value"}',
+        ),
       },
     });
     expect(called.isError, JSON.stringify(called.structuredContent)).not.toBe(
@@ -124,10 +147,41 @@ it("routes observe_native_calls through MCP with schema-checked input and output
         .parse(called.structuredContent).normalized_result,
     );
     expect(result.process).toMatchObject({ pid: 99, outcome: "exited" });
+    expect(result.breakpoints[0]?.locations[0]?.source_location).toEqual({
+      file_path: null,
+      line: 23,
+      column: null,
+    });
+
+    expect(result.target.environment).toEqual(
+      JSON.parse(
+        '{"__proto__":"selected literal value","constructor":"ordinary value"}',
+      ),
+    );
+    expect(Object.hasOwn(result.target.environment, "__proto__")).toBe(true);
     expect(result.breakpoints[0]?.request).toEqual({
       kind: "function",
       name: "open",
       module: null,
+    });
+    const invalidEnvironment = await client.callTool({
+      name: "observe_native_calls",
+      arguments: {
+        breakpoints: [{ kind: "function", name: "open" }],
+        environment: JSON.parse('{"__proto__":7}'),
+      },
+    });
+    expect(parseMcpToolError(invalidEnvironment).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["environment", "__proto__"],
+            reason: "invalid_type",
+            expected: "string",
+          }),
+        ],
+      },
     });
     const rejected = await client.callTool({
       name: "observe_native_calls",
@@ -260,10 +314,13 @@ it.each([
       ),
     );
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "native-calls-partial-mcp-test",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "native-calls-partial-mcp-test",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

@@ -88,7 +88,10 @@ export async function verifyGhidraTargetAdmission({
       (await call("binary_session")).analysis_run.run_id,
       before.analysis_run.run_id,
     );
-    const dossier = await call("analyze_function", { procedure: entry });
+    const dossier = await call("analyze_function", {
+      procedure: entry,
+      detail: "complete",
+    });
     const instruction = await call("inspect_native_instruction", {
       address: entry,
     });
@@ -106,15 +109,19 @@ export async function verifyGhidraTargetAdmission({
         instruction,
       );
       assert.equal(
-        (await call("resolve_containing_procedure", { address })).procedure
-          .address,
+        (
+          await call("resolve_containing_procedure", {
+            detail: "complete",
+            address,
+          })
+        ).procedure.address,
         entry,
       );
     }
     // Imported facts belong to the captured bytes even if the caller's path disappears.
     await rm(source);
     assert.deepEqual(
-      await call("analyze_function", { procedure: entry }),
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
       dossier,
     );
     assert.deepEqual(

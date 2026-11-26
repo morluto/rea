@@ -1,10 +1,9 @@
+import { sha256File } from "../../lib/verifier-file-sha256.mjs";
+import { requireMcpOutput } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { access, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -14,21 +13,24 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../dist/domain/harmony/harmonyApplication.js";
 import fixture from "../../fixtures/harmony/pipeline.json" with { type: "json" };
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "../../lib/complete-evidence.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hap = process.env.REA_HARMONY_TEST_HAP;
 if (hap === undefined)
   throw new Error(
-    "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/harmony-analysis.md.",
+    "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/guides/harmony/harmony-analysis.md.",
   );
 await access(hap);
-const hashFile = async (path) => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
-};
 assert.equal(
-  await hashFile(hap),
+  await sha256File(hap),
   fixture.sha256,
   "Real HarmonyOS lane requires the pinned Harmony pipeline release fixture",
 );
@@ -36,18 +38,29 @@ const entrypoint =
   process.env.REA_HARMONY_ENTRYPOINT ?? resolve(repository, "scripts/rea.mjs");
 const execute = promisify(execFile);
 const path = resolve(hap);
-const workspace = await mkdtemp(join(tmpdir(), "rea-harmony-verify-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-harmony-verify-",
+});
+const workspace = workspaceFixture.path;
 
-try {
+await withVerifierFixture(workspaceFixture, async () => {
   const inspectResponse = await execute(
     process.execPath,
-    [entrypoint, "inspect-artifact", path, "--format", "json"],
+    [
+      entrypoint,
+      ...(await completeEvidenceCliArguments([
+        "inspect-artifact",
+        path,
+        "--format",
+        "json",
+      ])),
+    ],
     { cwd: repository, timeout: 150_000, maxBuffer: 64 * 1024 * 1024 },
   );
   const inspection = parseEvidence(JSON.parse(inspectResponse.stdout));
   assert.equal(inspection.operation, "inspect_artifact");
-  assert.equal(inspection.subject?.format, "hap");
-  assert.equal(inspection.subject?.digest.sha256, fixture.sha256);
+  assert.equal(inspection.subject?.identity.format, "hap");
+  assert.equal(inspection.subject?.identity.sha256, fixture.sha256);
   console.log("PASS CLI inspect_artifact");
 
   const projectionInput = JSON.stringify({
@@ -147,10 +160,12 @@ try {
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const client = new Client({
-    name: "rea-real-harmony-verifier",
-    version: "1",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "rea-real-harmony-verifier",
+      version: "1",
+    }),
+  );
   try {
     await client.connect(transport, { timeout: 30_000 });
     await client.listTools();
@@ -169,11 +184,13 @@ try {
     assert.equal(status.structuredContent?.result?.open, true);
     assert.equal(status.structuredContent?.result?.format, "hap");
     const inspected = await client.callTool(
-      { name: "inspect_artifact", arguments: {} },
+      { name: "inspect_artifact", arguments: { detail: "complete" } },
       { timeout: 150_000 },
     );
-    assert.notEqual(inspected.isError, true, JSON.stringify(inspected));
-    const mcpInspection = parseEvidence(inspected.structuredContent);
+    assert.notEqual(inspected.structuredContent, undefined);
+    const mcpInspection = parseEvidence(
+      requireMcpOutput(inspected, "inspect_artifact"),
+    );
     assert.deepEqual(
       mcpInspection.normalized_result,
       inspection.normalized_result,
@@ -186,9 +203,10 @@ try {
       },
       { timeout: 150_000 },
     );
-    assert.notEqual(response.isError, true, JSON.stringify(response));
-    assert.ok(response.structuredContent !== undefined);
-    const mcpEvidence = parseEvidence(response.structuredContent);
+    assert.notEqual(response.structuredContent, undefined);
+    const mcpEvidence = parseEvidence(
+      requireMcpOutput(response, "project_harmony_application_graph"),
+    );
     assert.deepEqual(
       mcpEvidence.normalized_result,
       projectionEvidence.normalized_result,
@@ -206,7 +224,7 @@ try {
     assert.notEqual(empty.isError, true, JSON.stringify(empty));
     assert.equal(empty.structuredContent?.result?.open, false);
     assert.equal(
-      await hashFile(path),
+      await sha256File(path),
       fixture.sha256,
       "MCP workflow must preserve source bytes",
     );
@@ -217,6 +235,4 @@ try {
   } finally {
     await client.close();
   }
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+});

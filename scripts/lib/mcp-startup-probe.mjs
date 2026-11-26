@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 
-import { Client } from "@modelcontextprotocol/client";
+import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { mcpPhaseBudgetRecovery } from "../../dist/config/mcpStartupBudgets.js";
+import { completeEvidenceClient } from "./complete-evidence.mjs";
 
 const RSS_SAMPLE_INTERVAL_MS = 10;
 const MAXIMUM_PROFILE_BUFFER_BYTES = 2 * 1_024 * 1_024;
@@ -28,18 +30,33 @@ export async function measureMcpStartup({
     stderr = boundedAppend(stderr, chunk.toString());
   });
   const rss = createLinuxRssSampler(() => transport.pid);
-  const client = new Client({
-    name: "package-startup-probe",
-    version: "1.0.0",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "package-startup-probe",
+      version: "1.0.0",
+    }),
+  );
   const startedAt = performance.now();
+  // One deadline for both phases. Each request also uses the time still left,
+  // so a shorter first-catalog budget stops a pending initialize or tools/list
+  // instead of waiting out that phase's own budget.
+  const firstCatalog = armFirstCatalogDeadline(policy.firstCatalog, startedAt);
   rss.start();
   try {
-    await client.connect(transport, { timeout: policy.initializeBudgetMs });
+    await awaitPhaseWithinFirstCatalog(
+      policy.initialize,
+      firstCatalog,
+      (timeout) => client.connect(transport, { timeout }),
+    );
     const initializedAt = performance.now();
-    const tools = await client.listTools(undefined, {
-      timeout: policy.toolsListBudgetMs,
-    });
+    const tools = await awaitPhaseWithinFirstCatalog(
+      policy.toolsList,
+      firstCatalog,
+      (timeout) =>
+        client.listTools(undefined, {
+          timeout,
+        }),
+    );
     const listedAt = performance.now();
     rss.stop();
     const measurement = {
@@ -52,8 +69,13 @@ export async function measureMcpStartup({
     assertStartupBudgets(measurement, policy);
     return measurement;
   } catch (cause) {
-    throw new Error(`packaged MCP startup probe failed: ${stderr}`, { cause });
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `packaged MCP startup probe failed: ${detail}${stderr.length === 0 ? "" : `\n${stderr}`}`,
+      { cause },
+    );
   } finally {
+    firstCatalog.clear();
     rss.stop();
     await Promise.allSettled([client.close(), transport.close()]);
   }
@@ -77,17 +99,23 @@ export async function profileMcpModuleLoading({
     stderr: "pipe",
   });
   transport.stderr?.on("data", (chunk) => profile.append(chunk.toString()));
-  const client = new Client({
-    name: "package-module-profile",
-    version: "1.0.0",
-  });
+  const client = completeEvidenceClient(
+    new Client({
+      name: "package-module-profile",
+      version: "1.0.0",
+    }),
+  );
   try {
-    await client.connect(transport, {
-      timeout: policy.doctorDeadlineMs,
-    });
-    await client.listTools(undefined, {
-      timeout: policy.toolsListBudgetMs,
-    });
+    await withPhaseBudget(policy.doctor, () =>
+      client.connect(transport, {
+        timeout: policy.doctor.milliseconds,
+      }),
+    );
+    await withPhaseBudget(policy.toolsList, () =>
+      client.listTools(undefined, {
+        timeout: policy.toolsList.milliseconds,
+      }),
+    );
     return profile.result();
   } finally {
     await Promise.allSettled([client.close(), transport.close()]);
@@ -197,17 +225,96 @@ const createLinuxRssSampler = (pid) => {
   };
 };
 
+const withPhaseBudget = async (budget, operation) => {
+  try {
+    return await operation();
+  } catch (cause) {
+    if (
+      !(cause instanceof SdkError) ||
+      cause.code !== SdkErrorCode.RequestTimeout
+    )
+      throw cause;
+    throw new Error(`${cause.message} ${mcpPhaseBudgetRecovery(budget)}`, {
+      cause,
+    });
+  }
+};
+
+const firstCatalogBudgetExceeded = (budget) =>
+  new Error(
+    `packaged MCP exceeded the first-catalog phase budget. ${mcpPhaseBudgetRecovery(budget)}`,
+  );
+
+/**
+ * Wall-clock end of the first-catalog budget, measured from the same instant
+ * as the phase durations. The SDK timeout starts only once its request is
+ * sent, so this timer still stops a child that has not reached that request.
+ */
+const armFirstCatalogDeadline = (budget, startedAt) => {
+  const deadline = startedAt + budget.milliseconds;
+  let timer;
+  const expired = new Promise((resolve) => {
+    timer = setTimeout(
+      resolve,
+      Math.max(1, Math.ceil(deadline - performance.now())),
+    );
+  });
+  return {
+    budget,
+    deadline,
+    expired,
+    clear() {
+      clearTimeout(timer);
+    },
+  };
+};
+
+const phaseRequestTimeout = (phase, deadline) => {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) return 0;
+  return Math.max(1, Math.min(phase.milliseconds, Math.ceil(remaining)));
+};
+
+/**
+ * Bound one pending phase by its own budget and by the time left in the
+ * first-catalog budget. The recovery names whichever bound is shorter.
+ */
+const awaitPhaseWithinFirstCatalog = async (phase, firstCatalog, operation) => {
+  const timeout = phaseRequestTimeout(phase, firstCatalog.deadline);
+  if (timeout === 0) throw firstCatalogBudgetExceeded(firstCatalog.budget);
+  const remaining = firstCatalog.deadline - performance.now();
+  const budget = remaining < phase.milliseconds ? firstCatalog.budget : phase;
+  const pending = withPhaseBudget(budget, () => operation(timeout)).then(
+    (value) => ({ kind: "fulfilled", value }),
+    (cause) => ({ kind: "rejected", cause }),
+  );
+  const outcome = await Promise.race([
+    pending,
+    firstCatalog.expired.then(() => ({ kind: "expired" })),
+  ]);
+  if (outcome.kind === "expired")
+    throw firstCatalogBudgetExceeded(firstCatalog.budget);
+  if (outcome.kind === "rejected") throw outcome.cause;
+  return outcome.value;
+};
+
 const assertStartupBudgets = (measurement, policy) => {
-  if (measurement.process_started_to_initialized_ms > policy.initializeBudgetMs)
-    throw new Error("packaged MCP exceeded the initialize regression budget");
-  if (measurement.initialized_to_tools_list_ms > policy.toolsListBudgetMs)
-    throw new Error("packaged MCP exceeded the tools/list regression budget");
   if (
-    measurement.process_started_to_tools_list_ms > policy.firstCatalogBudgetMs
+    measurement.process_started_to_initialized_ms >
+    policy.initialize.milliseconds
   )
     throw new Error(
-      "packaged MCP exceeded the first-catalog regression budget",
+      `packaged MCP exceeded the initialize phase budget. ${mcpPhaseBudgetRecovery(policy.initialize)}`,
     );
+  if (measurement.initialized_to_tools_list_ms > policy.toolsList.milliseconds)
+    throw new Error(
+      `packaged MCP exceeded the tools/list phase budget. ${mcpPhaseBudgetRecovery(policy.toolsList)}`,
+    );
+  if (
+    measurement.process_started_to_tools_list_ms >
+    policy.firstCatalog.milliseconds
+  )
+    throw firstCatalogBudgetExceeded(policy.firstCatalog);
 };
 
 const elapsed = (startedAt, completedAt) =>

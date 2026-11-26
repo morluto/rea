@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 
 import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
+import { obligationCategories } from "./reconstructionObligationCategories.js";
+import { evidenceAuthoritySchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
   reconstructionObligationCoverage,
@@ -41,29 +43,11 @@ const sameProjection = <Value>(
   return counts.size === 0;
 };
 
-export const obligationStatusSchema = z.enum([
-  "unowned",
-  "characterized",
-  "implemented",
-  "verified",
-  "contradicted",
-  "blocked",
-  "out-of-scope",
-  "unknown",
-]);
+export const obligationStatusSchema = z.enum(obligationCategories.statuses);
 
-export const obligationLayerSchema = z.enum([
-  "cli",
-  "protocol",
-  "electron",
-  "persistence",
-  "process",
-  "runtime",
-  "packaging",
-  "native-abi",
-  "application",
-  "other",
-]);
+export const obligationLayerSchema = z.enum(
+  obligationCategories.applicationLayers,
+);
 
 export const obligationCaseKindSchema = z.enum([
   "positive",
@@ -91,6 +75,8 @@ export const obligationOriginalAuthoritySchema = z.enum([
   "external",
 ]);
 
+const obligationEvidenceStateSchema = z.enum(obligationCategories.sourceStates);
+
 const obligationTargetSchema = z.strictObject({
   artifact_sha256: digestSchema.nullable(),
   application_node_id: z
@@ -106,14 +92,8 @@ const obligationTargetSchema = z.strictObject({
 
 const authorityReferenceSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
-  authority: z.enum([
-    "shipped-artifact",
-    "controlled-replay",
-    "historical-reference",
-    "external-service",
-    "analyst-inference",
-  ]),
-  state: z.enum(["candidate", "observed", "reviewed", "unknown"]),
+  authority: evidenceAuthoritySchema,
+  state: obligationEvidenceStateSchema,
   location: textSchema,
 });
 
@@ -179,7 +159,7 @@ export const reconstructionObligationManifestSchema = z.strictObject({
 
 export const reviewedReconstructionObligationSchema = z.strictObject({
   obligation_id: stableIdSchema,
-  obligation_version: z.number().int().min(1),
+  obligation_version: z.int().min(1),
   title: textSchema,
   application_layer: obligationLayerSchema,
   family: textSchema,
@@ -208,11 +188,15 @@ const diagnosticSchema = z.strictObject({
     "weak-original-case-authority",
     "missing-case",
     "weak-fixture-authority",
+    "inapplicable-fixture-proof",
+    "fixture-failed",
     "missing-verifier",
     "verifier-does-not-enumerate",
     "missing-verifier-result",
     "weak-verifier-authority",
     "verifier-failed",
+    "verifier-unavailable",
+    "inapplicable-verifier-proof",
     "static-only",
     "contradiction",
     "contradiction-evidence-missing",
@@ -228,14 +212,14 @@ const diagnosticSchema = z.strictObject({
 
 export const reconstructionObligationSchema = z.strictObject({
   obligation_id: stableIdSchema,
-  obligation_version: z.number().int().min(1),
+  obligation_version: z.int().min(1),
   title: textSchema,
   origin: z.enum(["generated", "reviewed"]),
   application_layer: obligationLayerSchema,
   family: textSchema,
   target: obligationTargetSchema,
   authority_references: z.array(authorityReferenceSchema).min(1),
-  source_state: z.enum(["candidate", "observed", "reviewed", "unknown"]),
+  source_state: obligationEvidenceStateSchema,
   observed_cases: z.array(observedCaseSchema),
   required: z.boolean(),
   required_case_kinds: z.array(obligationCaseKindSchema).min(1),
@@ -263,7 +247,7 @@ const countBySchema = <Schema extends z.ZodType>(
   z.array(
     z.strictObject({
       key,
-      count: z.number().int().min(0),
+      count: z.int().min(0),
     }),
   );
 
@@ -295,7 +279,8 @@ const obligationSummariesMatch = (
   countEntriesMatch(
     actual.by_evidence_authority,
     expected.by_evidence_authority,
-  );
+  ) &&
+  countEntriesMatch(actual.by_source_state, expected.by_source_state);
 
 export const reconstructionObligationLedgerSchema = z
   .strictObject({
@@ -304,17 +289,20 @@ export const reconstructionObligationLedgerSchema = z
     closure_digest: digestSchema,
     status: z.enum(["ready", "open", "failed", "unknown"]),
     coverage: z.strictObject({
-      status: z.enum(["complete", "partial"]),
+      status: knownCoverageStatusSchema,
     }),
     summary: z.strictObject({
-      total: z.number().int().min(0),
-      required: z.number().int().min(0),
-      verified: z.number().int().min(0),
-      required_open: z.number().int().min(0),
+      total: z.int().min(0),
+      required: z.int().min(0),
+      verified: z.int().min(0),
+      required_open: z.int().min(0),
       by_status: countBySchema(obligationStatusSchema),
       by_application_layer: countBySchema(obligationLayerSchema),
-      by_evidence_authority: countBySchema(
-        z.enum(["candidate", "observed", "reviewed", "unknown"]),
+      by_evidence_authority: countBySchema(evidenceAuthoritySchema).describe(
+        "Obligations per Evidence authority. An obligation counts once under each distinct authority among its authority_references, so counts can sum above total.",
+      ),
+      by_source_state: countBySchema(obligationEvidenceStateSchema).describe(
+        "Obligations per source_state; each obligation counts once.",
       ),
     }),
     reports: z.strictObject({

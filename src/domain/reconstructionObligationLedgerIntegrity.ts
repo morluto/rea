@@ -1,5 +1,8 @@
+import { CoverageAccumulator } from "./coverageAccumulator.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJson } from "./comparisonSemantics.js";
+import { obligationCategories } from "./reconstructionObligationCategories.js";
+import { evidenceAuthoritySchema } from "./evidence.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import type {
@@ -19,37 +22,23 @@ export const summarizeReconstructionObligations = (
   ).length,
   by_status: countBy(
     obligations,
-    [
-      "unowned",
-      "characterized",
-      "implemented",
-      "verified",
-      "contradicted",
-      "blocked",
-      "out-of-scope",
-      "unknown",
-    ],
+    obligationCategories.statuses,
     ({ status }) => status,
   ),
   by_application_layer: countBy(
     obligations,
-    [
-      "cli",
-      "protocol",
-      "electron",
-      "persistence",
-      "process",
-      "runtime",
-      "packaging",
-      "native-abi",
-      "application",
-      "other",
-    ],
+    obligationCategories.applicationLayers,
     ({ application_layer }) => application_layer,
   ),
   by_evidence_authority: countBy(
     obligations,
-    ["candidate", "observed", "reviewed", "unknown"],
+    evidenceAuthoritySchema.options,
+    ({ authority_references: references }) =>
+      references.map(({ authority }) => authority),
+  ),
+  by_source_state: countBy(
+    obligations,
+    obligationCategories.sourceStates,
     ({ source_state }) => source_state,
   ),
 });
@@ -67,7 +56,8 @@ export const reconstructionObligationLedgerStatus = (
     requiredOpen.some(
       ({ status, diagnostics }) =>
         status === "contradicted" ||
-        hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed"),
+        hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed") ||
+        hasReconstructionObligationDiagnostic(diagnostics, "fixture-failed"),
     )
   )
     return "failed";
@@ -78,9 +68,11 @@ export const reconstructionObligationLedgerStatus = (
 
 export const reconstructionObligationCoverage = (
   limitations: readonly string[],
-): ReconstructionObligationLedger["coverage"] => ({
-  status: limitations.length === 0 ? "complete" : "partial",
-});
+): ReconstructionObligationLedger["coverage"] => {
+  const coverage = new CoverageAccumulator().recordComplete();
+  for (const limitation of limitations) coverage.recordOmission(limitation);
+  return { status: coverage.finalizeKnown() };
+};
 
 export const reconstructionObligationReports = (
   obligations: readonly ReconstructionObligation[],
@@ -201,12 +193,19 @@ export const reconstructionObligationLedgerClosureDigest = (ledger: {
     "Reconstruction obligation ledger",
   );
 
+/** Count items per key; an item counts once under each distinct key it has. */
 const countBy = <Value extends string, Item>(
   items: readonly Item[],
   values: readonly Value[],
-  valueFor: (item: Item) => Value,
-): { key: Value; count: number }[] =>
-  values.map((value) => ({
-    key: value,
-    count: items.filter((item) => valueFor(item) === value).length,
-  }));
+  valuesFor: (item: Item) => Value | readonly Value[],
+): { key: Value; count: number }[] => {
+  const counts = new Map<Value, number>();
+  for (const item of items) {
+    const itemValues = valuesFor(item);
+    for (const value of new Set(
+      typeof itemValues === "string" ? [itemValues] : itemValues,
+    ))
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return values.map((value) => ({ key: value, count: counts.get(value) ?? 0 }));
+};

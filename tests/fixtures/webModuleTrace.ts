@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   WebModuleArtifacts,
   WebModuleResolutionPort,
-} from "../../src/application/WebModulePorts.js";
+} from "../../src/ports/WebModulePorts.js";
 import { webScriptExportManifestSchema } from "../../src/domain/webScriptExport.js";
 import { ok } from "../../src/domain/result.js";
 
@@ -101,7 +101,10 @@ export const completedModuleResolverLauncher =
     return {
       version: () => "controlled-browser",
       newContext: async () => ({
-        route: async () => {},
+        route: async () => ({
+          dispose: async () => undefined,
+          [Symbol.asyncDispose]: async () => undefined,
+        }),
         newPage: async () => ({
           on: () => {},
           goto: async () => null,
