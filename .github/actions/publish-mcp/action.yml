@@ -15,7 +15,7 @@ runs:
         MCP_PUBLISHER_SHA256_LINUX_AMD64: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
       run: |
         archive="mcp-publisher_linux_amd64.tar.gz"
-        curl -fsSLo "${archive}" \
+        curl -fsSL --retry 3 --retry-all-errors -o "${archive}" \
           "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
         echo "${MCP_PUBLISHER_SHA256_LINUX_AMD64}  ${archive}" | sha256sum --check --strict
         tar xzf "${archive}" mcp-publisher

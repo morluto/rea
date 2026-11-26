@@ -14,6 +14,7 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -51,6 +52,7 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-sparse-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
@@ -180,6 +182,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             state: "refused",
             format: "android-ota-payload",
             reason: ota.reason,
+          };
+    },
+    ({ prefix }) => {
+      const sparse = recognizeAndroidSparseImage(prefix);
+      if (sparse === undefined) return undefined;
+      return sparse.state === "recognized"
+        ? { state: "recognized", format: "android-sparse-image" }
+        : {
+            state: "refused",
+            format: "android-sparse-image",
+            reason: sparse.reason,
           };
     },
     ({ prefix }) => {

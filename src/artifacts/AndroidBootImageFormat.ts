@@ -51,7 +51,12 @@ const BOARD_ID_OFFSET = 12 + RAMDISK_NAME_SIZE;
 
 export type AndroidBootCompression = "gzip" | "lz4" | "zstd";
 
-export interface AndroidBootComponentPlan {
+interface BootImageRange {
+  readonly offset: number;
+  readonly size: number;
+}
+
+export interface AndroidBootComponentPlan extends BootImageRange {
   readonly role:
     | "kernel"
     | "ramdisk"
@@ -63,8 +68,6 @@ export interface AndroidBootComponentPlan {
     | "signature";
   readonly path: string;
   readonly index: number;
-  readonly offset: number;
-  readonly size: number;
   readonly loadAddress: number | null;
   readonly ramdiskType: number | null;
   readonly ramdiskTypeName: string | null;
@@ -113,14 +116,8 @@ export interface AndroidBootParse {
   /** Page-aligned end after the last component; trailing padding may be absent. */
   readonly imageEnd: number;
   readonly limitations: readonly string[];
-  readonly tableRange: {
-    readonly offset: number;
-    readonly size: number;
-  } | null;
-  readonly vendorRamdiskSection: {
-    readonly offset: number;
-    readonly size: number;
-  } | null;
+  readonly tableRange: BootImageRange | null;
+  readonly vendorRamdiskSection: BootImageRange | null;
 }
 
 export interface VendorRamdiskTableParse {
@@ -287,10 +284,7 @@ const requireHeaderSize = (
 const requireFileCovers = (
   fileSize: number,
   headerSize: number,
-  ranges: readonly ({
-    readonly offset: number;
-    readonly size: number;
-  } | null)[],
+  ranges: readonly (BootImageRange | null)[],
 ): number => {
   if (!Number.isSafeInteger(fileSize) || fileSize < 0)
     formatError("file size is not a safe nonnegative integer");
@@ -997,7 +991,7 @@ const vendorRamdiskPath = (
 };
 
 const sectionCovered = (
-  entries: readonly AndroidBootComponentPlan[],
+  entries: readonly BootImageRange[],
   sectionOffset: number,
   sectionSize: number,
 ): boolean => {
@@ -1015,14 +1009,16 @@ const sectionCovered = (
   return covered === sectionSize;
 };
 
+interface VendorRamdiskTableLayout {
+  readonly entryCount: number;
+  readonly entrySize: number;
+  readonly sectionOffset: number;
+  readonly sectionSize: number;
+}
+
 const readVendorRamdiskTable = (
   table: Buffer,
-  input: {
-    readonly entryCount: number;
-    readonly entrySize: number;
-    readonly sectionOffset: number;
-    readonly sectionSize: number;
-  },
+  input: VendorRamdiskTableLayout,
 ): VendorRamdiskTableParse => {
   const expected = vendorTableByteLength(input.entryCount, input.entrySize);
   requireBytes(table, expected, "vendor ramdisk table");
@@ -1119,12 +1115,7 @@ const readVendorRamdiskTable = (
 /** Split a v4 vendor ramdisk table into non-overlapping section slices. */
 export const parseVendorRamdiskTable = (
   table: Buffer,
-  input: {
-    readonly entryCount: number;
-    readonly entrySize: number;
-    readonly sectionOffset: number;
-    readonly sectionSize: number;
-  },
+  input: VendorRamdiskTableLayout,
 ): Result<VendorRamdiskTableParse, ParseFailureError> =>
   parsed(() => readVendorRamdiskTable(table, input));
 
@@ -1146,10 +1137,10 @@ const avbOverlapError = (message: string): never => {
 };
 
 const rejectVbmetaOverlap = (
-  vbmeta: { readonly offset: number; readonly size: number },
+  vbmeta: BootImageRange,
   fileSize: number,
   headerOccupied: number,
-  components: readonly { readonly offset: number; readonly size: number }[],
+  components: readonly BootImageRange[],
 ): void => {
   if (vbmeta.size === 0) return;
   if (endOf(vbmeta.offset, vbmeta.size) > fileSize - AVB_FOOTER_SIZE)
@@ -1177,17 +1168,16 @@ export const avbFooterOffset = (
   return offset >= dataEnd ? offset : null;
 };
 
-const readAvbFooter = (input: {
+interface AvbFooterInput {
   readonly fileSize: number;
   readonly dataEnd: number;
   readonly imageEnd: number;
   readonly headerOccupied: number;
-  readonly components: readonly {
-    readonly offset: number;
-    readonly size: number;
-  }[];
+  readonly components: readonly BootImageRange[];
   readonly tail: Buffer | null;
-}): AvbFooterFacts => {
+}
+
+const readAvbFooter = (input: AvbFooterInput): AvbFooterFacts => {
   if (input.fileSize < input.dataEnd)
     throw truncatedInput(
       ANDROID_BOOT_FORMAT,
@@ -1245,15 +1235,7 @@ const readAvbFooter = (input: {
  * Report an AVB footer when the last 64 bytes start with AVBf and sit past
  * the actual boot components. Sizes are recorded; the footer is not verified.
  */
-export const inspectAvbFooter = (input: {
-  readonly fileSize: number;
-  readonly dataEnd: number;
-  readonly imageEnd: number;
-  readonly headerOccupied: number;
-  readonly components: readonly {
-    readonly offset: number;
-    readonly size: number;
-  }[];
-  readonly tail: Buffer | null;
-}): Result<AvbFooterFacts, ParseFailureError> =>
+export const inspectAvbFooter = (
+  input: AvbFooterInput,
+): Result<AvbFooterFacts, ParseFailureError> =>
   parsed(() => readAvbFooter(input));
