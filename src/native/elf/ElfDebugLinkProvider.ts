@@ -1,7 +1,4 @@
-import {
-  isParseLimit,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import {
   closeArtifactResources,
@@ -41,8 +38,7 @@ import {
   verifyElfDebugCandidateCooperative,
   type ElfDebugCandidateFile,
 } from "./ElfDebugLink.js";
-import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
-import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import { elfNoteLimitConstraint } from "./elfNoteLimitConstraint.js";
 import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 
 const OPERATION = "inspect_elf_debug_link";
@@ -315,43 +311,15 @@ const elfDebugLinkFailure = (
         field === "candidate_path" ? "debug file candidate" : "ELF image",
       field,
       fallbackMessage: "ELF debug-link inspection failed.",
-      recognise: (failure) => {
-        const sectionNameBudget = elfSectionNameBudget(failure);
-        if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
-          return parseLimitConstraint(OPERATION, "memory", failure, {
-            retryable: false,
-            limit: elfReadBudgetLimit(
+      recognise: (failure) =>
+        isNativeStructureFailure(failure)
+          ? nativeStructureConstraint(OPERATION, failure)
+          : elfNoteLimitConstraint(
+              OPERATION,
+              failure,
+              input,
               ELF_DEBUG_LINK_READ_BUDGETS,
-              "max_file_bytes",
-              input.max_file_bytes,
-              sectionNameBudget.required,
             ),
-          });
-        if (isNativeStructureFailure(failure))
-          return nativeStructureConstraint(OPERATION, failure);
-        if (isParseLimit(failure, "elf-notes")) {
-          const entryBudget = failure.failure.limit.name === "max_entries";
-          return parseLimitConstraint(
-            OPERATION,
-            entryBudget ? "capacity" : "memory",
-            failure,
-            entryBudget
-              ? {
-                  retryable: false,
-                  limit: elfReadBudgetLimit(
-                    ELF_DEBUG_LINK_READ_BUDGETS,
-                    "max_entries",
-                    input.max_entries,
-                  ),
-                }
-              : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
-                  limit: failure.failure.limit.maximum,
-                  unit: "bytes",
-                }),
-          );
-        }
-        return undefined;
-      },
       fileSize: (failure) => {
         const candidate = field === "candidate_path";
         return parseLimitConstraint(
