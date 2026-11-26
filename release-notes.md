@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **metadata:** NTFS and Maven report refusals report details.limit instead of a fixed_ceiling refusal, and parseMavenGradleMetadata and the inspect_ntfs_journal input contract gain the new controls.
 * **flutter:** Flutter size, inventory and candidate refusals report details.limit instead of a fixed_ceiling refusal, and the inspect_dart_aot abi selector admits labels up to 65,521 characters.
 * **artifacts:** artifactReaderLimitsSchema now requires deno, wxapkg and tar groups, so saved Evidence whose effective_limits predates them fails validation and must be re-inspected. A release-exposure refusal at max_file_bytes reports details.limit instead of a fixed_ceiling refusal.
 * **limits:** discovery output_window gains record_budget_reached, a page can return fewer than limit records, and discovery no longer refuses at the record or line budget.
@@ -96,6 +97,7 @@
 * **javascript:** add semantic_analysis structure-only mode to analyze_javascript_application ([#14117](https://github.com/morluto/rea/issues/14117)) ([eccd18a](https://github.com/morluto/rea/commit/eccd18a2cc325bb97f66f23a4216dfcacd9e1bca))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
 * **mcp:** link retained Evidence from over-budget summaries ([#14603](https://github.com/morluto/rea/issues/14603)) ([fa65e51](https://github.com/morluto/rea/commit/fa65e51a24dc4c2983840af8d2ec119c28687cf7))
+* **metadata:** give NTFS, Maven report and NuGet budgets typed per-call controls ([#14629](https://github.com/morluto/rea/issues/14629)) ([4f66985](https://github.com/morluto/rea/commit/4f6698597884d709be8a98ec43f9f5320ae598ce))
 * **native:** report the stored RVA of PE exports ([bf8448c](https://github.com/morluto/rea/commit/bf8448cdfc90c4c077f03b877cf09ea150509092))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **pe:** inspect x64 exception-directory function ranges ([#14254](https://github.com/morluto/rea/issues/14254)) ([a85859e](https://github.com/morluto/rea/commit/a85859e14790795f6d13000b173cb32c82c49813))
