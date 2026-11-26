@@ -43,6 +43,22 @@ describe("version report", () => {
     });
   });
 
+  it("admits modern Bun with Node 26.x compatibility", () => {
+    const report = versionReport({
+      ...host,
+      versions: { node: "26.3.0", bun: "1.4.4" },
+    });
+
+    expect(versionReportSchema.parse(report)).toMatchObject({
+      runtime: {
+        id: "bun",
+        version: "1.4.4",
+        node_compatibility_version: "26.3.0",
+      },
+      supported_runtime: { satisfied: true },
+    });
+  });
+
   it("rejects fields outside the documented schema", () => {
     const report = versionReport({ ...host, versions: { node: "24.22.1" } });
 

@@ -6,7 +6,10 @@ import { expect } from "vitest";
 import { z } from "zod";
 
 import { versionReportSchema } from "../../../src/domain/versionReport.js";
-import { SUPPORTED_NODE_VERSION_RANGE } from "../../../src/domain/runtimeVersion.js";
+import {
+  SUPPORTED_BUN_NODE_COMPATIBILITY_RANGE,
+  SUPPORTED_NODE_VERSION_RANGE,
+} from "../../../src/domain/runtimeVersion.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -39,14 +42,26 @@ cliTest(
     // Piped JSON is one compact document.
     expect(json.stdout.trimEnd().split("\n")).toHaveLength(1);
     const report = versionReportSchema.parse(JSON.parse(json.stdout));
+    const expectedRuntime =
+      process.versions.bun !== undefined
+        ? {
+            id: "bun" as const,
+            version: process.versions.bun,
+            node_compatibility_version: process.versions.node,
+          }
+        : { id: "node" as const, version: process.versions.node };
+    const expectedRange =
+      process.versions.bun !== undefined
+        ? SUPPORTED_BUN_NODE_COMPATIBILITY_RANGE
+        : SUPPORTED_NODE_VERSION_RANGE;
     expect(report).toEqual({
       name,
       version,
-      runtime: { id: "node", version: process.versions.node },
+      runtime: expectedRuntime,
       platform: process.platform,
       architecture: process.arch,
       supported_runtime: {
-        range: SUPPORTED_NODE_VERSION_RANGE,
+        range: expectedRange,
         satisfied: true,
       },
     });

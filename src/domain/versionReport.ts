@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   javaScriptRuntime,
+  SUPPORTED_BUN_NODE_COMPATIBILITY_RANGE,
   SUPPORTED_NODE_VERSION_RANGE,
   supportsJavaScriptRuntime,
 } from "./runtimeVersion.js";
@@ -58,7 +59,10 @@ export const versionReport = (host: VersionReportHost): VersionReport => {
     platform: host.platform,
     architecture: host.architecture,
     supported_runtime: {
-      range: SUPPORTED_NODE_VERSION_RANGE,
+      range:
+        runtime.id === "bun"
+          ? SUPPORTED_BUN_NODE_COMPATIBILITY_RANGE
+          : SUPPORTED_NODE_VERSION_RANGE,
       satisfied: supportsJavaScriptRuntime(runtime),
     },
   };

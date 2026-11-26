@@ -20,6 +20,7 @@ import type {
   SetupFailureCode,
   SetupHopperInstallResult,
 } from "./SetupInstallFailure.js";
+import type { JavaScriptRuntime } from "../domain/runtimeVersion.js";
 
 /** Exact non-secret provider variables propagated into managed registrations. */
 export type SetupProviderEnvironment = Readonly<Record<string, string>>;
@@ -120,6 +121,7 @@ export interface SetupHost {
   /** Why client registration cannot proceed from this host. */
   readonly registrationCommandBlocker?: string;
   readonly nodeVersion: string;
+  readonly runtime?: JavaScriptRuntime;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
@@ -266,6 +268,12 @@ export interface SetupOptions {
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;
+  /** JavaScript runtime to register for clients (node or bun). */
+  readonly runtime?: "node" | "bun";
+  /** Python environment runner for analysis tools (standard, uv, or none). */
+  readonly pythonRunner?: "standard" | "uv" | "none";
+  /** Caller or uv-discovered Python executable path. */
+  readonly uvPythonPath?: string;
   /** Pack the build-computer runtime and record the build settings in the selected registrations. */
   readonly desktopBuild?: boolean;
   /** With desktopBuild, install the pinned agentenv-framework with uv. */
