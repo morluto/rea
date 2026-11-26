@@ -307,8 +307,9 @@ export const decompileDirectoryFunctionSchema = z
      */
     representation: z.string().min(1).optional(),
     /**
-     * Production source kind from the observation rawResult when retained
-     * (for example single-function or project-export). Omitted means unavailable.
+     * Production source kind from the observation's typed pseudocode facts when
+     * retained (for example single-function or project-export). Omitted means
+     * unavailable.
      */
     source: z.string().min(1).optional(),
   })

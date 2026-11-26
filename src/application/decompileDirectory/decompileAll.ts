@@ -597,11 +597,13 @@ const publishOne = async (input: {
       original.sourceDescriptor === undefined
         ? { status: "unknown", reason: "source_not_available" }
         : { status: "reported", source: original.sourceDescriptor };
+    const originalFacts = pseudocodeExportFacts(original);
     const recorded = await input.session.append(
       failureRecord(input.procedure, body.fact, pseudocodeFailure(null), {
         limitations: [...new Set([...infoCaveats, ...original.limitations])],
         providerSource: originalSource,
         pseudocodeAbsence: original.pseudocodeAbsence,
+        ...establishedPseudocodeFields(originalFacts),
       }),
     );
     if (!recorded.ok) return { result: recorded, bodySupport: body.support };

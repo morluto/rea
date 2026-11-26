@@ -245,12 +245,14 @@ it("qualifies only parallel project pseudocode, including dossier results", asyn
     procedure: "main",
   });
   expect(cold.rawResult).toMatchObject({ source: { kind: "single-function" } });
+  expect(cold.pseudocodeSource).toBe("single-function");
   expect(cold.limitations.join("\n")).not.toContain(caveat);
   await run(client, "procedure_assembly", { procedure: "main" });
   const warm = await run(client, "procedure_pseudo_code", {
     procedure: "main",
   });
   expect(warm.rawResult).toMatchObject({ source: { kind: "project-export" } });
+  expect(warm.pseudocodeSource).toBe("project-export");
   expect(warm.limitations.join("\n")).toContain(caveat);
   const dossier = await run(client, "analyze_function", { procedure: "main" });
   expect(dossier.limitations.join("\n")).toContain(caveat);

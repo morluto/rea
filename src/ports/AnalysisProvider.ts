@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { RetainedResourceScope } from "../resources/index.js";
 import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
@@ -83,6 +85,22 @@ export interface AnalysisExecution extends AnalysisObservation {
   /** Provider-observed cause of a null pseudocode result, when known. */
   readonly pseudocodeAbsence?: PseudocodeAbsence;
   /**
+   * Provider-reported pseudocode language for a `procedure_pseudo_code`
+   * observation. Absent means unavailable; consumers must not invent one.
+   */
+  readonly pseudocodeLanguage?: string;
+  /**
+   * Provider-reported pseudocode representation for a `procedure_pseudo_code`
+   * observation. Absent means unavailable.
+   */
+  readonly pseudocodeRepresentation?: string;
+  /**
+   * Provider-reported production source kind for a `procedure_pseudo_code`
+   * observation (for example `single-function` or `project-export`). Absent
+   * means unavailable.
+   */
+  readonly pseudocodeSource?: string;
+  /**
    * Compact provider-owned facts for this execution. This is not an Evidence
    * record and is not restored by snapshot replay; consumers must treat its
    * absence as unknown.
@@ -132,6 +150,9 @@ export interface AnalysisExecution extends AnalysisObservation {
 export interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
   readonly pseudocodeAbsence?: PseudocodeAbsence;
+  readonly pseudocodeLanguage?: string;
+  readonly pseudocodeRepresentation?: string;
+  readonly pseudocodeSource?: string;
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
@@ -149,6 +170,8 @@ export interface CreateAnalysisExecutionOptions {
   readonly subject?: EvidenceSubjectTarget | null;
   readonly authority?: EvidenceAuthority;
 }
+
+const pseudocodeFactStringSchema = z.string().min(1);
 
 /**
  * Build a validated atomic provider observation at an adapter boundary.
@@ -184,6 +207,27 @@ export function createAnalysisExecution(
       : {
           pseudocodeAbsence: pseudocodeAbsenceSchema.parse(
             options.pseudocodeAbsence,
+          ),
+        }),
+    ...(options.pseudocodeLanguage === undefined
+      ? {}
+      : {
+          pseudocodeLanguage: pseudocodeFactStringSchema.parse(
+            options.pseudocodeLanguage,
+          ),
+        }),
+    ...(options.pseudocodeRepresentation === undefined
+      ? {}
+      : {
+          pseudocodeRepresentation: pseudocodeFactStringSchema.parse(
+            options.pseudocodeRepresentation,
+          ),
+        }),
+    ...(options.pseudocodeSource === undefined
+      ? {}
+      : {
+          pseudocodeSource: pseudocodeFactStringSchema.parse(
+            options.pseudocodeSource,
           ),
         }),
     ...(options.sourceDescriptor === undefined

@@ -1,5 +1,4 @@
 import type { DecompileDirectoryFunctionRecord } from "../../contracts/decompileDirectory.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ExportIdentity } from "./exportTree.js";
 
 export interface FunctionBodyFact {
@@ -71,21 +70,18 @@ export const bodyRecord = (
     : { available: false, reason: body.reason };
 
 /**
- * Read language, representation, and production-source facts the observation
- * already retained. Values must be non-empty strings; unknown shapes stay null.
+ * Copy language, representation, and production-source facts the provider
+ * already established on the observation. Absent typed fields stay unavailable.
  */
 export const pseudocodeExportFacts = (input: {
-  readonly rawResult: JsonValue | null;
-}): PseudocodeExportFacts => {
-  const raw = input.rawResult;
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
-    return UNAVAILABLE_FACTS;
-  return {
-    language: optionalFact(raw.language),
-    representation: optionalFact(raw.representation),
-    source: sourceFact(raw.source),
-  };
-};
+  readonly pseudocodeLanguage?: string;
+  readonly pseudocodeRepresentation?: string;
+  readonly pseudocodeSource?: string;
+}): PseudocodeExportFacts => ({
+  language: input.pseudocodeLanguage ?? null,
+  representation: input.pseudocodeRepresentation ?? null,
+  source: input.pseudocodeSource ?? null,
+});
 
 /** Optional journal/index fields for established facts only. */
 export const establishedPseudocodeFields = (
@@ -138,16 +134,6 @@ const providerLine = (identity: ExportIdentity): string =>
 
 const factHeader = (value: string | null): string =>
   value === null ? "unavailable" : headerValue(value);
-
-const optionalFact = (value: unknown): string | null =>
-  typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-
-const sourceFact = (value: unknown): string | null => {
-  if (typeof value === "string") return optionalFact(value);
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return null;
-  return "kind" in value ? optionalFact(value.kind) : null;
-};
 
 /** Keep a provider string on one header line without control characters. */
 const headerValue = (value: string): string =>

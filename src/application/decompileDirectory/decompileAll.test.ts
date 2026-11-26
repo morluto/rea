@@ -154,12 +154,33 @@ const harness = (options?: {
   /** Addresses procedure_info classifies as external, as Ghidra does for imports. */
   readonly external?: readonly string[];
   /**
-   * Optional procedure_pseudo_code rawResult facts. Stub language/representation
+   * Optional typed procedure_pseudo_code facts. Stub language/representation
    * and production source without requiring a live provider.
    */
-  readonly pseudocodeRawResult?: JsonValue;
+  readonly pseudocodeFacts?: {
+    readonly language?: string;
+    readonly representation?: string;
+    readonly source?: string;
+  };
   readonly pseudocodeText?: string;
 }) => {
+  const typedFacts =
+    options?.pseudocodeFacts === undefined
+      ? {}
+      : {
+          ...(options.pseudocodeFacts.language === undefined
+            ? {}
+            : { pseudocodeLanguage: options.pseudocodeFacts.language }),
+          ...(options.pseudocodeFacts.representation === undefined
+            ? {}
+            : {
+                pseudocodeRepresentation:
+                  options.pseudocodeFacts.representation,
+              }),
+          ...(options.pseudocodeFacts.source === undefined
+            ? {}
+            : { pseudocodeSource: options.pseudocodeFacts.source }),
+        };
   const procedures = options?.procedures ?? [
     { address: "0x3000", name: "Bar::late" },
     { address: "0x1000", name: "Foo::main" },
@@ -233,9 +254,7 @@ const harness = (options?: {
             ok(
               createAnalysisExecution("", provider, {
                 analysisProfile: profile,
-                ...(options?.pseudocodeRawResult === undefined
-                  ? {}
-                  : { rawResult: options.pseudocodeRawResult }),
+                ...typedFacts,
               }),
             ),
           );
@@ -244,9 +263,7 @@ const harness = (options?: {
             ok(
               createAnalysisExecution(null, provider, {
                 analysisProfile: profile,
-                ...(options?.pseudocodeRawResult === undefined
-                  ? {}
-                  : { rawResult: options.pseudocodeRawResult }),
+                ...typedFacts,
               }),
             ),
           );
@@ -263,9 +280,7 @@ const harness = (options?: {
                 ...(options?.foreignTarget === address
                   ? { subject: { ...subject, sha256: "cd".repeat(32) } }
                   : {}),
-                ...(options?.pseudocodeRawResult === undefined
-                  ? {}
-                  : { rawResult: options.pseudocodeRawResult }),
+                ...typedFacts,
                 limitations: [
                   "terminal call may cut the body",
                   ...(options?.addressCaveats === true
@@ -417,10 +432,10 @@ describe("decompile_all pseudocode language facts", () => {
     const { tools } = harness({
       procedures: [{ address: "0x1000", name: "_audit_compute" }],
       pseudocodeText: rustLike,
-      pseudocodeRawResult: {
+      pseudocodeFacts: {
         language: "rust-language",
         representation: "provider-pseudocode",
-        source: { kind: "single-function" },
+        source: "single-function",
       },
     });
     const result = await run(tools, directory());
@@ -456,17 +471,16 @@ describe("decompile_all pseudocode language facts", () => {
       }),
     ]);
 
-    const journalLine = [
-      ...(
-        await readFile(
-          join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
-          "utf8",
-        )
+    const journalLine = (
+      await readFile(
+        join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+        "utf8",
       )
-        .trim()
-        .split("\n")
-        .slice(1),
-    ].map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+    )
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
     expect(journalLine).toEqual([
       expect.objectContaining({
         kind: "function",
@@ -486,10 +500,10 @@ describe("decompile_all pseudocode language facts", () => {
       const { tools } = harness({
         procedures: [{ address: "0x1000", name: "main" }],
         fail: { "0x1000": failure },
-        pseudocodeRawResult: {
+        pseudocodeFacts: {
           language: "c",
           representation: "provider-pseudocode",
-          source: { kind: "project-export" },
+          source: "project-export",
         },
       });
       const result = await run(tools, directory());
@@ -515,6 +529,82 @@ describe("decompile_all pseudocode language facts", () => {
       ]);
     },
   );
+
+  it("keeps the first observation's facts on the independent_fresh pre-retry journal record", async () => {
+    const { port } = harness({
+      procedures: [{ address: "0x1000", name: "main" }],
+    });
+    let calls = 0;
+    const retrying: AnalysisOperationPort = {
+      execute: (operation, parameters, options) => {
+        if (operation !== "procedure_pseudo_code")
+          return port.execute(operation, parameters, options);
+        calls += 1;
+        if (calls === 1)
+          return Promise.resolve(
+            ok(
+              createAnalysisExecution(null, provider, {
+                analysisProfile: profile,
+                pseudocodeAbsence: {
+                  kind: "provider-failure",
+                  reason: "initial project-export failure",
+                },
+                pseudocodeLanguage: "c-language",
+                pseudocodeRepresentation: "provider-pseudocode",
+                pseudocodeSource: "project-export",
+              }),
+            ),
+          );
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main(void) { return 0; }", provider, {
+              analysisProfile: profile,
+              pseudocodeLanguage: "c-language",
+              pseudocodeRepresentation: "provider-pseudocode",
+              pseudocodeSource: "single-function",
+            }),
+          ),
+        );
+      },
+    };
+    const result = await run(new EnhancedTools(retrying), directory(), {
+      retry_failed: "independent_fresh",
+    });
+    if (!result.ok) throw result.error;
+    expect(calls).toBe(2);
+
+    const journal = (
+      await readFile(
+        join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME),
+        "utf8",
+      )
+    )
+      .trimEnd()
+      .split("\n")
+      .slice(1)
+      .map((line) => decompileJournalLineSchema.parse(JSON.parse(line)));
+    expect(journal).toEqual([
+      expect.objectContaining({
+        kind: "function",
+        status: "failed",
+        failure: expect.objectContaining({ code: "no_pseudocode" }),
+        language: "c-language",
+        representation: "provider-pseudocode",
+        source: "project-export",
+        pseudocode_absence: {
+          kind: "provider-failure",
+          reason: "initial project-export failure",
+        },
+      }),
+      expect.objectContaining({
+        kind: "function",
+        status: "written",
+        language: "c-language",
+        representation: "provider-pseudocode",
+        source: "single-function",
+      }),
+    ]);
+  });
 });
 
 describe("decompile_all inventory limitations", () => {
