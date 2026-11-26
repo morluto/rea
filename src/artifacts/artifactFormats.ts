@@ -442,7 +442,7 @@ const NON_ZIP_FORMATS = {
     extractable: true,
     absentInventory: "unavailable",
     readerLimitation:
-      "Android vbmeta inventory exposes the authentication block, public key, and public key metadata as stored children. AVB footers on partition images other than boot images are out of scope.",
+      "Android vbmeta inventory exposes the authentication block, public key, public key metadata, and decoded descriptors as stored children. AVB footers on partition images other than boot images are out of scope.",
     createReader: (path, options) =>
       new AndroidVbmetaArtifactReader(
         path,

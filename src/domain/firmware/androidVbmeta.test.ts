@@ -158,26 +158,28 @@ it("decodes the header, names the disabled flags, and exposes stored ranges", ()
       .subarray(auxiliary, auxiliary + SAMPLE_PUBLIC_KEY.length)
       .equals(SAMPLE_PUBLIC_KEY),
   ).toBe(true);
-  expect(image.children).toEqual([
-    {
-      path: "authentication_block",
-      role: "authentication-block",
-      offset: 256,
-      size: metadata.authentication_data_block_size,
-    },
-    {
-      path: "public_key",
-      role: "public-key",
-      offset: auxiliary,
-      size: SAMPLE_PUBLIC_KEY.length,
-    },
-    {
-      path: "public_key_metadata",
-      role: "public-key-metadata",
-      offset: auxiliary + SAMPLE_PUBLIC_KEY.length,
-      size: SAMPLE_PUBLIC_KEY_METADATA.length,
-    },
-  ]);
+  expect(image.children.filter((child) => child.role !== "descriptor")).toEqual(
+    [
+      {
+        path: "authentication_block",
+        role: "authentication-block",
+        offset: 256,
+        size: metadata.authentication_data_block_size,
+      },
+      {
+        path: "public_key",
+        role: "public-key",
+        offset: auxiliary,
+        size: SAMPLE_PUBLIC_KEY.length,
+      },
+      {
+        path: "public_key_metadata",
+        role: "public-key-metadata",
+        offset: auxiliary + SAMPLE_PUBLIC_KEY.length,
+        size: SAMPLE_PUBLIC_KEY_METADATA.length,
+      },
+    ],
+  );
   expect(image.limitations).toContain(ANDROID_VBMETA_LIMITATIONS.unverified);
   expect(image.limitations).toContain(ANDROID_VBMETA_LIMITATIONS.untrusted);
 });
@@ -193,6 +195,20 @@ it("decodes one of each descriptor and retains an unknown tag", () => {
       following: num_bytes_following,
     })),
   ).toEqual(headers);
+  const children = image.children.filter(
+    (child) => child.role === "descriptor",
+  );
+  expect(children.map(({ offset, size }) => ({ offset, size }))).toEqual(
+    headers.map(({ offset, following }) => ({ offset, size: 16 + following })),
+  );
+  expect(children.map(({ path }) => path)).toEqual([
+    "descriptor-0-property.bin",
+    "descriptor-1-hashtree.bin",
+    "descriptor-2-hash.bin",
+    "descriptor-3-kernel-cmdline.bin",
+    "descriptor-4-chain-partition.bin",
+    "descriptor-5-unknown.bin",
+  ]);
   expect(headers.map(({ tag }) => tag)).toEqual([
     AVB_DESCRIPTOR_TAG.PROPERTY,
     AVB_DESCRIPTOR_TAG.HASHTREE,
@@ -594,7 +610,9 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
   expect(atLimit.image.metadata.descriptors).toHaveLength(
     DEFAULTS.descriptor_count,
   );
-  expect(atLimit.image.children).toMatchObject([{ path: "public_key" }]);
+  expect(
+    atLimit.image.children.filter((child) => child.role !== "descriptor"),
+  ).toMatchObject([{ path: "public_key" }]);
 
   const counted = failed(androidVbmetaDescriptorCountOverflow());
   expect(counted.failure).toMatchObject({

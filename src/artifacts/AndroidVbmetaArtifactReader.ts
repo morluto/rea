@@ -11,6 +11,7 @@ import {
   type AndroidVbmetaChild,
 } from "../domain/firmware/androidVbmeta.js";
 import type {
+  AndroidVbmetaDescriptorEntryMetadata,
   AndroidVbmetaEntryMetadata,
   AndroidVbmetaMetadata,
 } from "../domain/formatMetadata/androidAndSystemMetadata.js";
@@ -27,7 +28,9 @@ import {
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 type VbmetaEntry = PositionalArtifactEntry & {
-  readonly formatMetadata: AndroidVbmetaEntryMetadata;
+  readonly formatMetadata:
+    | AndroidVbmetaEntryMetadata
+    | AndroidVbmetaDescriptorEntryMetadata;
 };
 
 /** Read a standalone vbmeta image without verifying or modifying it. */
@@ -125,9 +128,15 @@ const entryFor = (child: AndroidVbmetaChild): VbmetaEntry => ({
   unpacked: false,
   limitations: [],
   adapterKey: `android-vbmeta:${child.path}`,
-  formatMetadata: {
-    kind: "android-vbmeta-entry",
-    role: child.role,
-  },
+  formatMetadata:
+    child.role === "descriptor"
+      ? {
+          kind: "android-vbmeta-descriptor",
+          index: child.index,
+          tag: String(child.descriptor.tag),
+          tag_name: child.descriptor.tag_name,
+          descriptor_size: child.size,
+        }
+      : { kind: "android-vbmeta-entry", role: child.role },
   sourcePath: child.path,
 });

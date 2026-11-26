@@ -41,6 +41,7 @@ import {
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidVbmetaEntryMetadataSchema,
+  androidVbmetaDescriptorEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
@@ -94,6 +95,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   androidBootImageEntryMetadataSchema,
   androidVbmetaMetadataSchema,
   androidVbmetaEntryMetadataSchema,
+  androidVbmetaDescriptorEntryMetadataSchema,
   iso9660MetadataSchema,
   iso9660EntryMetadataSchema,
   ddsMetadataSchema,
@@ -250,6 +252,10 @@ const declarationsByKind: {
   "android-vbmeta-entry": {
     notCompared:
       "role restates the entry's path; its stored bytes are compared by content.",
+  },
+  "android-vbmeta-descriptor": {
+    notCompared:
+      "index and tag name restate the entry's path; its stored descriptor bytes are compared by content.",
   },
   iso9660: {
     notCompared:

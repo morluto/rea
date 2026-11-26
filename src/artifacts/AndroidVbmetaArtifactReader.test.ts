@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { DEFAULT_ANDROID_VBMETA_READER_LIMITS } from "../domain/artifactReaderLimits.js";
@@ -21,6 +21,8 @@ import {
 import { classifyArtifactBytesAtPath } from "../../tests/fixtures/artifactClassification.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { artifactReaderLifecycleCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
 
 const collect = async (stream: Readable): Promise<Buffer> => {
@@ -166,6 +168,18 @@ it("inventories stored ranges and matches the chain key digest", async () => {
     await reader.close();
   }
   expect(stored.get("public_key")?.equals(SAMPLE_PUBLIC_KEY)).toBe(true);
+  const descriptorFacts = root?.format_metadata;
+  if (descriptorFacts?.kind !== "android-vbmeta")
+    throw new Error("Expected vbmeta root metadata");
+  for (const [index, descriptor] of descriptorFacts.descriptors.entries()) {
+    const name = descriptor.tag_name.toLowerCase().replaceAll("_", "-");
+    expect(stored.get(`descriptor-${String(index)}-${name}.bin`)).toEqual(
+      bytes.subarray(
+        descriptor.offset,
+        descriptor.offset + 16 + descriptor.num_bytes_following,
+      ),
+    );
+  }
   expect(
     stored.get("public_key_metadata")?.equals(SAMPLE_PUBLIC_KEY_METADATA),
   ).toBe(true);
@@ -237,6 +251,8 @@ it("keeps decoded descriptors before a malformed one and names it", async () => 
   expect(snapshot.coverage.status).toBe("unknown");
   expect(snapshot.occurrences.map(({ logical_path }) => logical_path)).toEqual([
     ".",
+    "descriptor-0-property.bin",
+    "descriptor-1-hashtree.bin",
   ]);
   expect(snapshot.limitations.join(" ")).toContain(
     "Descriptor walk stopped at file offset",
@@ -254,6 +270,93 @@ it("keeps decoded descriptors before a malformed one and names it", async () => 
     kind: "malformed",
     field: "hash algorithm",
   });
+  const reader = new AndroidVbmetaArtifactReader(path);
+  try {
+    for await (const entry of reader.entries()) {
+      expect(entry.path).toMatch(
+        /^descriptor-[01]-(?:property|hashtree)\.bin$/u,
+      );
+      expect(entry.formatMetadata).toMatchObject({
+        kind: "android-vbmeta-descriptor",
+      });
+      expect(await collect(await reader.open(entry))).toEqual(
+        (await readFile(path)).subarray(
+          entry.byteOffset!,
+          entry.byteOffset! + entry.declaredSize!,
+        ),
+      );
+    }
+  } finally {
+    await reader.close();
+  }
+});
+
+it("rejects descriptor reads after the prepared carrier changes", async () => {
+  const bytes = sampleAndroidVbmeta();
+  const path = await writeCarrier("changed.img", bytes);
+  const reader = new AndroidVbmetaArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const descriptor = entries.find(
+      (entry) => entry.formatMetadata?.kind === "android-vbmeta-descriptor",
+    );
+    expect(descriptor).toBeDefined();
+    await writeFile(path, Buffer.concat([bytes, Buffer.from([0])]));
+    await expect(reader.open(descriptor!)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("publishes no descriptors after cancellation during header admission and can retry", async () => {
+  const path = await writeCarrier("cancelled.img", sampleAndroidVbmeta());
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new AndroidVbmetaArtifactReader(path, admitted);
+  const controller = new AbortController();
+  const reason = new Error("cancel vbmeta header");
+  const nativeRead = admitted.handle.read.bind(admitted.handle);
+  const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(nativeRead, admitted.handle, args);
+    if (args[3] === 0) controller.abort(reason);
+    return result;
+  }) as typeof admitted.handle.read);
+  const onCoverage = vi.fn();
+  try {
+    await expect(
+      (async () => {
+        for await (const _entry of reader.entries(controller.signal, {
+          onCoverage,
+        })) {
+          throw new Error("Cancelled admission published an entry");
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    expect(onCoverage).not.toHaveBeenCalled();
+    expect(reader.formatMetadata()).toBeUndefined();
+    reads.mockRestore();
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(
+      entries.filter(
+        (entry) => entry.formatMetadata?.kind === "android-vbmeta-descriptor",
+      ),
+    ).toHaveLength(6);
+  } finally {
+    reads.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
+artifactReaderLifecycleCases({
+  image: sampleAndroidVbmeta,
+  createReader: (path, admitted) =>
+    new AndroidVbmetaArtifactReader(path, admitted),
 });
 
 it("keeps the header and stored ranges when the first descriptor stops the walk", async () => {

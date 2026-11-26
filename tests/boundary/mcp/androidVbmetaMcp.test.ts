@@ -58,6 +58,11 @@ it("retains Android vbmeta facts through compiled MCP", async () => {
         }),
       }),
     );
+    const metadata = inventory.occurrences.find(
+      (row) => row.logical_path === ".",
+    )?.format_metadata;
+    if (metadata?.kind !== "android-vbmeta")
+      throw new Error("Expected vbmeta root metadata");
     const summary = await call("inspect_artifact", { detail: "summary" });
     expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
     // The strict summary schema rejects a retained descriptor array.
@@ -88,6 +93,19 @@ it("retains Android vbmeta facts through compiled MCP", async () => {
     expect(sha256Hex(await readFile(join(outputRoot, "public_key")))).toBe(
       sha256Hex(SAMPLE_PUBLIC_KEY),
     );
+    for (const [index, descriptor] of metadata.descriptors.entries()) {
+      const name = descriptor.tag_name.toLowerCase().replaceAll("_", "-");
+      expect(
+        await readFile(
+          join(outputRoot, `descriptor-${String(index)}-${name}.bin`),
+        ),
+      ).toEqual(
+        bytes.subarray(
+          descriptor.offset,
+          descriptor.offset + 16 + descriptor.num_bytes_following,
+        ),
+      );
+    }
     expect((await readFile(path)).equals(bytes)).toBe(true);
     await call("close_binary", {});
   } finally {
@@ -113,7 +131,12 @@ it("keeps Android vbmeta parser refusal kinds and recovers through compiled MCP"
       expect(error, fixture.name).toMatchObject({
         code: fixture.code,
         category: fixture.category,
-        details: { operation: "inspect_artifact", reason: fixture.kind },
+        details: {
+          operation: "inspect_artifact",
+          ...(fixture.kind === "limit"
+            ? { reason: "limit" }
+            : { failure_kind: fixture.kind, format: "android-vbmeta" }),
+        },
       });
       expect((await readFile(path)).equals(fixture.bytes)).toBe(true);
       expect((await call("close_binary", {})).isError).not.toBe(true);
@@ -141,7 +164,7 @@ it("refuses descriptors past the default count and admits them on retry through 
     expect((await call("open_binary", { path })).isError).not.toBe(true);
     const { error } = parseMcpToolError(await call("inspect_artifact", {}));
     expect(error).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: true,
       details: {
         reason: "limit",

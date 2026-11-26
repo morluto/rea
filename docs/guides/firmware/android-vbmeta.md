@@ -75,8 +75,8 @@ keep every digit.
 An unknown tag is kept as tag, size, and file offset. Its tag is a decimal
 string because the field is an unsigned 64-bit value. One limitation covers
 every unknown descriptor: it gives their count, names up to eight distinct
-tags, and counts the tags it omits. To recover an unknown payload, read `num_bytes_following` bytes from the
-original carrier starting at the reported descriptor offset plus 16 bytes.
+tags, and counts the tags it omits. The descriptor's child retains its original
+16-byte header and payload, including bytes from unknown tags.
 
 The summary view uses kind `android-vbmeta-summary`. It keeps the header
 scalars and replaces the descriptor array with `descriptor_count`,
@@ -88,11 +88,20 @@ every descriptor.
 
 When the range is non-empty, extraction writes:
 
-| Path                   | Bytes                                   |
-| ---------------------- | --------------------------------------- |
-| `authentication_block` | the whole authentication block          |
-| `public_key`           | the auxiliary-block public key          |
-| `public_key_metadata`  | the auxiliary-block public key metadata |
+| Path                            | Bytes                                                        |
+| ------------------------------- | ------------------------------------------------------------ |
+| `authentication_block`          | the whole authentication block                               |
+| `public_key`                    | the auxiliary-block public key                               |
+| `public_key_metadata`           | the auxiliary-block public key metadata                      |
+| `descriptor-<index>-<name>.bin` | one complete stored descriptor, including its 16-byte header |
+
+Descriptor indexes start at zero. Names are `property`, `hashtree`, `hash`,
+`kernel-cmdline`, `chain-partition`, or `unknown`. Each child records its file
+offset, size, index, and exact tag in `android-vbmeta-descriptor` metadata.
+These bytes are copied from the carrier; decoded fields are not serialized
+back into a replacement descriptor. If a malformed descriptor stops the walk,
+the descriptors before it remain available as children alongside the header's
+stored ranges. No child is claimed for the malformed descriptor or unread tail.
 
 `public_key_sha256` on the root is the SHA-256 of that public key, or null
 when the key is empty. A chain-partition descriptor reports the SHA-256 of
@@ -115,7 +124,7 @@ fields and the descriptor table has no count field.
 
 The three byte sizes are admitted from the 256-byte header before the image
 body is read. The count is checked as the walk reaches each descriptor. A
-refusal is `truncated` with `details.reason` `limit` and a
+refusal is `partial` with `details.reason` `limit` and a
 `details.reader_limit` naming the parameter, its effective value and, for
 these four, the `required_value`. For the count, that is the number of
 well-formed descriptor headers in the table. Raise the field on the next call;
@@ -128,8 +137,9 @@ rea inspect-artifact ./vbmeta.img --json \
 
 Block sizes must be multiples of 64. A descriptor's `num_bytes_following` must
 be a multiple of 8, and every range must fit its block before those bytes are
-read. A declared image that ends past the file is `truncated`. A structural
-mismatch is `unsupported_target`. These refusals do not produce an empty
+read. A declared image that ends past the file returns `unsupported_target`
+with `details.failure_kind` `truncated`; a structural mismatch uses the same
+code with `details.failure_kind` `malformed`. These refusals do not produce an empty
 successful inventory. The limitation that names unknown descriptor tags lists
 at most eight; this is a presentation bound, and every descriptor stays in the
 Evidence.

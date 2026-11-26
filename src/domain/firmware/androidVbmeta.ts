@@ -159,12 +159,27 @@ export const ANDROID_VBMETA_LIMITATIONS = {
 export type AndroidVbmetaParseError = ParseFailureError;
 
 /** One stored range the reader exposes as a child. */
-export interface AndroidVbmetaChild {
-  readonly path: "authentication_block" | "public_key" | "public_key_metadata";
-  readonly role: "authentication-block" | "public-key" | "public-key-metadata";
+export type AndroidVbmetaChild = {
   readonly offset: number;
   readonly size: number;
-}
+} & (
+  | {
+      readonly path:
+        | "authentication_block"
+        | "public_key"
+        | "public_key_metadata";
+      readonly role:
+        | "authentication-block"
+        | "public-key"
+        | "public-key-metadata";
+    }
+  | {
+      readonly path: string;
+      readonly role: "descriptor";
+      readonly index: number;
+      readonly descriptor: AndroidVbmetaDescriptor;
+    }
+);
 
 /**
  * Header, descriptors, and the non-empty stored ranges. When a malformed
@@ -968,10 +983,12 @@ const walkDescriptors = (
   maxDescriptors: number,
 ): {
   readonly descriptors: AndroidVbmetaDescriptor[];
+  readonly children: AndroidVbmetaChild[];
   readonly limitations: string[];
   readonly failure: AndroidVbmetaDescriptorFailure | null;
 } => {
   const descriptors: AndroidVbmetaDescriptor[] = [];
+  const children: AndroidVbmetaChild[] = [];
   const limitations: string[] = [];
   const unknownTags = new Set<string>();
   let unknownCount = 0;
@@ -1003,6 +1020,16 @@ const walkDescriptors = (
       break;
     }
     const parsed = read.value;
+    const index = descriptors.length;
+    const name = parsed.descriptor.tag_name.toLowerCase().replaceAll("_", "-");
+    children.push({
+      path: `descriptor-${String(index)}-${name}.bin`,
+      role: "descriptor",
+      offset: parsed.descriptor.offset,
+      size: parsed.next - cursor,
+      index,
+      descriptor: parsed.descriptor,
+    });
     if (parsed.descriptor.tag_name === "UNKNOWN") {
       unknownCount += 1;
       unknownTags.add(parsed.descriptor.tag);
@@ -1017,7 +1044,7 @@ const walkDescriptors = (
     limitations.push(unknownTagsLimitation(unknownCount, unknownTags));
   if (reservedNonZero)
     limitations.push("A descriptor reserved field contains non-zero bytes.");
-  return { descriptors, limitations, failure };
+  return { descriptors, children, limitations, failure };
 };
 
 /** Decode one vbmeta image. `bytes` must cover the declared header and blocks. */
@@ -1093,6 +1120,7 @@ export const parseAndroidVbmeta = (
         offset: auxiliaryOffset + header.publicKeyMetadataOffset,
         size: header.publicKeyMetadataSize,
       });
+    for (const child of walked.children) children.push(child);
     return {
       imageSize: header.imageSize,
       layoutSupported,

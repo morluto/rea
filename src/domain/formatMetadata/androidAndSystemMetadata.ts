@@ -443,6 +443,25 @@ export type AndroidVbmetaEntryMetadata = z.infer<
   typeof androidVbmetaEntryMetadataSchema
 >;
 
+/** A complete stored descriptor, including its 16-byte header. */
+export const androidVbmetaDescriptorEntryMetadataSchema = z.strictObject({
+  kind: z.literal("android-vbmeta-descriptor"),
+  index: uint32,
+  tag: vbmetaU64Decimal,
+  tag_name: z.enum([
+    "PROPERTY",
+    "HASHTREE",
+    "HASH",
+    "KERNEL_CMDLINE",
+    "CHAIN_PARTITION",
+    "UNKNOWN",
+  ]),
+  descriptor_size: offset,
+});
+export type AndroidVbmetaDescriptorEntryMetadata = z.infer<
+  typeof androidVbmetaDescriptorEntryMetadataSchema
+>;
+
 /**
  * ISO 9660 primary volume descriptor facts, with what the rest of the
  * descriptor set declares. The identifiers, sizes, set and sequence numbers,

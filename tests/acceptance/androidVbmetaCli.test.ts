@@ -113,6 +113,18 @@ cliTest(
         ? rootMetadata.public_key_sha256
         : undefined,
     );
+    if (rootMetadata?.kind !== "android-vbmeta")
+      throw new Error("Expected vbmeta root metadata");
+    for (const [index, descriptor] of rootMetadata.descriptors.entries()) {
+      const name = descriptor.tag_name.toLowerCase().replaceAll("_", "-");
+      const path = `descriptor-${String(index)}-${name}.bin`;
+      expect(await readFile(join(result.output_root, path))).toEqual(
+        bytes.subarray(
+          descriptor.offset,
+          descriptor.offset + 16 + descriptor.num_bytes_following,
+        ),
+      );
+    }
   },
 );
 
@@ -132,7 +144,12 @@ for (const fixture of androidVbmetaRefusals()) {
       expect(result.json, fixture.name).toMatchObject({
         code: fixture.code,
         category: fixture.category,
-        details: { operation: "inspect_artifact", reason: fixture.kind },
+        details: {
+          operation: "inspect_artifact",
+          ...(fixture.kind === "limit"
+            ? { reason: "limit" }
+            : { failure_kind: fixture.kind, format: "android-vbmeta" }),
+        },
       });
       expect((await readFile(path)).equals(fixture.bytes)).toBe(true);
     },
