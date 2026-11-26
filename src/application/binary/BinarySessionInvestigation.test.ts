@@ -183,6 +183,36 @@ it("preserves metadata invalidation across reset until the mutated engine is ret
   }
 });
 
+it("keeps a staged snapshot when an external mutation ran without a bound target", async () => {
+  const [target] = await createBinarySessionTargets();
+  const calls: string[] = [];
+  const session = createTestBinarySession(createCacheProvider(calls));
+  const parameters = { address: "0x1000", document: "fixture" };
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    expect((await session.execute("address_name", parameters)).ok).toBe(true);
+    const replay = session.exportAnalysisSnapshot();
+    if (!replay.ok) throw replay.error;
+    expect((await session.close()).ok).toBe(true);
+
+    const mutated = await session.withAdmittedExternalMutation(
+      undefined,
+      undefined,
+      () => Promise.resolve(ok("done")),
+      (_value, error) => error,
+    );
+    expect(mutated).toMatchObject({ ok: true, value: { ok: true } });
+    expect(session.importAnalysisSnapshot(replay.value).ok).toBe(true);
+    expect((await session.open(target)).ok).toBe(true);
+    expect((await session.execute("address_name", parameters)).ok).toBe(true);
+    expect(
+      calls.filter((operation) => operation === "address_name"),
+    ).toHaveLength(1);
+  } finally {
+    await session.dispose();
+  }
+});
+
 it("preserves records through failed disposal and clears them only after its owned cleanup succeeds", async () => {
   const [target] = await createBinarySessionTargets();
   const client = new ControllableAnalysisClient();

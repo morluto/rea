@@ -64,7 +64,17 @@ it("rejects invalid request options at their input paths", () => {
     [
       { headers: [header(literal("agent"), "User-Agent")] },
       ["headers", 0, "name"],
-      "cannot set",
+      "cannot set User-Agent: the browser controls it",
+    ],
+    [
+      { headers: [header(literal("trace"), "Sec-Trace")] },
+      ["headers", 0, "name"],
+      "cannot set Sec-Trace: names starting with Proxy- or Sec- are reserved",
+    ],
+    [
+      { headers: [header(literal("auth"), "proxy-authorization")] },
+      ["headers", 0, "name"],
+      "cannot set proxy-authorization: names starting with Proxy- or Sec-",
     ],
     [
       { headers: [header(literal("a\r\nX-B: b"))] },
