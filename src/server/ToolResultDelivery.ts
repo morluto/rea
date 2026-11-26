@@ -52,10 +52,7 @@ import {
 } from "../domain/agentResultBudget.js";
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 import { AGENT_BUDGET_OPERATIONS } from "../domain/agentBudgetOperations.js";
-import {
-  retainedEvidenceLink,
-  retainedEvidenceReadFits,
-} from "./retainedEvidenceResource.js";
+import { retainedEvidenceLink } from "./retainedEvidenceResource.js";
 
 const AGENT_BUDGET_OPERATION_NAMES: ReadonlySet<string> = new Set(
   AGENT_BUDGET_OPERATIONS,
@@ -520,15 +517,13 @@ export class ToolResultDelivery {
     // The summarized partial is linked like a successful result's complete
     // record, when one read can deliver it.
     const link =
-      budgeted !== undefined &&
-      budgeted.completeBytes <= this.resultBudgetBytes &&
-      retainedEvidenceReadFits(budgeted.partial, this.resultBudgetBytes)
-        ? retainedEvidenceLink({
-            evidenceId: budgeted.partial.evidence_id,
-            operation: budgeted.partial.operation,
-            completeBytes: budgeted.completeBytes,
-          })
-        : undefined;
+      budgeted === undefined
+        ? undefined
+        : retainedEvidenceLink(
+            budgeted.partial,
+            budgeted.completeBytes,
+            this.resultBudgetBytes,
+          );
     const linkBytes =
       link === undefined ? 0 : Buffer.byteLength(JSON.stringify(link)) + 1;
     let structuredContent = { error: projected };
@@ -739,17 +734,11 @@ const overBudgetSummary = (
     return undefined;
   return {
     summary: summary.value,
-    // A record one read cannot deliver pages only through the cursor. The
-    // read's own check decides, after the cheap bound on its unescaped size.
-    link:
-      completeBytes <= limits.resultBudgetBytes &&
-      retainedEvidenceReadFits(evidence, limits.resultBudgetBytes)
-        ? retainedEvidenceLink({
-            evidenceId: evidence.evidence_id,
-            operation: evidence.operation,
-            completeBytes,
-          })
-        : undefined,
+    link: retainedEvidenceLink(
+      evidence,
+      completeBytes,
+      limits.resultBudgetBytes,
+    ),
     delivery: agentBudgetDelivery({
       operation: evidence.operation,
       evidenceId: evidence.evidence_id,
