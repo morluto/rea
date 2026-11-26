@@ -707,10 +707,7 @@ class TimelineCapture {
     // Numbers stay inside the fixed overhead. The strings are the part that
     // can grow with the page, so admission measures those before the row is kept.
     const bytes = timelineRowBytes(entry);
-    if (
-      bytes >
-      WEB_RUNTIME_LIMITS.retainedEventBytes - this.#timelineBytes
-    ) {
+    if (bytes > WEB_RUNTIME_LIMITS.retainedEventBytes - this.#timelineBytes) {
       this.#timelineBudgetFailure = new BrowserObservationError(
         "observe_web_session",
         "payload_limit",
