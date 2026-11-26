@@ -409,6 +409,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android Verified Boot vbmeta images",
+        source: "guides/firmware/android-vbmeta.md",
+        route: "/android-vbmeta",
+      },
+      {
         text: "Android sparse images",
         source: "guides/firmware/android-sparse-image.md",
         route: "/android-sparse-image",

@@ -11,6 +11,7 @@ import {
 } from "../formatMetadata/firmwareMetadata.js";
 import { uint8, uint32 } from "../formatMetadata/primitives.js";
 import { summarizeAndroidOtaPayload } from "./androidOtaPayloadSummary.js";
+import { summarizeAndroidVbmeta } from "./androidVbmetaSummary.js";
 
 type EspFlashImageFacts = z.infer<typeof espFlashImageFactsSchema>;
 
@@ -125,17 +126,20 @@ const summarizeImage = (
 });
 
 /**
- * Root facts for the summary view: compact for an ESP flash layout and an
- * Android OTA payload.
+ * Root facts for the summary view: compact for an ESP flash layout, an
+ * Android OTA payload, and an Android vbmeta image.
  */
 export const summaryRootMetadata = (
   metadata: ArtifactFormatMetadata,
 ):
   | ArtifactFormatMetadata
   | EspFlashImageSummaryMetadata
-  | ReturnType<typeof summarizeAndroidOtaPayload> => {
+  | ReturnType<typeof summarizeAndroidOtaPayload>
+  | ReturnType<typeof summarizeAndroidVbmeta> => {
   if (metadata.kind === "android-ota-payload")
     return summarizeAndroidOtaPayload(metadata);
+  if (metadata.kind === "android-vbmeta")
+    return summarizeAndroidVbmeta(metadata);
   if (metadata.kind !== "esp-flash-image") return metadata;
   const { bootloader, apps, ...rest } = metadata;
   return {

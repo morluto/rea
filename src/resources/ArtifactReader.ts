@@ -265,6 +265,7 @@ export interface ArtifactReader {
     | "nro"
     | "android-boot-image"
     | "android-ota-payload"
+    | "android-vbmeta"
     | "android-sparse-image"
     | "iso9660"
     | "uefi"

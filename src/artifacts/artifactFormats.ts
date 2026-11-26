@@ -20,6 +20,7 @@ import {
 } from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
+import { AndroidVbmetaArtifactReader } from "./AndroidVbmetaArtifactReader.js";
 import {
   AsarArtifactReader,
   type AsarAdmission,
@@ -474,6 +475,20 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-vbmeta": container("android-vbmeta", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "Android vbmeta inventory exposes the authentication block, public key, public key metadata, and decoded descriptors as stored children. AVB footers on partition images other than boot images are out of scope.",
+    createReader: (path, options) =>
+      new AndroidVbmetaArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_vbmeta,
+      ),
   }),
   "android-sparse-image": container("android-sparse-image", {
     roleContainer: true,

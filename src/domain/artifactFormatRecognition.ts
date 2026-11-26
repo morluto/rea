@@ -15,6 +15,7 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { hasAndroidVbmetaMagic } from "./firmware/androidVbmeta.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasBfltMagic } from "./bfltExecutable.js";
@@ -58,6 +59,7 @@ export type RecognizedArtifactFormat = Extract<
   | "nro"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-vbmeta"
   | "android-sparse-image"
   | "iso9660"
   | "intel-hex"
@@ -182,6 +184,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     when("nso", hasNsoMagic),
     when("nro", hasNroMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    when("android-vbmeta", hasAndroidVbmetaMagic),
     ({ prefix }) => {
       const ota = recognizeAndroidOtaPayload(prefix);
       if (ota === undefined) return undefined;
