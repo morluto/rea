@@ -4525,11 +4525,11 @@ esbuild@0.25.12 | development | MIT
   Package: https://www.npmjs.com/package/esbuild/v/0.25.12
   Archive: https://registry.npmjs.org/esbuild/-/esbuild-0.25.12.tgz
   Integrity: sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg==
-vite@6.4.5 | development | MIT
+vite@6.4.6 | development | MIT
   Lockfile path: node_modules/vitepress/node_modules/vite
-  Package: https://www.npmjs.com/package/vite/v/6.4.5
-  Archive: https://registry.npmjs.org/vite/-/vite-6.4.5.tgz
-  Integrity: sha512-4enwjFfi4IwtEh0w+jPzpLVOFQiPHmmzPxcHXQOyEur47o6u0jE573DmGpjA+7irXoMLYRZD5ZaFUEneS3abPg==
+  Package: https://www.npmjs.com/package/vite/v/6.4.6
+  Archive: https://registry.npmjs.org/vite/-/vite-6.4.6.tgz
+  Integrity: sha512-RtsraAwEG68idOA6iUOoIpOlcSKROnf815aIq9qHTSrDNpLoBrBa12suyfcEd8qn0xwOVQI1Yhm1GbmTjF600A==
 vitest@5.1.1 | development | MIT
   Lockfile path: node_modules/vitest
   Package: https://www.npmjs.com/package/vitest/v/5.1.1
