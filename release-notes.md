@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** discovery output_window gains record_budget_reached, a page can return fewer than limit records, and discovery no longer refuses at the record or line budget.
 * **cli:** An over-budget CLI result without --evidence_output is now saved to REA's private retained-Evidence cache and reported as {summary, evidence_bundle, delivery} with delivery.retained cache-file, instead of writing nothing. Pass --no-retain, or set REA_CLI_RETAINED_EVIDENCE_BYTES=0, to write nothing as before.
 * **delivery:** When a failure's details.partial_observation does not fit delivery.agent_result_budget_bytes beside the failure's own facts and the caller omitted detail, MCP and the CLI deliver its summary record instead of the complete Evidence, with details.partial_observation_delivery naming where the complete record is. Pass detail complete (--detail complete) for it inline.
 * **views:** xrefs and inspect_nuget_nupkg with detail omitted now return their retained summary when complete Evidence exceeds delivery.agent_result_budget_bytes in a session that can page it. Pass detail "complete" (CLI --detail complete) for complete inline delivery.
@@ -341,6 +342,7 @@
 * **javascript:** verify Expo context getter ownership ([#13803](https://github.com/morluto/rea/issues/13803)) ([8c16d7d](https://github.com/morluto/rea/commit/8c16d7d18f71c0057240db4122c5df9a8b907a95))
 * **limits:** let inspect_pcap_capture take producer_limits for its snapshot and TShark output ([#14280](https://github.com/morluto/rea/issues/14280)) ([fd09e2b](https://github.com/morluto/rea/commit/fd09e2b9a1ca8e6730d3d030ae23d012c5dea6f9))
 * **limits:** make the IL2CPP pointer index adjustable and require owned refusal limits ([#14243](https://github.com/morluto/rea/issues/14243)) ([6ab595c](https://github.com/morluto/rea/commit/6ab595cfd6fc67f6bfe7313e39f736ed67f036a3))
+* **limits:** report packet and signal producer budgets as details.limit and page discovery at its record budget ([#14621](https://github.com/morluto/rea/issues/14621)) ([33e4e07](https://github.com/morluto/rea/commit/33e4e07dd05f6968d106c6671ca9b38033b10f11))
 * **macho:** correct encryption range VM mapping ([#13918](https://github.com/morluto/rea/issues/13918)) ([0fb1d11](https://github.com/morluto/rea/commit/0fb1d112f699b5619607f564f95fe52f14b7b061))
 * **macho:** keep header reads inside declared slices ([#13913](https://github.com/morluto/rea/issues/13913)) ([1172d7e](https://github.com/morluto/rea/commit/1172d7ed7d3fc76e664d6ad79abc8e7fa44b2c97))
 * **macho:** preserve legacy bind stream bounds and target scope ([#13874](https://github.com/morluto/rea/issues/13874)) ([a8ccf8b](https://github.com/morluto/rea/commit/a8ccf8b5b883f5df3394c7753d7edc0caaffa524))
