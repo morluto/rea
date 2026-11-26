@@ -21,6 +21,11 @@ and kept in `source_path`. Member contents are hashed and classified like
 ZIP members, so an ELF, Godot PCK or UnityFS member inside a tarball is
 named by its format.
 
+Directory, symbolic link, device and FIFO headers store no data blocks, as
+POSIX ustar specifies, even when their size field is nonzero. The next header
+is read directly after them. A hard link keeps its declared size, because a
+pax archive may store a body for it.
+
 The root occurrence's `format_metadata` (`kind: "tar"`) records:
 
 - `compression`: `none` or `gzip`.
@@ -87,9 +92,10 @@ without reading the whole inventory inline.
 
 Synthetic fixtures, built in the tests from the POSIX ustar layout, cover
 stored and gzip archives, pax paths, GNU long names, ustar prefixes,
-symbolic links, omitted devices, FIFOs and hard links, a corrupt later
-header, trailing data, a truncated member, a cut gzip stream, a corrupt first
-header and the expansion allowance. Public release files checked: the
+symbolic links, omitted devices, FIFOs and hard links, header-only members
+that declare a size, a corrupt later header, trailing data, a truncated
+member, a cut gzip stream, a corrupt first header and the expansion
+allowance. Public release files checked: the
 Pixelorama v1.2.4 Linux tarball (39 members, including an ELF executable and
 a Godot PCK) and the UniVRM 0.131.4 `.unitypackage` (3,091 members). Both
 reported complete coverage. xz, bzip2 and zstd wrappers are not read. The

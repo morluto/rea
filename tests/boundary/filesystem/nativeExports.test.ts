@@ -7,7 +7,7 @@ import { createNativeExportsService } from "../../../src/composition/binaryDiagn
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
-  MAX_NATIVE_EXPORT_ROWS,
+  DEFAULT_NATIVE_EXPORT_ROWS,
   nativeExportsSchema,
 } from "../../../src/domain/native/nativeExports.js";
 import {
@@ -85,14 +85,17 @@ describe("native export stable filesystem boundary", () => {
             _tag: "AnalysisResourceConstraintError",
             resource: "capacity",
             reportedLimits: { boundary: "retained_text", maximum: 16777216 },
-            retryable: false,
-            fixedAllowance: {
-              name: "The native export retained-text allowance",
-              kind: "bytes",
-              limit: 16777216,
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_text_bytes",
+              effective_value: 16777216,
               unit: "bytes",
             },
           });
+          // The text check stops at the first excess, so its need is unknown.
+          expect(
+            "limit" in result.error ? result.error.limit : undefined,
+          ).not.toHaveProperty("required_value");
         }
       }
     } finally {
@@ -322,12 +325,44 @@ describe("native export text capacity", () => {
 });
 
 describe("native export entry allowance", () => {
+  it("names max_structure_bytes when an ELF header table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-native-export-structure-");
+    const path = join(root, "structure.so");
+    await writeFile(path, elfExportImage({ symbols: [{ name: "exported" }] }));
+    const service = createNativeExportsService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_structure_bytes",
+            effective_value: 64,
+          },
+          refusal: {
+            kind: "adjustable_budget",
+            control: "max_structure_bytes",
+          },
+        },
+      });
+      const admitted = await service.inspect({
+        path,
+        max_structure_bytes: 65536,
+      });
+      if (!admitted.ok) throw admitted.error;
+    } finally {
+      await service.close();
+    }
+  });
+
   it.each([false, true])(
     "reports whether an oversized ELF dynamic symbol table is file-backed (%s)",
     async (stored) => {
       const bytes = elfExportImage({ symbols: [{ name: "exported" }] });
       const symbolSection = Number(bytes.readBigUInt64LE(40)) + 64;
-      const size = (MAX_NATIVE_EXPORT_ROWS + 1) * 24;
+      const size = (DEFAULT_NATIVE_EXPORT_ROWS + 1) * 24;
       bytes.writeBigUInt64LE(BigInt(bytes.length), symbolSection + 24);
       bytes.writeBigUInt64LE(BigInt(size), symbolSection + 32);
       const root = await createTestTempDirectory("rea-native-export-dynsym-");
@@ -345,7 +380,11 @@ describe("native export entry allowance", () => {
             details: {
               reported_limits: {
                 boundary: "rows",
-                maximum: MAX_NATIVE_EXPORT_ROWS,
+                maximum: DEFAULT_NATIVE_EXPORT_ROWS,
+              },
+              limit: {
+                parameter: "max_entries",
+                required_value: DEFAULT_NATIVE_EXPORT_ROWS + 1,
               },
             },
           });
@@ -374,7 +413,7 @@ describe("native export entry allowance", () => {
     ],
   ])(
     "keeps count recovery for a %s export table above the entry allowance",
-    async (_case, image) => {
+    async (caseName, image) => {
       const root = await createTestTempDirectory("rea-native-export-rows-");
       const path = join(root, "rows.dll");
       await writeFile(path, image());
@@ -385,15 +424,32 @@ describe("native export entry allowance", () => {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource: "capacity",
-          reportedLimits: { boundary: "rows", maximum: MAX_NATIVE_EXPORT_ROWS },
+          reportedLimits: {
+            boundary: "rows",
+            maximum: DEFAULT_NATIVE_EXPORT_ROWS,
+          },
           retryable: false,
-          fixedAllowance: {
-            name: "The native export inventory allowance",
-            kind: "count",
-            limit: MAX_NATIVE_EXPORT_ROWS,
-            unit: "entries",
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_entries",
+            effective_value: DEFAULT_NATIVE_EXPORT_ROWS,
+            default_value: DEFAULT_NATIVE_EXPORT_ROWS,
+            required_value: 0x40001,
+            applies_at: "next_call",
           },
         });
+        const raised = await service.inspect({ path, max_entries: 0x40001 });
+        if (caseName === "stored") {
+          if (!raised.ok) throw raised.error;
+          expect(raised.value.normalized_result).toMatchObject({
+            format: "pe",
+            exports: expect.any(Array),
+          });
+        } else {
+          expect(raised.ok).toBe(false);
+          if (raised.ok) throw new Error("Expected truncated export failure");
+          expect(raised.error._tag).toBe("AnalysisTargetFailureError");
+        }
       } finally {
         await service.close();
       }

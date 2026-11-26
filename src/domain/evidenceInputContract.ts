@@ -35,6 +35,10 @@ export const declareEvidenceInput = <Schema extends z.ZodType>(
   return schema;
 };
 
+/** Whether `schema` was declared as an inline-or-retained-reference source. */
+export const isEvidenceReferenceAlternative = (schema: z.ZodType): boolean =>
+  referenceAlternatives.get(schema) !== undefined;
+
 /** Mark a source union that accepts both inline Evidence and a retained reference. */
 export const declareEvidenceReferenceAlternative = <Schema extends z.ZodType>(
   schema: Schema,
@@ -153,8 +157,7 @@ export const getEvidenceInputContract = <Schema extends z.ZodType>(
 };
 
 const compile = (schema: z.ZodType): EvidenceInputContract => {
-  if (referenceAlternatives.get(schema) !== undefined)
-    return identity(schema, true);
+  if (isEvidenceReferenceAlternative(schema)) return identity(schema, true);
   const declared = declarations.get(schema);
   if (declared?.kind === "evidence")
     return {

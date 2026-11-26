@@ -156,7 +156,7 @@ export class DenoStandaloneArtifactReader extends PositionalArtifactReader<
             "artifact_limits.expanded_bytes",
             Number(expansionBudget),
             "bytes",
-            declaredPlaintext,
+            // Entries after this one are not counted: a lower bound only.
           );
       }
       paths.reservePath(entry.path);

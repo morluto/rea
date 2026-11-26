@@ -182,12 +182,15 @@ it("refuses an entry count above the selected allowance", () => {
       readerLimit: {
         parameter: "artifact_limits.deno.vfs_entries",
         effective_value: 2,
-        required_value: 3,
         can_increase: true,
       },
     });
   }
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  // The walk stops at the first entry past the allowance; the total is unknown.
+  expect((failure as ArtifactReaderFailure).readerLimit).not.toHaveProperty(
+    "required_value",
+  );
   expect(
     walkDenoVirtualFs(entries, 0, undefined, {
       ...limits,
