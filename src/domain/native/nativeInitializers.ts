@@ -8,6 +8,7 @@ import {
 } from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES = 536870912;
@@ -67,6 +68,7 @@ export const inspectNativeInitializersInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF or Mach-O image",
   ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()

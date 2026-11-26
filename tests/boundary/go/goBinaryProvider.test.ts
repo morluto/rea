@@ -63,7 +63,7 @@ it.each([false, true])(
           code: "resource_constraint",
           details: {
             reported_limits: {
-              boundary: "structure",
+              boundary: "max_structure_bytes",
               maximum: 16 * 1024 * 1024,
             },
           },

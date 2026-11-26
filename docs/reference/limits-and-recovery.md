@@ -101,6 +101,26 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+### Native table structure budget
+
+`inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
+`inspect_dwarf_units`, `inspect_binary_hardening` and
+`inspect_native_initializers` accept `max_structure_bytes` (CLI
+`--max-structure-bytes`, 64 bytes to 512 MiB, default 16 MiB). It bounds one
+header, section, load-command or ELF dynamic-directory table read, and,
+separately, the section names decoded from the section-name table, before the
+decoded records are allocated. A refusal is a `memory` resource constraint
+whose `details.limit` names `max_structure_bytes`, its effective value, range
+and default; `details.reported_limits.boundary` is `max_structure_bytes`.
+`max_file_bytes` does not raise it. `inspect_elf_debug_link` still counts
+decoded section names against `max_file_bytes` as well. For `inspect_binary_hardening` it
+covers the ELF header tables, section names and dynamic table; Mach-O load
+commands keep the Mach-O command reader's own limit, and the PE headers it reads
+are bounded by the PE format.
+
+The Go, Rust and IL2CPP readers and `inspect_native_exports` read the same
+tables with the 16 MiB default and report it as a fixed allowance.
+
 ### Static reader read allowance
 
 `inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,

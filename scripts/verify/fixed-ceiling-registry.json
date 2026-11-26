@@ -256,10 +256,14 @@
     }
   },
   "src/native/dwarf/DwarfUnitsProvider.ts": {
-    "\"The native structural decoding allowance\"": {
+    "\"The PE section-name decoding allowance\"": {
       "class": "pending",
       "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+      "reason": "The 65,536-byte per-name COFF string-table decode is a resource policy; the aggregate is max_structure_bytes."
+    },
+    "\"The retained DWARF section bound\"": {
+      "class": "derived",
+      "reason": "Retained file-backed sections cannot exceed the admitted image size; the bound is the selected file and grows with it."
     },
     "DWARF_DECOMPRESSED_SECTION_ALLOWANCE": {
       "class": "pending",
@@ -268,11 +272,6 @@
     }
   },
   "src/native/elf/ElfDebugLinkProvider.ts": {
-    "\"The ELF structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    },
     "\"The whole-file debug candidate read allowance\"": {
       "class": "pending",
       "issue": 14235,
@@ -285,11 +284,6 @@
     }
   },
   "src/native/elf/ElfDependenciesProvider.ts": {
-    "\"The ELF structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "ELF dependency entry allowances are resource policies; the text budget is derived from the admitted image length."
-    },
     "text ? \"The ELF dependency text budget fixed by the admitted image length\" : `The ELF dependency ${limit.name} allowance`": {
       "class": "pending",
       "issue": 14235,
@@ -298,20 +292,6 @@
   },
   "src/native/elf/ElfNotesProvider.ts": {
     "ELF_NOTE_TEXT_ALLOWANCE": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    }
-  },
-  "src/native/elf/ElfUnwindRangesProvider.ts": {
-    "\"The ELF structural decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
-    }
-  },
-  "src/native/elf/KernelModuleProvider.ts": {
-    "\"The ELF structural decoding allowance\"": {
       "class": "pending",
       "issue": 14235,
       "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
@@ -335,10 +315,10 @@
     }
   },
   "src/native/hardening/BinaryHardeningProvider.ts": {
-    "\"The binary hardening structural allowance\"": {
+    "\"The binary hardening table-entry allowance\"": {
       "class": "pending",
       "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+      "reason": "The ELF dynamic table entry count is a resource policy; symbol-table excess already degrades to unresolved rows."
     }
   },
   "src/native/initializers/NativeInitializersProvider.ts": {
