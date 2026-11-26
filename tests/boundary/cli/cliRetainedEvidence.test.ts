@@ -828,7 +828,10 @@ it.each([false, true])(
       {
         operation: "source_fixture",
         parameters: {},
-        result: { marker: "captured-source" },
+        result: {
+          marker: "captured-source",
+          nested: { alpha: 1, omega: 2 },
+        },
       },
     );
     const firstSource = withEvidenceCallerInputPath(source, "./first-source");
@@ -891,8 +894,24 @@ it.each([false, true])(
       expect.arrayContaining([complete, secondSource, extra]),
     );
     const before = await stat(expanded.path);
-    const reordered = await publish([extra, secondSource]);
+    const publishedBytes = await readFile(expanded.path);
+    expect(basename(expanded.path, ".json")).toBe(
+      createHash("sha256").update(publishedBytes).digest("hex"),
+    );
+    const reorderedSource = parseEvidence({
+      ...secondSource,
+      normalized_result: {
+        nested: { omega: 2, alpha: 1 },
+        marker: "captured-source",
+      },
+    });
+    expect(reorderedSource.evidence_id).toBe(secondSource.evidence_id);
+    expect(JSON.stringify(reorderedSource)).not.toBe(
+      JSON.stringify(secondSource),
+    );
+    const reordered = await publish([extra, reorderedSource]);
     expect(reordered).toEqual(expanded);
     expect((await stat(reordered.path)).ino).toBe(before.ino);
+    expect(await readFile(reordered.path)).toEqual(publishedBytes);
   },
 );

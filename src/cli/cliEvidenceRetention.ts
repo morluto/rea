@@ -13,7 +13,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../domain/analysisResourceLimits.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
-import { jsonParts } from "../domain/jsonSerialization.js";
+import { canonicalJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -41,15 +41,15 @@ export const cliRetainedEvidenceDirectory = (
  * semantic Evidence ID. The bundle cache key separately covers source records.
  */
 export const retainedEvidenceDigest = (evidence: Evidence): string =>
-  retainedJsonDigest(evidence);
+  retainedJsonDigest(jsonParts(evidence));
 
-/** Cache identity includes the exact records and metadata the bundle publishes. */
+/** Hash the same canonical bytes the bundle writer publishes, including sources. */
 export const retainedEvidenceBundleDigest = (bundle: EvidenceBundle): string =>
-  retainedJsonDigest(bundle);
+  retainedJsonDigest(canonicalJsonParts(bundle));
 
-const retainedJsonDigest = (value: Evidence | EvidenceBundle): string => {
+const retainedJsonDigest = (parts: Iterable<string>): string => {
   const hash = createHash("sha256");
-  for (const part of jsonParts(value)) hash.update(part, "utf8");
+  for (const part of parts) hash.update(part, "utf8");
   return hash.digest("hex");
 };
 
