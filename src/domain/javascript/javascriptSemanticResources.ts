@@ -1530,14 +1530,13 @@ const socketOptionReader = (
   const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
   // A known source value proves the final option only when target writes are
   // ordinary. Target prototypes and copied __proto__ can absorb later writes.
+  const targetPrototype = target?.properties.find(
+    (property): property is t.ObjectProperty =>
+      t.isObjectProperty(property) && isObjectPrototypeSetter(property),
+  );
   if (
-    target?.properties.some(
-      (property) =>
-        !t.isSpreadElement(property) &&
-        isObjectPrototypeSetter(property) &&
-        t.isObjectProperty(property) &&
-        primitiveOwnKeys(property.value, isNullish) === null,
-    )
+    targetPrototype !== undefined &&
+    primitiveOwnKeys(targetPrototype.value, isNullish) === null
   )
     return undefined;
   const sourceReader = staticObjectCopyPropertyReader(source, isNullish);
@@ -1556,8 +1555,20 @@ const socketOptionReader = (
       (property) => t.isObjectMethod(property) && property.kind !== "method",
     ),
   );
-  const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
+  const targetReader = staticObjectPropertyReader(target, isNullish);
+  const readers = [targetReader, sourceReader];
+  const inheritedSetterMayPrecede =
+    specifier === "tls" &&
+    (targetPrototype === undefined ||
+      !t.isNullLiteral(
+        unwrapJavaScriptExpression(targetPrototype.value).node,
+      )) &&
+    prototypeMutationMayPrecede(state, "Object", node);
   return (member) => {
+    // TLS assigns into the target. An inherited setter can absorb both a
+    // positional default and a copied source value before an own slot exists.
+    if (inheritedSetterMayPrecede && targetReader(member).status !== "explicit")
+      return "unknown";
     let read: t.Node | "unknown" | undefined;
     for (const reader of readers) {
       const property = reader(member);

@@ -246,6 +246,45 @@ it.each(["() => {}", "function () {}", "class {}", "1 - 1", "1 === 1", "p++"])(
   },
 );
 
+const inheritedPortSetter = `Object.defineProperty(Object.prototype, "port", {
+  configurable: true, get() { return 443; }, set(_) {}
+});`;
+
+it.each([
+  `tls.connect(443, { path: null, socket: null, port: -1 })`,
+  `tls.connect({}, { path: null, socket: null, port: -1 })`,
+])(
+  "keeps TLS acquisitions when inherited setters absorb writes: %s",
+  (call) => {
+    expect(acquisitionsFor(`${inheritedPortSetter} ${call}`)).toEqual([
+      { kind: "acquire", method: "connect" },
+    ]);
+  },
+);
+
+it.each([
+  `tls.connect({ path: null, socket: null, port: 80 }, { port: -1 })`,
+  `tls.connect({ __proto__: null }, { path: null, socket: null, port: -1 })`,
+])("rejects invalid TLS ports when target writes are ordinary: %s", (call) => {
+  expect(acquisitionsFor(`${inheritedPortSetter} ${call}`)).toEqual([]);
+});
+
+it("ignores a prototype setter installed after the TLS call", () => {
+  expect(
+    acquisitionsFor(
+      `tls.connect(443, { path: null, socket: null, port: -1 }); ${inheritedPortSetter}`,
+    ),
+  ).toEqual([]);
+});
+
+it("shares inherited-setter uncertainty with TLS host validation", () => {
+  expect(
+    acquisitionsFor(`Object.defineProperty(Object.prototype, "host", {
+      configurable: true, get() { return "localhost"; }, set(_) {}
+    }); tls.connect(443, { path: null, socket: null, host: 42 });`),
+  ).toEqual([{ kind: "acquire", method: "connect" }]);
+});
+
 it("keeps the socket acquisition when Object.prototype.path may precede", () => {
   const operations = analyzeCommonJsSemanticFixture(`
     const net = require("node:net");
