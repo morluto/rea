@@ -82,20 +82,19 @@ it("retains a large extraction behind its summary and pages written files", asyn
       kind: "artifact-extraction",
       collection: "artifacts",
       path_globs: ["lib/**"],
-      fields: ["relative_path", "bytes_written"],
+      fields: ["relative_path", "bytes_written", "limitations"],
     },
   });
   expect(libraries.normalized_result).toMatchObject({
     kind: "artifact-extraction",
     output_root: join(root, "out"),
-    items: [
-      { index: 1, relative_path: "lib/arm64-v8a/libapp.so", bytes_written: 9 },
-      { index: 2, relative_path: "lib/x86_64/libapp.so", bytes_written: 9 },
-    ],
     coverage: { total: 2, exhausted: true },
     byte_limited: false,
   });
-  expect(libraries.normalized_result).not.toHaveProperty("items.0.sha256");
+  expect(libraries.normalized_result).toHaveProperty("items", [
+    { index: 1, relative_path: "lib/arm64-v8a/libapp.so", bytes_written: 9 },
+    { index: 2, relative_path: "lib/x86_64/libapp.so", bytes_written: 9 },
+  ]);
 
   const { evidence: first } = await evidence("inspect_analysis_view", {
     source,
