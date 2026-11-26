@@ -249,6 +249,7 @@ it("uses bounded APT provisioning before verifying packet captures", async () =>
     .array(
       z.object({
         uses: z.string().optional(),
+        run: z.string().optional(),
         with: z.record(z.string(), z.unknown()).optional(),
       }),
     )
@@ -261,6 +262,14 @@ it("uses bounded APT provisioning before verifying packet captures", async () =>
     uses: "./.github/actions/host-apt-packages",
     with: { packages: "tshark util-linux python3" },
   });
+  const focused = steps.findIndex(({ run }) =>
+    run?.includes("require-provider-tests.mjs packet"),
+  );
+  const verifier = steps.findIndex(({ run }) =>
+    run?.includes("node scripts/verify-packet-capture.mjs"),
+  );
+  expect(focused).toBeGreaterThan(archive + 1);
+  expect(verifier).toBeGreaterThan(focused);
 });
 
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
