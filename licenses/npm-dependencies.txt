@@ -3010,11 +3010,11 @@ kind-of@6.0.3 | development | MIT
   Package: https://www.npmjs.com/package/kind-of/v/6.0.3
   Archive: https://registry.npmjs.org/kind-of/-/kind-of-6.0.3.tgz
   Integrity: sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==
-knip@6.45.1 | development | ISC
+knip@6.46.1 | development | ISC
   Lockfile path: node_modules/knip
-  Package: https://www.npmjs.com/package/knip/v/6.45.1
-  Archive: https://registry.npmjs.org/knip/-/knip-6.45.1.tgz
-  Integrity: sha512-zp3zXKy2cZWiIttdlWU5fisKxVQaLSU6471ej0KGz1GdHdaHxpzTAO/LIyFNc3gU3v1W7LJaqvYumoO3l/u+6A==
+  Package: https://www.npmjs.com/package/knip/v/6.46.1
+  Archive: https://registry.npmjs.org/knip/-/knip-6.46.1.tgz
+  Integrity: sha512-5/ajqjZfmuv8O74+McrKBOSArKG6tsUgy6yJird36VZh9HiUq75qY4U39uqf9wjchEUOLrStuOZpFP057CZFRw==
 lightningcss@1.33.0 | development | MPL-2.0
   Lockfile path: node_modules/lightningcss
   Package: https://www.npmjs.com/package/lightningcss/v/1.33.0
@@ -3110,11 +3110,11 @@ lodash.ismatch@4.4.0 | development | MIT
   Package: https://www.npmjs.com/package/lodash.ismatch/v/4.4.0
   Archive: https://registry.npmjs.org/lodash.ismatch/-/lodash.ismatch-4.4.0.tgz
   Integrity: sha512-fPMfXjGQEV9Xsq/8MTSgUf255gawYRbjwMyDbcvDhXgV7enSZA0hynz6vMPnpAb5iONEzBHBPsT+0zes5Z301g==
-lossless-json@4.3.3 | runtime | MIT
+lossless-json@4.3.4 | runtime | MIT
   Lockfile path: node_modules/lossless-json
-  Package: https://www.npmjs.com/package/lossless-json/v/4.3.3
-  Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.3.tgz
-  Integrity: sha512-FGFrGArHsv7BRiYOf37ZRieT9HlKw+Kpu9HvtpYjcoOEo8lqNkjny8A2YAfWNWWQC+9pcLIrLZ+IviKJhaHwGQ==
+  Package: https://www.npmjs.com/package/lossless-json/v/4.3.4
+  Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.4.tgz
+  Integrity: sha512-zfmBtt+IgL7aiem9qNhAmW8/kZOVzA0Y219UNj/FN7p21hQ4ZOghT4y9FzxQAm/64e4wi4jR7lBXUXy2IrjaMA==
 lru-cache@11.5.3 | development | BlueOak-1.0.0
   Lockfile path: node_modules/lru-cache
   Package: https://www.npmjs.com/package/lru-cache/v/11.5.3

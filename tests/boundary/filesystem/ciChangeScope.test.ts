@@ -2538,9 +2538,11 @@ it("keeps a non-UTF-8 Git name distinct from a literal replacement character", a
     "tree",
     "raw-tree",
   ]);
-  expect(() => gitRepository(directory).readFiles(tree, ["\uFFFD.ts"])).toThrow(
-    `Git could not read ${tree}:\uFFFD.ts`,
-  );
+  // Exercise both a small read and a full-tree index lookup.
+  for (const revision of [tree, `${tree}^{tree}`])
+    expect(() =>
+      gitRepository(directory).readFiles(revision, ["\uFFFD.ts"]),
+    ).toThrow(`Git could not read ${revision}:\uFFFD.ts`);
 });
 
 it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {

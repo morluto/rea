@@ -47,6 +47,11 @@
       "class": "pending",
       "issue": 14235,
       "reason": "APK signing-block pair, signer, entry and report counts are REA resource policies, not APK Signature Scheme maxima."
+    },
+    "\"The APK signature input allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 512 MiB whole-APK read is a resource policy; the content digest needs the whole file."
     }
   },
   "src/apktool/ApktoolConfiguration.ts": {
@@ -162,13 +167,6 @@
       "reason": "Electron fuse input bytes and sentinel inventory are resource policies."
     }
   },
-  "src/erlang/BeamProvider.ts": {
-    "\"BEAM table row ceiling\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The BEAM table row ceiling is a resource policy."
-    }
-  },
   "src/flutter/FlutterBuildProvider.ts": {
     "\"The Flutter APK expansion allowance (derived from the APK size)\"": {
       "class": "derived",
@@ -192,6 +190,18 @@
       "class": "pending",
       "issue": 14235,
       "reason": "Projects the shared native structural decoding allowance (BinaryResourceFailure), a resource policy."
+    }
+  },
+  "src/gpu/GpuCodeObjectsProvider.ts": {
+    "\"The GPU object allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 128 MiB GPU object read allowance is a resource policy without a control."
+    },
+    "\"The GPU parser allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "AMDGPU metadata, HIP bundle, CUDA and PTX decode allowances (8 MiB to 512 MiB, visit and token counts) are resource policies without a control."
     }
   },
   "src/ida/IdaMcpConnection.ts": {
@@ -224,6 +234,12 @@
       "class": "pending",
       "issue": 14237,
       "reason": "Kuna's buffered function-text allowance is a resource policy."
+    }
+  },
+  "src/native/LldbCallTracer.ts": {
+    "\"The combined LLDB result representation ceiling\"": {
+      "class": "representation",
+      "reason": "The combined tracer result is read into one Buffer and decoded to one string; above min(buffer.constants.MAX_LENGTH, buffer.constants.MAX_STRING_LENGTH) the running Node cannot represent it."
     }
   },
   "src/native/NativeCommandAnalysisError.ts": {
@@ -283,6 +299,13 @@
       "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     }
   },
+  "src/native/elf/ElfUnwindRangesProvider.ts": {
+    "\"The ELF unwind symbol-name text allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 16 MiB symbol-name text decoded for one returned page is a resource policy; a smaller page (limit) stays within it."
+    }
+  },
   "src/native/exports/NativeExportsProvider.ts": {
     "\"The native export inventory allowance\"": {
       "class": "pending",
@@ -328,9 +351,8 @@
       "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     },
     "\"The native plist nesting allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+      "class": "representation",
+      "reason": "The decoded plist value nests inside Evidence JSON, whose depth is bounded by MAX_JSON_DEPTH before recursive result cloning; three levels are reserved for the report envelope (MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 3)."
     },
     "`The native ${encoding} plist decode allowance`": {
       "class": "pending",

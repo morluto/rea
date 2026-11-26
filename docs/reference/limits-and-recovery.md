@@ -101,6 +101,17 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+`inspect_devicetree`, `inspect_windows_shortcut`, `inspect_kernel_build_config`,
+`extract_firmware` and `inspect_byte_entropy` report the same parameter limit for
+their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
+`max_output_bytes`/`max_output_files`, and `block_size` or `length`).
+`inspect_devicetree` bounds its estimated decoded representation with
+`max_decoded_bytes` (default 32 MiB, at most 256 MiB).
+`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
+`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
+(`max_entries`) and `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+import and lambda rows combined; default 65,536, at most 1,048,576).
+
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
@@ -134,8 +145,9 @@ one streaming pass that hashes the file for its identity is not counted.
 An exhausted allowance is a `capacity` refusal. `details.limit` has
 `control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
 value, the bounds, the default and `applies_at: "next_call"`, and
-`details.limit.required_value` (also `details.reported_limits.required_read_bytes`)
-holds the reads needed so far. Pass at least that `max_file_bytes` and retry;
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+It is a lower bound, since later reads depend on structures not yet decoded, so
+the limit reports no `required_value`. Raise `max_file_bytes` and retry;
 `update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
 PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
@@ -518,7 +530,9 @@ caller to inspect the schema.
 The recovery is generated from the refusal's facts only, never from earlier
 calls. `required_value` is the smallest value that admits the refused request;
 the refusal reports it, in `details.limit` and `details.refusal`, whenever the
-producer measured it.
+producer measured it. A producer that knows only a lower bound, such as the
+reads counted before a refusal, omits it and reports the bound in
+`details.reported_limits`.
 
 - A per-call control reads "Pass a larger `<parameter>` on the next
   `<operation>` call (at least `<required_value>`; range
@@ -691,6 +705,20 @@ Each group follows one domain-owned default policy. See [.NET bundles](../dotnet
 SEA, PCK, ISO 9660, Deno, wxapkg and tar readers, including repeated readable logical occurrences. Omission
 retains each archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
+
+`artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
+100,000, range 1 to 2,147,483,647) is the session default for the per-call
+member counts `bun.module_count`, `dotnet_bundle.entry_count`,
+`node_sea.asset_count` and `deno.vfs_entries`. An explicit `artifact_limits`
+field wins for that call; otherwise the runtime override, then the launch
+seed, then the default applies (see [precedence](#precedence-and-lifetime)).
+A refusal at one of those fields also reports `details.limit` as that
+setting's limit, with the field as `parameter` and the value's `source`, so the
+recovery names both routes: the field for one large artifact, then
+`update_analysis_settings` (or the launch seed for a CLI invocation) for
+repeated work. When a non-default session value applies, inventory and
+extraction report the resolved `effective_limits` even if the call selected no
+`artifact_limits`. Other reader fields are per-call only.
 
 Failures preserve `details.reader_limit` with the exact parameter, effective
 value, units, supported range, required value when known, next-call scope and

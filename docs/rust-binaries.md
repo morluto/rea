@@ -168,7 +168,7 @@ selects a universal Mach-O slice.
 
 | Limit                     | Value                                         | Override                       |
 | ------------------------- | --------------------------------------------- | ------------------------------ |
-| Selected file             | 256 MiB                                       | `producer_limits.input_bytes`  |
+| Selected file             | 2 GiB                                         | `producer_limits.input_bytes`  |
 | Complete report           | 8 MiB                                         | `producer_limits.output_bytes` |
 | Compressed `.dep-v0` zlib | 1 MiB                                         | Fixed                          |
 | Inflated JSON             | Smaller of 8 MiB and 64 × the consumed stream | Fixed                          |

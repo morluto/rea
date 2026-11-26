@@ -3,7 +3,6 @@ import {
   parseLimitConstraint,
 } from "../../domain/parseFailureAnalysisError.js";
 import {
-  imageFileSizeRemediation,
   closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
@@ -27,7 +26,7 @@ import { classifyProviderFailure } from "../../providers/classifyProviderFailure
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
-  MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES,
+  nativeInitializersFileLimit,
   type InspectNativeInitializersInput,
   type NativeInitializerInspection,
   type NativeInitializers,
@@ -223,10 +222,7 @@ const nativeInitializersFailure = (
             {
               cause: failure,
               retryable: false,
-              remediationAction: imageFileSizeRemediation(
-                input.max_file_bytes,
-                MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES,
-              ),
+              limit: nativeInitializersFileLimit(input.max_file_bytes),
             },
           );
         return undefined;

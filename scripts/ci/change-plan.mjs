@@ -555,22 +555,27 @@ export const gitRepository = (cwd = process.cwd()) => {
         .filter(Boolean),
     readFiles: (revision, paths) => {
       if (!paths.length) return new Map();
-      // Resolve the tree once instead of walking revision:path for every test.
       const maxBuffer = 512 * 1024 * 1024;
-      const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
-        cwd,
-        encoding: "utf8",
-        maxBuffer,
-      });
       const objects = new Map();
-      for (const entry of tree.split("\0")) {
-        // Let Git resolve replacement characters so invalid UTF-8 bytes
-        // cannot alias a requested path when the listing is decoded.
-        if (!entry || entry.includes("\uFFFD")) continue;
-        // Git separates the header from the raw path at the first tab.
-        const tab = entry.indexOf("\t");
-        const [, , oid] = entry.slice(0, tab).split(" ");
-        objects.set(entry.slice(tab + 1), oid);
+      // Resolve small changed-test batches directly at their pinned revision.
+      // Read symbolic refs once and index the tree for large test graph reads.
+      const smallSnapshot =
+        paths.length <= 32 && /^[0-9a-f]{40}$/iu.test(revision);
+      if (!smallSnapshot) {
+        const tree = execFileSync("git", ["ls-tree", "-rz", revision], {
+          cwd,
+          encoding: "utf8",
+          maxBuffer,
+        });
+        for (const entry of tree.split("\0")) {
+          // Let Git resolve replacement characters so invalid UTF-8 bytes
+          // cannot alias a requested path when the listing is decoded.
+          if (!entry || entry.includes("\uFFFD")) continue;
+          // Git separates the header from the raw path at the first tab.
+          const tab = entry.indexOf("\t");
+          const [, , oid] = entry.slice(0, tab).split(" ");
+          objects.set(entry.slice(tab + 1), oid);
+        }
       }
       const requests = paths.map(
         (path) => objects.get(path) ?? `${revision}:${path}`,

@@ -247,7 +247,7 @@ The existing default resource budgets are now explicit per-call controls:
 
 | Parameter                      | Default     | What it admits                                                |
 | ------------------------------ | ----------- | ------------------------------------------------------------- |
-| `max_input_bytes`              | 256 MiB     | Complete stable input file                                    |
+| `max_input_bytes`              | 2 GiB       | Complete stable input file                                    |
 | `max_report_bytes`             | 8 MiB       | Complete normalized metadata representation                   |
 | `max_build_info_bytes`         | 1 MiB       | Aggregate embedded string contents, excluding length prefixes |
 | `max_header_search_bytes`      | 256 MiB     | Cumulative build-info search work                             |

@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { countValues, sortedCountEntries } from "./analysisViewCounts.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
@@ -32,11 +33,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { evidenceFileTarget, evidenceSubjectDisplay } from "../evidence.js";
 
-const page = {
-  kind: z.literal("interface-builder"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-} as const;
+const page = analysisViewPageFields("interface-builder");
 
 /** Original decoded rows; graph rows can be narrowed to one decoded document. */
 export const interfaceBuilderViewRequestSchema = z.discriminatedUnion(

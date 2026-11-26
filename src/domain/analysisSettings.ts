@@ -2,6 +2,7 @@
 export interface AnalysisSettingValues {
   readonly "asar.max_header_bytes": number;
   readonly "asar.max_listing_bytes": number;
+  readonly "artifact.member_count": number;
   readonly "ghidra.value_flow_max_operations": number;
   readonly "ghidra.value_flow_max_inputs_per_operation": number;
   readonly "ghidra.value_flow_max_edges": number;
