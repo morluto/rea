@@ -1,12 +1,12 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { truncate } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { finished } from "node:stream/promises";
 import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import {
@@ -23,20 +23,8 @@ import {
   UBI_PEB_SIZE_LIMIT,
 } from "../domain/firmware/ubiImage.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-ubi-image-boundary-"),
-    "nand.ubi",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
-
-const entries = async (reader: UbiImageArtifactReader) => {
-  const result = [];
-  for await (const entry of reader.entries()) result.push(entry);
-  return result;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-ubi-image-boundary-", "nand.ubi", bytes);
 
 it("refuses a PEB size that does not divide the file as a format failure", async () => {
   const image = twoVolumeUbiImage();
@@ -44,7 +32,7 @@ it("refuses a PEB size that does not divide the file as a format failure", async
     await fixture(image.subarray(0, image.length - 512)),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining("is not a multiple"),
     });
@@ -59,7 +47,7 @@ it("refuses to expose rootfs from a truncated dump with embedded PEB headers", a
     await fixture(image.subarray(0, 73_728)),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining("32768-byte eraseblock size"),
     });
@@ -75,7 +63,7 @@ it("refuses a header layout change between eraseblocks", async () => {
   ]);
   const reader = new UbiImageArtifactReader(await fixture(image));
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
     });
   } finally {
@@ -93,7 +81,7 @@ it("refuses an eraseblock size measured across a skipped eraseblock", async () =
     ),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining("eraseblock size is ambiguous"),
     });
@@ -130,7 +118,7 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
     ),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining("also fits a 32768-byte eraseblock"),
     });
@@ -178,7 +166,7 @@ it("reads an eraseblock size whose volume table padding rules out a smaller one"
     ),
   );
   try {
-    expect(await entries(reader)).toHaveLength(1);
+    expect(await collectEntries(reader)).toHaveLength(1);
   } finally {
     await reader.close();
   }
@@ -199,7 +187,7 @@ it("refuses two copies of one LEB that share a sequence number", async () => {
     await fixture(ubiImage([...ubiLayoutPebs(records), copy(1), copy(2)])),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining("so neither copy is newer"),
     });
@@ -222,7 +210,7 @@ it("reads eraseblocks whose image sequence is zero alongside a nonzero one", asy
     ),
   );
   try {
-    expect((await entries(reader)).map((entry) => entry.path)).toEqual([
+    expect((await collectEntries(reader)).map((entry) => entry.path)).toEqual([
       "volumes/rootfs",
     ]);
     expect(reader.formatMetadata()).toMatchObject({
@@ -242,7 +230,7 @@ it("stops the eraseblock search at the fixed ceiling", async () => {
   const reader = new UbiImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
       parserLimit: { name: UBI_PEB_SIZE_LIMIT, maximum: UBI_MAX_PEB_BYTES },
@@ -278,7 +266,7 @@ it("reads no VID header past the eraseblock ceiling", async () => {
   const reader = new UbiImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
       parserLimit: { name: UBI_PEB_SIZE_LIMIT, maximum: UBI_MAX_PEB_BYTES },
@@ -300,7 +288,7 @@ it("names the eraseblock count ceiling it stops at", async () => {
   await truncate(path, 2048 * (UBI_MAX_PEBS + 1));
   const reader = new UbiImageArtifactReader(path);
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
       parserLimit: {
@@ -327,7 +315,7 @@ it("preserves cancellation while streaming a volume", async () => {
   const controller = new AbortController();
   const reason = new Error("cancel volume");
   try {
-    const listed = await entries(reader);
+    const listed = await collectEntries(reader);
     const rootfs = listed.find((entry) => entry.path === "volumes/rootfs")!;
     const stream = await reader.open(rootfs, controller.signal);
     controller.abort(reason);
@@ -376,7 +364,7 @@ it.each([
   const reason = new Error("cancel paused volume");
   const deadline = new AbortController();
   try {
-    const [volume] = await entries(reader);
+    const [volume] = await collectEntries(reader);
     let acknowledgeReadAhead!: () => void;
     const readAhead = new Promise<void>((resolve) => {
       acknowledgeReadAhead = resolve;
@@ -498,7 +486,7 @@ it("refuses a header on a smaller eraseblock grid beyond the spacing check", asy
     ),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining(
         "erase-counter header at offset 22528 contradicts the 4096-byte eraseblock size",
@@ -536,7 +524,7 @@ it("reads a static volume whose payload holds EC headers no smaller LEB could ho
     await fixture(ubiImage([...ubiLayoutPebs(records, wide), ...lebs], wide)),
   );
   try {
-    const [volume] = await entries(reader);
+    const [volume] = await collectEntries(reader);
     expect(volume).toMatchObject({ declaredSize: 6 * lebBytes });
     const bytes = await buffer(await reader.open(volume!));
     expect(bytes.equals(Buffer.concat(lebs.map((leb) => leb.data)))).toBe(true);
@@ -582,7 +570,7 @@ it("reads past nested EC headers no eraseblock could begin at", async () => {
     ),
   );
   try {
-    const volumes = await entries(reader);
+    const volumes = await collectEntries(reader);
     expect(volumes).toMatchObject([
       { declaredSize: lebBytes },
       { declaredSize: lebBytes },
@@ -622,7 +610,7 @@ it("reads a first dynamic LEB holding a nested image", async () => {
     ),
   );
   try {
-    const volumes = await entries(reader);
+    const volumes = await collectEntries(reader);
     expect(volumes).toMatchObject([{ declaredSize: 2 * lebBytes }]);
     expect(
       (await buffer(await reader.open(volumes[0]!))).equals(
@@ -664,7 +652,7 @@ it("retries past a dividing 64 KiB EC header in a dynamic first LEB when the vol
   expect(bytes.length % (64 * 1024)).toBe(0);
   const reader = new UbiImageArtifactReader(await fixture(bytes));
   try {
-    const volumes = await entries(reader);
+    const volumes = await collectEntries(reader);
     expect(reader.formatMetadata()).toMatchObject({
       peb_size: 131_072,
       peb_count: 3,
@@ -689,7 +677,7 @@ it.each([undefined, 7])(
     expect(bytes.length).toBe(4 * wide.pebSize);
     const reader = new UbiImageArtifactReader(await fixture(bytes));
     try {
-      const volumes = await entries(reader);
+      const volumes = await collectEntries(reader);
       expect(reader.formatMetadata()).toMatchObject({
         peb_size: 131_072,
         peb_count: 4,
@@ -742,7 +730,7 @@ it("refuses a retry that would swallow neighboring eraseblock boundaries inside 
   );
   const reader = new UbiImageArtifactReader(await fixture(bytes));
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
+    await expect(collectEntries(reader)).rejects.toMatchObject({
       reason: "malformed",
       message: expect.stringContaining("no valid volume table"),
     });
@@ -778,7 +766,7 @@ it("reads a dynamic first LEB holding a nested mapped image with matching header
   );
   const reader = new UbiImageArtifactReader(await fixture(bytes));
   try {
-    const volumes = await entries(reader);
+    const volumes = await collectEntries(reader);
     expect(reader.formatMetadata()).toMatchObject({
       peb_size: wide.pebSize,
       peb_count: 4,
@@ -828,7 +816,7 @@ it("counts a corrupt oversized data_pad on PEB 0 instead of skipping the real PE
   );
   const reader = new UbiImageArtifactReader(await fixture(bytes));
   try {
-    const volumes = await entries(reader);
+    const volumes = await collectEntries(reader);
     expect(reader.formatMetadata()).toMatchObject({
       peb_size: wide.pebSize,
       peb_count: 4,
