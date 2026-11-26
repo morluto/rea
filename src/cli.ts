@@ -24,6 +24,7 @@ import * as apkSignatureModule from "./cli/apkSignatureCommands.js";
 import * as captureModule from "./cli/captureCommands.js";
 import * as signalModule from "./cli/signalCommands.js";
 import * as evmModule from "./cli/evmCommands.js";
+import * as solanaModule from "./cli/solanaCommands.js";
 import * as desktopApplicationModule from "./cli/desktopApplicationCommands.js";
 import * as releaseExposureModule from "./cli/releaseExposureCommands.js";
 import * as goModule from "./cli/goCommands.js";
@@ -86,6 +87,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   capture: captureModule,
   signal: signalModule,
   evm: evmModule,
+  solana: solanaModule,
   desktopApplication: desktopApplicationModule,
   releaseExposure: releaseExposureModule,
   go: goModule,

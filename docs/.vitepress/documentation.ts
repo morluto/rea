@@ -556,6 +556,16 @@ export const documentationSections = [
     ],
   },
   {
+    text: "Solana programs",
+    items: [
+      {
+        text: "Solana sBPF program analysis",
+        source: "guides/solana/solana-program-analysis.md",
+        route: "/solana-program-analysis",
+      },
+    ],
+  },
+  {
     text: "Databases and recorded packets",
     items: [
       {

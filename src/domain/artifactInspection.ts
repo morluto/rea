@@ -33,6 +33,7 @@ import {
   type Evidence,
 } from "./evidence.js";
 import { offsetText } from "./firmware/espImageStructures.js";
+import { ELF_MACHINE_BPF } from "./elfFixedHeader.js";
 import { jsonValueSchema } from "./jsonValue.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { nonEmptyTextSchema } from "./textSchemas.js";
@@ -159,6 +160,12 @@ export interface ArtifactInspectionRootImage {
   readonly format: NativeImageFormat;
   /** Whether a PE declares a CLI header; undefined is unknown. */
   readonly managed?: boolean | undefined;
+  /**
+   * The ELF e_machine target admission parsed from the shared header
+   * facts; undefined is unknown. Machine 263 (EM_BPF) routes to the
+   * dedicated Solana analyzer instead of the native ELF readers.
+   */
+  readonly machine?: number | undefined;
 }
 
 /** Project one successful inventory Evidence record into an inspection report. */
@@ -468,6 +475,8 @@ const formatProbes = (
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
+  if (format === "elf")
+    return nativeImageProbes({ format, machine: rootImage?.machine });
   return probesForFormat(format);
 };
 
@@ -728,27 +737,46 @@ const managedProbe = (
 const nativeImageProbes = ({
   format,
   managed,
+  machine,
 }: {
   readonly format: NativeImageFormat;
   readonly managed?: boolean | undefined;
-}): ArtifactInspectionResult["next_probes"] => [
-  ...(format === "pe" && managed === true
-    ? [managedProbe("The PE declares a CLI header; read its managed metadata.")]
-    : []),
-  ...staticReaders(STATIC_READERS[format]),
-  ...(format === "pe" && managed === undefined
+  readonly machine?: number | undefined;
+}): ArtifactInspectionResult["next_probes"] =>
+  // An sBPF ELF is not a native-lane image: the generic ELF readers and
+  // deep providers reject machine 263, so the only applicable probe is
+  // the dedicated Solana analyzer.
+  format === "elf" && machine === ELF_MACHINE_BPF
     ? [
-        managedProbe(
-          "Only if the PE declares a CLI header (data directory 14).",
-        ),
+        {
+          operation: "analyze_solana_program",
+          rationale:
+            "The ELF header names machine 263 (EM_BPF): a Solana sBPF program. The dedicated analyzer decodes its dispatch, syscalls and strings execution-free; the native ELF readers do not read sBPF.",
+          authority: "artifact-bytes",
+        },
       ]
-    : []),
-  {
-    operation: "open_binary",
-    rationale: deepNativeRationale(format, managed),
-    authority: "native-analysis-provider",
-  },
-];
+    : [
+        ...(format === "pe" && managed === true
+          ? [
+              managedProbe(
+                "The PE declares a CLI header; read its managed metadata.",
+              ),
+            ]
+          : []),
+        ...staticReaders(STATIC_READERS[format]),
+        ...(format === "pe" && managed === undefined
+          ? [
+              managedProbe(
+                "Only if the PE declares a CLI header (data directory 14).",
+              ),
+            ]
+          : []),
+        {
+          operation: "open_binary",
+          rationale: deepNativeRationale(format, managed),
+          authority: "native-analysis-provider",
+        },
+      ];
 
 // A CLI header makes the PE managed code first; a deep native provider adds
 // value only where managed inspection finds native code.

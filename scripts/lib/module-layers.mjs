@@ -86,6 +86,7 @@ export const UNIT_LAYERS = Object.freeze(
       "rizin",
       "rust",
       "signals",
+      "solana",
       "sqlite",
       "uefi",
       "v8",
@@ -374,6 +375,11 @@ export const ENTRY_FILES = Object.freeze(
         "windows/WindowsShortcutProvider.ts",
       ],
       nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
+      solana: [
+        "SolanaProgramProvider.ts",
+        "SolanaProviderIdentity.ts",
+        "SolanaReceiptsProvider.ts",
+      ],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
       pcap: [
         "PcapConfiguration.ts",

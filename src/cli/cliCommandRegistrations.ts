@@ -77,6 +77,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./evmCommands.js"),
     "registerEvmCommands",
   ),
+  solana: cliRegistrarWithEnvironment(
+    () => import("./solanaCommands.js"),
+    "registerSolanaCommands",
+  ),
   desktopApplication: cliRegistrar(
     () => import("./desktopApplicationCommands.js"),
     "registerDesktopApplicationCommands",
@@ -296,6 +300,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "capture",
     "signal",
     "evm",
+    "solana",
     "desktopApplication",
     "releaseExposure",
     "go",

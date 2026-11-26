@@ -24,6 +24,7 @@ import type { WindowsShortcutService } from "../application/binaryDiagnostics/Wi
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
+import type { SolanaToolServices } from "../application/solana/SolanaToolServices.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
 import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
@@ -188,6 +189,20 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<EvmInterfaceService>,
+  solanaProgram: ((services) => ({
+    analyze_solana_program: {
+      admission: "application",
+      run: (input, options) => services.program.inspect(input, options),
+    },
+    analyze_solana_programs: {
+      admission: "application",
+      run: (input, options) => services.batch.inspectBatch(input, options),
+    },
+    solana_receipts: {
+      admission: "application",
+      run: (input, options) => services.receipts.buildReceipts(input, options),
+    },
+  })) satisfies Bind<SolanaToolServices>,
   goBinary: ((service, retention) => ({
     inspect_go_binary: {
       admission: "application",

@@ -78,3 +78,14 @@ Thumbs.db
 website/_site/
 # Temporary translation output prepared before replacing the complete site.
 website/.i18n-*/
+
+# local build output (contains absolute /Users paths)
+tests/fixtures/nativeaot/obj/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id.json
+*keypair*.json
+*.log

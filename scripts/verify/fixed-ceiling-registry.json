@@ -359,6 +359,22 @@
       "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
     }
   },
+  "src/solana/SolanaProgramProvider.ts": {
+    "\"The Solana program intake allowance\"": {
+      "class": "format",
+      "reason": "Solana caps account data, and so every deployable program ELF, at 10 MiB (MAX_PERMITTED_DATA_LENGTH); the 64 MiB intake allowance admits every program a loader can hold."
+    },
+    "\"The Solana symbol name allowance\"": {
+      "class": "derived",
+      "reason": "Distinct dynamic-symbol name strings are decoded once per string-table offset; 16 MiB exceeds the 10 MiB ceiling on any deployable program ELF, so it only stops suffix-sharing string tables whose decoded total would grow quadratically."
+    }
+  },
+  "src/solana/SolanaReceiptsProvider.ts": {
+    "\"The Solana receipts JSON intake allowance\"": {
+      "class": "derived",
+      "reason": "Bounds REA's own analysis, batch index and evidence documents, whose schemas cap batch items at 64 and evidence documents at 64; no caller-chosen analysis input passes through it."
+    }
+  },
   "src/sqlite/SqliteDatabaseFailures.ts": {
     "`The SQLite worker diagnostic capture allowance of ${String(SQLITE_DATABASE_LIMITS.diagnosticBytes)} bytes (this release has no runtime override; worker_timeout_ms does not raise it)`": {
       "class": "protocol",

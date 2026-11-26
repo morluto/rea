@@ -29,7 +29,7 @@ import type { PeOptionalHeaderFacts } from "./peMachine.js";
 import { readPeCoffHeader } from "./peCoffHeader.js";
 import { readPeSectionHeader } from "./peSectionHeader.js";
 import { isStrictUtf8 } from "./strictUtf8.js";
-import { readElfFixedHeader } from "./elfFixedHeader.js";
+import { ELF_MACHINE_BPF, readElfFixedHeader } from "./elfFixedHeader.js";
 import {
   hasDosMzMagic,
   parseMzHeaderEvidence,
@@ -527,7 +527,13 @@ const parseElf = (
   const { elfClass, byteOrder, architecture, machine, type, flags } =
     fixedHeader.value;
   if (architecture === null)
-    return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
+    // First contact must route, not dead-end: an sBPF program has a
+    // dedicated analyzer even though the native lane cannot admit it.
+    return err(
+      machine === ELF_MACHINE_BPF
+        ? `unsupported ELF architecture: e_machine ${String(machine)} (Solana sBPF); the native lane does not decode sBPF — analyze this file with analyze_solana_program`
+        : `unsupported ELF architecture: e_machine ${String(machine)}`,
+    );
   if (
     architecture === "mips" ||
     architecture === "riscv" ||

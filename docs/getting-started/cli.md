@@ -275,6 +275,33 @@ table. This command does not require a native analysis provider. See
 [SQLite database snapshots](../guides/data/sqlite-databases.md) for database/WAL identity,
 source-file handling and row-value semantics.
 
+## Solana programs
+
+Analyze a Solana sBPF program from a captured ELF, or fetch it read-only by
+program id through Solana JSON-RPC (the fetched ELF is materialized under
+`--out-dir`, which program-id intake requires; an output directory must be
+absent or empty):
+
+```bash
+rea analyze-solana-program --path /absolute/path/to/program.so --json
+rea analyze-solana-program --program-id pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA --out-dir /absolute/path/to/out --json
+```
+
+The shared CLI/MCP workflow reports artifact SHA-256, ELF sections, a
+linear-sweep sBPF disassembly summary, dynamic syscall symbols, and Anchor
+handler candidates recovered from the lddw-constant dispatch idiom.
+Candidates are reconstruction leads, not verified behavior. See
+[Solana sBPF program analysis](../guides/solana/solana-program-analysis.md) for intake,
+evidence semantics and limitations.
+
+Join an analysis with recorded differential outcomes to give every
+handler candidate a verification receipt:
+
+```bash
+rea solana-receipts --analysis-path /absolute/path/to/solana-analysis.json --evidence-path /absolute/path/to/evidence.json --json
+rea solana-receipts --out-dir /absolute/path/to/batch --evidence-path /absolute/path/to/evidence.json --json
+```
+
 ## Native analysis
 
 Inspect embedded Go build metadata without installing Go or configuring a

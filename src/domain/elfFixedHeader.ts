@@ -11,6 +11,9 @@ type ElfArchitecture = Exclude<
   RawOnlyArchitecture | "arm64_32"
 >;
 
+/** ELF e_machine for Solana sBPF programs (EM_BPF); the dedicated Solana analyzer reads these. */
+export const ELF_MACHINE_BPF = 263;
+
 /** Fixed declarations after common ELF framing, before consumer admission. */
 export interface ElfHeaderFacts {
   readonly elfClass: 32 | 64;
