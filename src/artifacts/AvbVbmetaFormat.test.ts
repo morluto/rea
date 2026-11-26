@@ -51,7 +51,7 @@ it("decodes the v1.x header, block bounds, and release string", () => {
     signatureSize: 256,
     publicKeyOffset: 0,
     publicKeySize: 64,
-    rollbackIndex: 7,
+    rollbackIndex: 7n,
     flags: 0,
     flagNames: [],
     rollbackIndexLocation: 2,
@@ -78,7 +78,7 @@ it("decodes a property descriptor key and value", () => {
   expect(facts.descriptors).toHaveLength(1);
   expect(facts.descriptors[0]).toMatchObject({
     kind: "property",
-    tag: 0,
+    tag: 0n,
     tagName: "property",
     key: "com.android.build.fingerprint",
     value: "test-fingerprint",
@@ -91,7 +91,7 @@ it("decodes hashtree, hash, kernel cmdline, and chain partition descriptors", ()
   expect(property?.kind).toBe("property");
   expect(hashtree).toMatchObject({
     kind: "hashtree",
-    tag: 1,
+    tag: 1n,
     dmVerityVersion: 1,
     imageSize: 4096,
     treeOffset: 4096,
@@ -105,7 +105,7 @@ it("decodes hashtree, hash, kernel cmdline, and chain partition descriptors", ()
   });
   expect(hash).toMatchObject({
     kind: "hash",
-    tag: 2,
+    tag: 2n,
     imageSize: 2048,
     hashAlgorithm: "sha256",
     partitionName: "boot",
@@ -114,12 +114,12 @@ it("decodes hashtree, hash, kernel cmdline, and chain partition descriptors", ()
   });
   expect(cmdline).toMatchObject({
     kind: "kernel-cmdline",
-    tag: 3,
+    tag: 3n,
     cmdline: "androidboot.veritymode=enforcing",
   });
   expect(chain).toMatchObject({
     kind: "chain-partition",
-    tag: 4,
+    tag: 4n,
     rollbackIndexLocation: 0,
     partitionName: "vbmeta_system",
     publicKeySize: 64,
@@ -136,7 +136,7 @@ it("keeps unknown descriptor tags as undecoded entries", () => {
   expect(facts.descriptors).toHaveLength(1);
   expect(facts.descriptors[0]).toMatchObject({
     kind: "unknown",
-    tag: 99,
+    tag: 99n,
     tagName: "unknown",
   });
   expect(facts.limitations.join(" ")).toContain("unrecognized tag 99");
@@ -150,7 +150,48 @@ it("refuses a non-AVB0 magic", () => {
 
 it("refuses a truncated header", () => {
   const image = buildVbmetaImageWithAllDescriptors();
-  expect(failed(image.subarray(0, 100), 100).failure.kind).toBe("truncated");
+  const error = failed(image.subarray(0, 100), 100);
+  expect(error.failure.kind).toBe("truncated");
+  expect(error.failure.format).toBe("avb-vbmeta-image");
+});
+
+it("names the vbmeta format for a four-byte AVB0 file", () => {
+  const error = failed(Buffer.from("AVB0", "ascii"), 4);
+  expect(error.failure.kind).toBe("truncated");
+  expect(error.failure.format).toBe("avb-vbmeta-image");
+});
+
+it("keeps a rollback index above the safe-integer range exact", () => {
+  const facts = parsed(buildVbmetaImage({ rollbackIndex: 2n ** 53n + 1n }));
+  expect(facts.rollbackIndex).toBe(2n ** 53n + 1n);
+});
+
+it("keeps an unknown descriptor tag above the safe-integer range exact", () => {
+  const facts = parsed(
+    buildVbmetaImage({
+      descriptors: [{ tag: 2n ** 64n - 1n, body: Buffer.alloc(8) }],
+    }),
+  );
+  expect(facts.descriptors).toHaveLength(1);
+  expect(facts.descriptors[0]).toMatchObject({
+    kind: "unknown",
+    tag: 2n ** 64n - 1n,
+    tagName: "unknown",
+  });
+  expect(facts.limitations.join(" ")).toContain(
+    `unrecognized tag ${String(2n ** 64n - 1n)}`,
+  );
+});
+
+it("refuses a property descriptor whose key lacks its terminator", () => {
+  const descriptor = propertyDescriptor("k", "v");
+  const body = Buffer.from(descriptor.body);
+  // The key's separate NUL byte sits right after the counted key bytes.
+  body[16 + 1] = 0xff;
+  const image = buildVbmetaImage({
+    descriptors: [{ tag: 0, body }],
+  });
+  expect(failed(image).failure.kind).toBe("malformed");
 });
 
 it("refuses an image truncated inside its declared blocks", () => {

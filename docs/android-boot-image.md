@@ -79,7 +79,13 @@ version 1.x, algorithm type, rollback index and location, flags, release
 string) and the descriptor table inside the auxiliary block: property,
 hashtree, hash, kernel cmdline, and chain partition descriptors. Each
 descriptor becomes a child named `descriptor-<index>-<kind>.bin` holding its
-stored bytes. The hash and signature are recorded as offsets and sizes and
+stored bytes. Property key and value sizes count only the text bytes; each
+is followed by its own separate NUL byte, and the value starts after the
+key's NUL. Partition names and kernel command lines are stored without a
+terminating NUL and are read for exactly their counted length. The
+rollback index is a 64-bit counter and is reported as a decimal string so
+values above the safe-integer range stay exact; unrecognized descriptor
+tags are likewise kept exact. The hash and signature are recorded as offsets and sizes and
 are never verified; the public key bytes are not decoded. Descriptors with
 an unrecognized tag stay undecoded and are exposed as-is. The
 authentication and auxiliary blocks must be multiples of 64 bytes, each

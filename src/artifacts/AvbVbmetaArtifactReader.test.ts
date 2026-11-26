@@ -83,7 +83,7 @@ it("inventories and extracts every descriptor", async () => {
     required_libavb_version_minor: 2,
     algorithm_type: 1,
     algorithm_type_name: "sha256-rsa2048",
-    rollback_index: 7,
+    rollback_index: "7",
     rollback_index_location: 2,
     release_string: "avbtool 1.2.0",
     descriptor_count: 5,

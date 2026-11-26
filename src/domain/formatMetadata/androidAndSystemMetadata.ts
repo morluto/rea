@@ -7,7 +7,7 @@ import {
   ntfsAttributeListResolutionSchema,
 } from "../windows/ntfsMftAttributes.js";
 import { MFT_INLINE_HEADER_LIMIT } from "../windows/ntfsMft.js";
-import { offset, uint32 } from "./primitives.js";
+import { offset, uint32, uint64Decimal } from "./primitives.js";
 
 const ntfsRecordHeaderSchema = z.strictObject({
   index: offset,
@@ -276,7 +276,7 @@ export type AndroidBootImageEntryMetadata = z.infer<
 export const avbVbmetaPropertyDescriptorMetadataSchema = z.strictObject({
   kind: z.literal("property"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   offset,
   size: offset,
   key: z.string().nullable(),
@@ -288,7 +288,7 @@ export const avbVbmetaPropertyDescriptorMetadataSchema = z.strictObject({
 export const avbVbmetaHashtreeDescriptorMetadataSchema = z.strictObject({
   kind: z.literal("hashtree"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   offset,
   size: offset,
   dm_verity_version: uint32,
@@ -312,7 +312,7 @@ export const avbVbmetaHashtreeDescriptorMetadataSchema = z.strictObject({
 export const avbVbmetaHashDescriptorMetadataSchema = z.strictObject({
   kind: z.literal("hash"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   offset,
   size: offset,
   image_size: offset,
@@ -328,7 +328,7 @@ export const avbVbmetaHashDescriptorMetadataSchema = z.strictObject({
 export const avbVbmetaKernelCmdlineDescriptorMetadataSchema = z.strictObject({
   kind: z.literal("kernel-cmdline"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   offset,
   size: offset,
   flags: uint32,
@@ -339,7 +339,7 @@ export const avbVbmetaKernelCmdlineDescriptorMetadataSchema = z.strictObject({
 export const avbVbmetaChainPartitionDescriptorMetadataSchema = z.strictObject({
   kind: z.literal("chain-partition"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   offset,
   size: offset,
   rollback_index_location: uint32,
@@ -352,7 +352,7 @@ export const avbVbmetaChainPartitionDescriptorMetadataSchema = z.strictObject({
 export const avbVbmetaUnknownDescriptorMetadataSchema = z.strictObject({
   kind: z.literal("unknown"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   offset,
   size: offset,
 });
@@ -392,7 +392,7 @@ export const avbVbmetaImageMetadataSchema = z.strictObject({
   public_key_metadata_size: offset,
   descriptors_offset: offset,
   descriptors_size: offset,
-  rollback_index: offset,
+  rollback_index: uint64Decimal,
   flags: uint32,
   flag_names: z.array(z.string()),
   rollback_index_location: uint32,
@@ -411,7 +411,7 @@ export type AvbVbmetaImageMetadata = z.infer<
 export const avbVbmetaDescriptorEntryMetadataSchema = z.strictObject({
   kind: z.literal("avb-vbmeta-descriptor"),
   index: uint32,
-  tag: offset,
+  tag: uint64Decimal,
   tag_name: z.string(),
   descriptor_size: offset,
 });

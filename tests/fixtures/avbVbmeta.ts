@@ -26,9 +26,6 @@ const u64be = (value: number | bigint): Buffer => {
   return out;
 };
 
-const nulTerminated = (text: string): Buffer =>
-  Buffer.concat([Buffer.from(text, "utf8"), Buffer.from([0])]);
-
 const paddedBody = (body: Buffer): Buffer => {
   const padded = alignUp(body.length, 8);
   return padded === body.length
@@ -37,7 +34,8 @@ const paddedBody = (body: Buffer): Buffer => {
 };
 
 export interface AvbDescriptorFixture {
-  readonly tag: number;
+  /** A tag above the safe-integer range stays exact through the parser. */
+  readonly tag: number | bigint;
   /** Bytes following the 16-byte descriptor header; padded to a multiple of 8. */
   readonly body: Buffer;
 }
@@ -50,20 +48,22 @@ export const encodeDescriptor = (fixture: AvbDescriptorFixture): Buffer =>
     paddedBody(fixture.body),
   ]);
 
-/** Property descriptor (tag 0): NUL-terminated key and value. */
+/** Property descriptor (tag 0): counted key/value bytes, each followed by a separate NUL byte (libavb `avb_property_descriptor.h`). */
 export const propertyDescriptor = (
   key: string,
   value: string,
 ): AvbDescriptorFixture => {
-  const keyBytes = nulTerminated(key);
-  const valueBytes = nulTerminated(value);
+  const keyBytes = Buffer.from(key, "utf8");
+  const valueBytes = Buffer.from(value, "utf8");
   return {
     tag: 0,
     body: Buffer.concat([
       u64be(keyBytes.length),
       u64be(valueBytes.length),
       keyBytes,
+      Buffer.from([0]),
       valueBytes,
+      Buffer.from([0]),
     ]),
   };
 };
@@ -85,7 +85,7 @@ export const hashtreeDescriptor = (input: {
   readonly rootDigest?: Buffer;
   readonly flags?: number;
 }): AvbDescriptorFixture => {
-  const partitionName = nulTerminated(input.partitionName ?? "system");
+  const partitionName = Buffer.from(input.partitionName ?? "system", "utf8");
   const salt = input.salt ?? Buffer.from("salt");
   const rootDigest = input.rootDigest ?? Buffer.alloc(32, 0xab);
   const hashAlgorithm = Buffer.alloc(32);
@@ -124,7 +124,7 @@ export const hashDescriptor = (input: {
   readonly digest?: Buffer;
   readonly flags?: number;
 }): AvbDescriptorFixture => {
-  const partitionName = nulTerminated(input.partitionName ?? "boot");
+  const partitionName = Buffer.from(input.partitionName ?? "boot", "utf8");
   const salt = input.salt ?? Buffer.from("salt");
   const digest = input.digest ?? Buffer.alloc(32, 0xcd);
   const hashAlgorithm = Buffer.alloc(32);
@@ -146,12 +146,12 @@ export const hashDescriptor = (input: {
   };
 };
 
-/** Kernel cmdline descriptor (tag 3). */
+/** Kernel cmdline descriptor (tag 3): the cmdline bytes as counted, with no terminating NUL stored. */
 export const kernelCmdlineDescriptor = (
   cmdline: string,
   flags = 0,
 ): AvbDescriptorFixture => {
-  const bytes = nulTerminated(cmdline);
+  const bytes = Buffer.from(cmdline, "utf8");
   return {
     tag: 3,
     body: Buffer.concat([u32be(flags), u32be(bytes.length), bytes]),
@@ -165,7 +165,10 @@ export const chainPartitionDescriptor = (input: {
   readonly publicKey?: Buffer;
   readonly flags?: number;
 }): AvbDescriptorFixture => {
-  const partitionName = nulTerminated(input.partitionName ?? "vbmeta_system");
+  const partitionName = Buffer.from(
+    input.partitionName ?? "vbmeta_system",
+    "utf8",
+  );
   const publicKey = input.publicKey ?? Buffer.alloc(64, 0x11);
   return {
     tag: 4,

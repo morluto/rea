@@ -103,7 +103,7 @@ const entryFor = (descriptor: AvbDescriptor): VbmetaEntry => {
     formatMetadata: {
       kind: "avb-vbmeta-descriptor",
       index: descriptor.index,
-      tag: descriptor.tag,
+      tag: descriptor.tag.toString(),
       tag_name: descriptor.tagName,
       descriptor_size: descriptor.size,
     },
@@ -119,7 +119,7 @@ const toDescriptorMetadata = (
       return {
         kind: "property",
         index: descriptor.index,
-        tag: descriptor.tag,
+        tag: descriptor.tag.toString(),
         offset: descriptor.offset,
         size: descriptor.size,
         key: descriptor.key,
@@ -131,7 +131,7 @@ const toDescriptorMetadata = (
       return {
         kind: "hashtree",
         index: descriptor.index,
-        tag: descriptor.tag,
+        tag: descriptor.tag.toString(),
         offset: descriptor.offset,
         size: descriptor.size,
         dm_verity_version: descriptor.dmVerityVersion,
@@ -155,7 +155,7 @@ const toDescriptorMetadata = (
       return {
         kind: "hash",
         index: descriptor.index,
-        tag: descriptor.tag,
+        tag: descriptor.tag.toString(),
         offset: descriptor.offset,
         size: descriptor.size,
         image_size: descriptor.imageSize,
@@ -171,7 +171,7 @@ const toDescriptorMetadata = (
       return {
         kind: "kernel-cmdline",
         index: descriptor.index,
-        tag: descriptor.tag,
+        tag: descriptor.tag.toString(),
         offset: descriptor.offset,
         size: descriptor.size,
         flags: descriptor.flags,
@@ -182,7 +182,7 @@ const toDescriptorMetadata = (
       return {
         kind: "chain-partition",
         index: descriptor.index,
-        tag: descriptor.tag,
+        tag: descriptor.tag.toString(),
         offset: descriptor.offset,
         size: descriptor.size,
         rollback_index_location: descriptor.rollbackIndexLocation,
@@ -195,7 +195,7 @@ const toDescriptorMetadata = (
       return {
         kind: "unknown",
         index: descriptor.index,
-        tag: descriptor.tag,
+        tag: descriptor.tag.toString(),
         offset: descriptor.offset,
         size: descriptor.size,
       };
@@ -220,7 +220,7 @@ const toMetadata = (vbmeta: AvbVbmetaParse): AvbVbmetaImageMetadata => ({
   public_key_metadata_size: vbmeta.publicKeyMetadataSize,
   descriptors_offset: vbmeta.descriptorsOffset,
   descriptors_size: vbmeta.descriptorsSize,
-  rollback_index: vbmeta.rollbackIndex,
+  rollback_index: vbmeta.rollbackIndex.toString(),
   flags: vbmeta.flags,
   flag_names: [...vbmeta.flagNames],
   rollback_index_location: vbmeta.rollbackIndexLocation,
