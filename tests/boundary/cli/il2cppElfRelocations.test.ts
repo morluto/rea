@@ -110,7 +110,7 @@ cliTest(
     };
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "invalid_request",
+      code: "input_conflict",
       details: { partial_observation: { normalized_result: partial } },
     });
     const mcpRefused = await call("inspect_il2cpp_metadata", {
@@ -120,7 +120,7 @@ cliTest(
     });
     expect(mcpRefused.isError).toBe(true);
     const mcpError = parseMcpToolError(mcpRefused).error;
-    expect(mcpError.code).toBe("invalid_request");
+    expect(mcpError.code).toBe("input_conflict");
     const reference = z
       .object({
         partial_observation: z.object({

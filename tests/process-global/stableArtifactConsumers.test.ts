@@ -169,6 +169,7 @@ import { createIl2cppMetadataFixture } from "../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { mcpTest } from "../support/mcp/mcpFixture.js";
+import { producerLimitControl } from "../../src/domain/producerResourceLimits.js";
 
 beforeEach(() => {
   fault.path = "";
@@ -356,8 +357,7 @@ it.each(
               ok(
                 await resources.readSelectedArtifact({
                   path,
-                  maximumBytes: 1024,
-                  allowanceName: "fixture input",
+                  budget: producerLimitControl("input_bytes", 1024, 1024),
                   observedOutput: undefined,
                   signal: controller.signal,
                 }),
@@ -1289,7 +1289,11 @@ it.each([
       expect(marker.operationCause).toBe(raw);
       expect(projected.cleanupLease).toBe(failure.cleanupLease);
       expect(projected.cleanupLeases).toEqual([failure.cleanupLease]);
-      const error = translateArtifactFailure("inspect_artifact", projected);
+      const error = translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        projected,
+      );
       expect(error.cleanupResources).toEqual([path]);
       expect(error.cleanupIncomplete).toBe(true);
       expect(error.partialObservation).toBeUndefined();

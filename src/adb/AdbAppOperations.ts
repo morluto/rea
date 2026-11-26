@@ -2,7 +2,7 @@ import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
-  AnalysisUnsupportedTargetError,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   adbResultSchemas,
@@ -80,9 +80,10 @@ export const uninstallAdbPackageOperation = async (
     );
   if (verdict.status === "failure")
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         operation,
         input.serial,
+        "android-package",
         verdict.reason,
       ),
     );
@@ -136,9 +137,10 @@ export const startAdbAppOperation = async (
   const component = parseResolveActivityOutput(resolved.value.stdout);
   if (component === null)
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         operation,
         input.serial,
+        "android-package",
         `No launcher activity is declared for ${input.package}`,
       ),
     );
@@ -279,9 +281,10 @@ const runAmStart = async (
       if (verdict.status !== "refused" || verdict.startedActivity === null)
         return failure;
       const { partialObservation } = buildActivityObservation(verdict);
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         serial,
+        "android-package",
         verdict.reason ?? "am start refused the intent",
         { capturedOutput: run.capturedOutput, partialObservation },
       );
@@ -299,9 +302,10 @@ const runAmStart = async (
   const { result, partialObservation } = buildActivityObservation(verdict);
   if (verdict.status === "refused") {
     return err(
-      new AnalysisUnsupportedTargetError(
+      unsupportedTarget(
         operation,
         serial,
+        "android-package",
         verdict.reason ?? "am start refused the intent",
         { capturedOutput, partialObservation },
       ),

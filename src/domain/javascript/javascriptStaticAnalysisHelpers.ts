@@ -11,7 +11,7 @@ import type {
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 import {
-  readExactJavaScriptLiteral,
+  stringValue,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
@@ -749,20 +749,6 @@ const memberPropertyName = (
 ): string =>
   semanticStaticPropertyKey(node.property, node.computed) ??
   (node.computed ? `[computed@${String(node.property.start ?? -1)}]` : "");
-
-/**
- * Return a string literal value without evaluating an expression. A template
- * literal without substitutions denotes the same exact string.
- */
-export const stringValue = (
-  node: t.Node | null | undefined,
-): string | undefined => {
-  if (node === null || node === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(node);
-  return literal.found && typeof literal.value === "string"
-    ? literal.value
-    : undefined;
-};
 
 /** Return a string or numeric argument literal. */
 export const argumentValue = (

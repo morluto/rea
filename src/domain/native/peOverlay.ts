@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { knownCoverageStatusSchema } from "../coverage.js";
+import { knownCoverage } from "../coverageAccumulator.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { malformedInput, truncatedInput } from "../parseFailure.js";
@@ -428,7 +429,10 @@ export const computePeOverlay = (
   }
   const partial = declared > sections.length;
   const coverage: PeOverlay["section_coverage"] = {
-    status: partial ? "partial" : "complete",
+    status: knownCoverage(
+      !partial,
+      "section inventory truncated at inline row budget",
+    ),
     declared,
     reported: sections.length,
   };

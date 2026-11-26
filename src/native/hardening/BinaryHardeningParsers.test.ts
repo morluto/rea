@@ -215,7 +215,7 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   expect(findRow(overBudget.rows, "nx").state).toBe("enabled");
   expect(findRow(overBudget.rows, "stack_protector")).toMatchObject({
     state: "unknown",
-    note: expect.stringContaining("structural budget"),
+    note: expect.stringContaining("table allowance"),
   });
   expect(findRow(overBudget.rows, "fortify").state).toBe("unknown");
   const longPath = "A".repeat(70000);
@@ -2039,4 +2039,46 @@ it("locates the __restrict section that makes dyld restrict an image", async () 
       bytes.subarray(section.offset, section.offset + section.bytes).toString(),
     ).toBe("__restrict\0\0\0\0\0\0");
   }
+});
+
+it("bounds the ELF dynamic table by max_structure_bytes", () => {
+  const fixture = elfHardeningFixture({ sections: false });
+  // Pad the image so PT_DYNAMIC can declare zero entries after its DT_NULL.
+  const bytes = Buffer.concat([fixture, Buffer.alloc(1024)]);
+  const phoff = Number(bytes.readBigUInt64LE(32));
+  const phnum = bytes.readUInt16LE(56);
+  let dynamicSize = 0;
+  for (let index = 0; index < phnum; index++) {
+    const at = phoff + index * 56;
+    if (bytes.readUInt32LE(at) !== 2) continue;
+    const offset = Number(bytes.readBigUInt64LE(at + 8));
+    dynamicSize = Math.floor((bytes.length - offset) / 16) * 16;
+    bytes.writeBigUInt64LE(BigInt(dynamicSize), at + 32);
+    bytes.writeBigUInt64LE(BigInt(dynamicSize), at + 40);
+  }
+  const tableBytes = Math.max(64, phnum * 56);
+  expect(dynamicSize).toBeGreaterThan(tableBytes);
+  expect(() => readElfHardening(bytes, undefined, tableBytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        limit: {
+          name: "max_structure_bytes",
+          maximum: tableBytes,
+          required: dynamicSize,
+        },
+      }),
+    }),
+  );
+  expect(readElfHardening(bytes, undefined, dynamicSize).format).toBe("elf");
+  // A partial row stays a malformed target, not a budget refusal.
+  const partial = Buffer.from(bytes);
+  for (let index = 0; index < phnum; index++) {
+    const at = phoff + index * 56;
+    if (partial.readUInt32LE(at) !== 2) continue;
+    partial.writeBigUInt64LE(BigInt(dynamicSize - 8), at + 32);
+    partial.writeBigUInt64LE(BigInt(dynamicSize - 8), at + 40);
+  }
+  expect(() => readElfHardening(partial, undefined, tableBytes)).toThrow(
+    "not a whole number of entries",
+  );
 });

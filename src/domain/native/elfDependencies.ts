@@ -4,6 +4,12 @@ import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
 import { coverageStatusSchema } from "../coverage.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -201,45 +207,67 @@ export const derivedElfVersionMaxima = (
   }));
 };
 
+/** The per-call budgets of `inspect_elf_dependencies`. */
+export const ELF_DEPENDENCY_BUDGETS = {
+  max_file_bytes: {
+    minimum: 64,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
+    default_value: 67108864,
+    unit: "bytes",
+  },
+  max_needed: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
+    default_value: 1024,
+    unit: "count",
+  },
+  max_versions: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
+    default_value: 4096,
+    unit: "count",
+  },
+  max_imports: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+    default_value: 65536,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type ElfDependencyBudget = keyof typeof ELF_DEPENDENCY_BUDGETS;
+
+/** The per-call budget that stopped a dependency inspection. */
+export const elfDependencyBudgetLimit = (
+  parameter: ElfDependencyBudget,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    parameter,
+    ELF_DEPENDENCY_BUDGETS[parameter],
+    effectiveValue,
+  );
+
 /** Complete bounded inspection of one loadable ELF dynamic-dependency inventory. */
 export const inspectElfDependenciesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF32/ELF64 ET_EXEC or ET_DYN image",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(64)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES)
-    .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
-  max_needed: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_NEEDED)
-    .default(1024)
-    .describe(
-      "Maximum DT_NEEDED entries to examine; exceeding the budget fails without partial success",
-    ),
-  max_versions: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_VERSIONS)
-    .default(4096)
-    .describe(
-      "Maximum GNU version requirement and definition records to examine; exceeding the budget fails without partial success",
-    ),
-  max_imports: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_DEPENDENCY_IMPORTS)
-    .default(65536)
-    .describe(
-      "Maximum undefined dynamic symbols to examine as imports; exceeding the budget fails without partial success",
-    ),
+  max_file_bytes: parameterBudgetSchema(
+    ELF_DEPENDENCY_BUDGETS.max_file_bytes,
+  ).describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_needed: parameterBudgetSchema(ELF_DEPENDENCY_BUDGETS.max_needed).describe(
+    "Maximum DT_NEEDED entries to examine; exceeding the budget fails without partial success",
+  ),
+  max_versions: parameterBudgetSchema(
+    ELF_DEPENDENCY_BUDGETS.max_versions,
+  ).describe(
+    "Maximum GNU version requirement and definition records to examine; exceeding the budget fails without partial success",
+  ),
+  max_imports: parameterBudgetSchema(
+    ELF_DEPENDENCY_BUDGETS.max_imports,
+  ).describe(
+    "Maximum undefined dynamic symbols to examine as imports; exceeding the budget fails without partial success",
+  ),
 });
 export type InspectElfDependenciesInput = z.infer<
   typeof inspectElfDependenciesInputSchema

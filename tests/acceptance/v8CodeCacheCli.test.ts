@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -21,8 +22,6 @@ cliTest(
     const wide = v8CodeCacheFixture(
       `var settings = { key: "${marker}" }; settings.key;`,
     );
-    const digest = (bytes: Buffer) =>
-      createHash("sha256").update(bytes).digest("hex");
     const payloadDigest = digest(wide.subarray(32));
     for (const [bytes, headerBytes] of [
       [wide, 32],

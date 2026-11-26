@@ -8,6 +8,7 @@ import {
 } from "../../resources/index.js";
 import type { PeOverlayPort } from "../../ports/binaryDiagnostics/PeOverlayPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import { binaryResourceCeiling } from "../../domain/binaryContainer.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
@@ -71,11 +72,11 @@ export class PeOverlayProvider implements PeOverlayPort {
               bytes: MAX_INSPECT_PE_OVERLAY_FILE_BYTES,
             },
             limits: PE_OVERLAY_LIMITS,
-            limitRecovery: (_limit, ceiling) =>
+            limitRecovery: (_limit, failure) =>
               fixedAllowanceOptions(
                 "The PE structural decoding allowance",
                 "parser",
-                ceiling,
+                binaryResourceCeiling(failure),
               ),
           },
           snapshot,

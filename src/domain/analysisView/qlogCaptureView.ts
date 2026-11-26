@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { z } from "zod";
 import {
   qlogCaptureFactsSchema,
@@ -21,11 +22,7 @@ export const qlogSummarySchema = qlogViewContextSchema.extend({
 });
 
 /** Select retained trace facts without copying event inventories or every contribution. */
-const pageRequestShape = {
-  kind: z.literal("qlog"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageRequestShape = analysisViewPageFields("qlog");
 const traceSelectorShape = { trace_index: z.int().nonnegative() };
 const streamSelectorShape = {
   ...traceSelectorShape,

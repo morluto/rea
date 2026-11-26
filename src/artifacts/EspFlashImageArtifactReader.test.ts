@@ -1,6 +1,7 @@
 import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -432,10 +433,7 @@ describe("ESP flash layout reader identity", () => {
       );
       if (entry === undefined) throw new Error("Missing entry");
       expect(entry).toMatchObject({ byteOffset: cut.length, declaredSize: 0 });
-      const chunks: Buffer[] = [];
-      for await (const chunk of await reader.open(entry))
-        chunks.push(chunk as Buffer);
-      expect(Buffer.concat(chunks)).toHaveLength(0);
+      expect(await buffer(await reader.open(entry))).toHaveLength(0);
     } finally {
       await reader.close();
     }

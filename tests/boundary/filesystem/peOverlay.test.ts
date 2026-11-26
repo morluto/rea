@@ -22,9 +22,10 @@ describe("PE overlay stable filesystem boundary", () => {
     if (malformedResult.ok)
       throw new Error("Expected malformed target refusal");
     expect(malformedResult.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_pe_overlay",
       path: malformed,
+      failure: expect.objectContaining({ kind: "malformed" }),
     });
     for (const [candidate, reason] of [
       [root, "invalid_format"],

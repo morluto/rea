@@ -13,6 +13,7 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   declaredFileRange,
+  DEFAULT_NATIVE_STRUCTURE_BYTES,
   requireBinaryTableBudget,
   BinaryFormatFailure,
   BinaryReader,
@@ -30,12 +31,14 @@ import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (
   bytes: Buffer,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Extract<BinaryContainer, { format: "macho" }> =>
-  readMachoImageCore(bytes, bytes.length);
+  readMachoImageCore(bytes, bytes.length, structureBytes);
 
 /** Same thin Mach-O header and section read over a random-access source without buffering the full image. */
 export const readMachoImageFromReader = async (
   source: ByteSource,
+  structureBytes: number = DEFAULT_NATIVE_STRUCTURE_BYTES,
 ): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
   const headerPrefix = await readByteSourceSlice(
     source,
@@ -58,18 +61,23 @@ export const readMachoImageFromReader = async (
         offset: table.headerSize,
       },
     );
-  requireBinaryTableBudget(BigInt(table.commandBytes), "Mach-O load commands");
+  requireBinaryTableBudget(
+    BigInt(table.commandBytes),
+    "Mach-O load commands",
+    structureBytes,
+  );
   const tableBytes = await readByteSourceSlice(
     source,
     0,
     table.headerSize + table.commandBytes,
   );
-  return readMachoImageCore(tableBytes, source.size);
+  return readMachoImageCore(tableBytes, source.size, structureBytes);
 };
 
 const readMachoImageCore = (
   bytes: Buffer,
   fileBytes: number,
+  structureBytes: number,
 ): Extract<BinaryContainer, { format: "macho" }> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileBytes);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
@@ -95,6 +103,7 @@ const readMachoImageCore = (
     commandBytes,
     1,
     "Mach-O load commands",
+    structureBytes,
   );
   const mappings: FileMapping[] = [];
   const loadRegions: LoadRegion[] = [];

@@ -87,7 +87,11 @@ describe("artifact inventory snapshot", () => {
     if (snapshotRoot === undefined)
       throw new Error("ASAR snapshot was not observed");
     expect((await lstat(snapshotRoot)).isDirectory()).toBe(true);
-    const error = translateArtifactFailure("inventory_artifact", failure);
+    const error = translateArtifactFailure(
+      "inventory_artifact",
+      "/selected/artifact",
+      failure,
+    );
     const observation = {
       kind: "artifact-inventory",
       inventory: {

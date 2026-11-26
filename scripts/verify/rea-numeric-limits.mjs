@@ -1230,6 +1230,12 @@ const restartOnlyBounds = (owners) => {
       exportedNumber(owners.mcpResponse, "MAXIMUM_RESPONSE_BYTES"),
     ),
     phaseBound(phases.toolsList),
+    bound(
+      "REA_MCP_TOOLS_LIST_PAGE_BYTES",
+      exportedNumber(owners.limits, "DEFAULT_MCP_TOOLS_LIST_PAGE_BYTES"),
+      exportedNumber(owners.limits, "MINIMUM_MCP_TOOLS_LIST_PAGE_BYTES"),
+      exportedNumber(owners.limits, "MAXIMUM_MCP_TOOLS_LIST_PAGE_BYTES"),
+    ),
     bound("REA_RECONNECT_TIMEOUT_SECONDS", seconds, seconds, seconds),
     bound(
       "REA_SWIFTC_COMPILE_TIMEOUT_MS",

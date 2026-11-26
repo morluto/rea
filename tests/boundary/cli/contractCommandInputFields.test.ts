@@ -39,10 +39,7 @@ it("keeps a branch-only default out of the branch the caller selects", async () 
   );
   const registered = cliCommand(cli, "branch-probe")?.definition;
   if (registered === undefined) throw new Error("branch-probe is missing");
-  const parse = (value: unknown) =>
-    (
-      Reflect.get(registered, "options") as { parse(v: unknown): unknown }
-    ).parse(value);
+  const parse = (value: unknown) => registered.options!.parse(value);
   const execute = Reflect.get(registered, "run") as (
     value: unknown,
   ) => Promise<unknown>;
@@ -94,10 +91,7 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
   const command = (name: string) => {
     const registered = cliCommand(cli, name)?.definition;
     if (registered === undefined) throw new Error(`${name} is missing`);
-    const options = (value: unknown) =>
-      (
-        Reflect.get(registered, "options") as { parse(v: unknown): unknown }
-      ).parse(value);
+    const options = (value: unknown) => registered.options!.parse(value);
     const run = Reflect.get(registered, "run") as (
       value: unknown,
     ) => Promise<unknown>;
@@ -173,10 +167,7 @@ it("hands a JSON-document handler the contract's parse of its document, once, on
   const command = (name: string) => {
     const registered = cliCommand(cli, name)?.definition;
     if (registered === undefined) throw new Error(`${name} is missing`);
-    const args = (value: unknown) =>
-      (Reflect.get(registered, "args") as { parse(v: unknown): unknown }).parse(
-        value,
-      );
+    const args = (value: unknown) => registered.args!.parse(value);
     const run = Reflect.get(registered, "run") as (
       value: unknown,
     ) => Promise<unknown>;

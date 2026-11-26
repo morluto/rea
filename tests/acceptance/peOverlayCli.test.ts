@@ -170,11 +170,11 @@ cliTest.for([1, 9])(
         format: "pe-certificate-table",
         ...(size < 8
           ? {
-              format_failure: "truncated",
+              failure_kind: "truncated",
               reason: "WIN_CERTIFICATE header is truncated.",
             }
           : {
-              format_failure: "malformed",
+              failure_kind: "malformed",
               reason: "WIN_CERTIFICATE dwLength exceeds the certificate table.",
             }),
       },

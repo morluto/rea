@@ -1,13 +1,11 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
 import { expect, it } from "vitest";
 import { ElfDependenciesService } from "./ElfDependenciesService.js";
 import { ELF_DEPENDENCIES_PROVIDER } from "../../domain/investigationProviders.js";
 import type { ElfDependencies } from "../../domain/native/elfDependencies.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const identity = ELF_DEPENDENCIES_PROVIDER;
 const digest = "a".repeat(64);
@@ -47,26 +45,12 @@ const report: ElfDependencies = {
   ],
 };
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new ElfDependenciesService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "program" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "program",
+    (inspect) => new ElfDependenciesService({ identity, inspect }),
+  ));
 
 it("records an empty PT_DYNAMIC inventory and its x86_64 architecture", async () => {
   const result = await new ElfDependenciesService({
