@@ -40,6 +40,7 @@ export const AGENT_BUDGET_OPERATIONS = [
   "list_names",
   "list_procedures",
   "list_strings",
+  "observe_web_execution",
   "procedure_address",
   "procedure_callees",
   "procedure_callers",
