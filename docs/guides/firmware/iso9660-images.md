@@ -33,6 +33,13 @@ are decoded; other values return `unsupported_target`. A volume set size of
 descriptor set terminator is malformed. The descriptor's root record must be
 a single-extent directory with identifier 0x00 on this volume.
 
+The root record is read from the 34-byte field the descriptor reserves for
+it, because the volume set identifier always follows that field. A length
+byte above 34, or in a Joliet descriptor a root identifier length of 2 (a
+UCS-2 NUL), does not extend the record: mastering programs have written
+both, and Linux, 7-Zip, and pycdlib read such images. A length byte below
+34 is malformed.
+
 Every directory record names its volume. A volume sequence number of 0 or
 above the declared volume set size names no volume and is malformed. Another
 volume within the set returns `unsupported_target`, because REA reads one
