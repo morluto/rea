@@ -247,11 +247,6 @@
     }
   },
   "src/native/dwarf/DwarfUnitsProvider.ts": {
-    "\"The PE section-name decoding allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 65,536-byte per-name COFF string-table decode is a resource policy; the aggregate is max_structure_bytes."
-    },
     "\"The retained DWARF section bound\"": {
       "class": "derived",
       "reason": "Retained file-backed sections cannot exceed the admitted image size; the bound is the selected file and grows with it."
