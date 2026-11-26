@@ -23,7 +23,7 @@ import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const fixture = environmentServeFixture();
-const { source: servedSource, served } = environmentServeServed(fixture);
+const { source: servedSource, served } = await environmentServeServed(fixture);
 
 interface PlanOptions {
   readonly name?: string;
@@ -55,8 +55,8 @@ const exportPreparation =
     });
 
 /** Plan under a name expected to be refused before the state is prepared, and project the refusal. */
-const nameRefusal = (name: string) => {
-  const refused = planBundle({
+const nameRefusal = async (name: string) => {
+  const refused = await planBundle({
     name,
     served: () => {
       throw new Error("The state was prepared before the name checks");
@@ -66,21 +66,24 @@ const nameRefusal = (name: string) => {
   return projectAnalysisError(refused.error);
 };
 
-const plan = (options: PlanOptions = {}) => {
-  const result = planBundle(options);
+const plan = async (options: PlanOptions = {}) => {
+  const result = await planBundle(options);
   if (!result.ok) throw result.error;
   return result.value;
 };
 
-const file = (planned: ReturnType<typeof plan>, path: string): string => {
+const file = (
+  planned: Awaited<ReturnType<typeof plan>>,
+  path: string,
+): string => {
   const found = planned.files.find((entry) => entry.path === path);
   if (found === undefined) throw new Error(`Planned file missing: ${path}`);
   return found.content;
 };
 
 describe("planEnvironmentBundle", () => {
-  it("plans the echo-shaped file set under the manifest name with byte-exact copies beside the Dockerfile", () => {
-    const planned = plan();
+  it("plans the echo-shaped file set under the manifest name with byte-exact copies beside the Dockerfile", async () => {
+    const planned = await plan();
     expect(planned.name).toBe("grafana-example");
     // Served from the derived state: the 19 manifest tools less the 5 write tools.
     expect(planned.toolCount).toBe(14);
@@ -105,8 +108,8 @@ describe("planEnvironmentBundle", () => {
     );
   });
 
-  it("copies and installs the tarball instead of the registry package when one is given", () => {
-    const planned = plan({ tarball: "/packed/rea-agents-1.2.3.tgz" });
+  it("copies and installs the tarball instead of the registry package when one is given", async () => {
+    const planned = await plan({ tarball: "/packed/rea-agents-1.2.3.tgz" });
     expect(planned.copies.tarball).toBe("envs/grafana-example/rea-agents.tgz");
     const dockerfile = file(planned, "envs/grafana-example/Dockerfile");
     expect(dockerfile).toContain("COPY rea-agents.tgz /tmp/\n");
@@ -116,8 +119,8 @@ describe("planEnvironmentBundle", () => {
     expect(dockerfile).not.toContain(`rea-agents@${PACKAGE_METADATA.version}`);
   });
 
-  it("writes a verifier that checks the served tool count and the status the server answers the first parameterless GET tool with", () => {
-    const planned = plan();
+  it("writes a verifier that checks the served tool count and the status the server answers the first parameterless GET tool with", async () => {
+    const planned = await plan();
     // Served tools are name-ordered, so the first parameterless GET is the annotations list; the state answers it from its recording.
     expect(planned.check).toEqual({
       tool: "get_annotations",
@@ -144,8 +147,8 @@ describe("planEnvironmentBundle", () => {
     );
   });
 
-  it("writes the smoke task deploying the env locally before the verifier", () => {
-    expect(JSON.parse(file(plan(), "tasks/smoke.json"))).toEqual([
+  it("writes the smoke task deploying the env locally before the verifier", async () => {
+    expect(JSON.parse(file(await plan(), "tasks/smoke.json"))).toEqual([
       {
         id: "env",
         type: "deploy_env",
@@ -162,9 +165,9 @@ describe("planEnvironmentBundle", () => {
     ]);
   });
 
-  it("records provenance, what the environment serves, the run command and the rights note in the README", () => {
+  it("records provenance, what the environment serves, the run command and the rights note in the README", async () => {
     const source = servedSource;
-    const readme = file(plan(), "README.md");
+    const readme = file(await plan(), "README.md");
     expect(readme).toContain(
       `- Capture Evidence (the manifest's parent): \`${source.evidenceId}\``,
     );
@@ -202,8 +205,8 @@ describe("planEnvironmentBundle", () => {
 });
 
 describe("planEnvironmentBundle portable names", () => {
-  it("refuses a hexadecimal IP spelling before preparing state", () => {
-    expect(nameRefusal("0xffffffff")).toMatchObject({
+  it("refuses a hexadecimal IP spelling before preparing state", async () => {
+    expect(await nameRefusal("0xffffffff")).toMatchObject({
       code: "invalid_request",
       details: {
         operation: "environment-export",
@@ -212,9 +215,9 @@ describe("planEnvironmentBundle portable names", () => {
     });
   });
 
-  it("keeps addressable numeric prefixes and admits the DNS label boundary", () => {
+  it("keeps addressable numeric prefixes and admits the DNS label boundary", async () => {
     for (const name of ["123-replay", "0xffffffff-replay", "a".repeat(63)]) {
-      const planned = plan({ name });
+      const planned = await plan({ name });
       expect(planned.name).toBe(name);
       expect(file(planned, `envs/${name}/Dockerfile`)).toContain(
         `ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,${name}`,
@@ -222,8 +225,8 @@ describe("planEnvironmentBundle portable names", () => {
     }
   });
 
-  it("accepts a kebab-case name override and refuses any other name as invalid input", () => {
-    const renamed = plan({ name: "replay-2" });
+  it("accepts a kebab-case name override and refuses any other name as invalid input", async () => {
+    const renamed = await plan({ name: "replay-2" });
     expect(renamed.files.map((entry) => entry.path)).toContain(
       "envs/replay-2/Dockerfile",
     );
@@ -235,7 +238,7 @@ describe("planEnvironmentBundle portable names", () => {
       file_artifact_id: "check_replay-2",
     });
     for (const name of ["Grafana", "a_b", "-a", "a--b", "", "a".repeat(65)])
-      expect(nameRefusal(name)).toMatchObject({
+      expect(await nameRefusal(name)).toMatchObject({
         code: "invalid_request",
         details: {
           operation: "environment-export",
@@ -244,7 +247,7 @@ describe("planEnvironmentBundle portable names", () => {
       });
   });
 
-  it("refuses device names Windows reserves for files and folders, before planning any file", () => {
+  it("refuses device names Windows reserves for files and folders, before planning any file", async () => {
     for (const name of [
       "con",
       "prn",
@@ -255,7 +258,7 @@ describe("planEnvironmentBundle portable names", () => {
       "lpt1",
       "lpt9",
     ])
-      expect(nameRefusal(name)).toMatchObject({
+      expect(await nameRefusal(name)).toMatchObject({
         code: "invalid_request",
         details: {
           operation: "environment-export",
@@ -263,17 +266,17 @@ describe("planEnvironmentBundle portable names", () => {
         },
       });
     for (const name of ["console", "com10", "nul-check"])
-      expect(planBundle({ name }).ok).toBe(true);
+      expect((await planBundle({ name })).ok).toBe(true);
   });
 });
 
 describe("planEnvironmentBundle served check", () => {
-  it("keeps the first record's unknown status instead of borrowing another record's", () => {
+  it("keeps the first record's unknown status instead of borrowing another record's", async () => {
     const first = servedSource.exchanges.get(25);
     if (first === undefined) throw new Error("Fixture lacks record 25");
     const exchanges = new Map(servedSource.exchanges);
     exchanges.set(25, { ...first, status: null });
-    const unknown = plan({ exchanges });
+    const unknown = await plan({ exchanges });
     expect(unknown.check).toMatchObject({
       tool: "get_annotations",
       recordOrdinal: 25,
@@ -284,16 +287,16 @@ describe("planEnvironmentBundle served check", () => {
     ).toContain("EXPECTED_STATUS = None");
   });
 
-  it("checks the next parameterless GET tool when the server cannot answer one without arguments", () => {
+  it("checks the next parameterless GET tool when the server cannot answer one without arguments", async () => {
     const exchanges = new Map(servedSource.exchanges);
     exchanges.delete(25);
-    expect(plan({ exchanges }).check).toMatchObject({
+    expect((await plan({ exchanges })).check).toMatchObject({
       tool: "get_folders",
       status: 200,
     });
   });
 
-  it("expects the status of the state's answer where it differs from replay's", () => {
+  it("expects the status of the state's answer where it differs from replay's", async () => {
     // Without arguments replay keeps the first line; the state answers the line {} names exactly.
     const items = environmentStateServeFixture(
       timedCaptureEvidence([
@@ -301,7 +304,7 @@ describe("planEnvironmentBundle served check", () => {
         ["GET", "/api/items", [{ id: 1 }, { id: 2 }]],
       ]),
     );
-    const { source, served: prepared } = environmentServeServed(items);
+    const { source, served: prepared } = await environmentServeServed(items);
     if (prepared.state === undefined) throw new Error("Expected a state");
     const tool = source.manifest.tools.find(({ name }) => name === "get_items");
     if (tool === undefined) throw new Error("Fixture manifest lacks get_items");
@@ -321,7 +324,7 @@ describe("planEnvironmentBundle served check", () => {
       status: 206,
       replay: { record_ordinal: 0 },
     });
-    const planned = planEnvironmentBundle(source, {
+    const planned = await planEnvironmentBundle(source, {
       served: exportPreparation(source, items.capture),
     });
     if (!planned.ok) throw planned.error;
@@ -335,17 +338,16 @@ describe("planEnvironmentBundle served check", () => {
 });
 
 describe("planEnvironmentBundle without a state", () => {
-  const fallback = environmentServeServed(
-    scenarioServeFixture(scenarioHeaderOnlyCaptureEvidence()),
-  );
-
-  it("predicts replay, with every manifest tool and a replayed status, when the export cannot derive the state", () => {
+  it("predicts replay, with every manifest tool and a replayed status, when the export cannot derive the state", async () => {
+    const fallback = await environmentServeServed(
+      scenarioServeFixture(scenarioHeaderOnlyCaptureEvidence()),
+    );
     expect(fallback.served.report).toMatchObject({
       served: false,
       reason: "unavailable",
       code: "unsupported_target",
     });
-    const planned = planEnvironmentBundle(fallback.source, {
+    const planned = await planEnvironmentBundle(fallback.source, {
       served: () => fallback.served,
     });
     if (!planned.ok) throw planned.error;
@@ -372,7 +374,7 @@ describe("planEnvironmentBundle without a state", () => {
     expect(readme).toContain("Neither is emulation");
   });
 
-  it("serves and predicts replay when the state's catalog exceeds the discovery budget that replay's fits", () => {
+  it("serves and predicts replay when the state's catalog exceeds the discovery budget that replay's fits", async () => {
     // Locate the state admission boundary instead of pinning a count to description sizes.
     const reads = servedSource.manifest.tools.filter(
       ({ method }) => method === "GET",
@@ -418,14 +420,14 @@ describe("planEnvironmentBundle without a state", () => {
       servedCatalog(source, undefined, source.manifest.name).ok,
       "The fixture must fit replay discovery while exceeding state discovery",
     ).toBe(true);
-    const prepared = prepareServedState(source, fixture.capture);
+    const prepared = await prepareServedState(source, fixture.capture);
     expect(prepared.state).toBeUndefined();
     expect(prepared.report).toMatchObject({
       served: false,
       reason: "unavailable",
       code: "resource_constraint",
     });
-    const planned = planEnvironmentBundle(source, {
+    const planned = await planEnvironmentBundle(source, {
       served: exportPreparation(source, fixture.capture),
     });
     if (!planned.ok) throw planned.error;
@@ -445,7 +447,7 @@ describe("planEnvironmentBundle without a state", () => {
   });
 });
 
-it("refuses a bundle that the server cannot admit in either mode, using export operation context", () => {
+it("refuses a bundle that the server cannot admit in either mode, using export operation context", async () => {
   const tool = servedSource.manifest.tools[0]!;
   const manifest = {
     ...servedSource.manifest,
@@ -460,7 +462,7 @@ it("refuses a bundle that the server cannot admit in either mode, using export o
     ],
   };
   const source = { ...servedSource, manifest };
-  const result = planEnvironmentBundle(source, {
+  const result = await planEnvironmentBundle(source, {
     served: exportPreparation(source, fixture.capture),
   });
   expect(result).toMatchObject({

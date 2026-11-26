@@ -5,8 +5,10 @@ import {
 } from "../EvidenceInputResolver.js";
 import type { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
+import {
+  AnalysisInputError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import type { EvidenceFileReadOptions } from "../analysisView/evidenceFileSource.js";
 import {
   artifactComparisonInputSchema,
@@ -126,15 +128,17 @@ export const resolveArtifactComparisonSources = async (
     const resolved = await resolveEvidenceSource(source, side, evidenceById, {
       ...options,
       operation: OPERATION,
-      resolveEvidence: (candidate, related) => {
+      resolveEvidence: async (candidate, related) => {
         const authenticated = readEvidence(candidate);
         if (!authenticated.ok) return authenticated;
-        const owner = resolveArtifactComparisonEvidence(
+        const owner = await resolveArtifactComparisonEvidence(
           authenticated.value,
           related,
           [side],
         );
         if (!owner.ok) return owner;
+        if (options.signal?.aborted)
+          return err(cancelledBy(OPERATION, options.signal));
         linkedSources = collectLinkedSources(owner.value, related);
         return owner;
       },
@@ -260,11 +264,11 @@ export const compareArtifactEvidence = ({
  * Resolve an already-authenticated artifact summary's exact retained owner.
  * The caller must authenticate the supplied Evidence before invoking this helper.
  */
-export const resolveArtifactComparisonEvidence = (
+export const resolveArtifactComparisonEvidence = async (
   evidence: Evidence,
   evidenceById: EvidenceLookup | undefined,
   path: readonly (string | number)[] = [],
-): Result<Evidence, AnalysisError> => {
+): Promise<Result<Evidence, AnalysisError>> => {
   if (evidence.operation !== "inspect_analysis_view") return ok(evidence);
 
   const summary = artifactInventorySummaryViewResultSchema.safeParse(
@@ -301,6 +305,8 @@ export const resolveArtifactComparisonEvidence = (
   const owner = authenticated.value;
   const presentation = summaryPresentation(evidence, owner, summary.data);
   if (presentation === undefined) return mismatch();
+  const { inspectAnalysisViewValidated } =
+    await import("../analysisView/AnalysisViewService.js");
   const reprojected = inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: parentId },

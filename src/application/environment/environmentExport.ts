@@ -449,7 +449,7 @@ export const exportEnvironmentBundle = async (
   input: EnvironmentExportInput,
 ): Promise<Result<EnvironmentExportResult, AnalysisError>> => {
   // The bundle's server prepares the state at startup; preparing it here, once the name is checked, predicts what it serves.
-  const plan = planEnvironmentBundle(input.source, {
+  const plan = await planEnvironmentBundle(input.source, {
     name: input.name,
     packageTarball: input.packageTarball,
     served: (name) =>

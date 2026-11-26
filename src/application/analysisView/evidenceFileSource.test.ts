@@ -75,6 +75,33 @@ describe("evidence-file source reads", () => {
       ok: false,
       error: { _tag: "EvidenceFileError", reason: "wrong-kind" },
     });
+
+    // Cancellation arriving during an async resolveSelected callback is observed.
+    await writeFile(single, JSON.stringify(source));
+    const abortController = new AbortController();
+    const abortReason = new Error("aborted during async resolveSelected");
+    const cancelledAsync = await readEvidenceFileSource(
+      single,
+      { signal: abortController.signal },
+      undefined,
+      {
+        operation: "compare_artifacts",
+        path: ["left"],
+        resolveSelected: async (record) => {
+          abortController.abort(abortReason);
+          await Promise.resolve();
+          return ok(record);
+        },
+      },
+    );
+    expect(cancelledAsync).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "compare_artifacts",
+        cause: abortReason,
+      },
+    });
   });
 
   it("refuses a cancelled request before reading and reads within the caller's resource scope", async () => {

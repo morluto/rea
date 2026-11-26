@@ -61,11 +61,17 @@ export const environmentServeSource = (
 };
 
 /** The fixture source and the state its server prepares at startup, as serving and export prepare it. */
-export const environmentServeServed = (
+export const environmentServeServed = async (
   fixture: EnvironmentServeFixture = environmentServeFixture(),
-): { readonly source: EnvironmentSource; readonly served: PreparedState } => {
+): Promise<{
+  readonly source: EnvironmentSource;
+  readonly served: PreparedState;
+}> => {
   const source = environmentServeSource(fixture);
-  return { source, served: prepareServedState(source, fixture.capture) };
+  return {
+    source,
+    served: await prepareServedState(source, fixture.capture),
+  };
 };
 
 /** Paths of the two Evidence files the serve command reads. */

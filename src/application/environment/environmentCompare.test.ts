@@ -50,8 +50,8 @@ const LIVE_RENAMED = renamedBook(LIVE_FIRST, "Renamed Book", 5);
 const ANN = { id: 1, name: "Ann" };
 const BOB = { id: 2, name: "Bob" };
 
-const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
-  const report = compareEnvironment({
+const compare = async (...probes: (readonly TimedCaptureRow[])[]) => {
+  const report = await compareEnvironment({
     source,
     captureValue: fixture.capture,
     probes: probes.map((rows, index) => ({
@@ -65,12 +65,12 @@ const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
 };
 
 describe("step difference coverage", () => {
-  it("counts a reorder of a complete duplicate ID list in strict agreement", () => {
+  it("counts a reorder of a complete duplicate ID list in strict agreement", async () => {
     const capture = timedCaptureEvidence([
       ["GET", "/api/selection", { ids: [2, 1, 1] }],
     ]);
     const served = environmentStateServeFixture(capture);
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(served),
       captureValue: capture,
       probes: [
@@ -95,13 +95,13 @@ describe("step difference coverage", () => {
     });
   });
 
-  it("keeps categories from differences beyond the returned prefix", () => {
+  it("keeps categories from differences beyond the returned prefix", async () => {
     const fields = Object.fromEntries(
       Array.from({ length: 20 }, (_, index) => [`field${String(index)}`, 0]),
     );
     const capture = timedCaptureEvidence([["GET", "/api/config", fields]]);
     const served = environmentStateServeFixture(capture);
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(served),
       captureValue: capture,
       probes: [
@@ -145,13 +145,13 @@ describe("step difference coverage", () => {
 });
 
 describe("matchProbeRequest", () => {
-  it("compares a repeated-query probe against the matching recorded response", () => {
+  it("compares a repeated-query probe against the matching recorded response", async () => {
     const recorded = timedCaptureEvidence([
       ["GET", "/api/items?tag=a&tag=b", { selected: "b" }],
       ["GET", "/api/items?tag=a&tag=c", { selected: "c" }],
     ]);
     const served = environmentStateServeFixture(recorded);
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(served),
       captureValue: recorded,
       probes: [
@@ -369,8 +369,8 @@ describe("collections under different parents", () => {
 });
 
 describe("compareEnvironment", () => {
-  it("agrees with a re-seeded application once seeded and created ids are mapped", () => {
-    const report = compare([
+  it("agrees with a re-seeded application once seeded and created ids are mapped", async () => {
+    const report = await compare([
       ["GET", "/api/books", [LIVE_FIRST, LIVE_SECOND]],
       ["GET", "/api/books/101", LIVE_FIRST],
       ["POST", "/api/books", LIVE_FOURTH, 201, { name: "Fourth Book" }],
@@ -393,8 +393,8 @@ describe("compareEnvironment", () => {
     expect(report.summary.normalised.ids).toBeGreaterThan(0);
   });
 
-  it("resets the state per probe and categorises every kind of disagreement", () => {
-    const report = compare(
+  it("resets the state per probe and categorises every kind of disagreement", async () => {
+    const report = await compare(
       [
         ["GET", "/api/books", [LIVE_FIRST, LIVE_SECOND]],
         ["DELETE", "/api/books/101", { detail: "Book is referenced." }, 409],
@@ -445,8 +445,8 @@ describe("what the comparison translates and learns", () => {
     ]),
   );
   const extraSource = environmentServeSource(extra);
-  const compareExtra = (rows: readonly TimedCaptureRow[]) => {
-    const report = compareEnvironment({
+  const compareExtra = async (rows: readonly TimedCaptureRow[]) => {
+    const report = await compareEnvironment({
       source: extraSource,
       captureValue: extra.capture,
       probes: [{ label: "probe", value: timedCaptureEvidence(rows) }],
@@ -456,9 +456,9 @@ describe("what the comparison translates and learns", () => {
     return report.value.probes[0]!;
   };
 
-  it("translates a path id by the collection it names when two collections reuse a live id", () => {
+  it("translates a path id by the collection it names when two collections reuse a live id", async () => {
     // Live book 101 is the environment's book 1, while live author 101 is its author 2.
-    const probe = compareExtra([
+    const probe = await compareExtra([
       ["GET", "/api/books", [LIVE_FIRST, LIVE_SECOND]],
       [
         "GET",
@@ -473,38 +473,44 @@ describe("what the comparison translates and learns", () => {
     expect(probe.results.map((step) => step.equal)).toEqual([true, true, true]);
   });
 
-  it("refuses arguments the served tool's input schema refuses, as the server would", () => {
+  it("refuses arguments the served tool's input schema refuses, as the server would", async () => {
     // A search replays its recording whatever it is sent, but the server refuses a body that is not an object.
-    const [step] = compareExtra([
-      ["POST", "/api/books/search", [FIRST_BOOK], 200, ["First"]],
-    ]).results;
+    const [step] = (
+      await compareExtra([
+        ["POST", "/api/books/search", [FIRST_BOOK], 200, ["First"]],
+      ])
+    ).results;
     expect(step?.categories).toEqual(["refused"]);
     expect(step?.differences[0]?.env).toContain("Invalid arguments");
   });
 
-  it("agrees on an empty response however each side spells it, and keeps a JSON empty string", () => {
-    expect(compareExtra([["GET", "/api/ping", ""]]).results[0]?.equal).toBe(
-      true,
-    );
-    expect(compareExtra([["GET", "/api/motd", '""']]).results[0]?.equal).toBe(
-      true,
-    );
+  it("agrees on an empty response however each side spells it, and keeps a JSON empty string", async () => {
+    expect(
+      (await compareExtra([["GET", "/api/ping", ""]])).results[0]?.equal,
+    ).toBe(true);
+    expect(
+      (await compareExtra([["GET", "/api/motd", '""']])).results[0]?.equal,
+    ).toBe(true);
   });
 
-  it("learns ids from a replayed recording only of the same call, body included", () => {
+  it("learns ids from a replayed recording only of the same call, body included", async () => {
     expect(
-      compareExtra([
-        ["POST", "/api/tags/search", [{ id: 102 }], 200, { q: "second" }],
-      ]).ids_mapped,
+      (
+        await compareExtra([
+          ["POST", "/api/tags/search", [{ id: 102 }], 200, { q: "second" }],
+        ])
+      ).ids_mapped,
     ).toBe(0);
     expect(
-      compareExtra([
-        ["POST", "/api/tags/search", [{ id: 102 }], 200, { q: "first" }],
-      ]).ids_mapped,
+      (
+        await compareExtra([
+          ["POST", "/api/tags/search", [{ id: 102 }], 200, { q: "first" }],
+        ])
+      ).ids_mapped,
     ).toBe(1);
     // A body the probe did not send is not the body the recording sent.
     expect(
-      compareExtra([["POST", "/api/tags/search", [{ id: 102 }], 200]])
+      (await compareExtra([["POST", "/api/tags/search", [{ id: 102 }], 200]]))
         .ids_mapped,
     ).toBe(0);
   });
@@ -525,8 +531,8 @@ describe("what the comparison translates and learns", () => {
     });
   });
 
-  it("learns no ids from another call's recording replayed in place of an answer", () => {
-    const report = compareEnvironment({
+  it("learns no ids from another call's recording replayed in place of an answer", async () => {
+    const report = await compareEnvironment({
       source: extraSource,
       captureValue: extra.capture,
       probes: [
@@ -548,13 +554,13 @@ describe("what the comparison translates and learns", () => {
   });
 });
 
-const compareRows = (
+const compareRows = async (
   recorded: readonly TimedCaptureRow[],
   probe: readonly TimedCaptureRow[],
 ) => {
   const capture = timedCaptureEvidence(recorded);
   const built = environmentStateServeFixture(capture);
-  const report = compareEnvironment({
+  const report = await compareEnvironment({
     source: environmentServeSource(built),
     captureValue: capture,
     probes: [{ label: "probe", value: timedCaptureEvidence(probe) }],
@@ -564,9 +570,9 @@ const compareRows = (
   return report.value.probes[0]!;
 };
 
-it("learns ids from trailing-slash lists in the collection their item calls name", () => {
+it("learns ids from trailing-slash lists in the collection their item calls name", async () => {
   const item = (id: number, name: string) => ({ id, name });
-  const probe = compareRows(
+  const probe = await compareRows(
     [
       ["GET", "/api/books", [item(1, "Book")]],
       ["GET", "/api/books/1", item(1, "Book")],
@@ -589,8 +595,8 @@ describe("ids the comparison used to misread", () => {
     ["null", "", true],
   ] as const)(
     "compares a recorded missing-item body representation %j against %j",
-    (recorded, live, equal) => {
-      const probe = compareRows(
+    async (recorded, live, equal) => {
+      const probe = await compareRows(
         [
           ["GET", "/api/books", [FIRST_BOOK]],
           ["GET", "/api/books/1", FIRST_BOOK],
@@ -604,8 +610,8 @@ describe("ids the comparison used to misread", () => {
       expect(probe.results[1]?.equal).toBe(equal);
     },
   );
-  it("reads a twice-encoded path id once, so book%2531 is not book1", () => {
-    const probe = compareRows(
+  it("reads a twice-encoded path id once, so book%2531 is not book1", async () => {
+    const probe = await compareRows(
       [
         ["GET", "/api/files/book1", { id: "book1", name: "One" }],
         ["GET", "/api/files/book%2531", { id: "book%31", name: "Encoded" }],
@@ -617,10 +623,10 @@ describe("ids the comparison used to misread", () => {
     expect(probe.results[0]?.categories).not.toContain("value");
   });
 
-  it("learns a create that answers with only the new id", () => {
+  it("learns a create that answers with only the new id", async () => {
     const item = (id: number, name: string) => ({ id, name });
     const third = item(3, "Third");
-    const probe = compareRows(
+    const probe = await compareRows(
       [
         ["GET", "/api/items", [item(1, "First"), item(2, "Second")]],
         ["GET", "/api/items/1", item(1, "First")],
@@ -637,7 +643,7 @@ describe("ids the comparison used to misread", () => {
     );
     expect(probe.results.map((step) => step.equal)).toEqual([true, true, true]);
     expect(probe.ids_mapped).toBeGreaterThan(0);
-    const scalar = compareRows(
+    const scalar = await compareRows(
       [
         ["GET", "/api/items", [item(1, "First"), item(2, "Second")]],
         ["GET", "/api/items/1", item(1, "First")],
@@ -659,7 +665,7 @@ describe("ids the comparison used to misread", () => {
     ]);
   });
 
-  it("compares a create id within its collection when another collection already mapped that live id", () => {
+  it("compares a create id within its collection when another collection already mapped that live id", async () => {
     const item = (id: number, name: string) => ({ id, name });
     const recorded = (
       created: number | { readonly created: number },
@@ -680,19 +686,20 @@ describe("ids the comparison used to misread", () => {
       ["GET", "/api/authors/103", item(103, "Bob")],
     ];
     expect(
-      compareRows(recorded(3), probe(103)).results.map((step) => step.equal),
+      (await compareRows(recorded(3), probe(103))).results.map(
+        (step) => step.equal,
+      ),
     ).toEqual([true, true, true]);
     expect(
-      compareRows(
-        recorded({ created: 3 }),
-        probe({ created: 103 }),
+      (
+        await compareRows(recorded({ created: 3 }), probe({ created: 103 }))
       ).results.map((step) => step.equal),
     ).toEqual([true, true, true]);
   });
 
-  it("keeps each parent's child ids and does not rename a literal route segment", () => {
+  it("keeps each parent's child ids and does not rename a literal route segment", async () => {
     const users = (id: number, name: string) => ({ id, name });
-    const probe = compareRows(
+    const probe = await compareRows(
       [
         ["GET", "/api/orgs/1/users", [users(10, "Ann"), users(11, "Bea")]],
         ["GET", "/api/orgs/2/users", [users(20, "Cy"), users(21, "Di")]],
@@ -814,44 +821,47 @@ describe("probe request chronology", () => {
     ["2026-10-20 09:00:00.0000000002Z", "2026-10-20 09:00:00.0000000001Z"],
     ["2026-10-20 09:00:00.0000000002", "2026-10-20T10:00:00.0000000001+01:00"],
     ["2026-10-20 09:01", "2026-10-20T10:00+01:00"],
-  ])("replays an earlier delete before a later read (%s)", (later, earlier) => {
-    const report = run(
-      analysisViewCaptureEvidence(
-        environmentManifestCaptureFixture([
-          {
-            ...exchange(1, "GET", "http://app.example/api/books/2", 404),
-            startedDateTime: later,
-            response: {
-              status: 404,
-              content: {
-                mimeType: "application/json",
-                text: JSON.stringify(BOOK_NOT_FOUND),
+  ])(
+    "replays an earlier delete before a later read (%s)",
+    async (later, earlier) => {
+      const report = await run(
+        analysisViewCaptureEvidence(
+          environmentManifestCaptureFixture([
+            {
+              ...exchange(1, "GET", "http://app.example/api/books/2", 404),
+              startedDateTime: later,
+              response: {
+                status: 404,
+                content: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(BOOK_NOT_FOUND),
+                },
               },
             },
-          },
-          {
-            ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
-            startedDateTime: earlier,
-          },
+            {
+              ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
+              startedDateTime: earlier,
+            },
+          ]),
+        ),
+      );
+      if (!report.ok) throw report.error;
+      expect(
+        report.value.probes[0]?.results.map(({ ordinal, env_status }) => [
+          ordinal,
+          env_status,
         ]),
-      ),
-    );
-    if (!report.ok) throw report.error;
-    expect(
-      report.value.probes[0]?.results.map(({ ordinal, env_status }) => [
-        ordinal,
-        env_status,
-      ]),
-    ).toEqual([
-      [1, 204],
-      [0, 404],
-    ]);
-    expect(report.value.summary).toMatchObject({
-      steps: 2,
-      equal: 2,
-      agreement: 1,
-    });
-  });
+      ).toEqual([
+        [1, 204],
+        [0, 404],
+      ]);
+      expect(report.value.summary).toMatchObject({
+        steps: 2,
+        equal: 2,
+        agreement: 1,
+      });
+    },
+  );
 
   it.each([
     ["2026-10-20T09:00:00.000100Z", "2026-10-20T10:00:00.0001+01:00"],
@@ -889,8 +899,8 @@ describe("probe request chronology", () => {
 });
 
 const registerProbeCoverageCases = () => {
-  it("compares an unrecorded body by status only and lists the records it could not compare", () => {
-    const report = run(
+  it("compares an unrecorded body by status only and lists the records it could not compare", async () => {
+    const report = await run(
       analysisViewCaptureEvidence(
         environmentManifestCaptureFixture([
           exchange(0, "GET", "http://app.example/api/books/1", 200),
@@ -916,8 +926,8 @@ const registerProbeCoverageCases = () => {
     expect(report.value.summary.normalised.unobserved_bodies).toBe(1);
   });
 
-  it("makes a request whose answer was lost, so later reads see its effect", () => {
-    const report = run(
+  it("makes a request whose answer was lost, so later reads see its effect", async () => {
+    const report = await run(
       analysisViewCaptureEvidence(
         environmentManifestCaptureFixture([
           exchange(0, "DELETE", "http://app.example/api/books/2", 0),
@@ -941,7 +951,7 @@ const registerProbeCoverageCases = () => {
     expect(report.value.summary).toMatchObject({ steps: 1, equal: 1 });
   });
 
-  it("makes no request to another origin, so it cannot change the environment", () => {
+  it("makes no request to another origin, so it cannot change the environment", async () => {
     const answered = (second: number, url: string, body: JsonValue) => ({
       ...exchange(second, "GET", url, 200),
       response: {
@@ -949,7 +959,7 @@ const registerProbeCoverageCases = () => {
         content: { mimeType: "application/json", text: JSON.stringify(body) },
       },
     });
-    const report = run(
+    const report = await run(
       analysisViewCaptureEvidence(
         environmentManifestCaptureFixture([
           // The probe also called another server's API, at a path the application's tools match.
@@ -970,14 +980,14 @@ const registerProbeCoverageCases = () => {
 const registerProbeOrderingAndCaptureCases = () => {
   it.each([undefined, "2026-02-30T09:00:00Z"])(
     "keeps replay in recorded order when a start is missing or invalid: %s",
-    (startedDateTime) => {
+    async (startedDateTime) => {
       const { startedDateTime: _undated, ...remove } = exchange(
         0,
         "DELETE",
         "http://app.example/api/books/2",
         204,
       );
-      const report = run(
+      const report = await run(
         analysisViewCaptureEvidence(
           environmentManifestCaptureFixture([
             {
@@ -1007,8 +1017,8 @@ const registerProbeOrderingAndCaptureCases = () => {
     },
   );
 
-  it("refuses a browser probe that makes writes without recorded request bodies", () => {
-    const report = run(
+  it("refuses a browser probe that makes writes without recorded request bodies", async () => {
+    const report = await run(
       scenarioCaptureEvidence(
         scenarioCaptureFixture(undefined, {
           request_body: false,
@@ -1024,8 +1034,8 @@ const registerProbeOrderingAndCaptureCases = () => {
     );
   });
 
-  it("refuses a browser probe captured without response bodies", () => {
-    const report = run(scenarioHeaderOnlyCaptureEvidence());
+  it("refuses a browser probe captured without response bodies", async () => {
+    const report = await run(scenarioHeaderOnlyCaptureEvidence());
     expect(report.ok).toBe(false);
     if (report.ok) return;
     expect(JSON.stringify(report.error)).toContain(

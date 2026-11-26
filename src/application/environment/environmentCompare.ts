@@ -487,16 +487,18 @@ const toolsOf = (
 };
 
 /** Compare an environment with probe captures of the application: each probe from a reset state, every request answered and compared. */
-export const compareEnvironment = (input: {
+export const compareEnvironment = async (input: {
   readonly source: EnvironmentSource;
   readonly captureValue: unknown;
   readonly probes: readonly CompareProbeInput[];
   readonly operation: string;
-}): Result<CompareReport, AnalysisError> => {
+}): Promise<Result<CompareReport, AnalysisError>> => {
   const { source, operation } = input;
-  const state = prepareServedState(source, input.captureValue, {
-    operation,
-  }).state;
+  const state = (
+    await prepareServedState(source, input.captureValue, {
+      operation,
+    })
+  ).state;
   const catalog = servedCatalog(source, state, source.manifest.name, operation);
   if (!catalog.ok) return catalog;
   const served = new Map(

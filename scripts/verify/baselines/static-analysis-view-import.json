@@ -1,6 +1,0 @@
-{
-  "src/application/artifacts/ArtifactComparisonEvidence.ts": 1,
-  "src/application/environment/environmentBuild.ts": 1,
-  "src/application/environment/environmentState.ts": 1,
-  "src/application/frida/FridaInstrumentationService.ts": 1
-}

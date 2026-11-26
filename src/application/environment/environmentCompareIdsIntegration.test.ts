@@ -10,13 +10,13 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import { compareEnvironment } from "./environmentCompare.js";
 
-const compareRows = (
+const compareRows = async (
   recorded: readonly TimedCaptureRow[],
   probe: readonly TimedCaptureRow[],
 ) => {
   const capture = timedCaptureEvidence(recorded);
   const fixture = environmentStateServeFixture(capture);
-  const report = compareEnvironment({
+  const report = await compareEnvironment({
     source: environmentServeSource(fixture),
     captureValue: capture,
     probes: [{ label: "probe", value: timedCaptureEvidence(probe) }],
@@ -27,8 +27,8 @@ const compareRows = (
 };
 
 describe("environment comparison collection matching", () => {
-  it("does not match two live object keys to one environment entry", () => {
-    const probe = compareRows(
+  it("does not match two live object keys to one environment entry", async () => {
+    const probe = await compareRows(
       [
         ["GET", "/api/items", [{ id: 1, name: "A" }]],
         ["GET", "/api/counts", { counts: { "1": 5 } }],
@@ -46,8 +46,8 @@ describe("environment comparison collection matching", () => {
 });
 
 describe("environment comparison identifier semantics", () => {
-  it("reports changed business tokens and numeric arrays through the application comparison boundary", () => {
-    const probe = compareRows(
+  it("reports changed business tokens and numeric arrays through the application comparison boundary", async () => {
+    const probe = await compareRows(
       [
         [
           "GET",
@@ -75,15 +75,15 @@ describe("environment comparison identifier semantics", () => {
     ]);
     expect(probe.normalised.generated).toBe(0);
     expect(probe.normalised.clocks).toBe(0);
-    const same = compareRows(
+    const same = await compareRows(
       [["GET", "/api/measurements", { samples: [1700000000] }]],
       [["GET", "/api/measurements", { samples: [1700000000] }]],
     );
     expect(same.results[0]?.equal).toBe(true);
   });
-  it("compares numeric format identifiers literally while normalizing actual clock fields", () => {
+  it("compares numeric format identifiers literally while normalizing actual clock fields", async () => {
     const fourcc = (value: string) => Buffer.from(value).readUInt32LE(0);
-    const probe = compareRows(
+    const probe = await compareRows(
       [
         [
           "GET",
@@ -117,8 +117,8 @@ describe("environment comparison identifier semantics", () => {
     expect(probe.normalised.clocks).toBe(1);
   });
 
-  it("does not normalize measurements after learning an unrelated numeric ID", () => {
-    const probe = compareRows(
+  it("does not normalize measurements after learning an unrelated numeric ID", async () => {
+    const probe = await compareRows(
       [
         ["GET", "/api/items", [{ id: 1, name: "A" }]],
         ["GET", "/api/stats", { size: 1, workers: 1, price: 1 }],
@@ -135,7 +135,7 @@ describe("environment comparison identifier semantics", () => {
     expect(probe.normalised.ids).toBe(1);
   });
 
-  it("does not collapse distinct references when one field is equal", () => {
+  it("does not collapse distinct references when one field is equal", async () => {
     const cases: readonly [
       { owner_id: number; reviewer_id: number },
       { owner_id: number; reviewer_id: number },
@@ -154,7 +154,7 @@ describe("environment comparison identifier semantics", () => {
       ],
     ];
     for (const [recorded, live] of cases) {
-      const probe = compareRows(
+      const probe = await compareRows(
         [["GET", "/api/review", recorded]],
         [["GET", "/api/review", live]],
       );
@@ -162,7 +162,7 @@ describe("environment comparison identifier semantics", () => {
       expect(probe.results[0]?.differences).not.toHaveLength(0);
       expect(probe.id_conflicts).toBeGreaterThan(0);
     }
-    const identical = compareRows(
+    const identical = await compareRows(
       [["GET", "/api/review", { owner_id: 1, reviewer_id: 1 }]],
       [["GET", "/api/review", { owner_id: 1, reviewer_id: 1 }]],
     );
@@ -170,10 +170,10 @@ describe("environment comparison identifier semantics", () => {
     expect(identical.normalised.ids).toBe(0);
   });
 
-  it("maps keyed identities in the collection that owns them", () => {
+  it("maps keyed identities in the collection that owns them", async () => {
     const book = (id: number) => ({ id, name: "Book", slug: "book" });
     const things = (id: number) => ({ [String(id)]: { id, name: "Thing" } });
-    const probe = compareRows(
+    const probe = await compareRows(
       [
         ["GET", "/api/books", [book(1)]],
         ["GET", "/api/books/1", book(1)],

@@ -31,11 +31,11 @@ const RECORDED: readonly TimedCaptureRow[] = [
 describe("browser probe request-body admission", () => {
   it.each([200, undefined])(
     "refuses a browser bulk delete without selected request bodies (response status %s)",
-    (status) => {
+    async (status) => {
       const fixture = environmentStateServeFixture(
         timedCaptureEvidence(RECORDED),
       );
-      const report = compareEnvironment({
+      const report = await compareEnvironment({
         source: environmentServeSource(fixture),
         captureValue: fixture.capture,
         probes: [
@@ -71,11 +71,11 @@ describe("browser probe request-body admission", () => {
     },
   );
 
-  it("compares a browser bulk delete when request bodies were selected", () => {
+  it("compares a browser bulk delete when request bodies were selected", async () => {
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence(RECORDED),
     );
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(fixture),
       captureValue: fixture.capture,
       probes: [
@@ -109,11 +109,11 @@ describe("browser probe request-body admission", () => {
     expect(report.value.summary).toMatchObject({ steps: 2, equal: 2 });
   });
 
-  it("allows a browser item delete without selecting request bodies", () => {
+  it("allows a browser item delete without selecting request bodies", async () => {
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence(BOOK_ROWS),
     );
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(fixture),
       captureValue: fixture.capture,
       probes: [
@@ -139,11 +139,11 @@ describe("browser probe request-body admission", () => {
 });
 
 describe("environment comparison of bulk writes", () => {
-  it("sends a probe's bulk delete body to the served tool, which answers it from the state", () => {
+  it("sends a probe's bulk delete body to the served tool, which answers it from the state", async () => {
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence(RECORDED),
     );
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(fixture),
       captureValue: fixture.capture,
       probes: [
@@ -164,7 +164,7 @@ describe("environment comparison of bulk writes", () => {
     expect(read).toMatchObject({ env_status: 404, equal: true });
   });
 
-  it("translates the ids a bulk body names with its collection's own mapping", () => {
+  it("translates the ids a bulk body names with its collection's own mapping", async () => {
     const project = { id: 7, name: "Project" };
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence([
@@ -175,7 +175,7 @@ describe("environment comparison of bulk writes", () => {
     );
     // The probe reuses id 100 for the project and for the first book.
     const live = (id: number) => ({ ...FIRST_BOOK, id });
-    const report = compareEnvironment({
+    const report = await compareEnvironment({
       source: environmentServeSource(fixture),
       captureValue: fixture.capture,
       probes: [

@@ -14,7 +14,6 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
   ENVIRONMENT_SERVE_OPERATION,
   inputError,
@@ -211,14 +210,16 @@ export const loadEnvironmentState = (
 };
 
 /** Derive the state the capture observed with the manifest's rules, projected as retained Evidence, and check it as a supplied state. */
-export const deriveEnvironmentState = (
+export const deriveEnvironmentState = async (
   source: EnvironmentSource,
   captureValue: unknown,
   operation: string = ENVIRONMENT_SERVE_OPERATION,
-): Result<EnvironmentState, AnalysisError> => {
+): Promise<Result<EnvironmentState, AnalysisError>> => {
   const capture = parseEvidenceFile(operation, "evidence", captureValue);
   if (!capture.ok) return capture;
   const captureId = capture.value.evidence_id;
+  const { inspectAnalysisViewValidated } =
+    await import("../analysisView/AnalysisViewService.js");
   const projected = inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: captureId },
@@ -291,20 +292,20 @@ const unavailable = (error: AnalysisError): PreparedState => {
 };
 
 /** Serve the derived state when its catalog fits under the served name; otherwise serve replay and report why. */
-export const prepareServedState = (
+export const prepareServedState = async (
   source: EnvironmentSource,
   captureValue: unknown,
   options: {
     readonly name?: string | undefined;
     readonly operation?: string;
   } = {},
-): PreparedState => {
+): Promise<PreparedState> => {
   const operation = options.operation ?? ENVIRONMENT_SERVE_OPERATION;
   const name = options.name ?? source.manifest.name;
   // The read catalog depends only on the manifest and name, so checking it first spares deriving a state that cannot be served.
   const reads = servedCatalog(source, { writes: new Map() }, name, operation);
   if (!reads.ok) return unavailable(reads.error);
-  const derived = deriveEnvironmentState(source, captureValue, operation);
+  const derived = await deriveEnvironmentState(source, captureValue, operation);
   if (!derived.ok) return unavailable(derived.error);
   const admitted = admitServedState(derived.value, operation);
   if (!admitted.ok) return unavailable(admitted.error);

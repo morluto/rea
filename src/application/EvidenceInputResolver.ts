@@ -160,7 +160,9 @@ export interface EvidenceSourceResolutionOptions extends EvidenceFileReadOptions
     evidence: Evidence,
     lookup: EvidenceLookup | undefined,
     side: "left" | "right",
-  ) => Result<Evidence, AnalysisError>;
+  ) =>
+    | Result<Evidence, AnalysisError>
+    | Promise<Result<Evidence, AnalysisError>>;
 }
 
 /** Resolve an exact reference; callers declare when recovery requires retained closure. */
