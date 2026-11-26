@@ -1527,6 +1527,7 @@
 * **sqlite:** consolidate inventory column capacity checks ([#12798](https://github.com/morluto/rea/issues/12798)) ([d21636a](https://github.com/morluto/rea/commit/d21636ae071d6cd9223150a72e6a59d930ce9673))
 * **sqlite:** consolidate inventory column capacity coverage ([d21636a](https://github.com/morluto/rea/commit/d21636ae071d6cd9223150a72e6a59d930ce9673))
 * **sqlite:** consolidate retained views and journal coverage ([#12876](https://github.com/morluto/rea/issues/12876)) ([b38438b](https://github.com/morluto/rea/commit/b38438bab4ecac3b85bb7808e8af53a138c10d52))
+* **trace:** assert adjustable nesting budget refusals ([#14647](https://github.com/morluto/rea/issues/14647)) ([7768770](https://github.com/morluto/rea/commit/77687702b3d0e375e8698128a5b4746022e8e4f6))
 * **uefi:** consolidate extraction publication contracts ([#13627](https://github.com/morluto/rea/issues/13627)) ([9e0d132](https://github.com/morluto/rea/commit/9e0d132ef3c16649333a9dfd8c43f5ddd335fa80))
 * **uefi:** consolidate volume ownership and checksum proofs ([#14070](https://github.com/morluto/rea/issues/14070)) ([df7f8b9](https://github.com/morluto/rea/commit/df7f8b9ead0dd472cd74803ea1bb90a62865fd4b))
 * **uefi:** reuse the driver file across firmware fixtures ([#14570](https://github.com/morluto/rea/issues/14570)) ([e6a4965](https://github.com/morluto/rea/commit/e6a4965084b713d663c14e7e48cce8a30c3f5ec5))
