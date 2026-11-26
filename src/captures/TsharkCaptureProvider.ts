@@ -155,13 +155,14 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             this.environment,
           )
         : undefined;
-    if (output !== undefined && !output.ok) return err(output.error);
+    // An invalid launch seed is refused inside the cleanup boundary below,
+    // after retained cleanup is retried.
     const limits = resolveProducerLimits(defaults, {
       ...input.producer_limits,
-      ...(output === undefined ? {} : { output_bytes: output.value.value }),
+      ...(output?.ok === true ? { output_bytes: output.value.value } : {}),
     });
     const outputControl =
-      output === undefined
+      output?.ok !== true
         ? producerLimitControl(
             "output_bytes",
             limits.output_bytes,
@@ -178,6 +179,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       if (options?.signal?.aborted)
         throw cancelledBy(operation, options.signal);
       await this.#resources.release();
+      if (output?.ok === false) throw output.error;
       if (!tsharkHostSupported(this.platform))
         throw new Error(
           "Packet inspection requires Linux with util-linux prlimit and TShark 4.x (on PATH or through absolute REA_TSHARK_COMMAND) so expanded captures are processed under an enforced address-space limit.",

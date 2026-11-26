@@ -79,6 +79,7 @@ const fixture = async (
   mode = "ok",
   failCleanup = false,
   recordingName?: string,
+  launchEnvironment: Readonly<Record<string, string>> = {},
 ) => {
   const directory = await createTestTempDirectory("rea-signal-test-");
   const path = join(
@@ -115,6 +116,7 @@ const fixture = async (
   const provider = new SigrokRecordingProvider(
     {
       ...process.env,
+      ...launchEnvironment,
       REA_SIGROK_COMMAND: configuredCommand,
       REA_SIGROK_PRLIMIT_COMMAND:
         mode === "limiter-refused" ? limiter : configuredCommand,
@@ -1430,7 +1432,9 @@ it("applies a runtime producer.output_bytes override below the per-call field", 
     () => f.service.inspectDecoders({}),
   );
   if (raised.ok) throw new Error("Expected the malformed catalog");
-  expect(raised.error).not.toBeInstanceOf(AnalysisResourceConstraintError);
+  // The whole output was admitted; only the catalog grammar refused it.
+  expect(raised.error).toBeInstanceOf(AnalysisOutputError);
+  expect(raised.error.capturedOutput?.stdout).toHaveLength(5 * 1024 * 1024);
   // An explicit per-call field still wins over the session value.
   const request = await runWithAnalysisOperationSnapshot(
     snapshot(8 * 1024 * 1024),
@@ -1445,6 +1449,42 @@ it("applies a runtime producer.output_bytes override below the per-call field", 
     update_mode: "parameter",
   });
   await f.service.close();
+});
+
+it("seeds producer.output_bytes from REA_PRODUCER_OUTPUT_BYTES and refuses an invalid seed until a runtime value repairs it", async () => {
+  const seeded = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "1024",
+  });
+  const refused = await seeded.service.inspectDecoders({});
+  if (refused.ok) throw new Error("Expected the seeded output refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toMatchObject({
+    setting: "producer.output_bytes",
+    effective_value: 1024,
+    source: "setting",
+  });
+  await seeded.service.close();
+
+  const invalid = await fixture("overflow", false, undefined, {
+    REA_PRODUCER_OUTPUT_BYTES: "0",
+  });
+  const rejected = await invalid.service.inspectDecoders({});
+  if (rejected.ok) throw new Error("Expected the invalid seed refusal");
+  expect(rejected.error).toMatchObject({ _tag: "ConfigurationError" });
+  // A runtime value repairs the session without editing the seed.
+  const repaired = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "producer.output_bytes": 2048 } },
+    () => invalid.service.inspectDecoders({}),
+  );
+  if (repaired.ok) throw new Error("Expected the repaired output refusal");
+  expect(projectAnalysisError(repaired.error).details?.limit).toMatchObject({
+    effective_value: 2048,
+    source: "runtime",
+  });
+  // Resetting the override exposes the invalid seed again.
+  const reset = await invalid.service.inspectDecoders({});
+  if (reset.ok) throw new Error("Expected the invalid seed refusal again");
+  expect(reset.error).toMatchObject({ _tag: "ConfigurationError" });
+  await invalid.service.close();
 });
 
 it("pages help output longer than one page record budget instead of refusing it", async () => {

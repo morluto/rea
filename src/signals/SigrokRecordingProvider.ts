@@ -149,15 +149,16 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     input: DecodeSignalRecordingInput | InspectSignalDecodersInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    // Decoding and decoder discovery share the session-adjustable output budget.
+    // Decoding and decoder discovery share the session-adjustable output
+    // budget. An invalid launch seed is refused inside the cleanup boundary
+    // below, after retained cleanup is retried.
     const output = resolveProducerOutputBytes(
       input.producer_limits?.output_bytes,
       this.environment,
     );
-    if (!output.ok) return err(output.error);
     const limits = resolveProducerLimits(LIMITS, {
       ...input.producer_limits,
-      output_bytes: output.value.value,
+      ...(output.ok ? { output_bytes: output.value.value } : {}),
     });
     const environment = snapshotEnvironment(this.environment, this.platform);
     const operation = "path" in input ? OPERATION : "inspect_signal_decoders";
@@ -171,6 +172,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       if (options?.signal?.aborted)
         throw cancelledBy(operation, options.signal);
       await this.#resources.release();
+      if (!output.ok) throw output.error;
       if (!sigrokHostSupported(this.platform))
         throw new Error(
           "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
@@ -454,7 +456,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         limits: {
           selected: limits,
           defaults: LIMITS,
-          output: producerOutputBytesLimit(output.value),
+          output: output.ok
+            ? producerOutputBytesLimit(output.value)
+            : producerLimitControl(
+                "output_bytes",
+                limits.output_bytes,
+                LIMITS.output_bytes,
+              ),
         },
         effectiveLimits,
         observedOutput: capturedOutput,
