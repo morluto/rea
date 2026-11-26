@@ -1,3 +1,4 @@
+import { hostHasProcfs } from "../platform/HostPlatform.js";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 
@@ -59,7 +60,7 @@ export const resolveSystemPs = async (
   } = {},
 ): Promise<SystemPs> => {
   if (platform === "darwin") return { command: "/bin/ps", source: "system" };
-  if (platform === "linux")
+  if (hostHasProcfs(platform))
     for (const command of linuxLocations)
       if (await isExecutable(command)) return { command, source: "system" };
   return { command: "ps", source: "path" };

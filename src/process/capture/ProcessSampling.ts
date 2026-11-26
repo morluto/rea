@@ -1,3 +1,4 @@
+import { hostHasProcfs } from "../../platform/HostPlatform.js";
 import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
 import { resolveSystemPs } from "../systemPs.js";
 import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
@@ -249,7 +250,7 @@ const readRootIdentity = async (
   rootPid: number,
   signal: AbortSignal,
 ): Promise<SamplingObservation<ProcessRow | undefined>> => {
-  if (platform === "linux") return readLinuxProcessStat(rootPid, signal);
+  if (hostHasProcfs(platform)) return readLinuxProcessStat(rootPid, signal);
   const rows = await readPsRows(platform, signal);
   return samplingObservation(
     rows.value?.find(({ pid }) => pid === rootPid),
@@ -273,7 +274,7 @@ const inspectInitializedPtyRoot = async (
   )
     return samplingObservation(undefined, before.diagnostics);
   const observedRunId =
-    platform === "linux"
+    hostHasProcfs(platform)
       ? await readProcSamplingSource(
           `/proc/${String(rootPid)}/environ`,
           signal,
@@ -353,7 +354,7 @@ const sampleProcesses = async (
     return samplingObservation([]);
 
   const rows =
-    context.platform === "linux"
+    hostHasProcfs(context.platform)
       ? await sampleLinux(context)
       : await samplePs(context);
 

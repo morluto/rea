@@ -559,6 +559,39 @@ describe("doctor", () => {
       detail: "win32 arm64",
     });
   });
+
+  it("admits Termux/Android arm64 and x64 hosts", async () => {
+    const androidArm = await runDoctor(
+      undefined,
+      host({
+        platform: "android",
+        architecture: "arm64",
+        macosVersion: () => Promise.resolve(undefined),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+    const androidX64 = await runDoctor(
+      undefined,
+      host({
+        platform: "android",
+        architecture: "x64",
+        macosVersion: () => Promise.resolve(undefined),
+        executable: () => Promise.resolve(false),
+      }),
+    );
+    expect(
+      androidArm.checks.find(({ name }) => name === "host"),
+    ).toMatchObject({
+      ok: true,
+      detail: "android arm64",
+    });
+    expect(
+      androidX64.checks.find(({ name }) => name === "host"),
+    ).toMatchObject({
+      ok: true,
+      detail: "android x64",
+    });
+  });
   it("detects a manual configured Hopper before Homebrew", async () => {
     let brewProbes = 0;
     const result = await runDoctor(

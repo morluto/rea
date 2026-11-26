@@ -1,5 +1,5 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, hostHasProcfs } from "../platform/HostPlatform.js";
 import {
   describeSystemPs,
   PROCESS_INVENTORY_PS_ARGUMENTS,
@@ -872,7 +872,7 @@ export const settleVanishedTokenFacts = async (
   budget: ProcessExitSettlementBudget,
   signal?: AbortSignal,
 ): Promise<readonly ProcessOwnershipFact[]> => {
-  if ((host.platform ?? HOST_PLATFORM.platform) !== "linux") return facts;
+  if (!hostHasProcfs(host.platform ?? HOST_PLATFORM.platform)) return facts;
   let pending = facts
     .filter(
       ({ token, identityAfter }) =>
@@ -995,7 +995,7 @@ export const readProcessOwnershipFacts = async (
   // missing procfs entry with signal-zero ESRCH. Keep the previous live
   // observation if the refresh is unreadable; PID reuse remains a mismatch.
   let finalObservedAfter = observedAfter;
-  if ((host.platform ?? HOST_PLATFORM.platform) === "linux") {
+  if (hostHasProcfs(host.platform ?? HOST_PLATFORM.platform)) {
     const disappearing = processes.filter(({ pid }) => {
       const token = tokens.get(pid);
       return (
@@ -1279,7 +1279,7 @@ export const createSystemProcessOwnershipHost = (
     ProcessOwnershipHost["processIdentities"]
   > = async (processes, signal, credentialPids) => {
     if (processes.length === 0) return new Map();
-    if (platform === "linux") {
+    if (hostHasProcfs(platform)) {
       const callerUserNamespace =
         credentialPids !== undefined && credentialPids.size > 0
           ? readlink("/proc/self/ns/user").catch(() => undefined)
@@ -1602,7 +1602,7 @@ export const createSystemProcessOwnershipHost = (
           ? Reflect.get(cause, "code")
           : undefined);
       const systemCode = typeof rawCode === "string" ? rawCode : undefined;
-      if (platform === "linux")
+      if (hostHasProcfs(platform))
         throw new LinuxOwnedProcessPrerequisiteError(cause, {
           missing: systemCode === "ENOENT",
           systemCode,
@@ -1664,7 +1664,7 @@ export const createSystemProcessOwnershipHost = (
     platform,
     prepare: async (signal) => {
       await darwinTokens?.prepare(signal);
-      if (platform === "linux") {
+      if (hostHasProcfs(platform)) {
         const processes = await safeListProcesses(signal);
         if (!processes.some(({ pid }) => pid === process.pid))
           throw new LinuxOwnedProcessPrerequisiteError(
@@ -1675,7 +1675,7 @@ export const createSystemProcessOwnershipHost = (
     listProcesses,
     async environment(pid, signal) {
       assertProcessOwnershipInspectionActive(signal);
-      if (platform === "linux")
+      if (hostHasProcfs(platform))
         return parseProcessEnvironment(
           await readProcessInspectionFile(`/proc/${pid}/environ`, signal),
         );

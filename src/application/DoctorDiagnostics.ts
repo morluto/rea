@@ -289,6 +289,8 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
       macosMajor !== undefined &&
       macosMajor >= 12) ||
     (host.platform === "linux" && supportsReaHost(linuxDistribution)) ||
+    (host.platform === "android" &&
+      (host.architecture === "arm64" || host.architecture === "x64")) ||
     (host.platform === "win32" && host.architecture === "x64");
   const detail =
     macosVersion ??
@@ -296,7 +298,7 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
       ? `${host.platform} ${host.architecture}`
       : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`);
   return check("host", supported, detail, {
-    remediation: `REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires ${LINUX_HOPPER_SETUP_HOSTS}.`,
+    remediation: `REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, Termux/Android arm64 or x64 (experimental), and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup on Linux additionally requires ${LINUX_HOPPER_SETUP_HOSTS}.`,
     classification: "unsupported_host",
   });
 };
