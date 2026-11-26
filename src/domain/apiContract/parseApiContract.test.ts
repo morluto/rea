@@ -93,7 +93,10 @@ it.each(["2.0", "3.3.0", "3.2", "3.01.0", "3.0.01", "3.2.0-beta.1"])(
     const value = parse(document({}, version));
     expect(value.ok).toBe(false);
     if (!value.ok)
-      expect(value.error._tag).toBe("AnalysisUnsupportedTargetError");
+      expect(value.error).toMatchObject({
+        _tag: "AnalysisTargetFailureError",
+        failure: { kind: "unsupported", format: "openapi" },
+      });
   },
 );
 

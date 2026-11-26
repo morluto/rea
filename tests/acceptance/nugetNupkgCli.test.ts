@@ -199,7 +199,7 @@ cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
     category: "unsupported_target",
     details: {
       operation: "inspect_nuget_nupkg",
-      format_failure: "malformed",
+      failure_kind: "malformed",
       reason: expect.stringContaining("not a ZIP"),
     },
   });

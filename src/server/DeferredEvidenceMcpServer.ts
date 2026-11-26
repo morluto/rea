@@ -110,6 +110,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       recordedCompactTools,
     );
     this.canAdvertise = advertisesTool;
+    // The runtime attaches the session ledger; until then nothing is retained.
+    this.serveRetainedEvidence(undefined);
     for (const name of catalog.evidenceReferenceAlternatives)
       this.registerEvidenceReferenceAlternative(name);
     for (const tool of catalog.tools) {

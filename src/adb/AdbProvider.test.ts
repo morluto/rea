@@ -1351,7 +1351,7 @@ exit 91`,
     expect(projected).toMatchObject({
       code: "unsupported_target",
       details: { operation, path, reason },
-      message: `Unsupported target for ${operation} at ${path}: ${reason}`,
+      message: `Unsupported android-device target for ${operation} at ${path}: ${reason}`,
     });
   },
 );

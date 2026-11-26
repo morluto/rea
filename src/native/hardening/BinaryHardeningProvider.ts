@@ -5,7 +5,7 @@ import {
   artifactFileCeilingConstraint,
   artifactReadBudgetConstraint,
   projectStableArtifactFailure,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -23,17 +23,16 @@ import {
   MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
   type InspectBinaryHardeningInput,
 } from "../../domain/native/binaryHardening.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  hasElfMagic,
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
 import { readElfHardeningFromHandle } from "./ElfHardening.js";
 import { readMachoHardeningFromHandle } from "./MachoHardening.js";
 import { readPeHardeningFromHandle } from "./PeHardening.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
 const HEADER_PREFIX_BYTES = 4096;
@@ -43,16 +42,12 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
   readonly identity = BINARY_HARDENING_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        BINARY_HARDENING_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      BINARY_HARDENING_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -81,29 +76,17 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
           },
           async (handle) => {
             assertArtifactReadActive(options?.signal);
-            const source = {
-              size: handle.size,
-              prefix: handle.prefix,
-              readRange: (offset: number, length: number) =>
-                handle.readRange(offset, length),
-            };
             const artifact = {
               path: input.path,
               sha256: handle.sha256,
               bytes: handle.size,
             };
-            if (
-              handle.prefix.length >= 4 &&
-              handle.prefix[0] === 0x7f &&
-              handle.prefix[1] === 0x45 &&
-              handle.prefix[2] === 0x4c &&
-              handle.prefix[3] === 0x46
-            )
+            if (hasElfMagic(handle.prefix))
               return {
                 artifact,
                 format: "elf" as const,
                 images: [
-                  await readElfHardeningFromHandle(source, options?.signal),
+                  await readElfHardeningFromHandle(handle, options?.signal),
                 ],
                 limitations: [...BINARY_HARDENING_LIMITATIONS],
               };
@@ -113,7 +96,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
                 format: "pe" as const,
                 images: [
                   await readPeHardeningFromHandle(
-                    source,
+                    handle,
                     artifact,
                     options?.signal,
                   ),
@@ -124,7 +107,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
               artifact,
               format: "mach-o" as const,
               images: await readMachoHardeningFromHandle(
-                source,
+                handle,
                 options?.signal,
               ),
               limitations: [...BINARY_HARDENING_LIMITATIONS],
@@ -179,14 +162,6 @@ const binaryHardeningFailure = (
             max_file_bytes: input.max_file_bytes,
           },
         ),
-      unclassified: (failure) =>
-        new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
-        }),
     }),
   );
   return projectStableArtifactFailure(

@@ -1,5 +1,5 @@
 import * as zlib from "node:zlib";
-import { createHash } from "node:crypto";
+import { sha256 as sha256Of } from "../../support/sha256.js";
 import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
@@ -43,9 +43,6 @@ import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFr
 
 vi.mock(import("node:zlib"), { spy: true });
 vi.mock(import("node:fs/promises"), { spy: true });
-
-const sha256Of = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 it("inflates section names once per artifact while preserving build-ID comparison", async () => {
   const root = await createTestTempDirectory("rea-elf-debug-link-name-reuse-");

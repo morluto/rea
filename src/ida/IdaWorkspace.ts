@@ -1,3 +1,8 @@
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 
@@ -46,46 +51,20 @@ export const resolveIdaWorkspaceParent = async (
   return realpath(root);
 };
 
-/**
- * Private input copy isolates upstream database and sidecar writes from the
- * original. An IDA database target is copied whole, so the worker unpacks and
- * releases only the copy; the selected database is never opened for writing.
- */
-interface InputFileStat {
-  readonly dev: bigint;
-  readonly ino: bigint;
-  readonly size: bigint;
-  readonly mtimeNs: bigint;
-  readonly ctimeNs: bigint;
-}
-
 const COPY_BUFFER_BYTES = 64 * 1024;
 
 const isRegularInputFile = (observed: BigIntStats): boolean =>
   observed.isFile() && !observed.isSymbolicLink();
 
-const captureInputStat = (observed: BigIntStats): InputFileStat => ({
-  dev: observed.dev,
-  ino: observed.ino,
-  size: observed.size,
-  mtimeNs: observed.mtimeNs,
-  ctimeNs: observed.ctimeNs,
-});
-
-const sameInputStat = (
-  expected: InputFileStat,
-  observed: BigIntStats,
-): boolean =>
-  observed.dev === expected.dev &&
-  observed.ino === expected.ino &&
-  observed.size === expected.size &&
-  observed.mtimeNs === expected.mtimeNs &&
-  observed.ctimeNs === expected.ctimeNs;
-
+/**
+ * Private input copy isolates upstream database and sidecar writes from the
+ * original. An IDA database target is copied whole, so the worker unpacks and
+ * releases only the copy; the selected database is never opened for writing.
+ */
 export class IdaWorkspace {
   readonly sessionId = `rea-${randomUUID()}`;
   #inputSha256: string | undefined;
-  #inputStat: InputFileStat | undefined;
+  #inputStat: FileStatStamp | undefined;
   readonly #files = new ArtifactResourceScope();
   private constructor(
     private readonly runtime: PrivateRuntimeRoot,
@@ -228,7 +207,7 @@ export class IdaWorkspace {
       );
     const observed = await input.stat({ bigint: true });
     this.#inputSha256 = inputHash.digest("hex");
-    this.#inputStat = captureInputStat(observed);
+    this.#inputStat = fileStatStamp(observed);
   }
 
   /**
@@ -248,7 +227,7 @@ export class IdaWorkspace {
       expected !== undefined &&
       before !== undefined &&
       isRegularInputFile(before) &&
-      sameInputStat(expected, before)
+      sameFileStatStamp(expected, before)
     )
       return true;
     if ((await idaFileDigest(this.inputPath)) !== this.#inputSha256)
@@ -260,9 +239,9 @@ export class IdaWorkspace {
       if (
         after !== undefined &&
         isRegularInputFile(after) &&
-        sameInputStat(captureInputStat(before), after)
+        sameFileStatStamp(before, after)
       )
-        this.#inputStat = captureInputStat(after);
+        this.#inputStat = fileStatStamp(after);
     }
     return true;
   }

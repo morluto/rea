@@ -205,7 +205,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
   const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
-    (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
+    command[key]!.parse(value);
   return withCliResultControls(async () => {
     const value: unknown = await (
       Reflect.get(command, "run") as (value: unknown) => Promise<unknown>

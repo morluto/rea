@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { compareInspectionDimension } from "../../support/browser/webCaptureComparison.js";
 
 import { receiveCdpEvent } from "../../../src/browser/CdpConnection.js";
 import { CdpCaptureEvents } from "../../../src/browser/CdpCaptureEvents.js";
@@ -8,8 +9,6 @@ import {
   webPageInspectionSchema,
   type WebPageInspection,
 } from "../../../src/domain/browserObservationSchemas.js";
-import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
-import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 
 const ORIGIN = "https://example.test";
@@ -71,13 +70,7 @@ it("captures all repeated array rows and empty arrays without retaining payload 
   expect(JSON.stringify(shape)).not.toContain("payload-value-excluded");
 });
 
-const compareNetwork = (before: WebPageInspection, after: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  ).dimensions.network;
+const compareNetwork = compareInspectionDimension("network");
 
 /** Give retained request facts a complete, independently authored inventory. */
 const completeInventory = (source: WebPageInspection): WebPageInspection => ({

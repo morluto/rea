@@ -22,6 +22,7 @@ import {
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -59,7 +60,9 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "signal-recording-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "signal-recording-verifier", version: "1" }),
+);
 // Real sigrok refusals of an unknown decoder ID must name the caller's field.
 const assertRejectedSelector = (
   response,
@@ -426,6 +429,8 @@ await withVerifierFixture(root, async () => {
       matching: matched.length,
       returned: page.length,
       has_more: offset + page.length < matched.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     const flags = Object.entries(input).flatMap(([key, value]) =>
       value === null ? ["--all"] : [`--${key}`, String(value)],

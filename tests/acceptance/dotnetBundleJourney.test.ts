@@ -192,7 +192,7 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
       const observed = await client.callTool({
         name: "inspect_artifact",
-        arguments: {},
+        arguments: { detail: "complete" },
       });
       expect(observed.isError, JSON.stringify(observed)).not.toBe(true);
       expect(
@@ -246,8 +246,8 @@ test("reports excessive bundle path depth as a public CLI limit", async ({
   });
   expect(result.exitCode, result.stderr).toBe(1);
   expect(result.json).toMatchObject({
-    code: "truncated",
-    category: "truncated",
+    code: "partial",
+    category: "partial",
     retryable: true,
     details: {
       reason: "limit",

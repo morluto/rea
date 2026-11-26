@@ -192,9 +192,21 @@ it.each([["app.js", "App.js"], ["other.js"]])(
 );
 
 it("reserves prefix capacity atomically without declaring destination kinds", () => {
-  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 3 });
+  const registry = new ArtifactPathRegistry({
+    group: "deno",
+    maxParts: 4,
+    maxNodes: 3,
+  });
   registry.reservePath("a/b");
-  expect(() => registry.reservePath("a/c/d")).toThrow();
+  expect(() => registry.reservePath("a/c/d")).toThrow(
+    expect.objectContaining({
+      readerLimit: expect.objectContaining({
+        parameter: "artifact_limits.deno.path_nodes",
+        effective_value: 3,
+        required_value: 4,
+      }),
+    }),
+  );
   expect(() => registry.reservePath("z")).not.toThrow();
   expect(() => registry.reservePath("a/b")).not.toThrow();
   registry.add("a/b", "file");
@@ -202,7 +214,11 @@ it("reserves prefix capacity atomically without declaring destination kinds", ()
 });
 
 it("reports a file prefix conflict without inserting the candidate", () => {
-  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 2 });
+  const registry = new ArtifactPathRegistry({
+    group: "deno",
+    maxParts: 4,
+    maxNodes: 2,
+  });
   registry.reservePath("a/b");
   expect(registry.conflicts("a/b")).toBe(true);
   expect(registry.conflicts("a")).toBe(true);

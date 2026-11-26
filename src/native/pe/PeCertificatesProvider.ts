@@ -6,7 +6,7 @@ import {
   artifactFileCeilingConstraint,
   artifactReadBudgetConstraint,
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   ArtifactReaderFailure,
   withStableArtifactHandle,
@@ -39,16 +39,12 @@ export class PeCertificatesProvider implements PeCertificatesPort {
   readonly identity = PE_CERTIFICATES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_CERTIFICATES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_CERTIFICATES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeCertificatesInput, options?: ExecutionOptions) {

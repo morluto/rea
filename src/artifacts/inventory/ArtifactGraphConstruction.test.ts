@@ -164,7 +164,7 @@ it("projects the parsed ASAR header size when admission rejects an archive", () 
     throw new Error("ASAR admission failure was not classified");
 
   const projected = projectAnalysisError(
-    translateArtifactFailure("inspect_artifact", failure),
+    translateArtifactFailure("inspect_artifact", "/selected/artifact", failure),
   );
   expect(projected.details?.limit).toMatchObject({
     required_value: headerBytes,

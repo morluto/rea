@@ -4,7 +4,7 @@ import {
 } from "../../domain/artifactReadBudget.js";
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   withStableArtifactHandle,
   assertArtifactReadActive,
   ArtifactResourceScope,
@@ -29,16 +29,12 @@ export class PeUnwindRangesProvider implements PeUnwindRangesPort {
   readonly identity = PE_UNWIND_RANGES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        PE_UNWIND_RANGES_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      PE_UNWIND_RANGES_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(input: InspectPeUnwindRangesInput, options?: ExecutionOptions) {

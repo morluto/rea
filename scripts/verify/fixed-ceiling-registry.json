@@ -82,30 +82,10 @@
       "reason": "The 4 GiB auditd log admission is a resource policy; issue #11345 tracks giving it a control as the reader grows past step 1."
     }
   },
-  "src/artifacts/DenoStandaloneArtifactReader.ts": {
-    "\"The Deno compile retained metadata allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Deno retained metadata bytes are a resource policy."
-    }
-  },
   "src/artifacts/WxapkgArtifactReader.ts": {
     "\"The wxapkg directory-and-chunk I/O work allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
-    }
-  },
-  "src/artifacts/WxapkgStructures.ts": {
-    "\"The wxapkg directory representation allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
-    },
-    "\"The wxapkg member table allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "wxapkg directory, member-table and I/O allowances are resource policies."
+      "class": "derived",
+      "reason": "Four times the admitted member count plus 64 KiB chunks of declared member bytes, which artifact_limits.expanded_bytes bounds; it grows with that admission."
     }
   },
   "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": {
@@ -113,18 +93,6 @@
       "class": "pending",
       "issue": 14237,
       "reason": "assetutil output capture is a producer budget without a per-call control."
-    }
-  },
-  "src/artifacts/deno/DenoSectionLayout.ts": {
-    "`The Deno compile ${scope} allowance`": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
-    },
-    "`The Deno compile ${scope} record allowance`": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
     }
   },
   "src/artifacts/deno/DenoStandaloneLocation.ts": {
@@ -135,19 +103,8 @@
   },
   "src/artifacts/deno/DenoVirtualFs.ts": {
     "\"The Deno compile virtual filesystem depth allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
-    },
-    "\"The Deno compile virtual filesystem entry allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
-    },
-    "\"The Deno compile virtual filesystem retained name allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Deno compile table, VFS entry, depth and retained-name allowances are resource policies, not Deno format maxima."
+      "class": "representation",
+      "reason": "Bounds nested walkEntries recursion so a deeply nested VFS JSON cannot exhaust the call stack; entry, name and path budgets are per-call artifact_limits.deno controls."
     }
   },
   "src/artifacts/dotnet/DotnetBundle.ts": {
@@ -160,25 +117,6 @@
     "\"Node SEA duplicate-blob verification allowance\"": {
       "class": "derived",
       "reason": "Duplicate-blob verification work is bounded by the carrier's own file size, so the bound grows with the admitted input."
-    }
-  },
-  "src/artifacts/releaseExposure/releaseExposureFailures.ts": {
-    "\"The release exposure input allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "The release exposure input allowance bounds bytes read, a resource policy."
-    }
-  },
-  "src/artifacts/tar/TarWalk.ts": {
-    "\"The tar extended-header allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
-    },
-    "\"The tar member metadata allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "tar extended-header and retained member-metadata allowances are resource policies."
     }
   },
   "src/browser/WebBundleAnalysisWorker.ts": {
@@ -206,13 +144,6 @@
       "class": "pending",
       "issue": 14236,
       "reason": "Playwright trace archive input and record parser allowances are resource policies."
-    }
-  },
-  "src/captures/TsharkCaptureProvider.ts": {
-    "\"The packet-field discovery record allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "Packet-field discovery record capture is a producer budget."
     }
   },
   "src/domain/analysisErrorCore.ts": {
@@ -556,34 +487,11 @@
       "reason": "The decoded-JSON work across both tshark passes bounds the in-process parse; raising it needs a streaming decoder or a heap-aware control, so it stays fixed until then."
     }
   },
-  "src/process/ArtifactAnalysisResources.ts": {
-    "`The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "Retained command output is a producer budget without a per-call control."
-    },
-    "allowanceName": {
-      "class": "forwarding",
-      "reason": "Declares a producer input allowance only for callers that offer no budget parameter; the value is the caller's selected maximum."
-    }
-  },
   "src/process/capture/ProcessSensitiveOutput.ts": {
     "\"Sensitive terminal redaction\"": {
       "class": "pending",
       "issue": 14237,
       "reason": "Sensitive terminal redaction state is a resource policy."
-    }
-  },
-  "src/resources/ArtifactPaths.ts": {
-    "\"The artifact path depth allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Artifact path depth and tree-node allowances are resource policies."
-    },
-    "\"The artifact path tree allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Artifact path depth and tree-node allowances are resource policies."
     }
   },
   "src/resources/artifactReadBudget.ts": {
@@ -607,13 +515,6 @@
       "class": "pending",
       "issue": 14235,
       "reason": "Rust container, dependency and WebAssembly section-walk allowances are resource policies."
-    }
-  },
-  "src/signals/SigrokRecordingProvider.ts": {
-    "\"The sigrok decoder-discovery line allowance\"": {
-      "class": "pending",
-      "issue": 14237,
-      "reason": "sigrok decoder-discovery line capture is a producer budget."
     }
   },
   "src/sqlite/SqliteDatabaseFailures.ts": {

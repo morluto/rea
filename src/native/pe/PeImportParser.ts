@@ -15,11 +15,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import {
-  readPeImage,
-  readPeImageFromReader,
-  type PeImage,
-} from "../../domain/native/peImage.js";
+import { readPeImageFromReader } from "../../domain/native/peImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,
@@ -139,27 +135,12 @@ const WINDOW_READ_BYTES = 4096;
 const RETAINED_WINDOWS = 3;
 
 interface PeImportReader {
-  readonly fileSize: number;
   readRange(offset: number, length: number): Promise<Buffer>;
   readPrefix(offset: number, maximum: number): Promise<Buffer>;
   u16(offset: number): Promise<number>;
   u32(offset: number): Promise<number>;
   word(offset: number, bits: 32 | 64): Promise<bigint>;
 }
-
-const createBufferPeImportReader = (bytes: Buffer): PeImportReader => {
-  const reader = new BinaryReader(bytes, true, "pe");
-  return {
-    fileSize: bytes.length,
-    readRange: async (offset, length) =>
-      bytes.subarray(offset, offset + length),
-    readPrefix: async (offset, maximum) =>
-      bytes.subarray(offset, offset + maximum),
-    u16: async (offset) => reader.u16(offset),
-    u32: async (offset) => reader.u32(offset),
-    word: async (offset, bits) => reader.word(offset, bits),
-  };
-};
 
 const createHandlePeImportReader = (
   source: PrefixedByteSource,
@@ -204,7 +185,6 @@ const createHandlePeImportReader = (
   };
 
   return {
-    fileSize: source.size,
     async readRange(offset, length) {
       if (length === 0) return Buffer.alloc(0);
       const window = await windowFor(offset, length);
@@ -231,20 +211,28 @@ const createHandlePeImportReader = (
   };
 };
 
-const parsePeImportsCore = async (
-  image: PeImage,
-  reader: PeImportReader,
+/** Read import and delay-load directories positionally, yielding between batches of entries. */
+export const parsePeImportsFromHandle = async (
+  source: PrefixedByteSource,
   artifact: Artifact,
   input: InspectPeImportsInput,
   signal?: AbortSignal,
 ): Promise<PeImports> => {
+  assertArtifactReadActive(signal);
+  const fileSize = source.size;
+  const reader = createHandlePeImportReader(source);
+  const image = await readPeImageFromReader({
+    size: fileSize,
+    prefix: source.prefix,
+    readRange: reader.readRange,
+  });
   const bits = image.bits;
   const base = image.image_base;
   const lookup = createFileMappingIndex(
     imageFileMappings(image),
     image.zero_fills,
   );
-  const compatibleRead = createPefileReadCompatibility(image, reader.fileSize);
+  const compatibleRead = createPefileReadCompatibility(image, fileSize);
   let mappingCompatibility = true;
   const map = (rva: number, size: number): number => {
     requireRva(rva, size);
@@ -684,7 +672,7 @@ const parsePeImportsCore = async (
       truncatedDescriptor: pefileTruncatedDescriptor,
       bits,
       directoryRva: importDirectory?.address ?? 0,
-      fileBytes: reader.fileSize,
+      fileBytes: fileSize,
     }),
     coverage: coverage(
       issues,
@@ -696,42 +684,4 @@ const parsePeImportsCore = async (
     header_anomalies: headerAnomalies,
     limitations,
   };
-};
-
-/**
- * Read PE import and delay-load directories without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` descriptors or thunks.
- */
-export const parsePeImports = async (
-  bytes: Buffer,
-  artifact: Artifact,
-  input: InspectPeImportsInput,
-  signal?: AbortSignal,
-): Promise<PeImports> => {
-  assertArtifactReadActive(signal);
-  return parsePeImportsCore(
-    readPeImage(bytes),
-    createBufferPeImportReader(bytes),
-    artifact,
-    input,
-    signal,
-  );
-};
-
-/** Read PE import and delay-load directories positionally over a bounded file handle. */
-export const parsePeImportsFromHandle = async (
-  source: PrefixedByteSource,
-  artifact: Artifact,
-  input: InspectPeImportsInput,
-  signal?: AbortSignal,
-): Promise<PeImports> => {
-  assertArtifactReadActive(signal);
-  const reader = createHandlePeImportReader(source);
-  const image = await readPeImageFromReader({
-    size: source.size,
-    prefix: source.prefix,
-    readRange: (offset, length) => reader.readRange(offset, length),
-  });
-  return parsePeImportsCore(image, reader, artifact, input, signal);
 };

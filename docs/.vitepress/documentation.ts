@@ -674,6 +674,11 @@ export const documentationSections = [
         route: "/mcp-contracts",
       },
       {
+        text: "Target failures",
+        source: "reference/target-failures.md",
+        route: "/target-failures",
+      },
+      {
         text: "Directory identity",
         source: "reference/directory-identity.md",
         route: "/directory-identity",

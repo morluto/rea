@@ -1,3 +1,4 @@
+import type { RetainedResourceScope } from "../resources/index.js";
 import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
 import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
@@ -308,18 +309,7 @@ export interface AnalysisClientContext {
   readonly runId: string;
 }
 
-/** One lifecycle owner for retained resources and abortable inspection work. */
-export interface RetainedResourceScope {
-  retain(
-    owner: {
-      close(): Promise<void>;
-      /** Complete labels authored by this exact owner; the display label is only a fallback. */
-      readonly cleanupResources?: readonly string[] | undefined;
-    },
-    resource: string,
-  ): void;
-  run<T>(operation: () => Promise<T>): Promise<T>;
-}
+export type { RetainedResourceScope };
 
 export interface ProviderIdentity {
   readonly id: string;

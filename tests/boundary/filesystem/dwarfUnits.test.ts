@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDwarfUnitsService } from "../../../src/composition/binaryDiagnostics/dwarfUnits.js";
 import { elfImage } from "../../../src/native/dwarf/DwarfUnits.fixture.js";
-import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisTargetFailureError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
@@ -29,7 +29,7 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
       const malformedResult = await service.inspect({ path: malformed });
       if (malformedResult.ok) throw new Error("Expected a malformed target");
       expect(malformedResult.error).toMatchObject({
-        _tag: "AnalysisMalformedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "inspect_dwarf_units",
         path: malformed,
       });
@@ -42,9 +42,7 @@ describe("DWARF compile-unit stable filesystem boundary", () => {
       });
       const foreignResult = await service.inspect({ path: foreign });
       if (foreignResult.ok) throw new Error("Expected an unsupported file");
-      expect(foreignResult.error).toBeInstanceOf(
-        AnalysisUnsupportedTargetError,
-      );
+      expect(foreignResult.error).toBeInstanceOf(AnalysisTargetFailureError);
     } finally {
       await service.close();
     }

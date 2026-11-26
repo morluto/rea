@@ -1,3 +1,8 @@
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
 import { boundedList, type BoundedList } from "../domain/boundedList.js";
 import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -50,14 +55,6 @@ interface GuidanceBundle {
   >;
 }
 
-interface GuideFileStatStamp {
-  readonly dev: bigint;
-  readonly ino: bigint;
-  readonly size: bigint;
-  readonly mtimeNs: bigint;
-  readonly ctimeNs: bigint;
-}
-
 const PACKAGED_GUIDE_PATHS: readonly string[] = MANAGED_SKILL_FILES.map(
   (relativePath) =>
     fileURLToPath(new URL(`${SKILL_ROOT}${relativePath}`, import.meta.url)),
@@ -65,28 +62,22 @@ const PACKAGED_GUIDE_PATHS: readonly string[] = MANAGED_SKILL_FILES.map(
 
 let cachedPackagedBundle:
   | {
-      readonly stamps: readonly GuideFileStatStamp[];
+      readonly stamps: readonly FileStatStamp[];
       readonly bundle: GuidanceBundle;
     }
   | undefined;
 
 const statPackagedGuides = async (): Promise<
-  readonly GuideFileStatStamp[] | undefined
+  readonly FileStatStamp[] | undefined
 > => {
   try {
     const stats = await Promise.all(
       PACKAGED_GUIDE_PATHS.map((filePath) => stat(filePath, { bigint: true })),
     );
-    const stamps: GuideFileStatStamp[] = [];
+    const stamps: FileStatStamp[] = [];
     for (const info of stats) {
       if (!info.isFile()) return undefined;
-      stamps.push({
-        dev: info.dev,
-        ino: info.ino,
-        size: info.size,
-        mtimeNs: info.mtimeNs,
-        ctimeNs: info.ctimeNs,
-      });
+      stamps.push(fileStatStamp(info));
     }
     return stamps;
   } catch {
@@ -95,18 +86,11 @@ const statPackagedGuides = async (): Promise<
 };
 
 const sameGuideStamps = (
-  left: readonly GuideFileStatStamp[],
-  right: readonly GuideFileStatStamp[],
+  left: readonly FileStatStamp[],
+  right: readonly FileStatStamp[],
 ): boolean =>
   left.length === right.length &&
-  left.every(
-    (item, index) =>
-      item.dev === right[index]!.dev &&
-      item.ino === right[index]!.ino &&
-      item.size === right[index]!.size &&
-      item.mtimeNs === right[index]!.mtimeNs &&
-      item.ctimeNs === right[index]!.ctimeNs,
-  );
+  left.every((item, index) => sameFileStatStamp(item, right[index]!));
 
 const indexSectionsByGuide = (
   sections: readonly GuideSection[],

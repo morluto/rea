@@ -1,5 +1,8 @@
 import { BinaryReader } from "../binaryContainer.js";
-import { DEFAULT_ISO9660_READER_LIMITS } from "../artifactReaderLimits.js";
+import {
+  DEFAULT_ISO9660_READER_LIMITS,
+  type ArtifactReaderLimitParameter,
+} from "../artifactReaderLimits.js";
 import { decodeIso9660RecordDate } from "./iso9660Dates.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -39,7 +42,7 @@ export const ISO9660_FLAG_DIRECTORY = 0x02;
 export const ISO9660_FLAG_MULTI_EXTENT = 0x80;
 
 type Iso9660LimitSpec = LimitRef & {
-  readonly parameter: string;
+  readonly parameter: ArtifactReaderLimitParameter;
   readonly maximum: number;
   readonly unit: "bytes" | "count";
 };

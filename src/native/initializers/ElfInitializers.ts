@@ -1,3 +1,4 @@
+import { lastAtOrBelow } from "../../domain/virtualFileMapping.js";
 import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import {
@@ -591,26 +592,6 @@ interface WriteLoad {
 }
 
 /**
- * Index of the first slot whose word could overlap a write starting at
- * `address`, that is the first slot above `address - word`.
- */
-const firstOverlap = (
-  slots: readonly bigint[],
-  address: bigint,
-  word: number,
-): number => {
-  const from = address - BigInt(word);
-  let low = 0;
-  let high = slots.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if ((slots[mid] ?? address) <= from) low = mid + 1;
-    else high = mid;
-  }
-  return low;
-};
-
-/**
  * Drain the shared dynamic-relocation reader, keeping only writes that touch a
  * wanted slot. A slot is resolved by a write only when that write starts at the
  * slot with the pointer width and no other write overlaps the slot, which
@@ -635,7 +616,7 @@ const loadWrites = async (
   const consider = (write: ElfPointerWrite): void => {
     const end = write.address + BigInt(write.width);
     for (
-      let at = firstOverlap(slots, write.address, word);
+      let at = lastAtOrBelow(slots, write.address - BigInt(word)) + 1;
       at < slots.length;
       at += 1
     ) {

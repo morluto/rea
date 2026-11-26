@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { machoFailure } from "./machoContainer.js";
 
 import {
   dylibResolutionInputSchema,
@@ -500,8 +501,10 @@ describe("dyld resolution outcomes: checking candidate format and compatibility"
         }),
         "Contents/MacOS/a/lib.dylib": "data",
         "Contents/MacOS/b/lib.dylib": {
-          status: "malformed",
-          reason: "load command 0 has invalid cmdsize 0",
+          status: "failed",
+          failure: machoFailure.malformed(
+            "load command 0 has invalid cmdsize 0",
+          ),
         },
         "Contents/MacOS/c/lib.dylib": parsed(slice({ architecture: "x86_64" })),
       }),
@@ -999,8 +1002,10 @@ describe("dyld slice compatibility and coverage", () => {
           dependencies: [dependency("@executable_path/libbig.dylib")],
         }),
         "Contents/MacOS/libbig.dylib": {
-          status: "unsupported",
-          reason: "big-endian Mach-O images are not supported",
+          status: "failed",
+          failure: machoFailure.unsupported(
+            "big-endian Mach-O images are not supported",
+          ),
         },
       }),
       { roots: [MAIN] },
@@ -1022,8 +1027,10 @@ describe("dyld slice compatibility and coverage", () => {
       memoryView({
         [MAIN]: executable(),
         [broken]: {
-          status: "malformed",
-          reason: "load command 0 has invalid cmdsize 0",
+          status: "failed",
+          failure: machoFailure.malformed(
+            "load command 0 has invalid cmdsize 0",
+          ),
         },
       }),
       { roots: [MAIN], unclassified: [broken] },

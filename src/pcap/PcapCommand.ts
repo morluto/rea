@@ -7,7 +7,7 @@ import {
 } from "../process/ArtifactCommandPath.js";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
 } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -24,9 +24,8 @@ import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
-  carriedReason,
+  unsupportedTarget,
 } from "../domain/analysisErrorCore.js";
 import {
   OwnedCommandFailure,
@@ -138,9 +137,10 @@ export const runPcapCommand = async (options: {
         diagnostic,
       )
     )
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         operation,
         options.inputPath,
+        "pcap",
         diagnostic,
         details,
       );
@@ -249,10 +249,7 @@ export const runPcapCommand = async (options: {
       throw cause;
     }
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      throw cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      throw artifactFileCancellationError(operation, cause);
     if (
       cause instanceof OwnedCommandFailure &&
       cause.cleanupOwner !== undefined

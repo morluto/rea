@@ -5,20 +5,16 @@ import {
   readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  bindArtifactFileCleanup,
-  completedStableArtifactObservation,
+  artifactFileCancellationError,
+  projectStableArtifactFailure,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-  cancelledBy,
-  carriedReason,
+  unsupportedTarget,
+  unrecognizedTarget,
 } from "../domain/analysisErrorCore.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
@@ -45,24 +41,26 @@ export const mapApkBlockError = (
 ): AnalysisError => {
   switch (error.kind) {
     case "not-a-zip":
-      return new AnalysisUnsupportedTargetError(
+      return unrecognizedTarget(
         OPERATION,
         path,
-        `The selected file is not a ZIP/APK (${error.detail}).`,
-        { remediationAction: "Select a local .apk/.zip/.aab archive." },
+        "zip",
+        `The selected file is not a ZIP/APK (${error.detail}). Select a local .apk/.zip/.aab archive.`,
       );
     case "zip64-unsupported":
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         OPERATION,
         path,
+        "zip",
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
+        { undecodedContent: true },
       );
     case "multi-disk-unsupported":
-      return new AnalysisUnsupportedTargetError(
+      return unsupportedTarget(
         OPERATION,
         path,
-        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}).`,
-        { remediationAction: "Select a complete single-disk APK/ZIP archive." },
+        "zip",
+        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}). Select a complete single-disk APK/ZIP archive.`,
       );
     case "malformed-zip":
       return inputError(
@@ -161,22 +159,15 @@ export const apkSignatureFailure = (
   cause: unknown,
   path: string,
   identity?: { readonly sha256: string; readonly bytes: number },
-): AnalysisError => {
-  const primary = primaryFailure(artifactFilePrimaryFacts(cause), path);
-  const observation = completedStableArtifactObservation(cause, path, identity);
-  if (observation !== undefined) primary.retainPartialObservation(observation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+): AnalysisError =>
+  projectStableArtifactFailure(
+    cause,
+    primaryFailure(artifactFilePrimaryFacts(cause), path),
+    path,
     APK_SIGNATURE_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { cause, operation: OPERATION },
+    OPERATION,
+    identity,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
 
 /** Distinguish cancellation, access, integrity and limits for the primary failure. */
 const primaryFailure = (
@@ -225,10 +216,7 @@ const artifactReaderFailure = (
     case "integrity":
       return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
-      return cancelledBy(
-        OPERATION,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
+      return artifactFileCancellationError(OPERATION, cause);
     case "limit":
       return new AnalysisResourceConstraintError(
         OPERATION,

@@ -18,7 +18,10 @@ import {
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import type { NativeToolName } from "../../src/contracts/native/nativeToolContracts.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
-import { observed } from "../fixtures/analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  observed,
+} from "../fixtures/analysisExecution.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import {
   createBinarySessionTargets,
@@ -260,14 +263,9 @@ it.each([
 
 it("preserves a managed execution profile in direct analysis Evidence", async () => {
   const [path] = await createBinarySessionTargets();
-  const profile = createAnalysisProfile(
-    {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    },
-    { fixture: true },
-  );
+  const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+    fixture: true,
+  });
   const factories = recordingFactories(undefined, profile);
   const evidence = await runProviderAnalysis(
     factories.dependencies,
@@ -280,10 +278,9 @@ it("preserves a managed execution profile in direct analysis Evidence", async ()
 
 it("direct analysis snapshot target mismatch retains actionable snapshot recovery", async () => {
   const [path, other] = await createBinarySessionTargets();
-  const profile = createAnalysisProfile(
-    { id: "fixture", name: "Fixture analysis provider", version: "1" },
-    { fixture: true },
-  );
+  const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+    fixture: true,
+  });
   const factories = recordingFactories(undefined, profile);
   const snapshotPath = join(dirname(path), "snapshot.json");
   expect(
@@ -336,10 +333,9 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
 
 it("retries snapshot file cleanup before final close even when a published identity is excluded", async () => {
   const [path] = await createBinarySessionTargets();
-  const profile = createAnalysisProfile(
-    { id: "fixture", name: "Fixture analysis provider", version: "1" },
-    { fixture: true },
-  );
+  const profile = createAnalysisProfile(createFixtureProviderIdentity(), {
+    fixture: true,
+  });
   const factories = recordingFactories(undefined, profile);
   const events: string[] = [];
   const publication = new EvidenceFileError("write", "io", {

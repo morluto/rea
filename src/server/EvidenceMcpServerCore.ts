@@ -32,6 +32,7 @@ import {
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { AnalysisTargetFailureError } from "../domain/analysisErrorCore.js";
 import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
@@ -46,14 +47,21 @@ import {
 } from "../contracts/mcpSchemaPresentation.js";
 import { ErrorEvidenceTransport } from "./ErrorEvidenceTransport.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { RETAINED_SUMMARY_VIEW_TOOL } from "./retainedSummaryDelivery.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import { registerRetainedEvidenceResource } from "./retainedEvidenceResource.js";
 
 /** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
+  pageable: boolean,
+  record: () => EvidenceWriter["recordEvidence"] | undefined,
 ): Schema => {
   const standard = schema["~standard"];
-  if (standard.vendor !== "zod") return schema;
+  // Zod issues feed field-level diagnostics; the delivery selection is
+  // captured for every vendor, since every admitted call has its own.
+  const zod = standard.vendor === "zod";
   return {
     ...schema,
     "~standard": {
@@ -63,13 +71,19 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
         const capture = (
           result: Awaited<ReturnType<typeof standard.validate>>,
         ) => {
-          if (context?.tool === tool && result.issues !== undefined)
+          if (zod && context?.tool === tool && result.issues !== undefined)
             context.validation = {
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
-          if (result.issues === undefined)
+          if (zod && result.issues === undefined)
             context?.captureCallerParameters(tool, value, result.value);
+          if (result.issues === undefined && context?.tool === tool)
+            context.deliverySelection = {
+              detail: isRecord(value) ? value.detail : undefined,
+              pageable,
+              record: record(),
+            };
           return result;
         };
         const result = standard.validate(value);
@@ -258,6 +272,25 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     else super.sendToolListChanged();
   }
 
+  private evidenceLookup: EvidenceLookup | undefined;
+  private servesRetainedEvidence = false;
+
+  /**
+   * Serve `rea://evidence/{evidence_id}` from the session ledger. The
+   * template is registered once, before connecting, so the resource
+   * capability is advertised; a deferred server registers it before its
+   * runtime, and its ledger lookup attaches with the runtime.
+   */
+  serveRetainedEvidence(lookup: EvidenceLookup | undefined): void {
+    if (lookup !== undefined) this.evidenceLookup = lookup;
+    if (this.servesRetainedEvidence) return;
+    this.servesRetainedEvidence = true;
+    registerRetainedEvidenceResource(this, () => ({
+      lookup: this.evidenceLookup,
+      budgetBytes: this.delivery.resultBudgetBytes,
+    }));
+  }
+
   /** Attach the process-owned session only after lazy runtime construction. */
   attachRuntime(
     recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
@@ -370,6 +403,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 inputSchema: captureInputValidation(
                   name,
                   presented.inputSchema as StandardSchemaWithJSON,
+                  this.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+                  () => this.recordEvidence,
                 ),
               }),
           ...(outputSchema === undefined ? {} : { outputSchema }),
@@ -403,9 +438,19 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 input,
                 normalized(context as ServerContext),
               );
-        const result = await (this.analysisSettings === undefined
-          ? invoke()
-          : this.analysisSettings.run(invoke));
+        let result: Awaited<ReturnType<typeof invoke>>;
+        try {
+          result = await (this.analysisSettings === undefined
+            ? invoke()
+            : this.analysisSettings.run(invoke));
+        } catch (cause: unknown) {
+          // The SDK flattens a thrown handler failure into one text block and
+          // JSON-RPC errors are for protocol faults, so a target failure that
+          // escapes a handler is still returned as a projected tool result.
+          // Its message can name target bytes, so it is marked as such.
+          if (!(cause instanceof AnalysisTargetFailureError)) throw cause;
+          result = this.delivery.toErrorToolResult(cause, true);
+        }
         if (request !== undefined)
           request.projectedErrorEncoding = projectedErrorEncoding(result);
         return result;

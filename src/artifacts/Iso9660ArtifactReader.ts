@@ -131,6 +131,7 @@ export class Iso9660ArtifactReader extends PositionalArtifactReader<Iso9660Metad
     const fileSize = initial.size;
     const available = Math.max(0, fileSize - ISO9660_DESCRIPTOR_OFFSET);
     const descriptorBytes = await readArtifactFileBytes(
+      "iso9660",
       handle,
       ISO9660_DESCRIPTOR_OFFSET,
       Math.min(
@@ -199,6 +200,7 @@ export class Iso9660ArtifactReader extends PositionalArtifactReader<Iso9660Metad
       const extent = tree.directoryExtent(directory);
       this.assertOpen(signal);
       const bytes = await readArtifactFileBytes(
+        "iso9660",
         handle,
         extent.dataOffset,
         extent.dataLength,

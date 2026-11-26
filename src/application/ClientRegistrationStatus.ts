@@ -11,10 +11,7 @@ import {
 } from "./ClientConfigurationFiles.js";
 
 export type { ClientRegistrationScope };
-import {
-  effectiveClientServer,
-  type ClientConfigurationDocument,
-} from "./ClientConfigurationDocument.js";
+import { effectiveClientServer } from "./ClientConfigurationDocument.js";
 import { lstat, stat } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -115,11 +112,6 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
         readonly remediation: string;
       }
   );
-
-export type UnhealthyClientRegistrationStatus = Exclude<
-  ClientRegistrationStatus,
-  { readonly state: "aligned" }
->;
 
 interface ClientRegistrationReadOptions {
   readonly platform: NodeJS.Platform;

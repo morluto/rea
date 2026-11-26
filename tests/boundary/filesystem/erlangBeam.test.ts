@@ -25,7 +25,7 @@ describe("Erlang BEAM stable filesystem boundary", () => {
     const refused = await service.inspect({ path: malformed });
     if (refused.ok) throw new Error("Expected malformed target refusal");
     expect(refused.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_erlang_beam",
       path: malformed,
       failure: {

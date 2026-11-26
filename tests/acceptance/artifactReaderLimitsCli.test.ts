@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as digest } from "../support/sha256.js";
 import { constants as bufferConstants } from "node:buffer";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 
@@ -9,7 +9,12 @@ import {
   bunModuleGraphPayload,
   elfAppendedBunPayload,
 } from "../../src/artifacts/bun/BunStandalone.fixture.js";
+import {
+  buildDenoSection,
+  denoElf,
+} from "../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { dotnetBundleFixture } from "../../src/artifacts/dotnet/DotnetBundle.fixture.js";
+import { tarFixture } from "../../src/artifacts/tar/tar.fixture.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
 import type { ArtifactReaderLimitsInput } from "../../src/domain/artifactReaderLimits.js";
 import {
@@ -19,10 +24,8 @@ import {
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
+import { buildWxapkg } from "../fixtures/wxapkg.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
-
-const digest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const readInspection = (value: unknown) => {
   const evidence = parseEvidence(value);
@@ -102,6 +105,47 @@ const readers: readonly ReaderCase[] = [
     value: 1,
   },
   {
+    format: "deno-standalone",
+    create: () =>
+      denoElf(
+        buildDenoSection({
+          vfs: [
+            { File: { n: "main.ts", o: [0, 4], u: true } },
+            { File: { n: "other.ts", o: [0, 4], u: true } },
+          ],
+          vfsFileData: Buffer.from("main"),
+        }),
+      ),
+    lower: { deno: { vfs_entries: 1 } },
+    raised: { deno: { vfs_entries: 2 } },
+    parameter: "artifact_limits.deno.vfs_entries",
+    value: 1,
+  },
+  {
+    format: "wxapkg",
+    create: () =>
+      buildWxapkg([
+        { path: "/app.js", data: "app" },
+        { path: "/page.wxml", data: "page" },
+      ]),
+    lower: { wxapkg: { table_bytes: 1 } },
+    raised: { wxapkg: { table_bytes: 4096 } },
+    parameter: "artifact_limits.wxapkg.table_bytes",
+    value: 1,
+  },
+  {
+    format: "tar",
+    create: () =>
+      tarFixture([
+        { name: "first.txt", data: "first" },
+        { name: "second.txt", data: "second" },
+      ]),
+    lower: { tar: { metadata_bytes: 1 } },
+    raised: { tar: { metadata_bytes: 4096 } },
+    parameter: "artifact_limits.tar.metadata_bytes",
+    value: 1,
+  },
+  {
     format: "zip",
     create: async () => {
       const writer = new ZipWriter(new Uint8ArrayWriter());
@@ -139,10 +183,11 @@ test("rejects malformed directory dimensions before suggesting a budget increase
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
+    code: "unsupported_target",
     retryable: false,
     details: {
-      reason: "format",
+      path,
+      failure_kind: "truncated",
     },
   });
   const failure = result.json as {
@@ -178,7 +223,7 @@ for (const reader of readers)
     });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: true,
       details: {
         reader_limit: {
@@ -229,7 +274,7 @@ test("admits the same SEA carrier above the legacy 4096-argument ceiling", async
   const refused = await cli.run({ arguments: command });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     details: {
       reader_limit: {
         parameter: "artifact_limits.node_sea.argument_count",
@@ -273,7 +318,7 @@ test("applies the selected reader budget before extraction and preserves its out
   });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     details: {
       reader_limit: { parameter: "artifact_limits.dotnet_bundle.entry_count" },
     },
@@ -313,6 +358,8 @@ test("rejects unknown reader-policy fields before opening the selected artifact"
   for (const policy of [
     { unknown: 1 },
     { node_sea: { argument_count: 1, unknown: 1 } },
+    // An indexed Deno fallback path has two parts, so one is unrepresentable.
+    { deno: { path_parts: 1 } },
   ]) {
     const invalid = await cli.run({
       arguments: [

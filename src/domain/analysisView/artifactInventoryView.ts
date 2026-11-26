@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
@@ -590,12 +591,8 @@ const exactCandidates = (
     const byKind = new Map<ArtifactOccurrence["entry_kind"], number[]>();
     for (const [index, row] of rows.entries()) {
       byId.set(row.occurrence_id, index);
-      const existing = byPath.get(row.logical_path);
-      if (existing === undefined) byPath.set(row.logical_path, [index]);
-      else existing.push(index);
-      const kind = byKind.get(row.entry_kind);
-      if (kind === undefined) byKind.set(row.entry_kind, [index]);
-      else kind.push(index);
+      appendToMapList(byPath, row.logical_path, index);
+      appendToMapList(byKind, row.entry_kind, index);
     }
     source.index = { byId, byPath, byKind };
   }

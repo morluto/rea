@@ -56,7 +56,7 @@ export async function verifyMachOOccurrences(app, executable) {
       await withArtifactMcp(app, async (client) => {
         const reply = await artifactMcpCall(client, {
           name: "inspect_artifact",
-          arguments: {},
+          arguments: { detail: "complete" },
         });
         assert.notEqual(reply.isError, true, JSON.stringify(reply));
         assert.deepEqual(
