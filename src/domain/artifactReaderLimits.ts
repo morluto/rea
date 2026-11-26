@@ -114,7 +114,12 @@ export const denoReaderLimitsSchema = z.strictObject({
   vfs_entries: count,
   vfs_name_units: count,
   retained_bytes: bytes,
-  path_parts: count,
+  /**
+   * Indexed fallbacks live under a reserved top-level namespace directory
+   * (`deno-vfs/<index>`, `deno-remote/<index>`) that keeps them collision-free,
+   * so the smallest representable logical path has two parts.
+   */
+  path_parts: count.min(2),
   path_nodes: count,
 });
 export type DenoReaderLimits = z.output<typeof denoReaderLimitsSchema>;
@@ -246,7 +251,7 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     })
     .exactOptional()
     .describe(
-      `Deno compile admission; omitted fields use ${JSON.stringify(DEFAULT_DENO_READER_LIMITS)}. Table records apply to each specifier, redirect and remote-module table; VFS name units are retained UTF-16 path units; path parts also select indexed fallback paths.`,
+      `Deno compile admission; omitted fields use ${JSON.stringify(DEFAULT_DENO_READER_LIMITS)}. Table records apply to each specifier, redirect and remote-module table; VFS name units are retained UTF-16 path units; path parts (at least 2, the depth of an indexed fallback path) also select indexed fallback paths.`,
     ),
   wxapkg: z
     .strictObject({

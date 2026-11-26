@@ -137,7 +137,7 @@ export class DenoStandaloneArtifactReader extends PositionalArtifactReader<
       retainedAllowance,
     );
     if (retainedBytes > retainedAllowance)
-      throw denoRetainedLimit(retainedAllowance, retainedBytes);
+      throw denoRetainedLimit(retainedAllowance);
     let declaredPlaintext = 0n;
     const expansionBudget = BigInt(
       this.expandedBytes ?? artifactExpansionBudgetBytes(location.length),
@@ -165,7 +165,7 @@ export class DenoStandaloneArtifactReader extends PositionalArtifactReader<
         Math.max(0, retainedAllowance - retainedBytes),
       );
       if (retainedBytes > retainedAllowance)
-        throw denoRetainedLimit(retainedAllowance, retainedBytes);
+        throw denoRetainedLimit(retainedAllowance);
       entries.set(entry.adapterKey, entry);
     };
     if (section.vfs.listing === "listed") {
@@ -532,14 +532,15 @@ const assignRemoteDestinations = (
   return assigned;
 };
 
-const denoRetainedLimit = (
-  allowance: number,
-  claimed: number,
-): ArtifactReaderFailure =>
+/**
+ * `jsonValueByteLength` stops counting once its budget is exceeded, so the
+ * counted size understates the requirement and is not reported as required.
+ */
+const denoRetainedLimit = (allowance: number): ArtifactReaderFailure =>
   artifactReaderLimitFailure(
     "artifact_limits.deno.retained_bytes",
     allowance,
     "bytes",
-    claimed,
+    undefined,
     "memory",
   );

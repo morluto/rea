@@ -358,6 +358,8 @@ test("rejects unknown reader-policy fields before opening the selected artifact"
   for (const policy of [
     { unknown: 1 },
     { node_sea: { argument_count: 1, unknown: 1 } },
+    // An indexed Deno fallback path has two parts, so one is unrepresentable.
+    { deno: { path_parts: 1 } },
   ]) {
     const invalid = await cli.run({
       arguments: [
