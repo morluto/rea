@@ -169,6 +169,7 @@
 * **apple-application:** trust declared coverage for empty disk images ([#13678](https://github.com/morluto/rea/issues/13678)) ([01c0e5a](https://github.com/morluto/rea/commit/01c0e5a870ce1bf684fc1ced8d1cfa74d404e48c))
 * **apple:** decode keyed archives that name another archiver ([11896a6](https://github.com/morluto/rea/commit/11896a6eb1864f4f45e4ab756bdfea93427b4eb9))
 * **apple:** decode the ivar WORD_ALIGN sentinel as 8-byte alignment ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
+* **apple:** observe keyed-archive dates when the offset table reaches the trailer ([#7166](https://github.com/morluto/rea/issues/7166)) ([853d8ef](https://github.com/morluto/rea/commit/853d8ef9efc0a10f652fd90a938700147b7a32e1))
 * **apple:** preserve Interface Builder archive roles and omissions ([#13429](https://github.com/morluto/rea/issues/13429)) ([1f6a864](https://github.com/morluto/rea/commit/1f6a864a170e67fca964221ef4b0da4085e1daa6))
 * **apple:** preserve unknown CPU subtype in dylib selection ([#14706](https://github.com/morluto/rea/issues/14706)) ([b06adc4](https://github.com/morluto/rea/commit/b06adc4b49e0e10630246dbf4da373eb5ad2b703))
 * **apple:** report the declared archiver of a keyed archive ([2d182f8](https://github.com/morluto/rea/commit/2d182f865f5db5d59269b19b2f7115706ab79dfa))
