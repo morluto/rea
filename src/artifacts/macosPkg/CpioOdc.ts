@@ -109,11 +109,16 @@ export const isInstallScriptName = (name: string): boolean => {
 const parseCpioOdcInto = (
   bytes: Buffer,
   members: CpioMember[],
-  maxMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+  remainingMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+  packageMaxMembers: number = Math.max(
+    MACOS_PKG_MAX_CPIO_MEMBERS,
+    Math.floor(remainingMembers),
+  ),
 ): Result<readonly CpioMember[], MacosPkgParseError> => {
+  const effectiveMax = Math.max(0, Math.floor(packageMaxMembers));
   const memberLimit = Math.max(
     0,
-    Math.min(maxMembers, MACOS_PKG_MAX_CPIO_MEMBERS),
+    Math.min(Math.floor(remainingMembers), effectiveMax),
   );
   let cursor = 0;
   for (;;) {
@@ -196,14 +201,13 @@ const parseCpioOdcInto = (
     if (members.length >= memberLimit)
       return err(
         macosPkgLimitFailure(
-          memberLimit < MACOS_PKG_MAX_CPIO_MEMBERS
-            ? `cpio odc archives exceed the ${String(MACOS_PKG_MAX_CPIO_MEMBERS)}-member package allowance`
-            : `cpio odc archive declares more than ${String(MACOS_PKG_MAX_CPIO_MEMBERS)} members`,
+          memberLimit < effectiveMax
+            ? `cpio odc archives exceed the ${String(effectiveMax)}-member package allowance; raise artifact_limits.expanded_bytes to admit more cpio members`
+            : `cpio odc archive declares more than ${String(effectiveMax)} members; raise artifact_limits.expanded_bytes to admit more cpio members`,
           {
             name: "macos_pkg_cpio_members",
-            maximum: MACOS_PKG_MAX_CPIO_MEMBERS,
-            required:
-              MACOS_PKG_MAX_CPIO_MEMBERS - memberLimit + members.length + 1,
+            maximum: effectiveMax,
+            required: effectiveMax - memberLimit + members.length + 1,
           },
           "cpio",
         ),
@@ -255,10 +259,19 @@ export interface CpioOdcPrefix {
  */
 export const parseCpioOdcPrefix = (
   bytes: Buffer,
-  maxMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+  remainingMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+  packageMaxMembers: number = Math.max(
+    MACOS_PKG_MAX_CPIO_MEMBERS,
+    Math.floor(remainingMembers),
+  ),
 ): CpioOdcPrefix => {
   const members: CpioMember[] = [];
-  const parsed = parseCpioOdcInto(bytes, members, maxMembers);
+  const parsed = parseCpioOdcInto(
+    bytes,
+    members,
+    remainingMembers,
+    packageMaxMembers,
+  );
   return { members, failure: parsed.ok ? null : parsed.error };
 };
 
@@ -275,7 +288,7 @@ export const parseCpioOdc = (
 
 const cpioArchiveLimit = (maximum: number): MacosPkgParseError =>
   macosPkgLimitFailure(
-    `cpio archive exceeds the ${String(maximum)}-byte decode allowance`,
+    `cpio archive exceeds the ${String(maximum)}-byte decode allowance; raise artifact_limits.expanded_bytes to admit larger Scripts/Payload archives`,
     { name: "macos_pkg_cpio_archive_bytes", maximum },
     "cpio",
   );
@@ -289,14 +302,14 @@ const gunzipBounded = (
   bytes: Buffer,
   maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
 ): Result<Buffer, MacosPkgParseError> => {
-  const limit = Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES);
+  const limit = Math.max(0, Math.floor(maximum));
   try {
     return ok(gunzipSync(bytes, { maxOutputLength: limit }));
   } catch (cause: unknown) {
     if (isZlibOutputLimitError(cause))
       return err(
         macosPkgLimitFailure(
-          `gzip payload exceeds the ${String(limit)}-byte decode allowance`,
+          `gzip payload exceeds the ${String(limit)}-byte decode allowance; raise artifact_limits.expanded_bytes to admit larger Scripts/Payload archives`,
           {
             name: "macos_pkg_cpio_archive_bytes",
             maximum: limit,
@@ -346,7 +359,11 @@ const inventoryParsedArchive = (
 export const inventoryCompressedArchive = (
   bytes: Buffer,
   maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
-  maxMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+  remainingMembers: number = MACOS_PKG_MAX_CPIO_MEMBERS,
+  packageMaxMembers: number = Math.max(
+    MACOS_PKG_MAX_CPIO_MEMBERS,
+    Math.floor(remainingMembers),
+  ),
 ): Result<ArchiveInventory, MacosPkgParseError> => {
   const compression = detectPayloadCompression(bytes);
   if (compression === "pbzx")
@@ -364,22 +381,20 @@ export const inventoryCompressedArchive = (
         undecodedContent: true,
       }),
     );
+  const archiveLimit = Math.max(0, Math.floor(maximum));
   if (compression === "gzip-cpio-odc") {
-    const inflated = gunzipBounded(bytes, maximum);
+    const inflated = gunzipBounded(bytes, archiveLimit);
     if (!inflated.ok) return inflated;
     return inventoryParsedArchive(
       compression,
-      parseCpioOdcPrefix(inflated.value, maxMembers),
+      parseCpioOdcPrefix(inflated.value, remainingMembers, packageMaxMembers),
       inflated.value.length,
     );
   }
-  if (bytes.length > Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES))
-    return err(
-      cpioArchiveLimit(Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES)),
-    );
+  if (bytes.length > archiveLimit) return err(cpioArchiveLimit(archiveLimit));
   return inventoryParsedArchive(
     compression,
-    parseCpioOdcPrefix(bytes, maxMembers),
+    parseCpioOdcPrefix(bytes, remainingMembers, packageMaxMembers),
     bytes.length,
   );
 };

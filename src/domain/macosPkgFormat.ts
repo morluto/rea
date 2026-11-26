@@ -19,12 +19,57 @@ export const MACOS_PKG_MAX_TOC_FILES = 4096;
 export const MACOS_PKG_MAX_TOC_PATH_BYTES = 4 * 1024 * 1024;
 /** Resource policy: TOC XML nodes counted before the DOM is built, 256 per admitted file. */
 export const MACOS_PKG_MAX_TOC_XML_NODES = MACOS_PKG_MAX_TOC_FILES * 256;
-/** Resource policy: total expanded cpio members retained across all Scripts and Payload archives in a package. */
+/** Default resource policy: total expanded cpio members retained across all Scripts and Payload archives in a package when `artifact_limits.expanded_bytes` is omitted. */
 export const MACOS_PKG_MAX_CPIO_MEMBERS = 4096;
 /** Resource policy: one cpio member name, including the trailing NUL. */
 export const MACOS_PKG_MAX_CPIO_NAME_BYTES = 4096;
-/** Resource policy: one gzip-decoded Scripts/Payload archive. */
+/** Default resource policy: one decoded Scripts/Payload cpio archive when `artifact_limits.expanded_bytes` is omitted. */
 export const MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES = 64 * 1024 * 1024;
+/** Scaling ratio tying cpio member allowance to an explicit `artifact_limits.expanded_bytes` budget (64 MiB / 4,096 members). */
+export const MACOS_PKG_CPIO_BYTES_PER_MEMBER = 16 * 1024;
+/** Scaling ratio tying expanded cpio logical path bytes to an explicit `artifact_limits.expanded_bytes` budget (64 MiB / 4 MiB). */
+export const MACOS_PKG_CPIO_BYTES_PER_PATH_BYTE = 16;
+
+export interface MacosPkgCpioBudget {
+  readonly maxArchiveBytes: number;
+  readonly maxMembers: number;
+  readonly maxPathBytes: number;
+  readonly callerControlled: boolean;
+}
+
+/**
+ * Derive Scripts/Payload cpio archive byte, member-count, and expanded path
+ * byte allowances from `artifact_limits.expanded_bytes`. Omission keeps the
+ * 64 MiB / 4,096-member / 4 MiB-path defaults; an explicit
+ * `artifact_limits.expanded_bytes` sets the per-archive byte allowance to that
+ * budget and scales the package-wide member and path-byte allowances
+ * proportionally.
+ */
+export const macosPkgCpioBudget = (
+  expandedBytes: number | undefined,
+): MacosPkgCpioBudget => {
+  if (expandedBytes === undefined) {
+    return {
+      maxArchiveBytes: MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
+      maxMembers: MACOS_PKG_MAX_CPIO_MEMBERS,
+      maxPathBytes: MACOS_PKG_MAX_TOC_PATH_BYTES,
+      callerControlled: false,
+    };
+  }
+  const maxArchiveBytes = Math.max(0, Math.floor(expandedBytes));
+  const scaledMembers = Math.floor(
+    maxArchiveBytes / MACOS_PKG_CPIO_BYTES_PER_MEMBER,
+  );
+  const scaledPathBytes = Math.floor(
+    maxArchiveBytes / MACOS_PKG_CPIO_BYTES_PER_PATH_BYTE,
+  );
+  return {
+    maxArchiveBytes,
+    maxMembers: Math.max(MACOS_PKG_MAX_CPIO_MEMBERS, scaledMembers),
+    maxPathBytes: Math.max(MACOS_PKG_MAX_TOC_PATH_BYTES, scaledPathBytes),
+    callerControlled: true,
+  };
+};
 /** Default resource policy: Distribution or PackageInfo bytes decoded per document when `artifact_limits.expanded_bytes` is omitted. */
 export const MACOS_PKG_MAX_METADATA_XML_BYTES = 1 * 1024 * 1024;
 /** Default resource policy: total Distribution and PackageInfo bytes decoded across one package when `artifact_limits.expanded_bytes` is omitted. */

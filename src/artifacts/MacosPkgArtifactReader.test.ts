@@ -1709,3 +1709,156 @@ it("charges stored PackageInfo reads against the shared artifact_limits.expanded
     await reader.close();
   }
 });
+
+it("strips repeated leading ./ prefixes from cpio member names while preserving sourcePath and archive-root entries", async () => {
+  const payload = gzipSync(
+    buildCpioOdc([
+      { name: "./.", mode: 0o040755 },
+      { name: "././", mode: 0o040755 },
+      { name: "././usr/bin/tool", mode: 0o100755, data: Buffer.from("tool\n") },
+    ]),
+  );
+  const pkgBytes = buildXar({
+    files: [
+      {
+        path: "PackageInfo",
+        bytes: Buffer.from(`<pkg-info identifier="com.rea.dots"/>`),
+      },
+      { path: "Payload", bytes: payload },
+    ],
+  });
+  const { reader, entries, coverage, path } = await entriesOf(
+    pkgBytes,
+    "repeated-dot-slash-cpio.pkg",
+  );
+  try {
+    const tool = entries.find((entry) => entry.path === "Payload/usr/bin/tool");
+    expect(tool).toMatchObject({
+      path: "Payload/usr/bin/tool",
+      sourcePath: "././usr/bin/tool",
+      kind: "file",
+      executable: true,
+    });
+    expect(
+      entries.some(
+        (entry) =>
+          entry.path === "Payload/." ||
+          entry.path === "Payload/./" ||
+          entry.path.includes("/./"),
+      ),
+    ).toBe(false);
+    expect(coverage).toEqual([expect.objectContaining({ status: "complete" })]);
+  } finally {
+    await reader.close();
+  }
+
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(inventory.coverage.status).toBe("complete");
+  expect(
+    inventory.occurrences.find(
+      (row) => row.logical_path === "Payload/usr/bin/tool",
+    ),
+  ).toMatchObject({
+    logical_path: "Payload/usr/bin/tool",
+    source_path: "././usr/bin/tool",
+    hash_status: "verified",
+  });
+});
+
+it("raises cpio member-count and decoded-archive-byte allowances when artifact_limits.expanded_bytes is raised", async () => {
+  const emptyMembers = (prefix: string, count: number) =>
+    gzipSync(
+      buildCpioOdc(
+        Array.from({ length: count }, (_, index) => ({
+          name: `${prefix}${String(index)}`,
+          mode: 0o100644,
+        })),
+      ),
+    );
+  const manyMembersPkg = buildXar({
+    files: [
+      { path: "A.pkg", type: "directory" },
+      { path: "A.pkg/Payload", bytes: emptyMembers("a", 2500) },
+      { path: "B.pkg", type: "directory" },
+      { path: "B.pkg/Payload", bytes: emptyMembers("b", 2500) },
+    ],
+  });
+
+  // Default stops at 4,096 members and points callers to artifact_limits.expanded_bytes.
+  const defaultedMembers = await entriesOf(
+    manyMembersPkg,
+    "cpio-members-default.pkg",
+  );
+  try {
+    expect(
+      defaultedMembers.reader.formatMetadata()?.payload.members,
+    ).toHaveLength(MACOS_PKG_MAX_CPIO_MEMBERS);
+    expect(defaultedMembers.reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "oversize",
+        path: "B.pkg/Payload",
+        message: expect.stringContaining("artifact_limits.expanded_bytes"),
+      }),
+    ]);
+  } finally {
+    await defaultedMembers.reader.close();
+  }
+
+  // Raising artifact_limits.expanded_bytes to 96 MiB scales maxMembers to 6,144 and admits all 5,000 members.
+  const raisedMembers = await entriesOf(
+    manyMembersPkg,
+    "cpio-members-raised.pkg",
+    96 * 1024 * 1024,
+  );
+  try {
+    expect(raisedMembers.reader.formatMetadata()?.payload.members).toHaveLength(
+      5000,
+    );
+    expect(raisedMembers.reader.formatMetadata()?.refusals).toEqual([]);
+    expect(raisedMembers.coverage).toEqual([
+      expect.objectContaining({ status: "complete" }),
+    ]);
+  } finally {
+    await raisedMembers.reader.close();
+  }
+
+  // A > 64 MiB gzip-decoded Payload is refused under the 64 MiB default and
+  // admitted when artifact_limits.expanded_bytes is raised above its decoded size.
+  const over64MibSize = 64 * 1024 * 1024 + 4096;
+  const largePayloadGz = gzipSync(
+    buildCpioOdc([
+      { name: ".", mode: 0o040755 },
+      { name: "big.bin", mode: 0o100644, data: Buffer.alloc(over64MibSize) },
+    ]),
+  );
+  const largePayloadPkg = buildXar({
+    files: [
+      {
+        path: "PackageInfo",
+        bytes: Buffer.from(`<pkg-info identifier="com.rea.big"/>`),
+      },
+      { path: "Payload", bytes: largePayloadGz },
+    ],
+  });
+
+  const raisedLarge = await entriesOf(
+    largePayloadPkg,
+    "cpio-over-64mib-raised.pkg",
+    80 * 1024 * 1024,
+  );
+  try {
+    const bigEntry = raisedLarge.entries.find(
+      (entry) => entry.path === "Payload/big.bin",
+    );
+    expect(bigEntry).toMatchObject({
+      path: "Payload/big.bin",
+      declaredSize: over64MibSize,
+    });
+    expect(raisedLarge.reader.formatMetadata()?.refusals).toEqual([]);
+    expect(raisedLarge.coverage).toEqual([
+      expect.objectContaining({ status: "complete" }),
+    ]);
+  } finally {
+    await raisedLarge.reader.close();
+  }
+});
