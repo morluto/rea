@@ -948,7 +948,7 @@ it("refuses an over-budget collection before parsing the rows past the allowance
   );
 });
 
-it("skips unconsumed producer members and bounds fixed structural allowances", () => {
+it("skips unconsumed producer members and bounds structural and per-call allowances", () => {
   const skipped = parse(
     withBody(
       `{"threads":[],"usedImages":[],"lastExceptionBacktrace":[${Array.from({ length: 100_000 }, () => "{}").join(",")}]}`,
@@ -963,6 +963,16 @@ it("skips unconsumed producer members and bounds fixed structural allowances", (
   expect(() => parse(withBody(`{${keys}}`))).toThrow(
     parserLimit("unlisted_keys", 1024),
   );
+  const raisedKeys = parse(withBody(`{${keys}}`), { max_unlisted_keys: 1025 });
+  expect(raisedKeys.unlisted_body_keys).toHaveLength(1025);
+  expect(() =>
+    parse(
+      Buffer.from(
+        `${JSON.stringify({ bug_type: "309", extra1: 1, extra2: 2 })}\n{"threads":[],"usedImages":[]}`,
+      ),
+      { max_unlisted_keys: 1 },
+    ),
+  ).toThrow(parserLimit("unlisted_keys", 1));
   const deep = `${"[".repeat(100)}${"]".repeat(100)}`;
   expect(() => parse(withBody(`{"vmSummary":${deep}}`))).toThrow(
     parserLimit("nesting", 64),
@@ -971,4 +981,9 @@ it("skips unconsumed producer members and bounds fixed structural allowances", (
   expect(() =>
     parse(withBody(`{"termination":{"reasons":${reasons}}}`)),
   ).toThrow(parserLimit("termination_reasons", 256));
+  const raisedReasons = parse(
+    withBody(`{"termination":{"reasons":${reasons}}}`),
+    { max_termination_reasons: 257 },
+  );
+  expect(raisedReasons.termination?.reasons).toHaveLength(257);
 });

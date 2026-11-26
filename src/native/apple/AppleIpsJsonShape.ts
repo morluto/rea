@@ -1,9 +1,5 @@
 import type { InspectAppleIpsInput } from "../../domain/native/appleIps.js";
-import {
-  APPLE_IPS_FORMAT,
-  appleIpsLimit,
-  type AppleIpsFixedBoundary,
-} from "./AppleIps.errors.js";
+import { APPLE_IPS_FORMAT, appleIpsLimit } from "./AppleIps.errors.js";
 import {
   parseLosslessJson,
   LosslessJsonFailure,
@@ -17,10 +13,6 @@ import {
 
 /** IPS JSON is at most a handful of levels deep; deeper input is not a crash report shape. */
 const MAX_IPS_JSON_DEPTH = 64;
-/** Unlisted member names retained per documented object. */
-const MAX_UNLISTED_KEYS = 1024;
-/** termination.reasons entries; real reports carry a few. */
-const MAX_TERMINATION_REASONS = 256;
 
 const SCALAR: JsonShape = { kind: "scalar" };
 
@@ -29,26 +21,24 @@ const scalarMembers = (
 ): Record<string, JsonShape> =>
   Object.fromEntries(names.map((name) => [name, SCALAR]));
 
-const fixedAllowance =
-  (boundary: AppleIpsFixedBoundary, maximum: number, noun: string) =>
-  (count: number) => {
-    if (count > maximum)
-      throw appleIpsLimit(
-        boundary,
-        maximum,
-        `Crash report lists more than ${String(maximum)} ${noun}`,
-      );
-  };
-
-const unlistedKeys = fixedAllowance(
-  "unlisted_keys",
-  MAX_UNLISTED_KEYS,
-  "unlisted keys in one object",
-);
+const unlistedKeyAllowance = (maximum: number) => (count: number) => {
+  if (count > maximum)
+    throw appleIpsLimit(
+      "unlisted_keys",
+      maximum,
+      `Crash report lists more than ${String(maximum)} unlisted keys in one object, above the selected ${String(maximum)}-entry unlisted_keys allowance`,
+    );
+};
 
 /** One running count per selected row collection, checked before each row. */
 const selectedAllowances = (input: InspectAppleIpsInput) => {
-  const counts = { threads: 0, frames: 0, images: 0, registers: 0 };
+  const counts = {
+    threads: 0,
+    frames: 0,
+    images: 0,
+    registers: 0,
+    termination_reasons: 0,
+  };
   const take =
     (boundary: keyof typeof counts, maximum: number, noun: string) => () => {
       counts[boundary] += 1;
@@ -68,6 +58,12 @@ const selectedAllowances = (input: InspectAppleIpsInput) => {
       input.max_registers,
       "threadState register slots",
     ),
+    terminationReasons: take(
+      "termination_reasons",
+      input.max_termination_reasons,
+      "termination reasons",
+    ),
+    unlistedKeys: unlistedKeyAllowance(input.max_unlisted_keys),
   };
 };
 
@@ -93,7 +89,7 @@ const threadShape = (
             "symbolLocation",
             "inline",
           ),
-          beforeUnlisted: unlistedKeys,
+          beforeUnlisted: take.unlistedKeys,
         },
         beforeItem: take.frames,
       },
@@ -114,40 +110,31 @@ const threadShape = (
         beforeRest: take.registers,
       },
     },
-    beforeUnlisted: unlistedKeys,
+    beforeUnlisted: take.unlistedKeys,
   };
 };
 
-const terminationShape = (): JsonShape => {
-  const reasonLimit = fixedAllowance(
-    "termination_reasons",
-    MAX_TERMINATION_REASONS,
-    "termination reasons",
-  );
-  let reasons = 0;
-  return {
-    kind: "object",
-    members: {
-      ...scalarMembers(
-        "namespace",
-        "code",
-        "indicator",
-        "flags",
-        "byPid",
-        "byProc",
-      ),
-      reasons: {
-        kind: "array",
-        items: SCALAR,
-        beforeItem: () => {
-          reasons += 1;
-          reasonLimit(reasons);
-        },
-      },
+const terminationShape = (
+  take: ReturnType<typeof selectedAllowances>,
+): JsonShape => ({
+  kind: "object",
+  members: {
+    ...scalarMembers(
+      "namespace",
+      "code",
+      "indicator",
+      "flags",
+      "byPid",
+      "byProc",
+    ),
+    reasons: {
+      kind: "array",
+      items: SCALAR,
+      beforeItem: take.terminationReasons,
     },
-    beforeUnlisted: unlistedKeys,
-  };
-};
+  },
+  beforeUnlisted: take.unlistedKeys,
+});
 
 /**
  * Projection of the documented IPS crash body. Budget callbacks fire before
@@ -172,14 +159,14 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
       osVersion: {
         kind: "object",
         members: scalarMembers("train", "build", "releaseType", "isEmbedded"),
-        beforeUnlisted: unlistedKeys,
+        beforeUnlisted: take.unlistedKeys,
       },
       exception: {
         kind: "object",
         members: scalarMembers("type", "signal", "subtype", "codes", "message"),
-        beforeUnlisted: unlistedKeys,
+        beforeUnlisted: take.unlistedKeys,
       },
-      termination: terminationShape(),
+      termination: terminationShape(take),
       threads: {
         kind: "array",
         items: threadShape(take),
@@ -198,17 +185,17 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
             "name",
             "path",
           ),
-          beforeUnlisted: unlistedKeys,
+          beforeUnlisted: take.unlistedKeys,
         },
         beforeItem: take.images,
       },
     },
-    beforeUnlisted: unlistedKeys,
+    beforeUnlisted: take.unlistedKeys,
   };
 };
 
 /** Projection of the first-line IPS metadata object. */
-export const IPS_METADATA_SHAPE: JsonShape = {
+export const ipsMetadataShape = (input: InspectAppleIpsInput): JsonShape => ({
   kind: "object",
   members: scalarMembers(
     "bug_type",
@@ -220,8 +207,8 @@ export const IPS_METADATA_SHAPE: JsonShape = {
     "build_version",
     "platform",
   ),
-  beforeUnlisted: unlistedKeys,
-};
+  beforeUnlisted: unlistedKeyAllowance(input.max_unlisted_keys),
+});
 
 /** Parse one complete JSON value under a projection, mapping failures to IPS errors. */
 export const consumeJson = (

@@ -138,12 +138,14 @@ verified. Linux ELF cores use the separate
 ## Limits and failures
 
 The selected file is limited to 1 MiB by default (16 MiB maximum). At most 256
-threads, 8192 frames, 1024 `usedImages` rows, and 16384 `threadState`
-register slots are examined by default (4096 / 65536 / 4096 / 262144
-maximum). Budgets are checked before each row is parsed, and body members the
-report does not interpret are syntax-checked without being kept. Fixed
-allowances bound JSON nesting (64 levels), unlisted key names per object
-(1024), and `termination.reasons` entries (256). Malformed metadata, a
+threads, 8192 frames, 1024 `usedImages` rows, 16384 `threadState` register
+slots, 256 `termination.reasons` entries (`max_termination_reasons` /
+`--max-termination-reasons`, up to 4096), and 1024 unlisted key names per
+object (`max_unlisted_keys` / `--max-unlisted-keys`, up to 16384) are examined
+by default (4096 / 65536 / 4096 / 262144 maximum for the row budgets). Budgets
+are checked before each row is parsed, and body members the report does not
+interpret are syntax-checked without being kept. A fixed representation ceiling
+bounds recursive JSON nesting at 64 levels. Malformed metadata, a
 truncated crash body, invalid UTF-8, a NUL in the text, and exhausted budgets
 fail without partial success.
 

@@ -31,6 +31,10 @@ export const MAX_INSPECT_APPLE_IPS_IMAGES = 4096;
 export const MAX_INSPECT_APPLE_IPS_JOIN_BYTES = 256 * 1024 * 1024;
 /** Hard ceiling on threadState register slots across every thread. */
 export const MAX_INSPECT_APPLE_IPS_REGISTERS = 262144;
+/** Hard ceiling on termination.reasons entries. */
+export const MAX_INSPECT_APPLE_IPS_TERMINATION_REASONS = 4096;
+/** Hard ceiling on unlisted JSON key names retained per object. */
+export const MAX_INSPECT_APPLE_IPS_UNLISTED_KEYS = 16384;
 /** Conservative retained decimal/hex text capacity, measured as UTF-16 bytes. */
 export const DEFAULT_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES = 64 * 1024 * 1024;
@@ -91,6 +95,18 @@ export const APPLE_IPS_BUDGETS = {
     default_value: 16384,
     unit: "count",
   },
+  max_termination_reasons: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_TERMINATION_REASONS,
+    default_value: 256,
+    unit: "count",
+  },
+  max_unlisted_keys: {
+    minimum: 1,
+    maximum: MAX_INSPECT_APPLE_IPS_UNLISTED_KEYS,
+    default_value: 1024,
+    unit: "count",
+  },
   max_integer_text_bytes: {
     minimum: 1,
     maximum: MAX_INSPECT_APPLE_IPS_INTEGER_TEXT_BYTES,
@@ -130,6 +146,16 @@ export const inspectAppleIpsInputSchema = z.strictObject({
     APPLE_IPS_BUDGETS.max_registers,
   ).describe(
     "Maximum threadState register slots across every thread; exceeding the budget fails without partial success",
+  ),
+  max_termination_reasons: parameterBudgetSchema(
+    APPLE_IPS_BUDGETS.max_termination_reasons,
+  ).describe(
+    "Maximum termination.reasons entries to examine (default 256, maximum 4096); exceeding the budget fails without partial success",
+  ),
+  max_unlisted_keys: parameterBudgetSchema(
+    APPLE_IPS_BUDGETS.max_unlisted_keys,
+  ).describe(
+    "Maximum unlisted JSON key names retained per object (default 1024, maximum 16384); exceeding the budget fails without partial success",
   ),
   max_integer_text_bytes: parameterBudgetSchema(
     APPLE_IPS_BUDGETS.max_integer_text_bytes,

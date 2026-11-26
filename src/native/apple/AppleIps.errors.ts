@@ -9,13 +9,12 @@ export type AppleIpsSelectedBoundary =
   | "frames"
   | "images"
   | "registers"
-  | "integer_text";
-
-/** Fixed format ceilings that no caller argument raises. */
-export type AppleIpsFixedBoundary =
   | "termination_reasons"
   | "unlisted_keys"
-  | "nesting";
+  | "integer_text";
+
+/** Fixed representation ceiling that no caller argument raises. */
+export type AppleIpsFixedBoundary = "nesting";
 
 /** Resource boundary exceeded while walking an IPS crash report. */
 export const appleIpsLimit = (

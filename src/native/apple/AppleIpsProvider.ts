@@ -33,7 +33,6 @@ import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   APPLE_IPS_FORMAT,
-  type AppleIpsFixedBoundary,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
@@ -186,6 +185,8 @@ const SELECTED_BUDGETS = {
   frames: "max_frames",
   images: "max_images",
   registers: "max_registers",
+  termination_reasons: "max_termination_reasons",
+  unlisted_keys: "max_unlisted_keys",
   integer_text: "max_integer_text_bytes",
 } as const satisfies Record<AppleIpsSelectedBoundary, AppleIpsBudget>;
 
@@ -194,32 +195,18 @@ const isSelectedBoundary = (
 ): boundary is AppleIpsSelectedBoundary =>
   Object.hasOwn(SELECTED_BUDGETS, boundary);
 
-/** The unit each fixed IPS format ceiling counts. */
-const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
-  termination_reasons: "termination reasons",
-  unlisted_keys: "keys",
-  nesting: "levels",
-};
-
-const isFixedBoundary = (name: string): name is AppleIpsFixedBoundary =>
-  Object.hasOwn(FIXED_BOUNDARY_UNITS, name);
-
 const resourceRecovery = ({ name, maximum }: LimitRef) =>
   isSelectedBoundary(name)
     ? {
         retryable: false,
         limit: appleIpsBudgetLimit(SELECTED_BUDGETS[name], maximum),
       }
-    : fixedAllowanceOptions(
-        `The IPS ${name.replaceAll("_", " ")} allowance`,
-        "parser",
-        {
+    : name === "nesting"
+      ? fixedAllowanceOptions("The IPS JSON nesting allowance", "parser", {
           limit: maximum,
-          ...(isFixedBoundary(name)
-            ? { unit: FIXED_BOUNDARY_UNITS[name] }
-            : {}),
-        },
-      );
+          unit: "levels",
+        })
+      : undefined;
 
 const appleIpsFailurePrimary = (
   facts: ReturnType<typeof artifactFilePrimaryFacts>,
@@ -234,13 +221,15 @@ const appleIpsFailurePrimary = (
       path: input.path,
       description: "report",
       field,
-      recognise: (failure) =>
-        isParseLimit(failure, APPLE_IPS_FORMAT)
-          ? parseLimitConstraint(OPERATION, "capacity", failure, {
-              ...resourceRecovery(failure.failure.limit),
-              path: input.path,
-            })
-          : undefined,
+      recognise: (failure) => {
+        if (!isParseLimit(failure, APPLE_IPS_FORMAT)) return undefined;
+        const recovery = resourceRecovery(failure.failure.limit);
+        if (recovery === undefined) return undefined;
+        return parseLimitConstraint(OPERATION, "capacity", failure, {
+          ...recovery,
+          path: input.path,
+        });
+      },
       fileSize: (failure) =>
         new AnalysisResourceConstraintError(
           OPERATION,

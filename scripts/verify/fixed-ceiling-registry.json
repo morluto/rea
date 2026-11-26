@@ -240,10 +240,9 @@
     }
   },
   "src/native/apple/AppleIpsProvider.ts": {
-    "`The IPS ${name.replaceAll(\"_\", \" \")} allowance`": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
+    "\"The IPS JSON nesting allowance\"": {
+      "class": "representation",
+      "reason": "Bounds recursive parseLosslessJson descent (64 levels) so deeply nested IPS JSON cannot exhaust the call stack; termination reasons and unlisted keys per object are per-call controls."
     }
   },
   "src/native/dwarf/DwarfUnitsProvider.ts": {
