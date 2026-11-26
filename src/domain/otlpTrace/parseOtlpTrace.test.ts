@@ -386,6 +386,22 @@ describe("parseOtlpTrace attributes", () => {
       bytes_base64: "AQID",
     });
   });
+
+  it("measures a byte value too large for a repeated-quartet regexp", () => {
+    // A canonical base64 payload this large still fits the 32 MiB input budget;
+    // the base64 check must not recurse per quartet and throw a RangeError that
+    // escapes the parser with no inventory or typed failure.
+    const value = "A".repeat(8 * 1024 * 1024);
+    const report = parse(
+      envelope([
+        span({ attributes: [{ key: "big", value: { bytesValue: value } }] }),
+      ]),
+    );
+    expect(report.spans[0]!.attributes[0]).toMatchObject({
+      value_kind: "bytes",
+      bytes_length: 6 * 1024 * 1024,
+    });
+  });
 });
 
 describe("parseOtlpTrace damaged service names", () => {

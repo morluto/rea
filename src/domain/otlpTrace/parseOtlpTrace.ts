@@ -7,6 +7,7 @@ import {
   type JsonValue,
 } from "../jsonValue.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { isPaddedBase64 } from "../stringPatterns.js";
 import type {
   OtlpDiagnostic,
   OtlpResource,
@@ -195,9 +196,6 @@ const ANY_VALUE_MEMBERS = [
   "kvlistValue",
 ] as const;
 
-const isCanonicalBase64 = (text: string): boolean =>
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text);
-
 const readAttribute = (
   key: string,
   rawValue: Json,
@@ -284,8 +282,10 @@ const readAttribute = (
         return { ...empty, value_kind: "bytes" };
       const text = typeof value === "string" ? value : undefined;
       // Buffer.from ignores malformed base64, so a damaged payload would
-      // otherwise report a short or zero length and read as valid.
-      const readable = text !== undefined && isCanonicalBase64(text);
+      // otherwise report a short or zero length and read as valid. The shared
+      // check is stack-safe: a repeated-quartet regexp overflows the regexp
+      // stack on a valid payload the 32 MiB input budget still admits.
+      const readable = text !== undefined && isPaddedBase64(text);
       if (text !== undefined && !readable)
         capture.damaged?.(
           `The bytesValue at ${capture.pointer} is not canonical base64, so its decoded length is unknown; the source text is retained.`,
