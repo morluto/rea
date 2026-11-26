@@ -7,6 +7,7 @@ import { inspectPlaywrightTraceInputSchema } from "../../domain/playwrightTrace/
 import {
   PLAYWRIGHT_TRACE_OPERATION as operation,
   PLAYWRIGHT_TRACE_PROVIDER,
+  playwrightTraceLimits,
   playwrightTraceSchema,
   type PlaywrightTrace,
 } from "../../domain/playwrightTrace/playwrightTrace.js";
@@ -46,7 +47,11 @@ export class PlaywrightTraceService {
       signal,
     );
     if (!parsed.ok) return parsed;
-    const loaded = await this.port.inspect(parsed.value.path, signal);
+    const loaded = await this.port.inspect(
+      parsed.value.path,
+      playwrightTraceLimits(parsed.value.trace_limits),
+      signal,
+    );
     if (!loaded.ok) {
       const source =
         loaded.error.partialObservation ??

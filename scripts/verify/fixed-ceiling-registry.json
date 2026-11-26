@@ -118,18 +118,10 @@
       "reason": "Relays the live runtime-retention allowance its caller names."
     }
   },
-  "src/browser/history/playwrightTrace/PlaywrightTraceDecoder.ts": {
-    "`The Playwright trace archive input allowance of ${String(PLAYWRIGHT_TRACE_LIMITS.archiveBytes)} bytes`": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Playwright trace archive input and record parser allowances are resource policies."
-    }
-  },
-  "src/browser/history/playwrightTrace/TraceStream.ts": {
-    "nesting ? \"The Playwright trace record nesting allowance\" : \"The Playwright trace record parser allowance\"": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "Playwright trace archive input and record parser allowances are resource policies."
+  "src/browser/history/playwrightTrace/TraceFailure.ts": {
+    "\"The Playwright trace ZIP expansion allowance (derived from the archive size)\"": {
+      "class": "derived",
+      "reason": "The ZIP reader's plaintext-work budget is derived from the admitted trace archive's own size, which trace_limits.archive_bytes bounds."
     }
   },
   "src/domain/analysisErrorCore.ts": {
@@ -147,9 +139,8 @@
   },
   "src/domain/apiContract/GraphqlDocuments.ts": {
     "`The GraphQL AST nesting allowance of ${String(GRAPHQL_CONTRACT_LIMITS.astDepth)} levels`": {
-      "class": "pending",
-      "issue": 14236,
-      "reason": "GraphQL AST nesting depth is a resource policy unless a recursion-stack reason is stated."
+      "class": "representation",
+      "reason": "Bounds the parsed AST depth that REA's recursive selection-set generators (collectSelections, nested yield*) and graphql-js's recursive print and schema building walk, so a deeply nested document cannot exhaust the call stack or make nested generator delegation quadratic."
     }
   },
   "src/domain/fixedAllowanceRemediation.ts": {
@@ -398,18 +389,18 @@
       "reason": "PE structural and retained-text allowances are resource policies (the PE file-size admission is #14167)."
     }
   },
-  "src/native/pe/PeUnwindRangesProvider.ts": {
-    "\"The PE exception-directory entry allowance\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
-    }
-  },
   "src/native/pe/PeResourcesProvider.ts": {
     "\"The PE resource metadata allowance\"": {
       "class": "pending",
       "issue": 14235,
       "reason": "PE resource metadata retention is a resource policy (the PE file-size admission is #14167)."
+    }
+  },
+  "src/native/pe/PeUnwindRangesProvider.ts": {
+    "\"The PE exception-directory entry allowance\"": {
+      "class": "pending",
+      "issue": 14235,
+      "reason": "The 2,097,152-entry typed-array allowance bounds decoder memory like the other PE structural allowances; it is a resource policy pending #14235."
     }
   },
   "src/pcap/PcapCommand.ts": {

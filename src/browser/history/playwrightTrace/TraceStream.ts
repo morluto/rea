@@ -1,5 +1,4 @@
 import { decodeStrictUtf8 } from "../../../domain/strictUtf8.js";
-import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { getHeapStatistics } from "node:v8";
 import { recordedJsonNumber } from "../../../domain/exactJsonNumber.js";
 import { LosslessNumber } from "lossless-json";
@@ -17,7 +16,8 @@ import {
 } from "../../../domain/parseFailureAnalysisError.js";
 import {
   PLAYWRIGHT_TRACE_OPERATION,
-  PLAYWRIGHT_TRACE_LIMITS,
+  playwrightTraceLimitRecovery,
+  type PlaywrightTraceLimits,
   type TraceMember,
   type TraceStream,
   type TraceEvent,
@@ -64,7 +64,10 @@ const ensureTraceHeapHeadroom = (
     );
 };
 
-const readRecord = (bytes: Buffer): SelectiveCaptureJsonResult => {
+const readRecord = (
+  bytes: Buffer,
+  limits: PlaywrightTraceLimits,
+): SelectiveCaptureJsonResult => {
   ensureTraceHeapHeadroom(bytes.length, 4);
   let value: string;
   try {
@@ -82,7 +85,9 @@ const readRecord = (bytes: Buffer): SelectiveCaptureJsonResult => {
     "Playwright trace",
     RETAINED_TRACE_TYPES,
     {
-      maximumNodes: PLAYWRIGHT_TRACE_LIMITS.factsBytes / 256,
+      // Each parser node is charged against a share of the retained facts.
+      maximumNodes: Math.floor(limits.facts_bytes / 256),
+      maximumDepth: limits.nesting_depth,
       beforeMaterialize: () => ensureTraceHeapHeadroom(bytes.length, 64),
     },
   );
@@ -170,13 +175,14 @@ class TraceStreamRead {
     const { inventory, member } = this.input;
     let parsed: SelectiveCaptureJsonResult;
     try {
-      parsed = readRecord(line.bytes);
+      parsed = readRecord(line.bytes, inventory.limits);
     } catch (cause) {
       if (!(cause instanceof CaptureFormatError)) throw cause;
       if (isParseLimit(cause, CAPTURE_FORMAT)) {
         const { name, maximum } = cause.failure.limit;
         if (name !== "nesting-depth" && name !== "parser-nodes") throw cause;
         const nesting = name === "nesting-depth";
+        // Parser nodes are derived from facts_bytes, so that field recovers them.
         throw parseLimitConstraint(
           PLAYWRIGHT_TRACE_OPERATION,
           "memory",
@@ -185,15 +191,9 @@ class TraceStreamRead {
             reportedLimitContext: {
               [nesting ? "nesting_levels" : "parser_nodes"]: maximum,
             },
-            ...fixedAllowanceOptions(
-              nesting
-                ? "The Playwright trace record nesting allowance"
-                : "The Playwright trace record parser allowance",
-              "parser",
-              {
-                limit: maximum,
-                unit: CAPTURE_LIMITS[name].unit,
-              },
+            ...playwrightTraceLimitRecovery(
+              nesting ? "nesting_depth" : "facts_bytes",
+              inventory.limits,
             ),
           },
         );

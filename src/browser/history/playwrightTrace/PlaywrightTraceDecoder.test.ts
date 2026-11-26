@@ -1,10 +1,13 @@
+import {
+  playwrightTraceLimits,
+  playwrightTraceSchema,
+} from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
-import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { playwrightTraceFixture } from "../../../../tests/fixtures/playwrightTrace.js";
 import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -22,6 +25,7 @@ it("imports real v10 recorder text with per-stream identity and resource presenc
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     const report = playwrightTraceSchema.parse(result.value);
@@ -96,6 +100,7 @@ it("keeps failed-request status sentinels unknown without losing recorded respon
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     const report = playwrightTraceSchema.parse(result.value);
@@ -160,6 +165,7 @@ it("retains valid siblings of malformed records and exposes exact producer lines
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     expect(result.value.events).toHaveLength(1);
@@ -201,6 +207,7 @@ it("requires an unambiguous v10 profile for each trace and paired network stream
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     const { events, streams, members, diagnostics, source_coverage } =
@@ -244,6 +251,7 @@ it("refuses other declared trace versions with verified archive identity", async
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected version refusal");
     expect(result.error).toMatchObject({
@@ -267,6 +275,7 @@ it("preserves opaque pre-cancellation without reading or claiming a source snaps
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       "/unused.zip",
+      playwrightTraceLimits(),
       controller.signal,
     );
     if (result.ok) throw new Error("Expected cancellation");
@@ -287,6 +296,7 @@ it("keeps unsafe numeric literals exact instead of rounding recorded times", asy
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     expect(result.value.events[0]?.time).toBeNull();
@@ -313,6 +323,7 @@ it("refuses oversized physical lines before parsing their representation", async
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected line capacity refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
@@ -331,6 +342,7 @@ it("rejects a sparse over-budget archive before hashing or expansion", async () 
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected archive admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
@@ -354,11 +366,16 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (result.ok) throw new Error("Expected node admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(projectAnalysisError(result.error).details).toMatchObject({
-      refusal: { limit: 131072, unit: "parser nodes" },
+      // Parser nodes are facts_bytes / 256, so that field recovers them.
+      limit: {
+        parameter: "trace_limits.facts_bytes",
+        effective_value: 32 * 1024 * 1024,
+      },
       reported_limits: {
         boundary: "parser-nodes",
         maximum: 131072,
@@ -413,6 +430,7 @@ it("distinguishes ambiguous and missing archive resource references", async () =
   try {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
+      playwrightTraceLimits(),
     );
     if (!result.ok) throw result.error;
     expect(
@@ -461,7 +479,10 @@ it("names the ZIP decoder window for a large-window recorder stream", async () =
   );
   const resources = new ArtifactResourceScope();
   try {
-    const result = await new PlaywrightTraceDecoder(resources).inspect(path);
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      path,
+      playwrightTraceLimits(),
+    );
     if (result.ok) throw new Error("Expected decoder window refusal");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
@@ -511,6 +532,7 @@ it("validates malformed syntax, duplicate keys, and nesting limits inside skippe
   try {
     const malformedResult = await new PlaywrightTraceDecoder(resources).inspect(
       skippedMalformed.path,
+      playwrightTraceLimits(),
     );
     if (!malformedResult.ok) throw malformedResult.error;
     expect(malformedResult.value.events).toHaveLength(1);
@@ -520,6 +542,7 @@ it("validates malformed syntax, duplicate keys, and nesting limits inside skippe
 
     const dupResult = await new PlaywrightTraceDecoder(resources).inspect(
       skippedDuplicate.path,
+      playwrightTraceLimits(),
     );
     if (!dupResult.ok) throw dupResult.error;
     expect(dupResult.value.events).toHaveLength(1);
@@ -529,12 +552,23 @@ it("validates malformed syntax, duplicate keys, and nesting limits inside skippe
 
     const depthResult = await new PlaywrightTraceDecoder(resources).inspect(
       skippedOverDepth.path,
+      playwrightTraceLimits(),
     );
     if (depthResult.ok) throw new Error("Expected nesting-depth refusal");
     expect(depthResult.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(depthResult.error.limit).toMatchObject({
+      parameter: "trace_limits.nesting_depth",
+      effective_value: 64,
+    });
+    const raisedDepth = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedOverDepth.path,
+      playwrightTraceLimits({ nesting_depth: 66 }),
+    );
+    if (!raisedDepth.ok) throw raisedDepth.error;
 
     const firstLineResult = await new PlaywrightTraceDecoder(resources).inspect(
       skippedFirstLine.path,
+      playwrightTraceLimits(),
     );
     if (!firstLineResult.ok) throw firstLineResult.error;
     expect(firstLineResult.value.events).toEqual([]);
