@@ -14,6 +14,11 @@ import {
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "./firmware/androidOtaPayload.fixture.js";
+import {
+  buildAndroidSparseImage,
+  mixedAndroidSparseImage,
+} from "./firmware/androidSparseImage.fixture.js";
+import { androidSparseUnsupportedMajor } from "./firmware/androidSparseImage.js";
 import { devicetreeFixture } from "./firmware/devicetree.fixture.js";
 import { dfuseFile } from "./firmware/dfuse.fixture.js";
 import { DFUSE_SUFFIX_BYTES } from "./firmware/dfuse.js";
@@ -57,6 +62,12 @@ it.each([
     bytes: v1AndroidOtaPayload(),
     format: "android-ota-payload",
     reason: expect.stringContaining("major version 1"),
+  },
+  {
+    label: "an Android sparse image major version 2 header",
+    bytes: buildAndroidSparseImage({ majorVersion: 2 }),
+    format: "android-sparse-image",
+    reason: androidSparseUnsupportedMajor(2),
   },
   {
     label: "a UBI image with a bad erase-counter header CRC",
@@ -133,6 +144,13 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   expect(recognize(fullAndroidOtaPayload())).toMatchObject({
     state: "recognized",
     format: "android-ota-payload",
+  });
+});
+
+it("recognizes an Android sparse image by its 0xED26FF3A magic", () => {
+  expect(recognize(mixedAndroidSparseImage())).toMatchObject({
+    state: "recognized",
+    format: "android-sparse-image",
   });
 });
 

@@ -544,6 +544,15 @@ REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
 
+## Expand Android sparse images
+
+`inspect-artifact` / `extract-artifact` recognize an Android sparse image
+(`0xED26FF3A`) by magic, record its header and chunk counts, and expand it to
+one `image.raw` child offline. RAW chunks are copied, FILL chunks repeated and
+DONT_CARE chunks written as zeros; stored checksums are not verified. The
+expanded child is classified again, so a sparse-wrapped boot image continues
+to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
+
 ## Inspect UBI images
 
 `inspect-artifact` / `extract-artifact` recognize a UBI image or NAND dump by

@@ -409,6 +409,11 @@ export const documentationSections = [
         route: "/android-ota-payload",
       },
       {
+        text: "Android sparse images",
+        source: "guides/firmware/android-sparse-image.md",
+        route: "/android-sparse-image",
+      },
+      {
         text: "UBI images",
         source: "guides/firmware/ubi-images.md",
         route: "/ubi-images",

@@ -14,6 +14,7 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { recognizeUbiImage } from "./firmware/ubiImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
@@ -52,6 +53,7 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-sparse-image"
   | "ubi-image"
   | "iso9660"
   | "intel-hex"
@@ -190,6 +192,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return ubi.state === "recognized"
         ? { state: "recognized", format: "ubi-image" }
         : { state: "refused", format: "ubi-image", reason: ubi.reason };
+    },
+    ({ prefix }) => {
+      const sparse = recognizeAndroidSparseImage(prefix);
+      if (sparse === undefined) return undefined;
+      return sparse.state === "recognized"
+        ? { state: "recognized", format: "android-sparse-image" }
+        : {
+            state: "refused",
+            format: "android-sparse-image",
+            reason: sparse.reason,
+          };
     },
     ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);

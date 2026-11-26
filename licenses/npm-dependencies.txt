@@ -2525,11 +2525,11 @@ eventsource-parser@3.1.0 | runtime | MIT
   Package: https://www.npmjs.com/package/eventsource-parser/v/3.1.0
   Archive: https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz
   Integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==
-evmole@0.9.6 | runtime | MIT
+evmole@0.10.1 | runtime | MIT
   Lockfile path: node_modules/evmole
-  Package: https://www.npmjs.com/package/evmole/v/0.9.6
-  Archive: https://registry.npmjs.org/evmole/-/evmole-0.9.6.tgz
-  Integrity: sha512-JKqceBQQz8tdM09rt8XsXBd9w+zq9qT1v7BuUN+aRTbpOcEbOmYXyqgUREi6XUEEEhb5yaTIYrTi5BxQwcU98Q==
+  Package: https://www.npmjs.com/package/evmole/v/0.10.1
+  Archive: https://registry.npmjs.org/evmole/-/evmole-0.10.1.tgz
+  Integrity: sha512-kSN/g/Wi4vXNJPV7jgV1TrKSFKCJuaNiBs2rvCDv5+mzRaHkM7inImkRhqQKHdLx41TCIsWKzAaDihVMf06iTg==
 execa@9.6.1 | development | MIT
   Lockfile path: node_modules/execa
   Package: https://www.npmjs.com/package/execa/v/9.6.1

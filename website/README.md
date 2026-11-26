@@ -393,8 +393,9 @@ script reads the displayed position when opening or closing the menu.
 On narrower screens it becomes a sticky, native disclosure after the opening
 section; selecting a link
 closes the menu and focuses the destination. The homepage script follows
-the reading position and marks the current link. Without JavaScript, the
-menu stays open and its fragment links remain usable.
+the reading position and marks the current link. Escape and a pointer press
+outside the menu close the overlay. Without JavaScript, the disclosure starts
+closed; opening it keeps the fragment links usable.
 The RL environments section pairs its explanation and guide links with a
 copyable agent prompt on a contrasting surface. It follows the case studies
 and stacks into reading order on small screens.

@@ -30,6 +30,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   uimage: "archive",
   "android-boot-image": "archive",
   "android-ota-payload": "archive",
+  "android-sparse-image": "archive",
   "ubi-image": "archive",
   iso9660: "archive",
   dmg: "archive",
