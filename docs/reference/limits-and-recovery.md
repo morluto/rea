@@ -485,7 +485,10 @@ not, the work is never refused or truncated:
     and `retained` (`["--evidence_output", "<new-bundle-path>"]`). The
     analysis never fails because of retention. A save that published the
     file but then failed (staging cleanup or cancellation) reports that
-    failure and its cleanup state, as `--evidence_output` does. Caller inputs are never
+    failure and its cleanup state, as `--evidence_output` does; unfinished
+    staging cleanup before commit likewise reports `cleanup_incomplete` with
+    its remaining resources, and an oversized bundle whose post-write removal
+    fails keeps its receipt, paging cursor, and `retention_failure`. Caller inputs are never
     echoed, since they can carry access credentials; the note names both.
 
 A failure's own facts (code, `failure_kind`, retry, recovery and limits)

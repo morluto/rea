@@ -251,17 +251,15 @@ const deliverRetainedSummary = async (
     input,
     overBudget({ kind: "not-retained" }).complete_bytes,
   );
-  // The file was saved, but a later step failed: report that failure and
-  // its cleanup owner, as a requested --evidence_output bundle does.
-  if (retained?.ok === false && retained.error.committed !== undefined)
-    return projectFailure(retained.error.committed);
+  // Either the file committed before a later failure, or staging cleanup
+  // stayed incomplete before commit: report that failure and cleanup owner.
+  if (retained?.ok === false && retained.error.reportError !== undefined)
+    return projectFailure(retained.error.reportError);
   return retained?.ok === true
     ? {
         summary,
         evidence_bundle: retained.value.receipt,
-        delivery: deliveryJson(
-          overBudget({ kind: "cache-file", path: retained.value.path }),
-        ),
+        delivery: cacheFileDelivery(overBudget, retained.value),
       }
     : {
         summary,
@@ -272,6 +270,24 @@ const deliverRetainedSummary = async (
         ),
       };
 };
+
+/** Delivery facts when an over-budget record sits in the private cache. */
+const cacheFileDelivery = (
+  overBudget: (recovery: AgentBudgetRecovery) => AgentBudgetDelivery,
+  retained: {
+    readonly path: string | undefined;
+    readonly retentionFailure?: string;
+  },
+): JsonValue =>
+  deliveryJson(
+    overBudget({
+      kind: "cache-file",
+      path: retained.path,
+      ...(retained.retentionFailure === undefined
+        ? {}
+        : { reason: retained.retentionFailure }),
+    }),
+  );
 
 /** Delivery facts when an over-budget record was not kept in the cache. */
 const notRetainedDelivery = (
@@ -294,7 +310,8 @@ const notRetainedDelivery = (
  * Keep an over-budget result this invocation was not told to save in the
  * private retained-Evidence cache, so it pages without a rerun. Undefined
  * when retention is off (--no-retain, or the setting is 0); a failure says
- * why, and the result falls back to the rerun arguments.
+ * why, and the result falls back to the rerun arguments unless the writer
+ * committed or left incomplete staging cleanup.
  */
 const retainOverBudgetEvidence = async (
   complete: Evidence,
@@ -302,8 +319,19 @@ const retainOverBudgetEvidence = async (
   completeBytes: number,
 ): Promise<
   | Result<
-      { readonly path: string; readonly receipt: JsonValue },
-      RetentionStop<AnalysisError> & { readonly recordSha256?: string }
+      {
+        readonly path: string | undefined;
+        readonly receipt: JsonValue;
+        /** Set when an oversized bundle stayed on disk after removal failed. */
+        readonly retentionFailure?: string;
+      },
+      {
+        readonly reason: string;
+        readonly reportError?: AnalysisError;
+        readonly committed?: boolean;
+        readonly committedPath?: string;
+        readonly recordSha256?: string;
+      }
     >
   | undefined
 > => {
@@ -318,6 +346,7 @@ const retainOverBudgetEvidence = async (
   const { retainCliEvidence, retainedEvidenceDigest } =
     await import("./cliEvidenceRetention.js");
   const sha256 = retainedEvidenceDigest(complete);
+  let attemptedPath: string | undefined;
   const kept = await retainCliEvidence<AnalysisError>({
     sha256,
     completeBytes,
@@ -327,6 +356,7 @@ const retainOverBudgetEvidence = async (
         ? sensitiveCachePathReason
         : undefined,
     write: async (path) => {
+      attemptedPath = path;
       // The bundle writer creates the file exclusively and never overwrites.
       const published = await publishDeliveredEvidence(
         complete,
@@ -339,35 +369,79 @@ const retainOverBudgetEvidence = async (
         return ok({ bytes });
       }
       const { error, committed } = published.error;
-      if (error instanceof EvidenceFileError && error.reason === "exists")
+      if (
+        error instanceof EvidenceFileError &&
+        error.reason === "exists" &&
+        !error.cleanupIncomplete
+      )
         return err("exists");
       return err({
         reason: redactExplicitText(error.message, input.sensitiveValues ?? []),
-        ...(committed ? { committed: error } : {}),
+        ...(committed
+          ? { committed: error }
+          : error.cleanupIncomplete
+            ? { cleanupIncomplete: error }
+            : {}),
       });
     },
   });
-  // Clear the recorded receipt only when no published file remains on disk.
-  if (!kept.ok) {
-    if (kept.error.committed === undefined && kept.error.fileRemains !== true)
-      clearCliEvidencePublication();
-    return err({
-      ...kept.error,
-      ...(kept.error.committed === undefined ? {} : { recordSha256: sha256 }),
-      reason: redactExplicitText(
-        kept.error.reason,
-        input.sensitiveValues ?? [],
-      ),
-    });
-  }
-  const receipt = {
-    ...bundleReceipt(kept.value.path, kept.value.bytes, input),
+  const cacheReceipt = (path: string, bytes: number, digest: string) => ({
+    ...bundleReceipt(path, bytes, input),
     // The cache key: the digest of the complete record, not of the file,
     // which is the bundle that holds it.
-    record_sha256: kept.value.sha256,
-  };
+    record_sha256: digest,
+  });
+  if (!kept.ok) {
+    const redactedReason = redactExplicitText(
+      kept.error.reason,
+      input.sensitiveValues ?? [],
+    );
+    // An oversized bundle whose post-write removal failed still survives on
+    // disk: report its receipt, paging cursor, and the removal failure.
+    if (
+      kept.error.fileRemains === true &&
+      kept.error.remainingFile !== undefined
+    ) {
+      const receipt = cacheReceipt(
+        kept.error.remainingFile.path,
+        kept.error.remainingFile.bytes,
+        kept.error.remainingFile.sha256,
+      );
+      recordCliEvidencePublication(receipt);
+      return ok({
+        path: receipt.path,
+        receipt,
+        retentionFailure: redactedReason,
+      });
+    }
+    // Clear the recorded receipt whenever no published file remains on disk.
+    if (kept.error.committed === undefined && kept.error.fileRemains !== true)
+      clearCliEvidencePublication();
+    if (kept.error.committed !== undefined)
+      return err({
+        reason: redactedReason,
+        reportError: kept.error.committed,
+        committed: true,
+        ...(attemptedPath === undefined
+          ? {}
+          : { committedPath: attemptedPath }),
+        recordSha256: sha256,
+      });
+    if (kept.error.cleanupIncomplete !== undefined)
+      return err({
+        reason: redactedReason,
+        reportError: kept.error.cleanupIncomplete,
+        committed: false,
+      });
+    return err({ reason: redactedReason });
+  }
+  const receipt = cacheReceipt(
+    kept.value.path,
+    kept.value.bytes,
+    kept.value.sha256,
+  );
   recordCliEvidencePublication(receipt);
-  return ok({ path: kept.value.path, receipt });
+  return ok({ path: receipt.path, receipt });
 };
 
 /** Delivery facts are plain JSON by construction. */
@@ -470,20 +544,27 @@ const budgetFailurePartialEvidence = async (
           input,
           overBudget({ kind: "not-retained" }).complete_bytes,
         );
-  // The cache file was saved, but a later step failed: preserve the original
-  // analysis failure and report the committed receipt and cleanup owner.
-  if (retained?.ok === false && retained.error.committed !== undefined)
+  // Either the cache file committed before a later failure, or staging
+  // cleanup stayed incomplete before commit: preserve the original analysis
+  // failure and report the committed receipt or remaining cleanup owner.
+  if (retained?.ok === false && retained.error.reportError !== undefined) {
+    const committedPath =
+      retained.error.committed === true &&
+      retained.error.committedPath !== undefined &&
+      !revealsSensitiveValue(retained.error.committedPath, input)
+        ? retained.error.committedPath
+        : undefined;
     return refusedPartialPublication(
       found.failure,
       details,
-      { error: retained.error.committed, delivered: summary },
+      { error: retained.error.reportError, delivered: summary },
       input,
-      (receipt) =>
-        typeof receipt?.path === "string"
-          ? deliveryJson(overBudget({ kind: "cache-file", path: receipt.path }))
-          : notRetainedDelivery(overBudget, retained.error.reason, input),
+      retained.error.committed === true
+        ? deliveryJson(overBudget({ kind: "cache-file", path: committedPath }))
+        : undefined,
       { target: "retained-cache", recordSha256: retained.error.recordSha256 },
     );
+  }
   if (retained?.ok === true) {
     const diagnostics = isObject(details.diagnostics)
       ? details.diagnostics
@@ -493,8 +574,9 @@ const budgetFailurePartialEvidence = async (
       details: {
         ...details,
         partial_observation: summary,
-        [PARTIAL_OBSERVATION_DELIVERY]: deliveryJson(
-          overBudget({ kind: "cache-file", path: retained.value.path }),
+        [PARTIAL_OBSERVATION_DELIVERY]: cacheFileDelivery(
+          overBudget,
+          retained.value,
         ),
         diagnostics: {
           ...diagnostics,
@@ -793,9 +875,7 @@ const refusedPartialPublication = (
   refused: { readonly error: AnalysisError; readonly delivered?: Evidence },
   input: CliEvidencePublication,
   /** Delivery facts for a budgeted summary that replaced the partial. */
-  delivery?:
-    | JsonValue
-    | ((receipt: JsonObject | undefined) => JsonValue | undefined),
+  delivery?: JsonValue,
   options: {
     readonly target?: "evidence-output" | "retained-cache";
     readonly recordSha256?: string | undefined;
@@ -810,8 +890,6 @@ const refusedPartialPublication = (
     : {};
   const receipt = committedReceipt(refusalDetails, input, options.recordSha256);
   const cleanupIncomplete = refusalDetails.cleanup === "incomplete";
-  const resolvedDelivery =
-    typeof delivery === "function" ? delivery(receipt) : delivery;
   const destination =
     options.target === "retained-cache"
       ? "the retained-Evidence cache"
@@ -837,9 +915,9 @@ const refusedPartialPublication = (
         ? {}
         : {
             partial_observation: refused.delivered,
-            ...(resolvedDelivery === undefined
+            ...(delivery === undefined
               ? {}
-              : { [PARTIAL_OBSERVATION_DELIVERY]: resolvedDelivery }),
+              : { [PARTIAL_OBSERVATION_DELIVERY]: delivery }),
           }),
       diagnostics: {
         ...diagnostics,
@@ -849,7 +927,9 @@ const refusedPartialPublication = (
           message: refusal.message,
           limitation:
             receipt === undefined
-              ? `The partial Evidence was not published to ${destination}; it remains complete in details.partial_observation.`
+              ? cleanupIncomplete
+                ? `The partial Evidence was not published to ${destination} and its staging cleanup remains incomplete; details.resources lists what remains, and it remains complete in details.partial_observation.`
+                : `The partial Evidence was not published to ${destination}; it remains complete in details.partial_observation.`
               : cleanupIncomplete
                 ? `The partial Evidence was published to ${destination}, but its staging cleanup remains incomplete; details.resources lists what remains.`
                 : `The partial Evidence was published to ${destination} before delivery stopped.`,

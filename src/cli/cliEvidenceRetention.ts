@@ -60,17 +60,22 @@ export interface RetainedEvidenceFile {
 /**
  * Why nothing was retained. `committed` carries the writer's failure when
  * the file was published but a later step (staging cleanup, cancellation)
- * failed: its caller reports that failure and its cleanup owner.
+ * failed; `cleanupIncomplete` carries a pre-commit failure whose staging
+ * cleanup stayed incomplete. In both cases the caller reports that failure
+ * and its cleanup owner.
  */
 export interface RetentionStop<Committed> {
   readonly reason: string;
   readonly committed?: Committed;
+  readonly cleanupIncomplete?: Committed;
   /**
    * True when the file was published and remains on disk because a post-write
    * removal (such as discarding an oversized bundle) failed; the caller must
    * retain the published file's receipt.
    */
   readonly fileRemains?: true;
+  /** Surviving file receipt details when `fileRemains` is true. */
+  readonly remainingFile?: RetainedEvidenceFile;
 }
 
 /** The writer's outcome: the bytes it published, that the name exists, or a stop. */
@@ -234,8 +239,14 @@ export const retainCliEvidence = async <Committed>(input: {
           await rm(path, { force: true });
         } catch (cause: unknown) {
           return err({
-            reason: `The oversized retained-Evidence bundle could not be removed: ${errorMessage(cause)}`,
+            reason: `The oversized retained-Evidence bundle (${String(written.value.bytes)} bytes) is larger than the retained-Evidence cache (${String(capBytes)} bytes) and could not be removed: ${errorMessage(cause)}`,
             fileRemains: true,
+            remainingFile: {
+              path,
+              bytes: written.value.bytes,
+              sha256,
+              reused: false,
+            },
           });
         }
         return err(tooLarge(written.value.bytes));
