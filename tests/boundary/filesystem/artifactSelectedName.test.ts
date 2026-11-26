@@ -43,7 +43,13 @@ it.skipIf(process.platform === "win32").each([
   ["selected.asar", "content", "zip", "zip", false],
 ] as const)(
   "keeps selected %s and stored %s identity with admission %s, inventory %s and Android manifest %s",
-  async (name, stored, admittedFormat, inventoryFormat, includeAndroidManifest) => {
+  async (
+    name,
+    stored,
+    admittedFormat,
+    inventoryFormat,
+    includeAndroidManifest,
+  ) => {
     const { root, canonical } = await fixture(stored, includeAndroidManifest);
     const selected = join(root, name);
     await symlink(canonical, selected);

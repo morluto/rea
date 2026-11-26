@@ -90,7 +90,8 @@ const directoryDeclaresAndroidPackage = async (
   const header = Buffer.from(await read(directory, headerBytes));
   if (
     header.length !== headerBytes ||
-    new BinaryReader(header, true, "zip").u32(0) !== ZIP_CENTRAL_HEADER.signature
+    new BinaryReader(header, true, "zip").u32(0) !==
+      ZIP_CENTRAL_HEADER.signature
   )
     return undefined;
   const remainder =
@@ -106,8 +107,7 @@ const directoryDeclaresAndroidPackage = async (
   while (at < directorySize) {
     if (at + headerBytes > bytes.length || seen >= entriesOnDisk)
       return undefined;
-    if (reader.u32(at) !== ZIP_CENTRAL_HEADER.signature)
-      return undefined;
+    if (reader.u32(at) !== ZIP_CENTRAL_HEADER.signature) return undefined;
     const nameLength = reader.u16(at + ZIP_CENTRAL_HEADER.nameBytesOffset);
     const extraLength = reader.u16(at + ZIP_CENTRAL_HEADER.extraBytesOffset);
     const commentLength = reader.u16(
