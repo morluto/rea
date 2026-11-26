@@ -244,10 +244,12 @@ async function exerciseTrustedRetentionWithLegacyTarget(
     "scripts/ci/cache-retention.mjs",
   );
   await mkdir(join(trustedSource, "scripts/ci"), { recursive: true });
-  await copyFile(
-    join(repository, "scripts/ci/cache-retention.mjs"),
-    trustedHelperPath,
-  );
+  for (const filename of ["cache-retention.mjs", "github-api.mjs"]) {
+    await copyFile(
+      join(repository, "scripts/ci", filename),
+      join(trustedSource, "scripts/ci", filename),
+    );
+  }
   await expect(
     access(join(legacyTarget, "scripts/ci/cache-retention.mjs")),
   ).rejects.toMatchObject({ code: "ENOENT" });
