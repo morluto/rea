@@ -100,7 +100,7 @@ UnityPy 1.24.2 raw member bytes:
 | `atlas_test`       | 2018.4.11f1, format 6 | Members match (SHA-256 `61ee5afb5f5c64f0a4f65f039d09b2509198363e713423289c895067ac215177`) |
 | `banner_1`         | 2018.4.4f1            | Members match                                                                              |
 | `char_118_yuki.ab` | 5.6.7f1               | Members match                                                                              |
-| `xinzexi_2_n_tex`  | 2017.4.37f1, LZMA     | LZMA blocks decode under the same member hash path as LZ4                                  |
+| `xinzexi_2_n_tex`  | 2017.4.37f1, LZMA     | Unverified for this change (sample not rerun); synthetic LZMA round-trips only             |
 
 UnityPy-produced repacks additionally verify format 7/8, padded and unpadded
 front tables, end tables, and LZMA directories. They are library-produced, not

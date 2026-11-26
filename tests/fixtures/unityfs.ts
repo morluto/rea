@@ -32,14 +32,49 @@ const cstring = (value: string): Buffer =>
 const align16 = (value: number): number => (value + 15) & ~15;
 
 /** UnityFS LZMA: five property bytes plus the raw stream, no Alone size field. */
-const unityLzmaBlock = (data: Buffer): Buffer => {
+const unityLzmaBlock = (
+  data: Buffer,
+  options?: { readonly endMarker?: boolean },
+): Buffer => {
   const require = createRequire(import.meta.url);
   const lzma = require("lzma-purejs") as {
-    compressFile(input: Buffer): Buffer | Uint8Array;
+    compressFile(
+      input:
+        | Buffer
+        | {
+            readByte(): number;
+            read?(buffer: number[], offset: number, length: number): number;
+            eof?(): boolean;
+          },
+    ): Buffer | Uint8Array;
   };
-  const alone = Buffer.from(lzma.compressFile(data));
+  if (!options?.endMarker) {
+    const alone = Buffer.from(lzma.compressFile(data));
+    return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
+  }
+  let position = 0;
+  const alone = Buffer.from(
+    lzma.compressFile({
+      readByte() {
+        return position < data.length ? data[position++]! : -1;
+      },
+      read(buffer: number[], offset: number, length: number) {
+        let count = 0;
+        while (count < length && position < data.length)
+          buffer[offset + count++] = data[position++]!;
+        return count;
+      },
+      eof() {
+        return position >= data.length;
+      },
+    }),
+  );
   return Buffer.concat([alone.subarray(0, 5), alone.subarray(13)]);
 };
+
+/** UnityFS LZMA with an optional end marker still present after the payload. */
+export const encodeUnityLzmaWithEndMarker = (data: Buffer): Buffer =>
+  unityLzmaBlock(data, { endMarker: true });
 
 const maybeCompress = (data: Buffer, compression: number): Buffer => {
   if (compression === 1) return unityLzmaBlock(data);

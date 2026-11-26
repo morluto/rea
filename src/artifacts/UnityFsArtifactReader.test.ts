@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   buildUnityFs,
+  encodeUnityLzmaWithEndMarker,
   type UnityFsMember,
 } from "../../tests/fixtures/unityfs.js";
 
@@ -236,6 +237,27 @@ describe("UnityFS unavailable and malformed directories", () => {
   it("decodes an LZMA-compressed member block", async () => {
     await withReader(
       buildUnityFs(members, { blockCompression: 1 }),
+      async (reader) => {
+        const entries = await collectEntries(reader);
+        expect(entries).toHaveLength(members.length);
+        for (const [index, entry] of entries.entries()) {
+          const stream = await reader.open(entry);
+          expect(await text(stream)).toBe(
+            typeof members[index]!.data === "string"
+              ? members[index]!.data
+              : members[index]!.data.toString("utf8"),
+          );
+        }
+      },
+    );
+  });
+
+  it("decodes an LZMA member block that includes an end marker", async () => {
+    await withReader(
+      buildUnityFs(members, {
+        blockCompression: 1,
+        encodeBlock: encodeUnityLzmaWithEndMarker,
+      }),
       async (reader) => {
         const entries = await collectEntries(reader);
         expect(entries).toHaveLength(members.length);

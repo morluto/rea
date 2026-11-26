@@ -477,6 +477,43 @@ describe("UnityFS stream ownership and immutable cache", () => {
       }
     }
   });
+
+  it("preserves cancellation occurring inside the LZMA decoder", async () => {
+    const data = Buffer.alloc(8 * 1024 * 1024, 0x61);
+    const path = await fixture(
+      buildUnityFs([{ path: "x", data }], {
+        blockSize: data.length,
+        blockCompression: 1,
+      }),
+    );
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new UnityFsArtifactReader(path, admitted);
+    const controller = new AbortController();
+    const reason = new Error("cancel during lzma block decode");
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    const [entry] = await collectEntries(reader);
+    const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      const result = await Reflect.apply(nativeRead, admitted.handle, args);
+      globalThis.setImmediate(() => {
+        controller.abort(reason);
+      });
+      return result;
+    }) as typeof admitted.handle.read);
+    try {
+      await expect(
+        buffer(await reader.open(entry!, controller.signal)),
+      ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    } finally {
+      try {
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
+    }
+  });
 });
 
 describe("UnityFS stream capacity and cache ownership", () => {
