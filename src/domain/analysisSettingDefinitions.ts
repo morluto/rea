@@ -594,8 +594,9 @@ export const ANALYSIS_SETTINGS = {
     operations: ["inspect_binary_layout", "inspect_recorded_crash"],
     parameter: "producer_limits.input_bytes",
   },
-  // One session default for the producers that share BOUNDED_PRODUCER_LIMITS:
-  // their retained output is plain text with the same default and range.
+  // Session default for omitted producer_limits.output_bytes. Producers whose
+  // own default or maximum differs keep that default until this setting is
+  // set, then clamp an explicit value to their maximum.
   "producer.output_bytes": {
     updateMode: "runtime",
     environment: "REA_PRODUCER_OUTPUT_BYTES",
@@ -605,11 +606,18 @@ export const ANALYSIS_SETTINGS = {
     unit: "bytes",
     appliesAt: "next_operation",
     provider: "producer",
-    relatedProviders: ["tshark-capture", "sigrok-recording"],
+    relatedProviders: [
+      "tshark-capture",
+      "sigrok-recording",
+      "apktool",
+      "rea-artifact-graph",
+    ],
     operations: [
       "inspect_packet_capture",
       "decode_signal_recording",
       "inspect_signal_decoders",
+      "decode_android_resources",
+      "inspect_asset_catalog",
     ],
     parameter: "producer_limits.output_bytes",
   },

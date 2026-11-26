@@ -25,6 +25,11 @@ import {
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
+import type { AnalysisLimit } from "../../domain/analysisSettings.js";
+import {
+  producerOutputBytesLimit,
+  resolveProducerOutputBytes,
+} from "../../config/producerOutputBytes.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   ArtifactTraversalObservation,
@@ -37,6 +42,7 @@ import {
   appleResourceKeyFields,
   assetUtilOutputLimit,
   DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+  MAX_ASSETUTIL_OUTPUT_BYTES,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
   type AppleAssetAnalysisCoverage,
@@ -128,6 +134,19 @@ export const analyzeAppleAssetCatalogs = async (input: {
   let traversal: ArtifactReaderTraversal;
   let catalogCoverage: AppleAssetAnalysisCoverage;
   try {
+    const output = resolveProducerOutputBytes(
+      page.producer_limits?.output_bytes,
+      input.environment,
+      {
+        defaultValue: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+      },
+    );
+    if (!output.ok) throw output.error;
+    const outputLimit =
+      output.value.source === "runtime" || output.value.source === "setting"
+        ? producerOutputBytesLimit(output.value, MAX_ASSETUTIL_OUTPUT_BYTES)
+        : assetUtilOutputLimit(output.value.value);
     ({
       catalogs,
       uninspected,
@@ -137,8 +156,8 @@ export const analyzeAppleAssetCatalogs = async (input: {
       collectAssetCatalogs({
         ...input,
         resources,
-        outputBytes:
-          page.producer_limits?.output_bytes ?? DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+        outputBytes: output.value.value,
+        outputLimit,
       }),
     ));
   } catch (cause: unknown) {
@@ -244,6 +263,7 @@ const collectAssetCatalogs = async (input: {
   readonly resources: ArtifactResourceScope;
   /** The selected producer_limits.output_bytes: per stream and across catalogs. */
   readonly outputBytes: number;
+  readonly outputLimit: AnalysisLimit;
   readonly runAssetUtil?: (
     path: string,
     signal?: AbortSignal,
@@ -306,6 +326,7 @@ const collectAssetCatalogs = async (input: {
               input.assetUtilLauncher,
             )),
         outputBytes,
+        outputLimit: input.outputLimit,
         resources: input.resources,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
@@ -372,6 +393,7 @@ const inspectAssetCatalogEntry = async (input: {
   ) => Promise<string>;
   readonly resources: ArtifactResourceScope;
   readonly outputBytes: number;
+  readonly outputLimit: AnalysisLimit;
   readonly signal?: AbortSignal;
 }) => {
   const { entry, reader, signal } = input;
@@ -390,7 +412,13 @@ const inspectAssetCatalogEntry = async (input: {
   try {
     output = await input.runAssetUtil(entry.adapterKey, signal);
   } catch (cause) {
-    throw assetUtilFailure(cause, entry, input.resources, input.outputBytes);
+    throw assetUtilFailure(
+      cause,
+      entry,
+      input.resources,
+      input.outputBytes,
+      input.outputLimit,
+    );
   }
   const after = await lstat(entry.adapterKey, { bigint: true });
   if (
@@ -521,6 +549,7 @@ const assetUtilFailure = (
   entry: ArtifactEntry,
   resources: ArtifactResourceScope,
   outputBytes: number,
+  outputLimit: AnalysisLimit,
 ): unknown => {
   if (cause instanceof AnalysisError) return cause;
   const outcome = providerOutcomeOf(cause);
@@ -551,7 +580,7 @@ const assetUtilFailure = (
     (outcome !== undefined
       ? classifyProviderOutcome(
           outcome,
-          assetUtilOutcomeContext(entry, outputBytes),
+          assetUtilOutcomeContext(entry, outputBytes, outputLimit),
         )
       : processInspectionFailure(cause) !== undefined
         ? new ProviderAdapterError(ARTIFACT_GRAPH_PROVIDER.id, OPERATION, {
@@ -567,6 +596,7 @@ const assetUtilFailure = (
 const assetUtilOutcomeContext = (
   entry: ArtifactEntry,
   outputBytes: number,
+  outputLimit: AnalysisLimit,
 ): ProviderOutcomeContext => ({
   providerId: ARTIFACT_GRAPH_PROVIDER.id,
   operation: OPERATION,
@@ -576,7 +606,7 @@ const assetUtilOutcomeContext = (
   outputLimit: {
     reason: `assetutil output exceeds producer_limits.output_bytes (${String(outputBytes)} bytes)`,
     limits: { maximum_output_bytes: outputBytes },
-    limit: assetUtilOutputLimit(outputBytes),
+    limit: outputLimit,
     // Capture stops at the budget, so the output it needs is unmeasured.
     recovery: { retryable: false },
   },

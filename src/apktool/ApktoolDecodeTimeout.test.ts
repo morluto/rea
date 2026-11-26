@@ -6,7 +6,11 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { DEFAULT_APKTOOL_DECODE_TIMEOUT_MS } from "../domain/apktool/apktoolResourceAnalysis.js";
+import {
+  DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  MAX_APKTOOL_DECODE_OUTPUT_BYTES,
+} from "../domain/apktool/apktoolResourceAnalysis.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -168,5 +172,50 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     });
   } finally {
     await provider.close();
+  }
+});
+
+it("clamps an above-cap producer.output_bytes setting to the Apktool capture budget", async () => {
+  const root = await createTestTempDirectory("rea-apktool-output-cap-");
+  const path = join(root, "probe.apk");
+  await writeFile(path, "apk-bytes");
+  installLauncher();
+  const command =
+    process.platform === "win32"
+      ? "C:\\opt\\apktool\\apktool"
+      : "/opt/apktool/apktool";
+  const above = String(MAX_APKTOOL_DECODE_OUTPUT_BYTES + 1);
+  const seeded = new ApktoolProvider({
+    environment: {
+      REA_APKTOOL_COMMAND: command,
+      REA_PRODUCER_OUTPUT_BYTES: above,
+    },
+  });
+  try {
+    const fromSeed = await decode(seeded, path);
+    expect(fromSeed.ok).toBe(true);
+    expect(outputBudgets).toEqual([MAX_APKTOOL_DECODE_OUTPUT_BYTES]);
+  } finally {
+    await seeded.close();
+  }
+
+  outputBudgets.length = 0;
+  const runtime = new ApktoolProvider({
+    environment: { REA_APKTOOL_COMMAND: command },
+  });
+  try {
+    const fromRuntime = await runWithAnalysisOperationSnapshot(
+      {
+        revision: 1,
+        overrides: {
+          "producer.output_bytes": MAX_APKTOOL_DECODE_OUTPUT_BYTES + 1,
+        },
+      },
+      () => decode(runtime, path),
+    );
+    expect(fromRuntime.ok).toBe(true);
+    expect(outputBudgets).toEqual([MAX_APKTOOL_DECODE_OUTPUT_BYTES]);
+  } finally {
+    await runtime.close();
   }
 });

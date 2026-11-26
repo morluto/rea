@@ -225,8 +225,11 @@ setting's limit with `parameter: "producer_limits.output_bytes"` and the
 `source` of the value in force, so its recovery names both the per-call field
 and the setting. `inspect_packet_fields` keeps its own 32 MiB glossary default
 and is not covered by the setting. `decode_android_resources` and
-`inspect_asset_catalog` keep their own defaults and maxima, so the setting does
-not supply their omitted `producer_limits.output_bytes`.
+`inspect_asset_catalog` use the same setting. While it is unset they keep
+their own defaults (4 MiB and 64 MiB). An explicit runtime value or
+`REA_PRODUCER_OUTPUT_BYTES` supplies the omitted field and is clamped to each
+producer's maximum (the JavaScript string limit, and 128 MiB). A per-call
+`producer_limits.output_bytes` still wins and is rejected above that maximum.
 
 `inspect_rust_binary` bounds cargo-auditable dependency JSON with three
 per-call parameters (CLI `--max-compressed-dependency-bytes`,
