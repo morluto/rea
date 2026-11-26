@@ -3,11 +3,8 @@ import type {
   AnalysisParameterLimit,
   AnalysisSettingLimit,
 } from "./analysisSettings.js";
-import { z } from "zod";
-import {
-  analysisSettingDefinition,
-  analysisSettingIdSchema,
-} from "./analysisSettingDefinitions.js";
+import { analysisSettingDefinition } from "./analysisSettingDefinitions.js";
+import { currentAnalysisRefusalSpelling } from "./analysisRefusalSpelling.js";
 import {
   fixedAllowanceRemediation,
   type FixedAllowance,
@@ -62,45 +59,29 @@ const fieldName = (field: RefusalField): string => field.map(String).join(".");
 
 const UNCHANGED = "Repeating the unchanged request is not expected to succeed.";
 
-/** How an adapter spells a per-call control and the call that accepts it. */
-export interface PerCallControlSpelling {
-  readonly parameter: (parameter: string) => string;
-  readonly call: (operation: string) => string;
-}
-
-/** MCP names a control by its contract field and the call by its tool. */
-export const MCP_PER_CALL_CONTROL_SPELLING: PerCallControlSpelling = {
-  parameter: (parameter) => parameter,
-  call: (operation) => `the next ${operation} call`,
-};
-
 const budgetControl = (budget: AdjustableBudget): string =>
   "control_kind" in budget
     ? budget.parameter
     : (budget.parameter ?? budget.setting);
 
 /**
- * The `details.refusal` facts of an adjustable budget. They are complete for
- * its recovery, so an adapter parses them and renders its own spelling
- * instead of reading the sentence. `control` differs from `setting` when a
- * per-call parameter selects the value; `setting` is absent for a per-call
- * control no registered setting backs.
+ * The `details.refusal` facts of an adjustable budget, complete for its
+ * recovery. `control` differs from `setting` when a per-call parameter selects
+ * the value; `setting` is absent for a per-call control no registered setting
+ * backs.
  */
-export const adjustableBudgetRefusalSchema = z.strictObject({
-  kind: z.literal("adjustable_budget"),
-  operation: z.string(),
-  control: z.string(),
-  setting: analysisSettingIdSchema.exactOptional(),
-  source: z.enum(["default", "setting", "runtime", "request"]).exactOptional(),
-  effective_value: z.number().nullable(),
-  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
-  range: z.strictObject({ minimum: z.number(), maximum: z.number() }),
-  default_value: z.number().exactOptional(),
-  required_value: z.number().exactOptional(),
-});
-export type AdjustableBudgetRefusal = z.output<
-  typeof adjustableBudgetRefusalSchema
->;
+type AdjustableBudgetRefusal = {
+  readonly kind: "adjustable_budget";
+  readonly operation: string;
+  readonly control: string;
+  readonly setting?: AnalysisSettingLimit["setting"];
+  readonly source?: NonNullable<AnalysisSettingLimit["source"]>;
+  readonly effective_value: number | null;
+  readonly unit: AdjustableBudget["unit"];
+  readonly range: { readonly minimum: number; readonly maximum: number };
+  readonly default_value?: number;
+  readonly required_value?: number;
+};
 
 const adjustableBudgetFacts = (
   operation: string,
@@ -158,19 +139,21 @@ const settingRoute = (
 /** A budget quantity as prose; a count needs no unit word. */
 const quantity = (
   value: number | string,
-  unit: AdjustableBudgetRefusal["unit"],
+  unit: AdjustableBudget["unit"],
 ): string => (unit === "count" ? String(value) : `${String(value)} ${unit}`);
 
 /**
- * The recovery of an adjustable budget, from its refusal facts alone. A
- * per-call control gets the next-call step; one a registered setting backs
- * also gets the setting route for the caller's lifetime, for repeated work.
+ * The recovery of an adjustable budget, from its refusal facts alone, in the
+ * delivering adapter's spelling. A per-call control gets the next-call step;
+ * one a registered setting backs also gets the setting route for the caller's
+ * lifetime, for repeated work.
  */
-export const adjustableBudgetRemediation = (
+const adjustableBudgetRemediation = (
   facts: AdjustableBudgetRefusal,
-  callerLifetime: AnalysisCallerLifetime,
-  spelling: PerCallControlSpelling = MCP_PER_CALL_CONTROL_SPELLING,
+  projectedLifetime: AnalysisCallerLifetime,
 ): string => {
+  const spelling = currentAnalysisRefusalSpelling();
+  const callerLifetime = spelling.callerLifetime ?? projectedLifetime;
   const {
     operation,
     control,
@@ -197,7 +180,7 @@ export const adjustableBudgetRemediation = (
     setting === undefined ? undefined : settingRoute(setting, callerLifetime);
   if (setting !== undefined && control === setting)
     return `${effective}. ${route?.alone ?? `Set ${setting} for the next invocation`} ${bounds}`;
-  const perCall = `${effective}. Pass a larger ${spelling.parameter(control)} on ${spelling.call(operation)} ${bounds}`;
+  const perCall = `${effective}. Pass a larger ${spelling.control(control, operation)} on ${spelling.call(operation)} ${bounds}`;
   return route === undefined ? perCall : `${perCall} ${route.after}`;
 };
 
