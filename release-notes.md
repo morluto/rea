@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **artifacts:** artifactReaderLimitsSchema now requires deno, wxapkg and tar groups, so saved Evidence whose effective_limits predates them fails validation and must be re-inspected. A release-exposure refusal at max_file_bytes reports details.limit instead of a fixed_ceiling refusal.
 * **limits:** discovery output_window gains record_budget_reached, a page can return fewer than limit records, and discovery no longer refuses at the record or line budget.
 * **cli:** An over-budget CLI result without --evidence_output is now saved to REA's private retained-Evidence cache and reported as {summary, evidence_bundle, delivery} with delivery.retained cache-file, instead of writing nothing. Pass --no-retain, or set REA_CLI_RETAINED_EVIDENCE_BYTES=0, to write nothing as before.
 * **delivery:** When a failure's details.partial_observation does not fit delivery.agent_result_budget_bytes beside the failure's own facts and the caller omitted detail, MCP and the CLI deliver its summary record instead of the complete Evidence, with details.partial_observation_delivery naming where the complete record is. Pass detail complete (--detail complete) for it inline.
@@ -66,6 +67,7 @@
 * **analysis-view:** select retained JavaScript facts by property value ([25e93a8](https://github.com/morluto/rea/commit/25e93a8139abf3ad398d0366d84c53c75fcd0d82))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
+* **artifacts:** give Deno, wxapkg and tar readers artifact_limits controls ([#14620](https://github.com/morluto/rea/issues/14620)) ([3dae567](https://github.com/morluto/rea/commit/3dae567185ac08126d40ea38435d5cbe9aa64afe))
 * **artifacts:** inspect and compare directories by a content-addressed root digest ([#14270](https://github.com/morluto/rea/issues/14270)) ([56cf155](https://github.com/morluto/rea/commit/56cf15566ee1fee1cb0d3573bf0e23b1a682e635))
 * **artifacts:** inventory and extract ISO 9660 disc images offline ([#13290](https://github.com/morluto/rea/issues/13290)) ([e896f60](https://github.com/morluto/rea/commit/e896f60540f03e2c1fe0f916412bddd656c1f296))
 * **artifacts:** inventory and extract stored and gzip-compressed tar archives ([#14245](https://github.com/morluto/rea/issues/14245)) ([225a19a](https://github.com/morluto/rea/commit/225a19ae7a39d06d03a8d5df4d9bf44e645a6c54))
