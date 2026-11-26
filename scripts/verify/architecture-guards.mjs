@@ -58,17 +58,24 @@ const listFiles = async (dir) => {
   return output;
 };
 
+const BATCH_SIZE = 128;
+const mapInBatches = async (items, fn, batchSize = BATCH_SIZE) => {
+  const results = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    results.push(...(await Promise.all(items.slice(i, i + batchSize).map(fn))));
+  }
+  return results;
+};
+
 const sources = await listFiles(join(root, "src"));
-const files = await Promise.all(
-  sources.map(async (path) => {
-    const source = await readFile(path, "utf8");
-    return {
-      path: relative(root, path).split(sep).join("/"),
-      content: blankComments(source),
-      source,
-    };
-  }),
-);
+const files = await mapInBatches(sources, async (path) => {
+  const source = await readFile(path, "utf8");
+  return {
+    path: relative(root, path).split(sep).join("/"),
+    content: blankComments(source),
+    source,
+  };
+});
 const failures = [];
 const check = (label, selected, pattern, allow = []) => {
   const offenders = selected.filter(
@@ -937,15 +944,16 @@ const listTestFiles = async (dir) => {
   }
   return output;
 };
-const testFiles = await Promise.all(
+const testFiles = await mapInBatches(
   [
     ...(await listTestFiles(join(root, "src"))),
     ...(await listFiles(join(root, "tests"))),
     ...(await listTestFiles(join(root, "tests"))),
-  ].map(async (path) => ({
+  ],
+  async (path) => ({
     path: relative(root, path).split(sep).join("/"),
     content: await readFile(path, "utf8"),
-  })),
+  }),
 );
 checkCounted(
   "test redefines process.platform or process.arch (inject the platform: pass it as a parameter or host option, or mock src/platform/HostPlatform)",
@@ -1116,20 +1124,18 @@ const vocabularyGuardPath =
   "scripts/verify/retired-target-failure-vocabulary.mjs";
 const vocabularyGuardTestPath =
   "tests/evaluation/retiredTargetFailureVocabulary.test.ts";
-const vocabularyFiles = await Promise.all(
-  [
-    ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
-    ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
-    ...(await listVocabularyFiles(join(root, "scripts"), [
-      ".mjs",
-      ".ts",
-      ".py",
-    ])),
-    ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
-  ].map(async (path) => ({
+const allVocabularyPaths = [
+  ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
+  ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
+  ...(await listVocabularyFiles(join(root, "scripts"), [".mjs", ".ts", ".py"])),
+  ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
+];
+const vocabularyFiles = await mapInBatches(
+  allVocabularyPaths,
+  async (path) => ({
     path: relative(root, path).split(sep).join("/"),
     content: await readFile(path, "utf8"),
-  })),
+  }),
 );
 const retiredVocabulary = vocabularyFiles.filter(
   ({ path, content }) =>
