@@ -21,6 +21,7 @@ import {
 } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (
   process.env.GHIDRA_INSTALL_DIR === undefined ||
@@ -110,10 +111,12 @@ try {
         env,
         stderr: "pipe",
       });
-      const client = new Client({
-        name: "rea-mips16-shared-conformance",
-        version: "1",
-      });
+      const client = completeEvidenceClient(
+        new Client({
+          name: "rea-mips16-shared-conformance",
+          version: "1",
+        }),
+      );
       let stderr = "";
       transport.stderr?.on("data", (chunk) => {
         stderr = (stderr + chunk.toString()).slice(-262144);

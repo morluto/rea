@@ -1,3 +1,4 @@
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import type { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
@@ -16,6 +17,7 @@ import {
   ArtifactResourceScope,
   abortIfNeeded,
   ArtifactFileSource,
+  unsupportedArtifact,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
@@ -67,6 +69,7 @@ const carrierPathDialect = async (
   signal?: AbortSignal,
 ): Promise<CarrierPathDialect> => {
   const prefixRead = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: 0,
     length: Math.min(fileSize, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
     label: "carrier header",
@@ -77,6 +80,7 @@ const carrierPathDialect = async (
   let windowsHeader = observeMzWindowsHeader(prefix, fileSize);
   if (windowsHeader.state === "signature-needed") {
     const signatureRead = await readPyInstallerBytes(handle, {
+      measuredEnd: fileSize,
       position: windowsHeader.offset,
       length: 4,
       label: "PE signature",
@@ -90,8 +94,7 @@ const carrierPathDialect = async (
   }
   if (windowsHeader.state === "declared")
     return windowsHeader.signature === "PE" ? "windows" : "unknown";
-  if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-    return "posix";
+  if (hasElfMagic(prefix)) return "posix";
   const thinMachO = readMachoHeaderPrefixFacts(prefix);
   if (thinMachO.identity !== null) return "posix";
   if (readFatContainerHeader(prefix, fileSize).state === "parsed")
@@ -214,7 +217,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const read = stored.read;
       if (read === undefined)
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry has no readable bytes: ${entry.path}`,
         );
       const { handle } = await this.#source.readSelectedPath();
@@ -387,12 +390,12 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const cookie =
       this.#admission?.cookie ?? (await this.#cookie(handle, size, signal));
     state.budget = artifactExpansionBudgetBytes(cookie.packageLength);
-    const toc = await this.#toc(handle, cookie, signal);
+    const toc = await this.#toc(handle, cookie, size, signal);
     for (const entry of toc) {
       this.#charge(state, entry.uncompressedSize);
       this.#reserveMetadata(state, { ...entry }, false);
     }
-    const images = await this.#pyzImages(state, handle, cookie, toc);
+    const images = await this.#pyzImages(state, handle, cookie, size, toc);
     const magic = scriptPythonMagic(
       cookie,
       [...images.values()].map((image) => image.archive),
@@ -470,8 +473,8 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     if (!found.ok) throw failure(found.error);
     const observed = found.value;
     if (observed.state === "absent")
-      throw new ArtifactReaderFailure(
-        "format",
+      throw unsupportedArtifact(
+        "pyinstaller",
         "PyInstaller CArchive cookie was not found",
       );
     if (observed.state === "rejected-candidates")
@@ -482,9 +485,10 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   async #toc(
     handle: FileHandle,
     cookie: PyInstallerCookie,
+    fileSize: number,
     signal?: AbortSignal,
   ): Promise<readonly CArchiveEntry[]> {
-    const toc = await readCArchiveToc(handle, cookie, signal);
+    const toc = await readCArchiveToc(handle, cookie, signal, fileSize);
     if (!toc.ok) throw failure(toc.error);
     return toc.value;
   }
@@ -493,6 +497,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     state: ArchiveParseState,
     handle: FileHandle,
     cookie: PyInstallerCookie,
+    fileSize: number,
     toc: readonly CArchiveEntry[],
   ): Promise<ReadonlyMap<CArchiveEntry, PyzImage>> {
     const { signal } = state;
@@ -520,12 +525,14 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const source = spooled ?? {
         handle,
         start: cookie.archiveStart + entry.offset,
+        size: fileSize,
       };
       const parsed = await readPyzArchive(
         source.handle,
         source.start,
         entry.uncompressedSize,
         signal,
+        source.size,
       );
       if (!parsed.ok) throw failure(parsed.error);
       if (parsed.value.kind === "entries")

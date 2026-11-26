@@ -4,6 +4,7 @@ import {
   cleanupOwnedProcessGroup,
   readProcessRunId,
 } from "../../../dist/process/ProcessOwnership.js";
+import { completeEvidenceCliArguments } from "../../lib/complete-evidence.mjs";
 
 /** Exercise a real CLI signal while the owned Java engine is still running. */
 export const verifyAndroidCliCancellation = async ({
@@ -18,7 +19,15 @@ export const verifyAndroidCliCancellation = async ({
   await readProcessRunId(process.pid);
   const child = spawn(
     process.execPath,
-    [entrypoint, "inspect-android-package", path, "--format", "json"],
+    [
+      entrypoint,
+      ...(await completeEvidenceCliArguments([
+        "inspect-android-package",
+        path,
+        "--format",
+        "json",
+      ])),
+    ],
     { cwd: repository, env: environment, stdio: ["ignore", "pipe", "pipe"] },
   );
   let stdout = "";

@@ -1,6 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { Readable } from "node:stream";
+import { readFile } from "node:fs/promises";
+import { buffer } from "node:stream/consumers";
 
 import { expect, it } from "vitest";
 
@@ -14,21 +13,11 @@ import {
   osVersionRaw,
   truncateImage,
 } from "../../tests/fixtures/androidBootImage.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { elf } from "../domain/binaryTarget.fixture.js";
 
-const collect = async (stream: Readable): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-};
-
-const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-android-boot-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeCarrier = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-boot-", name, bytes);
 
 const openAll = async (path: string): Promise<ReadonlyMap<string, Buffer>> => {
   const reader = new AndroidBootImageArtifactReader(path);
@@ -37,7 +26,7 @@ const openAll = async (path: string): Promise<ReadonlyMap<string, Buffer>> => {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
     for (const entry of entries)
-      out.set(entry.path, await collect(await reader.open(entry)));
+      out.set(entry.path, await buffer(await reader.open(entry)));
     return out;
   } finally {
     await reader.close();
@@ -465,6 +454,57 @@ it("retains header metadata and other components when vendor ramdisk table parsi
   expect(stored.get("dtb")?.equals(dtb)).toBe(true);
   expect(stored.get("bootconfig")?.equals(bootconfig)).toBe(true);
 });
+
+it.each([
+  {
+    name: "a vendor ramdisk section without table entries",
+    image: () =>
+      buildVendorBootImage({
+        version: 4,
+        section: Buffer.from("uncovered-section"),
+      }),
+    children: [],
+    limitation: "outside the ramdisk table were not exposed",
+  },
+  {
+    name: "table entries that cover part of the vendor ramdisk section",
+    image: () =>
+      buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", bytes: Buffer.from("ramdisk-one") }],
+        section: Buffer.from("ramdisk-onetail-bytes"),
+      }),
+    children: ["vendor_ramdisk/one"],
+    limitation: "outside the ramdisk table were not exposed",
+  },
+  {
+    name: "bytes between the sequential layout and recovery_dtbo",
+    image: () =>
+      buildBootImage({
+        version: 1,
+        kernel: Buffer.from("kernel"),
+        ramdisk: Buffer.alloc(0),
+        recoveryDtbo: Buffer.from("dtbo"),
+        recoveryDtboOffset: 4096 * 5,
+      }),
+    children: ["kernel", "recovery_dtbo"],
+    limitation: "Bytes between the sequential layout and recovery_dtbo",
+  },
+])(
+  "keeps coverage unknown for $name",
+  async ({ image, children, limitation }) => {
+    const path = await writeCarrier("unexposed.img", image());
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(snapshot.limitations.join(" ")).toContain(limitation);
+    expect(
+      snapshot.occurrences
+        .filter((row) => row.logical_path !== ".")
+        .map((row) => row.logical_path)
+        .sort(),
+    ).toEqual(children);
+  },
+);
 
 it("refuses an AVB footer whose vbmeta overlaps the boot header even when original_image_size is also invalid", async () => {
   const image = buildBootImage({

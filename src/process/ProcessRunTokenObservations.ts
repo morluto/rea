@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   assertProcessOwnershipInspectionActive,
@@ -56,12 +57,7 @@ export const readProcessRunToken = async (
     )
       throw cause;
     rethrowProcessOwnershipInspectionFailure(cause);
-    const code =
-      cause instanceof Error &&
-      "code" in cause &&
-      typeof cause.code === "string"
-        ? cause.code
-        : undefined;
+    const code = systemCodeFromError(cause);
     return {
       state: "unavailable",
       ...(code === undefined ? {} : { code }),

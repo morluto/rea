@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
@@ -325,7 +326,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "dfuse" ||
     inventory.manifest.root_format === "esp-flash-image" ||
     inventory.manifest.root_format === "fit" ||
-    inventory.manifest.root_format === "android-ota-payload";
+    inventory.manifest.root_format === "android-ota-payload" ||
+    inventory.manifest.root_format === "android-sparse-image";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -590,12 +592,8 @@ const exactCandidates = (
     const byKind = new Map<ArtifactOccurrence["entry_kind"], number[]>();
     for (const [index, row] of rows.entries()) {
       byId.set(row.occurrence_id, index);
-      const existing = byPath.get(row.logical_path);
-      if (existing === undefined) byPath.set(row.logical_path, [index]);
-      else existing.push(index);
-      const kind = byKind.get(row.entry_kind);
-      if (kind === undefined) byKind.set(row.entry_kind, [index]);
-      else kind.push(index);
+      appendToMapList(byPath, row.logical_path, index);
+      appendToMapList(byKind, row.entry_kind, index);
     }
     source.index = { byId, byPath, byKind };
   }

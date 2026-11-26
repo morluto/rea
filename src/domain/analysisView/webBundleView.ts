@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { boundedList } from "../boundedList.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
@@ -22,12 +21,12 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
-const PAGE_BYTES = 1024 * 1024;
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
 
@@ -211,18 +210,10 @@ export const projectWebBundleView = (
   };
 
   const tooLarge = (collection: string): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The requested web-bundle page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          collection,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The requested web-bundle page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
+      { collection },
     );
 
   const buildSummary = (): z.output<typeof webBundleSummarySchema> => ({

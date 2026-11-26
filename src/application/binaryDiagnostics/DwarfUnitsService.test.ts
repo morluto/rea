@@ -1,8 +1,8 @@
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { DWARF_UNITS_PROVIDER } from "../../domain/investigationProviders.js";
@@ -40,26 +40,12 @@ const report: DwarfUnitsReport = {
   ],
 };
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new DwarfUnitsService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "program" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "program",
+    (inspect) => new DwarfUnitsService({ identity, inspect }),
+  ));
 
 it("records absent debug info for this file", async () => {
   const result = await new DwarfUnitsService({

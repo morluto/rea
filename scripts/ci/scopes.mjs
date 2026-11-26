@@ -20,8 +20,21 @@ const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
   "scripts/ci/require-provider-tests.mjs",
 ];
+const GHIDRA_PROJECT_COVERAGE_INPUTS = [
+  "scripts/verify-real-ghidra-project-coverage.mjs",
+  "tests/conformance/ghidra/selected-project-coverage.c",
+  "tests/conformance/ghidra/ReaSelectedProjectSeeds.java",
+];
 const UBUNTU_ARCHIVE_ACTION =
   ".github/actions/ubuntu-archive/action.{yml,yaml}";
+
+const CLI_LAUNCHER_INPUTS = [
+  "scripts/rea.mjs",
+  "scripts/lib/cli-compiled-runtime.mjs",
+  "scripts/lib/cli-process-environment.mjs",
+  "scripts/lib/runtime-admission.mjs",
+  "scripts/lib/runtime-admission.d.mts",
+];
 
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
@@ -161,6 +174,9 @@ const PATH_SCOPES = {
     "bridge/native/**",
     "bridge/process/**",
     "scripts/verify/apple/**",
+    "scripts/ci/darwin-gated-tests.mjs",
+    "scripts/ci/darwin-gate-candidates.mjs",
+    "tests/boundary/filesystem/ciDarwinGatedTests.test.ts",
     "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
     "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
     "tests/process-global/dmgCancellationReason.test.ts",
@@ -267,10 +283,7 @@ const PATH_SCOPES = {
     "scripts/lib/release-pull-request.mjs",
     "patches/release-please+17.11.2.patch",
     "tests/boundary/filesystem/releaseProposal.test.ts",
-    "scripts/rea.mjs",
-    "scripts/lib/cli-process-environment.mjs",
-    "scripts/lib/runtime-admission.mjs",
-    "scripts/lib/runtime-admission.d.mts",
+    ...CLI_LAUNCHER_INPUTS,
     "install.sh",
     "src/config/**",
     "src/hopperPaths/**",
@@ -543,10 +556,7 @@ const PATH_SCOPES = {
     "src/contracts/cliCommandNames.ts",
     "src/contracts/toolContracts.ts",
     "src/contracts/toolEffects.ts",
-    "scripts/rea.mjs",
-    "scripts/lib/cli-process-environment.mjs",
-    "scripts/lib/runtime-admission.mjs",
-    "scripts/lib/runtime-admission.d.mts",
+    ...CLI_LAUNCHER_INPUTS,
     "src/process/**",
     "src/resources/SafeOutputTree.ts",
     "scripts/verify/javascript/recovery.mjs",
@@ -686,6 +696,7 @@ const PATH_SCOPES = {
     ".github/workflows/nativeaot-fixtures.yml",
   ],
   ghidra_bridge: [
+    ...GHIDRA_PROJECT_COVERAGE_INPUTS,
     "bridge/ghidra/**",
     "src/ghidra/GhidraBridgeSources.ts",
     "src/ghidra/GhidraJavaProperties.ts",
@@ -806,7 +817,9 @@ export const CI_LANES = {
   web_source_map: sameJobs(PATH_SCOPES.web_source_map, ["web_source_map"]),
   agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
-  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
+  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"], {
+    earlyInputs: GHIDRA_PROJECT_COVERAGE_INPUTS,
+  }),
   go_binary: sameJobs(PATH_SCOPES.go_binary, ["go_binary"]),
   android_metadata: sameJobs(
     PATH_SCOPES.android_metadata,
@@ -834,8 +847,8 @@ for (const [name, paths] of Object.entries(PATH_SCOPES))
 export const CI_FLAGS = Object.keys(CI_LANES);
 
 // Verifier entrypoints that only manual, licensed, or self-hosted workflows
-// run. No selected CI lane executes them, so their edits need only the static
-// checks and the source-test suite. Shared helpers under scripts/lib remain
+// run unless an explicit lane earlyInput owns one. Other edits need only the
+// static checks and the source-test suite. Shared helpers under scripts/lib remain
 // broad inputs.
 export const MANUAL_VERIFIERS = [
   "scripts/verify-real-electron.mjs",

@@ -44,6 +44,7 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  androidSparseImageMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -82,6 +83,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   androidOtaPartitionMetadataSchema,
   macosPkgMetadataSchema,
   macosPkgEntryMetadataSchema,
+  androidSparseImageMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
@@ -268,6 +270,10 @@ const declarationsByKind: {
   "macos-pkg-entry": {
     notCompared:
       "role and layout restate the entry; stored bytes are compared by content.",
+  },
+  "android-sparse-image": {
+    notCompared:
+      "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
   },
   "esp-image": {
     notCompared:

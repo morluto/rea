@@ -63,7 +63,7 @@ describe("Apple IPS stable filesystem boundary", () => {
       resource: "capacity",
       reportedLimits: { boundary: "registers", maximum: 2 },
       retryable: false,
-      remediationAction: expect.stringContaining("max_registers"),
+      limit: { parameter: "max_registers", effective_value: 2 },
     });
 
     const nesting = await service.inspect({ path: deep });
@@ -78,7 +78,7 @@ describe("Apple IPS stable filesystem boundary", () => {
     const invalid = await service.inspect({ path: corrupt });
     if (invalid.ok) throw new Error("Expected invalid UTF-8 failure");
     expect(invalid.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       failure: { detail: expect.stringContaining("UTF-8") },
     });
 

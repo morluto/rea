@@ -5,7 +5,6 @@ import { digestSchema } from "../digests.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import {
@@ -24,7 +23,8 @@ import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFac
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewPageTooLarge,
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import {
@@ -294,7 +294,6 @@ const matches = (
 const selectedSet = (values: readonly string[] | undefined) =>
   values === undefined ? undefined : new Set(values);
 const ranks = { low: 0, medium: 1, high: 2 };
-const PAGE_BYTES = 1024 * 1024;
 // Sealing appends this field to a nonempty JSON object after projection.
 const DIGEST_BYTES = jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1;
 const PROJECTION_BYTES = PAGE_BYTES - DIGEST_BYTES;
@@ -391,18 +390,10 @@ export const projectJavaScriptRoutesView = (
     ],
   };
   const tooLarge = (): Result<never, AnalysisError> =>
-    err(
-      new AnalysisResourceConstraintError(
-        "inspect_analysis_view",
-        "transport",
-        "The requested route page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
-        {
-          parent_evidence_id: parent.evidenceId,
-          limit_bytes: PAGE_BYTES,
-          collection: view.collection,
-        },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
-      ),
+    analysisViewPageTooLarge(
+      parent.evidenceId,
+      "The requested route page cannot fit the analysis-view byte budget; select fewer fields or a smaller selection. The complete parent is retained.",
+      { collection: view.collection },
     );
   if (view.collection === "summary") {
     const summary = {

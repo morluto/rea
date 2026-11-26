@@ -194,7 +194,7 @@ const decodeStreamPayload = (
             ? "decoder"
             : failure.kind === "limit"
               ? "output-limit"
-              : "format",
+              : "malformed",
         message: errorMessage(cause),
       },
     };

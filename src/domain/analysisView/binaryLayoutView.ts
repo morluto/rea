@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
   invalidAnalysisView,
@@ -57,9 +58,7 @@ const layoutNameIndex = <Row extends { readonly name: LayoutName }>(
       const row = rows[i]!;
       if (row.name.unknown_reason !== null || row.name.bytes_base64 === null)
         continue;
-      const bucket = built.get(row.name.bytes_base64);
-      if (bucket === undefined) built.set(row.name.bytes_base64, [i]);
-      else bucket.push(i);
+      appendToMapList(built, row.name.bytes_base64, i);
     }
     index = built;
     layoutNameIndexes.set(rows, index);

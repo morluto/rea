@@ -13,31 +13,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...original,
-    open: async (path: unknown) => {
-      if (!String(path).startsWith("/proc/"))
-        throw new Error(`Unexpected descriptor open: ${String(path)}`);
-      let bytes: Buffer | undefined;
-      return {
-        fd: 42,
-        close: async () => {},
-        read: async (
-          buffer: Buffer,
-          offset: number,
-          length: number,
-          position: bigint,
-        ) => {
-          bytes ??= Buffer.from(await filesystem.readFile(path));
-          const start = Number(position);
-          const count = bytes.copy(buffer, offset, start, start + length);
-          return { bytesRead: count, buffer };
-        },
-      };
-    },
+    open: (path: unknown) =>
+      openProcDescriptorFixture(path, () => filesystem.readFile(path)),
     readlink: filesystem.readlink,
     stat: filesystem.stat,
   };
 });
 
+import { openProcDescriptorFixture } from "./procDescriptor.fixture.js";
 import {
   createSystemProcessOwnershipHost,
   readProcessOwnershipFacts,

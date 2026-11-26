@@ -56,6 +56,10 @@ it("counts the parsed prefix and positional reads, not the file size", async () 
       applies_at: "next_call",
     },
   });
+  // The reads so far are only a lower bound, so no admitting value is claimed.
+  expect(projectAnalysisError(error!).details).not.toHaveProperty(
+    "limit.required_value",
+  );
 });
 
 it("leaves other reader limits to their own projection", () => {
