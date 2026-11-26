@@ -19,7 +19,7 @@ export const sourceMapCodecReplySchema = z.discriminatedUnion("state", [
   }),
   z.strictObject({
     state: z.literal("failure"),
-    reason: z.enum(["format", "unsupported", "limit"]),
+    reason: z.enum(["malformed", "unsupported", "limit"]),
     message: z.string(),
   }),
 ]);

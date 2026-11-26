@@ -1,13 +1,19 @@
 import { setImmediate } from "node:timers/promises";
 
 import type { FitMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
+import type { ArtifactIntegrityClaim } from "../domain/artifactIntegrity.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import {
   FDT_MAX_HEADER_BYTES,
   readDevicetreeHeader,
 } from "../domain/firmware/devicetreeHeader.js";
 import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
+} from "../resources/index.js";
 import {
   PositionalArtifactReader,
   type PositionalArtifactEntries,
@@ -26,10 +32,16 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
   override readonly format = "fit" as const;
   readonly #path: string;
+  readonly #integrity: ArtifactIntegrityPolicyName;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    integrity: ArtifactIntegrityPolicyName = "fail",
+  ) {
     super(path, "FIT", admitted);
     this.#path = path;
+    this.#integrity = integrity;
   }
 
   formatMetadata(): FitMetadata | undefined {
@@ -40,10 +52,7 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
   protected override entryEndedEarly(
     entry: PositionalArtifactEntry,
   ): ArtifactReaderFailure {
-    return new ArtifactReaderFailure(
-      "format",
-      `FIT image ended early: ${entry.path}`,
-    );
+    return malformedArtifact("fit", `FIT image ended early: ${entry.path}`);
   }
 
   protected override async prepareEntries(
@@ -62,16 +71,27 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
       ({ totalsize } = readDevicetreeHeader(prefix).header);
     } catch (cause) {
       if (cause instanceof BinaryFormatFailure)
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "fit",
           `FIT devicetree header: ${cause.message}`,
+          {
+            cause,
+            offset: 0,
+            field: "devicetree-header",
+          },
         );
       throw cause;
     }
     if (totalsize > initial.size)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw truncatedArtifact(
+        "fit",
         `FIT devicetree is truncated: totalsize ${String(totalsize)} exceeds the ${String(initial.size)}-byte file`,
+        {
+          offset: 0,
+          field: "totalsize",
+          availableBytes: initial.size,
+          requiredBytes: totalsize,
+        },
       );
     if (totalsize > MAX_DEVICETREE_FILE_BYTES)
       throw new ArtifactReaderFailure(
@@ -86,12 +106,14 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
       initial.size,
     );
     const entries: PositionalArtifactEntry[] = [];
+    const limitations = [...structure.limitations];
     let index = 0;
     for (const image of structure.images) {
       if (index % 256 === 0) await setImmediate();
       index += 1;
       this.assertOpen(signal);
-      await this.#verifyHashes(image, signal);
+      const hashResult = await this.#verifyHashes(image, signal);
+      limitations.push(...hashResult.limitations);
       entries.push({
         path: `images/${image.name}.bin`,
         sourcePath: `/images/${image.name}`,
@@ -101,18 +123,27 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
         executable: false,
         encrypted: false,
         byteOffset: image.start,
-        declaredIntegrity: null,
+        declaredIntegrity: hashResult.declaredIntegrity,
         unpacked: false,
-        limitations: image.limitations,
+        limitations: [...image.limitations, ...hashResult.limitations],
         adapterKey: `fit:${String(image.index)}`,
-        formatMetadata: image.metadata,
+        formatMetadata:
+          hashResult.mismatches === 0
+            ? image.metadata
+            : {
+                ...image.metadata,
+                hashes_verified: Math.max(
+                  0,
+                  image.metadata.hashes_verified - hashResult.mismatches,
+                ),
+              },
       });
     }
     return {
       entries,
       coverage: {
         status: "complete",
-        limitations: structure.limitations,
+        limitations,
       },
       formatMetadata: structure.metadata,
     };
@@ -122,12 +153,17 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
   async #verifyHashes(
     image: FitImageDeclaration,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<{
+    readonly mismatches: number;
+    readonly limitations: readonly string[];
+    readonly declaredIntegrity: ArtifactIntegrityClaim | null;
+  }> {
     const digests = image.hashes.flatMap((hash) => {
       const digest = createFitDigest(hash.algo);
       return digest === undefined ? [] : [{ hash, digest }];
     });
-    if (digests.length === 0) return;
+    if (digests.length === 0)
+      return { mismatches: 0, limitations: [], declaredIntegrity: null };
     const { handle } = await this.verifyCarrier(signal);
     if (image.size > 0)
       for await (const chunk of readFileHandleChunks(handle, {
@@ -139,15 +175,31 @@ export class FitArtifactReader extends PositionalArtifactReader<FitMetadata> {
         this.assertOpen(signal);
         for (const { digest } of digests) digest.update(chunk);
       }
+    const limitations: string[] = [];
+    let mismatches = 0;
+    let declaredIntegrity: ArtifactIntegrityClaim | null = null;
     for (const { hash, digest } of digests) {
       const computed = digest.digest();
-      if (!computed.equals(hash.value))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`,
-          { integrityCheck: "declared-digest" },
-        );
+      if (!computed.equals(hash.value)) {
+        const message = `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`;
+        if (this.#integrity === "fail")
+          throw new ArtifactReaderFailure("integrity", message, {
+            integrityCheck: "declared-digest",
+          });
+        mismatches += 1;
+        limitations.push(message);
+        if (
+          declaredIntegrity === null &&
+          (hash.algo === "sha256" || hash.algo === "md5")
+        ) {
+          declaredIntegrity = {
+            algorithm: hash.algo,
+            digest: hash.value.toString("hex"),
+          };
+        }
+      }
     }
+    return { mismatches, limitations, declaredIntegrity };
   }
 }
 

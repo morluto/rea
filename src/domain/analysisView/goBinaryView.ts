@@ -22,7 +22,10 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
@@ -181,15 +184,8 @@ export const projectGoBinaryView = (
     SummaryAnalysisView | z.output<typeof goBinaryViewRequestSchema>
   >(admitted, "summary", "go");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Go build Evidence supports summary, go and cyclonedx views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Go build Evidence supports summary, go and cyclonedx views.",
     );
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;

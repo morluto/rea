@@ -42,13 +42,28 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: trusted-retention
           persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.nvmrc
+            /scripts/ci/cache-retention.mjs
+            /scripts/ci/github-api.mjs
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           path: triggering-source
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+          # Materialize the hashFiles inputs from the triggering revision.
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.npmrc
+            /.nvmrc
+            /knip.json
+            /package-lock.json
+            /package.json
+            /tsconfig.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version-file: trusted-retention/.nvmrc
       - name: Retain current Turbo snapshots and npm download caches
         env:

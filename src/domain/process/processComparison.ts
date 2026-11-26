@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
 import { processSourceTruncated } from "./processCaptureCoverage.js";
 import type {
@@ -147,8 +147,10 @@ const terminalObservations = (capture: ProcessCapture): readonly unknown[] => [
 ];
 
 const sameJsonValue = (left: unknown, right: unknown): boolean => {
-  const encodedLeft = canonicalize(left);
-  return encodedLeft !== undefined && encodedLeft === canonicalize(right);
+  const encodedLeft = serializeCanonicalValue(left);
+  return (
+    encodedLeft !== undefined && encodedLeft === serializeCanonicalValue(right)
+  );
 };
 
 const containerEntries = (value: unknown): readonly string[] | null =>
@@ -649,7 +651,8 @@ const differingContractFields = (
       (field) =>
         !Object.hasOwn(left, field) ||
         !Object.hasOwn(right, field) ||
-        canonicalize(left[field]) !== canonicalize(right[field]),
+        serializeCanonicalValue(left[field]) !==
+          serializeCanonicalValue(right[field]),
     )
     .sort();
 

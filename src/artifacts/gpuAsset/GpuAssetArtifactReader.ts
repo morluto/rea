@@ -79,6 +79,7 @@ export class GpuAssetArtifactReader extends PositionalArtifactReader<GpuAssetMet
       offset >= initial.size
         ? Promise.resolve(Buffer.alloc(0))
         : readArtifactFileBytes(
+            this.format,
             handle,
             offset,
             Math.min(length, initial.size - offset),

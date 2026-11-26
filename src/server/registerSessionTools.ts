@@ -6,7 +6,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
@@ -16,6 +16,7 @@ import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { ArtifactPathInspectionDependencies } from "../application/artifacts/ArtifactPathInspection.js";
 
 /** What the lifecycle and status tools of one session need. */
 interface LifecycleToolRegistration
@@ -41,6 +42,8 @@ export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes
   readonly platform: NodeJS.Platform;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  /** Inventories compare_artifacts path sources. */
+  readonly createArtifactPathInspection?: () => Promise<ArtifactPathInspectionDependencies>;
 }
 
 export const registerSessionTools = (
@@ -112,7 +115,11 @@ export const registerSessionTools = (
         platform: options.platform,
         resources: processResources,
       },
-      sessionDerived: { session, resources: options.artifactResources },
+      sessionDerived: {
+        session,
+        resources: options.artifactResources,
+        createArtifactPathInspection: options.createArtifactPathInspection,
+      },
       sessionRecords: { session, resources: options.artifactResources },
     },
     {

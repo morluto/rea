@@ -1,4 +1,4 @@
-import { BinaryReader } from "../binaryContainer.js";
+import { createBinaryReaderCache } from "../binaryContainer.js";
 import { err, ok } from "../result.js";
 
 export const ELF_NOTE_HEADER_BYTES = 12;
@@ -16,28 +16,11 @@ export const elfNoteSectionStorage = (section: {
       : "uncompressed";
 
 /** ELF note padding follows binutils: only a declared alignment of 8 uses 8. */
-export const elfNoteAlignment = (
-  declared: number | bigint,
-): ElfNoteAlignment => (declared === 8 || declared === 8n ? 8 : 4);
+export const elfNoteAlignment = (declared: number | bigint): ElfNoteAlignment =>
+  declared === 8 || declared === 8n ? 8 : 4;
 
-const LE_NOTE_READERS = new WeakMap<Uint8Array, BinaryReader>();
-const BE_NOTE_READERS = new WeakMap<Uint8Array, BinaryReader>();
-
-const cachedElfNoteReader = (
-  bytes: Uint8Array,
-  littleEndian: boolean,
-): BinaryReader => {
-  const cache = littleEndian ? LE_NOTE_READERS : BE_NOTE_READERS;
-  let reader = cache.get(bytes);
-  if (reader === undefined) {
-    const buffer = Buffer.isBuffer(bytes)
-      ? bytes
-      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    reader = new BinaryReader(buffer, littleEndian, "ELF note");
-    cache.set(bytes, reader);
-  }
-  return reader;
-};
+const littleEndianNoteReader = createBinaryReaderCache(true, "ELF note");
+const bigEndianNoteReader = createBinaryReaderCache(false, "ELF note");
 
 /** Fixed ELF note words without interpreting the rest of the table. */
 export const readElfNoteHeader = (
@@ -50,7 +33,9 @@ export const readElfNoteHeader = (
       kind: "malformed" as const,
       message: "ELF note header is truncated",
     });
-  const reader = cachedElfNoteReader(bytes, littleEndian);
+  const reader = littleEndian
+    ? littleEndianNoteReader(bytes)
+    : bigEndianNoteReader(bytes);
   return ok({
     namesz: reader.u32(offset),
     descsz: reader.u32(offset + 4),

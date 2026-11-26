@@ -103,7 +103,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       expect(error).toMatchObject({
         code: "unsupported_target",
         details: {
-          format_failure: "malformed",
+          failure_kind: "malformed",
           reason: expect.stringContaining("null entry"),
         },
       });

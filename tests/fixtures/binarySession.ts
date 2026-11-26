@@ -26,7 +26,12 @@ import { MANAGED_TOOL_CONTRACTS } from "../../src/contracts/managed/managedToolC
 import { ARTIFACT_TOOL_CONTRACTS } from "../../src/contracts/artifactToolContracts.js";
 
 import { err, ok as resultOk } from "../../src/domain/result.js";
-import { observed } from "./analysisExecution.js";
+import {
+  createFixtureProviderIdentity,
+  availableFixtureProvider,
+  supportedFixtureTarget,
+  observed,
+} from "./analysisExecution.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 type TestBinarySessionOptions = {
@@ -39,11 +44,7 @@ type TestBinarySessionOptions = {
 
 type FixtureClientFactory = AnalysisProvider["createClient"];
 
-const FIXTURE_IDENTITY = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-} as const;
+const FIXTURE_IDENTITY = createFixtureProviderIdentity();
 
 const FIXTURE_OPERATIONS: readonly Exclude<AnalysisOperation, "health">[] = [
   ...OFFICIAL_TOOL_CONTRACTS,
@@ -97,18 +98,8 @@ export const createTestProviderRouter = (
     createClient: (target, profile, context) =>
       declared.createClient(target, profile, context),
     resolveAnalysisProfile: resolve,
-    inspectAvailability: () => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+    inspectAvailability: availableFixtureProvider,
+    inspectTargetSupport: supportedFixtureTarget,
   };
   return SessionProviderRouter.selectable(
     new AnalysisProviderRegistry([candidate]),
@@ -140,11 +131,7 @@ export const createCacheProvider = (
   calls: string[],
   mayWriteFilesystem = false,
 ): AnalysisProvider => {
-  const identity = {
-    id: "fixture",
-    name: "Fixture analysis provider",
-    version: "1",
-  } as const;
+  const identity = createFixtureProviderIdentity();
   return {
     identity: () => identity,
     resolveAnalysisProfile: () =>

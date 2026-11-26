@@ -11,6 +11,7 @@ import {
 } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import type { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import type { TestDelivery } from "../../support/completeEvidenceByDefault.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
@@ -43,6 +44,8 @@ export const connectGhidraMcp = async (
     readonly attestDosTargetSnapshot?: ReturnType<GhidraProviderClientFactory>["attestDosTargetSnapshot"];
     readonly close?: ReturnType<GhidraProviderClientFactory>["close"];
     readonly delivery?: ToolResultDelivery;
+    /** "budgeted" leaves an omitted detail to the agent result budget. */
+    readonly testDelivery?: TestDelivery;
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
     readonly schemaValidator?: ReturnType<typeof createMcpSchemaValidation>;
   } = {},
@@ -87,6 +90,9 @@ export const connectGhidraMcp = async (
     ...(fixture.schemaValidator === undefined
       ? {}
       : { schemaValidator: fixture.schemaValidator }),
+    ...(fixture.testDelivery === undefined
+      ? {}
+      : { testDelivery: fixture.testDelivery }),
     serverOptions: {
       logger: silentLogger,
       environment: {

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { elf } from "../../domain/binaryTarget.fixture.js";
+import { createFixtureProviderIdentity } from "../../../tests/fixtures/analysisExecution.js";
 import { createTestBinarySession } from "../../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -37,11 +38,7 @@ it.each([false, true])(
       alias = join(directory, "alias.elf");
     await writeFile(first, elf(2, 1, 62));
     await writeFile(alias, elf(2, 1, 62));
-    const identity = {
-      id: "fixture",
-      name: "Fixture analysis provider",
-      version: "1",
-    };
+    const identity = createFixtureProviderIdentity();
     let generation = 0,
       dirty = false;
     const starts: number[] = [];

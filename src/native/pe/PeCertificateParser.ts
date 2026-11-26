@@ -21,10 +21,10 @@ import {
   readAsn1,
 } from "./PeCertificateAsn1.js";
 import {
-  readPeImage,
   readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
+import { peImageBaseHex } from "../../domain/native/peAddressSpace.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The format the certificate table's own parser names in its failures. */
@@ -38,15 +38,6 @@ const fail = (message: string, options?: ErrorOptions): never => {
 /** A declared certificate structure starts in the bytes but ends past them. */
 const failTruncated = (message: string): never => {
   throw truncatedInput(FORMAT, message);
-};
-
-/** Shared PE image admission, with malformed headers as format failures. */
-const readCertificateImage = (bytes: Buffer): PeImage => {
-  try {
-    return readPeImage(bytes, "headers");
-  } catch (cause) {
-    throw artifactParseFailure(cause, undefined);
-  }
 };
 
 const readCertificateImageAt = async (
@@ -120,12 +111,14 @@ const parsePeCertificateTable = (
 ): PeCertificates => {
   const format = image.bits === 64 ? "pe32-plus" : "pe32";
   const machine = image.pe_machine;
+  const imageBase = peImageBaseHex(image.image_base);
   const headerAnomalies = [...image.pe_header_anomalies];
   if (range === null)
     return {
       artifact,
       format,
       machine,
+      image_base: imageBase,
       table: null,
       entries: [],
       coverage: { status: "complete", examined_entries: 0, certificates: 0 },
@@ -286,6 +279,7 @@ const parsePeCertificateTable = (
     artifact,
     format,
     machine,
+    image_base: imageBase,
     table: {
       location: { offset: tableOffset, bytes: tableSize },
       data_directory_location: { offset: directoryAt, bytes: 8 },
@@ -303,21 +297,6 @@ const parsePeCertificateTable = (
       ...(unsignedAttributesPresent ? [UNSIGNED_ATTRIBUTES_LIMITATION] : []),
     ],
   };
-};
-
-/** Decode IMAGE_DIRECTORY_ENTRY_SECURITY as a file-offset WIN_CERTIFICATE table. */
-export const parsePeCertificates = (
-  bytes: Buffer,
-  artifact: PeCertificates["artifact"],
-  input: InspectPeCertificatesInput,
-): PeCertificates => {
-  const image = readCertificateImage(bytes);
-  const range = certificateTableRange(image, bytes.length);
-  const table =
-    range === null
-      ? Buffer.alloc(0)
-      : bytes.subarray(range.tableOffset, range.tableOffset + range.tableSize);
-  return parsePeCertificateTable(image, range, table, artifact, input);
 };
 
 /**

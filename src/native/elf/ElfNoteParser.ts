@@ -1145,23 +1145,6 @@ const decodeElfNoteSteps = <T>(bytes: Buffer, steps: ElfNoteSteps<T>): T => {
   return next.value;
 };
 
-const decodeElfNoteStepsCooperative = async <T>(
-  bytes: Buffer,
-  steps: ElfNoteSteps<T>,
-  decode: CooperativeElfSectionNameDecoder,
-): Promise<T> => {
-  let next = steps.next();
-  while (!next.done) {
-    const step = next.value;
-    next = steps.next(
-      step.kind !== "decode-section-names"
-        ? bytes.subarray(step.offset, step.offset + step.length)
-        : await decode(step.request),
-    );
-  }
-  return next.value;
-};
-
 const decodeElfNoteStepsFromSource = async <T>(
   source: PrefixedByteSource,
   steps: ElfNoteSteps<T>,
@@ -1274,18 +1257,6 @@ export const readElfBuildIds = (
   decodeElfNoteSteps(
     bytes,
     readElfBuildIdSteps(bytes.length, input, maximumBuildIdBytes),
-  );
-
-export const readElfBuildIdsCooperative = (
-  bytes: Buffer,
-  input: ElfNoteScanInput,
-  maximumBuildIdBytes: number,
-  decode: CooperativeElfSectionNameDecoder,
-): Promise<ElfGnuBuildIdNotes> =>
-  decodeElfNoteStepsCooperative(
-    bytes,
-    readElfBuildIdSteps(bytes.length, input, maximumBuildIdBytes),
-    decode,
   );
 
 /** Read GNU build IDs positionally over a bounded file handle. */

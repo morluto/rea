@@ -5,7 +5,10 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactProvider } from "../ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import {
   ZipArtifactReader,
@@ -175,10 +178,7 @@ it("keeps an earlier inventory failure primary when cleanup is cancelled", async
   const { path } = await zipFixture();
   const scope = new ArtifactResourceScope();
   const controller = new AbortController();
-  const primary = new ArtifactReaderFailure(
-    "format",
-    "member enumeration failed",
-  );
+  const primary = malformedArtifact("zip", "member enumeration failed");
   const enumeration = vi
     .spyOn(ZipArtifactReader.prototype, "entries")
     .mockImplementation(async function* () {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -9,47 +10,108 @@ const uint = z.number().int().min(0).max(0xffffffff);
 export const MAX_INSPECT_MAVEN_GRADLE_METADATA_FILE_BYTES = 16 * 1024 * 1024;
 
 /**
- * Fixed allowance for variant-name characters repeated across Gradle dependency
- * and constraint rows (name length times rows, summed over variants).
+ * Per-call report allowances (`report_limits`): each field's omitted value and
+ * the maximum the schema accepts. Each bounds a collection that expands a few
+ * input bytes into a much larger report:
+ *
+ * - `dependency_rows`: dependency plus constraint rows. A row spelled in two
+ *   or three input bytes (`{}` or `<dependency/>`) becomes a full row and up
+ *   to three unresolved records; the largest published BOMs declare a few
+ *   thousand rows.
+ * - `variants`: Gradle variants in one module file; published modules,
+ *   including Kotlin Multiplatform roots, declare at most a few hundred.
+ * - `exclusions`: dependency exclusions summed over every row.
+ * - `unresolved_records`: expanded property-reference and coordinate-gap
+ *   records.
+ * - `xml_nodes`: XML nodes in one Maven POM, counted as a stream before the
+ *   document tree is built; each costs hundreds of bytes of tree.
+ * - `repeated_variant_name_chars`: variant-name characters repeated across
+ *   Gradle dependency and constraint rows (name length times rows).
  */
-export const MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS =
-  4 * 1024 * 1024;
+export const MAVEN_GRADLE_REPORT_LIMIT_BOUNDS = {
+  dependency_rows: { default_value: 65_536, unit: "count" },
+  variants: { default_value: 4_096, unit: "count" },
+  exclusions: { default_value: 65_536, unit: "count" },
+  unresolved_records: { default_value: 65_536, unit: "count" },
+  xml_nodes: { default_value: 1_048_576, unit: "count" },
+  repeated_variant_name_chars: {
+    default_value: 4 * 1024 * 1024,
+    unit: "count",
+  },
+} as const;
+/** Every allowance counts records or UTF-16 units held in 32-bit indices. */
+const MAVEN_GRADLE_REPORT_LIMIT_MAXIMUM = 0x7fffffff;
+export type MavenGradleReportLimitField =
+  keyof typeof MAVEN_GRADLE_REPORT_LIMIT_BOUNDS;
+export type MavenGradleReportLimits = Readonly<
+  Record<MavenGradleReportLimitField, number>
+>;
 
-/**
- * Fixed allowance for dependency plus constraint rows in one report. A row
- * spelled in two or three input bytes (`{}` or `<dependency/>`) becomes a full
- * row and up to three unresolved records, a few hundred bytes of report; the
- * largest published BOMs declare a few thousand rows.
- */
-export const MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS = 65_536;
+const reportLimitField = (field: MavenGradleReportLimitField) =>
+  z
+    .int()
+    .min(1)
+    .max(MAVEN_GRADLE_REPORT_LIMIT_MAXIMUM)
+    .optional()
+    .describe(
+      `Default ${String(MAVEN_GRADLE_REPORT_LIMIT_BOUNDS[field].default_value)}`,
+    );
+export const mavenGradleReportLimitsSchema = z.strictObject({
+  dependency_rows: reportLimitField("dependency_rows"),
+  variants: reportLimitField("variants"),
+  exclusions: reportLimitField("exclusions"),
+  unresolved_records: reportLimitField("unresolved_records"),
+  xml_nodes: reportLimitField("xml_nodes"),
+  repeated_variant_name_chars: reportLimitField("repeated_variant_name_chars"),
+});
 
-/**
- * Fixed allowance for Gradle variants in one module file. An empty variant
- * (`{}`) becomes a full variant record; published modules, including Kotlin
- * Multiplatform roots with one variant per target and usage, declare at most a
- * few hundred.
- */
-export const MAVEN_GRADLE_METADATA_VARIANTS = 4_096;
+/** Omitted fields resolve to their defaults; explicit values are kept. */
+export const mavenGradleReportLimits = (
+  selected?: z.infer<typeof mavenGradleReportLimitsSchema>,
+): MavenGradleReportLimits => {
+  const resolved: Record<string, number> = {};
+  for (const field of Object.keys(
+    MAVEN_GRADLE_REPORT_LIMIT_BOUNDS,
+  ) as MavenGradleReportLimitField[])
+    resolved[field] =
+      selected?.[field] ??
+      MAVEN_GRADLE_REPORT_LIMIT_BOUNDS[field].default_value;
+  return resolved as MavenGradleReportLimits;
+};
 
-/**
- * Fixed allowance for dependency exclusions summed over every row in one
- * report. An empty exclusion (`{}` or `<exclusion/>`) becomes a full exclusion
- * record; real rows exclude a handful of modules each.
- */
-export const MAVEN_GRADLE_METADATA_EXCLUSIONS = 65_536;
+/** The per-call control that stopped a report, from the schema's bounds. */
+export const mavenGradleReportLimit = (
+  field: MavenGradleReportLimitField,
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `report_limits.${field}`,
+  effective_value: effectiveValue,
+  unit: MAVEN_GRADLE_REPORT_LIMIT_BOUNDS[field].unit,
+  minimum: 1,
+  maximum: MAVEN_GRADLE_REPORT_LIMIT_MAXIMUM,
+  default_value: MAVEN_GRADLE_REPORT_LIMIT_BOUNDS[field].default_value,
+  applies_at: "next_call",
+});
 
-/** Fixed allowance for expanded property-reference and coordinate-gap records. */
-export const MAVEN_GRADLE_METADATA_UNRESOLVED_RECORDS = 65_536;
+/** `max_file_bytes`: the schema's bounds and omitted value. */
+export const MAVEN_GRADLE_FILE_BYTES = {
+  minimum: 1,
+  maximum: MAX_INSPECT_MAVEN_GRADLE_METADATA_FILE_BYTES,
+  default_value: 1024 * 1024,
+} as const;
 
-/**
- * Fixed allowance for XML nodes (elements, attributes, text, CDATA, comments
- * and processing instructions) in one Maven POM, counted as a stream before
- * the document tree is built. Each node costs hundreds of bytes of tree, so a
- * 16 MiB POM of tiny elements could otherwise allocate gigabytes; the
- * allowance still admits a POM at the dependency-row allowance with a dozen
- * nodes per row.
- */
-export const MAVEN_GRADLE_METADATA_XML_NODES = 1_048_576;
+/** The per-call control that stopped the input read. */
+export const mavenGradleFileBytesLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_file_bytes",
+  effective_value: effectiveValue,
+  unit: "bytes",
+  ...MAVEN_GRADLE_FILE_BYTES,
+  applies_at: "next_call",
+});
 
 const nullableText = z.string().min(1).nullable();
 
@@ -126,11 +188,16 @@ export const inspectMavenGradleMetadataInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_MAVEN_GRADLE_METADATA_FILE_BYTES)
-    .default(1024 * 1024)
+    .min(MAVEN_GRADLE_FILE_BYTES.minimum)
+    .max(MAVEN_GRADLE_FILE_BYTES.maximum)
+    .default(MAVEN_GRADLE_FILE_BYTES.default_value)
     .describe(
       "Maximum stable artifact bytes to read; exceeding the budget fails without partial success",
+    ),
+  report_limits: mavenGradleReportLimitsSchema
+    .optional()
+    .describe(
+      "Report expansion allowances for this call (positive counts): dependency_rows (dependency plus constraint rows), variants (Gradle variants), exclusions, unresolved_records (property-reference and coordinate-gap records), xml_nodes (POM XML nodes), repeated_variant_name_chars (variant-name characters repeated across rows). A refusal reports the field in details.limit.",
     ),
 });
 

@@ -20,6 +20,7 @@ import type {
   AndroidBootImageMetadata,
 } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import {
+  absentAvbFooter,
   ANDROID_BOOT_FORMAT,
   ANDROID_BOOT_HEADER_PROBE_BYTES,
   ANDROID_BOOT_FIXED_LIMITS,
@@ -61,6 +62,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
   ): Promise<PositionalArtifactEntries<AndroidBootImageMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
+      "android-boot-image",
       handle,
       0,
       Math.min(initial.size, ANDROID_BOOT_HEADER_PROBE_BYTES),
@@ -71,9 +73,23 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     const parsed = parseAndroidBootHeader(headerBytes, initial.size);
     if (!parsed.ok) throw parseFailure(parsed.error);
     const header = parsed.value;
-    const table = await this.#vendorTable(handle, initial.size, header, signal);
-    const plans = [...(table?.components ?? []), ...header.components];
-    const avb = await this.#footer(handle, initial.size, header, plans, signal);
+    const tableResult = await this.#vendorTable(
+      handle,
+      initial.size,
+      header,
+      signal,
+    );
+    const plans = [
+      ...(tableResult.table?.components ?? []),
+      ...header.components,
+    ];
+    const footerResult = await this.#footer(
+      handle,
+      initial.size,
+      header,
+      plans,
+      signal,
+    );
     const compressions = await this.#compression(
       handle,
       initial.size,
@@ -87,15 +103,17 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
         throw formatFailure(`duplicate component path ${plan.path}`);
       entries.set(entry.adapterKey, entry);
     }
+    const degraded = tableResult.degraded || footerResult.degraded;
     return {
       entries: [...entries.values()],
-      formatMetadata: toMetadata(header, avb, plans.length),
+      formatMetadata: toMetadata(header, footerResult.avb, plans.length),
       coverage: {
-        status: "complete",
+        status: degraded ? "unknown" : "complete",
         limitations: [
           ...header.limitations,
-          ...(table?.limitations ?? []),
-          ...avb.limitations,
+          ...(tableResult.table?.limitations ?? []),
+          ...tableResult.limitations,
+          ...footerResult.avb.limitations,
         ],
       },
     };
@@ -106,9 +124,14 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     fileSize: number,
     header: AndroidBootParse,
     signal?: AbortSignal,
-  ): Promise<VendorRamdiskTableParse | undefined> {
+  ): Promise<{
+    readonly table: VendorRamdiskTableParse | undefined;
+    readonly degraded: boolean;
+    readonly limitations: readonly string[];
+  }> {
     const range = header.tableRange;
-    if (range === null) return undefined;
+    if (range === null)
+      return { table: undefined, degraded: false, limitations: [] };
     const section = header.vendorRamdiskSection;
     if (
       section === null ||
@@ -118,6 +141,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
       throw formatFailure("vendor ramdisk table is missing its section");
     this.assertOpen(signal);
     const bytes = await readArtifactFileBytes(
+      "android-boot-image",
       handle,
       range.offset,
       range.size,
@@ -130,8 +154,23 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
       sectionOffset: section.offset,
       sectionSize: section.size,
     });
-    if (!table.ok) throw parseFailure(table.error);
-    return table.value;
+    if (!table.ok) {
+      const { failure } = table.error;
+      if (
+        failure.kind === "truncated" ||
+        failure.kind === "limit" ||
+        failure.field === "vendor_ramdisk_table_overlap"
+      )
+        throw parseFailure(table.error);
+      return {
+        table: undefined,
+        degraded: true,
+        limitations: [
+          `Vendor ramdisk table could not be parsed: ${table.error.message}`,
+        ],
+      };
+    }
+    return { table: table.value, degraded: false, limitations: [] };
   }
 
   async #footer(
@@ -140,12 +179,13 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     header: AndroidBootParse,
     plans: readonly AndroidBootComponentPlan[],
     signal?: AbortSignal,
-  ): Promise<AvbFooterFacts> {
+  ): Promise<{ readonly avb: AvbFooterFacts; readonly degraded: boolean }> {
     const offset = avbFooterOffset(fileSize, header.dataEnd);
     this.assertOpen(signal);
     const tail =
       offset !== null
         ? await readArtifactFileBytes(
+            "android-boot-image",
             handle,
             offset,
             AVB_FOOTER_SIZE,
@@ -168,8 +208,22 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
       ],
       tail,
     });
-    if (!footer.ok) throw parseFailure(footer.error);
-    return footer.value;
+    if (!footer.ok) {
+      const { failure } = footer.error;
+      if (
+        failure.kind === "truncated" ||
+        failure.kind === "limit" ||
+        failure.field === "avb_overlap"
+      )
+        throw parseFailure(footer.error);
+      return {
+        avb: absentAvbFooter([
+          `Optional trailing AVB footer could not be parsed: ${footer.error.message}`,
+        ]),
+        degraded: true,
+      };
+    }
+    return { avb: footer.value, degraded: false };
   }
 
   async #compression(
@@ -182,6 +236,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     for (const plan of plans) {
       this.assertOpen(signal);
       const prefix = await readArtifactFileBytes(
+        "android-boot-image",
         handle,
         plan.offset,
         Math.min(4, plan.size),

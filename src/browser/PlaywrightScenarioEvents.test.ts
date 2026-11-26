@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Page, Request, Response } from "playwright-core";
 
@@ -888,4 +889,56 @@ it("promotes an already held page value to response scope without changing its f
   expect(secrets.redact(value, "response")).toBe(
     "[REDACTED:page:cookie.token]",
   );
+});
+
+it("does not finalize capture while a selected response body is pending", async () => {
+  const context = new EventEmitter();
+  const page = new EventEmitter();
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: "/fixture/chrome" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    capture: { events: ["network"], network: { response_body: true } },
+  });
+  const body = phaseGate<void, Buffer>();
+  const events = new PlaywrightScenarioEvents({
+    page: page as unknown as Page,
+    context: context as unknown as BrowserContext,
+    ownsContext: true,
+    enabled: new Set(["network"]),
+    network: scenario.capture.network,
+    secrets: resolveScenarioSecrets(scenario, {}),
+  });
+  const request = {
+    url: () => "https://app.example.test/data",
+    method: () => "GET",
+    resourceType: () => "fetch",
+    postDataBuffer: () => null,
+    redirectedFrom: () => null,
+    failure: () => null,
+    headers: () => ({ "content-type": "text/plain" }),
+    headersArray: async () => [{ name: "content-type", value: "text/plain" }],
+  } as unknown as Request;
+  const response = {
+    request: () => request,
+    url: () => request.url(),
+    status: () => 200,
+    headers: () => ({ "content-type": "text/plain" }),
+    headersArray: async () => [{ name: "content-type", value: "text/plain" }],
+    body: () => body.hold(),
+  } as unknown as Response;
+  context.emit("request", request);
+  context.emit("response", response);
+  context.emit("requestfinished", request);
+  const finishing = events.finish();
+  try {
+    await body.reached(finishing, "selected response body");
+    expect(events.captureFinalized()).toBe(false);
+    body.release(Buffer.from("complete response"));
+    await finishing;
+    expect(events.captureFinalized()).toBe(true);
+  } finally {
+    body.release(Buffer.from("complete response"));
+    await finishing;
+  }
 });

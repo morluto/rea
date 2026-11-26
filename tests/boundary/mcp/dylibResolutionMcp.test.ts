@@ -116,12 +116,16 @@ it("traces dylib resolution for an opened app bundle and rejects a changed targe
       arguments: {},
     });
     expect(changed.isError).toBe(true);
-    expect(parseMcpToolError(changed)).toMatchObject({
+    const changedError = parseMcpToolError(changed);
+    expect(changedError).toMatchObject({
       error: {
+        code: "artifact_operation_failed",
         category: "integrity_mismatch",
-        details: { reason: "integrity", integrity_check: "container-identity" },
+        retryable: false,
+        details: { reason: "integrity", integrity_check: "admitted-identity" },
       },
     });
+    expect(changedError.error.retry).toBeUndefined();
   });
 });
 

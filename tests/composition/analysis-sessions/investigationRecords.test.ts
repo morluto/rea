@@ -9,6 +9,7 @@ import { createImmutableEvidenceBundle } from "../../../src/domain/evidenceBundl
 import { ok } from "../../../src/domain/result.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { recordUnknownInputSchema } from "../../../src/domain/residualUnknown.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -172,16 +173,12 @@ it("detaches exported snapshot payloads after sealed bundle or snapshot import w
   expect((await session.open(first)).ok).toBe(true);
   const target = session.activeTarget();
   if (target === undefined) throw new Error("Missing open target");
-  const evidence = createEvidence(
-    target,
-    { id: "fixture", name: "Fixture analysis provider", version: "1" },
-    {
-      operation: "address_name",
-      parameters: { address: "0x1000", nested: { flag: true } },
-      result: { nested: ["observed"] },
-      rawResult: { raw: ["payload"] },
-    },
-  );
+  const evidence = createEvidence(target, createFixtureProviderIdentity(), {
+    operation: "address_name",
+    parameters: { address: "0x1000", nested: { flag: true } },
+    result: { nested: ["observed"] },
+    rawResult: { raw: ["payload"] },
+  });
   const sealedBundle = createImmutableEvidenceBundle([evidence]);
   expect(session.importEvidenceBundle(sealedBundle).ok).toBe(true);
 
