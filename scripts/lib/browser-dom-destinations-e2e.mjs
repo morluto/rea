@@ -44,7 +44,7 @@ export async function verifyBrowserDomDestinations(
     await client.connect(transport);
     const result = await client.callTool({
       name: "inspect_web_page",
-      arguments: { ...attachment, observation_ms: 100 },
+      arguments: { ...attachment, observation_ms: 100, detail: "complete" },
     });
     assert.notEqual(result.isError, true, mcpTextValue(result));
     assertFormDestinations(

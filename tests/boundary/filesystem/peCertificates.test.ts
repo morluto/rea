@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createPeCertificatesService } from "../../../src/composition/binaryDiagnostics/peCertificates.js";
 import { peCertificateFixture } from "../../../src/native/pe/PeCertificates.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("PE certificate stable filesystem boundary", () => {
   it("reports non-file and missing selections as caller input errors", async () => {
@@ -14,26 +15,12 @@ describe("PE certificate stable filesystem boundary", () => {
     await writeFile(path, peCertificateFixture());
     await symlink(path, alias);
     const service = createPeCertificatesService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [join(root, "missing.exe"), "invalid_value"],
-      [join(path, "child.exe"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_pe_certificates",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_pe_certificates",
+      { root, alias, path },
+      ".exe",
+    );
   });
 
   // The certificate table body is the target's own structure: a header that
@@ -48,7 +35,7 @@ describe("PE certificate stable filesystem boundary", () => {
     const result = await createPeCertificatesService().inspect({ path });
     if (result.ok) throw new Error("Expected malformed target refusal");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
       operation: "inspect_pe_certificates",
       path,
       failure: { kind: "malformed", format: "pe-certificate-table" },

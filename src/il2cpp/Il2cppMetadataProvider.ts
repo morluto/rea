@@ -10,12 +10,16 @@ import {
   parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
-import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
+import {
+  IL2CPP_METADATA_FORMAT,
+  Il2cppMetadataFormatFailure,
+} from "./Il2cppMetadataFormat.js";
 import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  closeArtifactResources,
   readStableArtifact,
   type StableArtifactSnapshot,
   ArtifactResourceScope,
@@ -42,17 +46,18 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
+  AnalysisTargetFailureError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   il2cppMetadataSchema,
+  il2cppNativeIndexLimit,
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { ELF_VIRTUAL_POINTER_INDEX_LIMIT } from "../domain/native/elfPointerRelocations.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -87,27 +92,20 @@ const linkConflict = (
   binaryPath: string,
   metadataPath: string,
   cause: Il2cppBinaryFormatFailure,
-): AnalysisInputError =>
-  new AnalysisInputError(
+): AnalysisTargetFailureError =>
+  new AnalysisTargetFailureError(
     OPERATION,
+    metadataPath,
     {
-      cause,
-      conformsToInputContract: true,
-      remediationAction:
-        "Select the native binary and global-metadata.dat from the same build. If they are from the same build, either file may be damaged or the binary's registration layout may be outside coverage. Without the binary, the metadata alone can still be read.",
+      kind: "conflict",
+      format: IL2CPP_BINARY_FORMAT,
+      detail: `Selected metadata does not link to the selected binary: ${cause.message}`,
+      inputs: [
+        { field: "path", path: metadataPath },
+        { field: "binary_path", path: binaryPath },
+      ],
     },
-    [
-      {
-        path: ["path"],
-        reason: "invalid_value",
-        message: `Selected metadata ${metadataPath} does not link to the selected binary: ${cause.message}`,
-      },
-      {
-        path: ["binary_path"],
-        reason: "invalid_value",
-        message: `Selected binary ${binaryPath} does not link to the metadata: ${cause.message}`,
-      },
-    ],
+    { cause },
   );
 
 const failureForPrimary = (
@@ -120,6 +118,18 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
+  if (
+    cause instanceof Il2cppBinaryFormatFailure &&
+    isParseLimit(cause, IL2CPP_BINARY_FORMAT) &&
+    cause.failure.limit.name === ELF_VIRTUAL_POINTER_INDEX_LIMIT
+  ) {
+    const selected = cause.failure.limit.maximum;
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      retryable: false,
+      limit: il2cppNativeIndexLimit(selected),
+      remediationAction: `The ELF pointer index allowance is max_native_index_bytes = ${String(selected)} bytes. Pass a larger max_native_index_bytes (up to ${String(Number.MAX_SAFE_INTEGER)}) on the next ${OPERATION} call with the same binary_path; no restart is required. Host memory and the binary file allowance are independent. Repeating the unchanged request fails the same way.`,
+    });
+  }
   if (
     cause instanceof Il2cppBinaryFormatFailure &&
     isParseLimit(cause, IL2CPP_BINARY_FORMAT)
@@ -412,25 +422,15 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     private readonly yieldControl: () => Promise<void> = setImmediate,
   ) {}
 
-  async close(): Promise<void> {
-    this.#admissionStopped = true;
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
-        IL2CPP_METADATA_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
-      );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => {
+        this.#admissionStopped = true;
+        return this.#resources.close();
+      },
+      IL2CPP_METADATA_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   /** Read every image, type and method name from one stable file snapshot. */
@@ -508,10 +508,17 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         );
         assertArtifactReadActive(options?.signal);
         if (v108 !== null) {
-          const failure = new AnalysisUnsupportedTargetError(
+          const failure = new AnalysisTargetFailureError(
             OPERATION,
             input.path,
-            "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+            {
+              kind: "unsupported",
+              format: IL2CPP_METADATA_FORMAT,
+              detail:
+                "unsupported-version: metadata version 108 has a partial header and string observation; type, method and binary layouts are not decoded",
+              field: "version",
+              undecodedContent: true,
+            },
           );
           failure.partialObservation = metadataSourceEvidence(
             artifact,
@@ -598,6 +605,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               {
                 ...admission,
                 genericInstances: input.generic_instances === true,
+                ...(input.max_native_index_bytes === undefined
+                  ? {}
+                  : { maxNativeIndexBytes: input.max_native_index_bytes }),
               },
               async () => {
                 await this.yieldControl();

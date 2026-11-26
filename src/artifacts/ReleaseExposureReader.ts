@@ -30,7 +30,7 @@ import {
   readStableArtifact,
   withStableArtifactHandle,
   type StableArtifactHandle,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
   createAsarHeaderSignatureProbe,
@@ -240,16 +240,12 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     private readonly asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
   ) {}
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        RELEASE_EXPOSURE_PROVIDER.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      RELEASE_EXPOSURE_PROVIDER,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -2515,8 +2511,13 @@ const embeddedPackageFormat = async (
         nativeFormat,
         context.signal,
       );
-      if (classified !== undefined)
-        return { kind: "package", format: classified.format };
+      if (classified.status === "present")
+        return { kind: "package", format: classified.package.format };
+      if (classified.status === "unknown") {
+        for (const limitation of classified.limitations)
+          pushLimitation(state, `${location}: ${limitation}`);
+        return { kind: "unreadable" };
+      }
       // A negative probe clears member coverage, so it only stands for the
       // image inventory hashed: a replacement is a changed member, not an
       // image without a package.

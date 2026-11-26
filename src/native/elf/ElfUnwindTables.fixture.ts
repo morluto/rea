@@ -1,3 +1,4 @@
+import { write16 } from "../BinaryInteger.fixture.js";
 /** Hand-assembled ELF images with .eh_frame CIE/FDE records and .eh_frame_hdr. */
 
 export const UNWIND_FN_A = 0x400100;
@@ -248,16 +249,6 @@ class Writer {
 
 const alignTo = (value: number, alignment: number): number =>
   Math.ceil(value / alignment) * alignment;
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
 
 const write32 = (
   bytes: Buffer,

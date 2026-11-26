@@ -9,7 +9,10 @@ import {
   gnuPropertyNote,
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
@@ -59,9 +62,11 @@ cliTest(
       } else {
         expect(result.exitCode, result.stderr).toBe(1);
         expect(result.json).toMatchObject({
-          code: "invalid_request",
-          category: "invalid_input",
+          code: "unsupported_target",
+          category: "unsupported_target",
           details: {
+            failure_kind: "malformed",
+            format: "elf",
             partial_observation: {
               kind: "file-snapshot-hash",
               path,
@@ -70,7 +75,11 @@ cliTest(
             },
           },
         });
-        expect(parseMcpToolError(response)).toEqual({ error: result.json });
+        expectAdapterErrorParity(
+          parseMcpToolError(response).error,
+          result.json,
+          "inspect_binary_hardening",
+        );
       }
       expect((await readFile(path)).equals(bytes)).toBe(true);
     }

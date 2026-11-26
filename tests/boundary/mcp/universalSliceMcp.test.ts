@@ -270,11 +270,32 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path: damaged,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "macho",
           reason: "FAT architecture 0 slice range extends beyond the file",
         },
       });
+
+    // A FAT table cut off by the file's end is truncated, not corrupt: the
+    // container reader measured both the file and the table it declares.
+    const cutOff = await write("cut-off", truncated.subarray(0, 20));
+    expect(
+      containerRefusal(
+        await client.callTool({
+          name: "inspect_go_binary",
+          arguments: { path: cutOff, architecture: "arm64" },
+        }),
+      ),
+    ).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path: cutOff,
+        failure_kind: "truncated",
+        format: "macho",
+        available_bytes: 20,
+        required_bytes: 28,
+      },
+    });
 
     // The FAT table and the slice header must agree before the slice is read.
     const disagreeing = await write(
@@ -299,7 +320,7 @@ sliceTest(
       code: "unsupported_target",
       details: {
         path: disagreeing,
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "macho",
         reason:
           "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
@@ -430,7 +451,7 @@ sliceTest(
         code: "unsupported_target",
         details: {
           path,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "macho",
           reason: "Mach-O slices 0 and 1 overlap.",
         },

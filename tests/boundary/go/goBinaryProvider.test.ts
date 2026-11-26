@@ -6,7 +6,7 @@ import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js"
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
 import {
-  AnalysisMalformedTargetError,
+  AnalysisTargetFailureError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
@@ -21,18 +21,16 @@ import { CPU_ARM64, universalMacho } from "../../fixtures/universalMacho.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("rejects advertised PE32 data directories outside the optional header", async () => {
+it("reads Go build information from a PE32 image declaring one data directory", async () => {
   const root = await createTestTempDirectory("rea-go-pe-directories-");
   const fixture = createGoBinaryFixture({ format: "pe", bits: 32 });
   fixture.bytes.writeUInt32LE(1, 152 + 92);
-  const path = join(root, "truncated-pe32.exe");
+  const path = join(root, "one-directory-pe32.exe");
   await writeFile(path, fixture.bytes);
   const result = await new GoBinaryProvider().inspect({ path });
-  if (result.ok) throw new Error("Truncated PE32 directories must be refused");
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "unsupported_target",
-    category: "unsupported_target",
-    details: { path, format_failure: "malformed" },
+  expect(result).toMatchObject({
+    ok: true,
+    value: { build_info: { go_version: "go1.26.0" } },
   });
 });
 
@@ -71,8 +69,8 @@ it.each([false, true])(
           },
         });
       else {
-        expect(result.error).toBeInstanceOf(AnalysisMalformedTargetError);
-        if (!(result.error instanceof AnalysisMalformedTargetError))
+        expect(result.error).toBeInstanceOf(AnalysisTargetFailureError);
+        if (!(result.error instanceof AnalysisTargetFailureError))
           throw result.error;
         expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
         if (!(result.error.cause instanceof BinaryFormatFailure))
@@ -86,7 +84,7 @@ it.each([false, true])(
         expect(projected).toMatchObject({
           code: "unsupported_target",
           details: {
-            format_failure: "truncated",
+            failure_kind: "truncated",
             format: "macho",
             field: "Mach-O load commands",
             offset: 32,

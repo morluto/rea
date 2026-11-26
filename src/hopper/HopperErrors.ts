@@ -299,8 +299,8 @@ const hopperSelectorMissRecovery = (
     };
   if (selector.source === "symbol")
     return {
-      remediation: `Name ${selector.value} resolves to ${selector.address}, which is not inside a Hopper procedure, such as an import address-table slot or a data label. Hopper procedure operations accept only names and addresses inside procedures. To list references to that symbol, call xrefs with address ${selector.address}; each result is a referencing address, not its containing procedure.`,
-      operations: ["xrefs"],
+      remediation: `Name ${selector.value} resolves to ${selector.address}, which is not inside a Hopper procedure, such as an import address-table slot or a data label. Only procedure_callers and incoming procedure_references answer such a symbol, with the procedures containing its references; xrefs with address ${selector.address} lists the referencing addresses.`,
+      operations: ["procedure_callers", "procedure_references", "xrefs"],
     };
   return {
     remediation: `No Hopper procedure contains ${selector.address}. ${inventory} To list references to ${selector.address} itself, call xrefs with that address.`,

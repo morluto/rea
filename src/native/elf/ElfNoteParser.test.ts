@@ -66,7 +66,11 @@ it.each([
     const secondPropertyOffset = note.length - 16;
     if (little) note.writeUInt32LE(type, secondPropertyOffset);
     else note.writeUInt32BE(type, secondPropertyOffset);
-    expect(words).toThrow(expect.objectContaining({ reason: "format" }));
+    expect(words).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ format: "elf", kind: "malformed" }),
+      }),
+    );
   },
 );
 
@@ -99,7 +103,11 @@ it("checks GNU property order across streamed read windows", () => {
   expect(words().get(0xc0000002)?.value).toBe(3);
   expect(reads).toContain(16 + 65536);
   note.writeUInt32LE(1, 16 + 65536);
-  expect(words).toThrow(expect.objectContaining({ reason: "format" }));
+  expect(words).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({ format: "elf", kind: "malformed" }),
+    }),
+  );
 });
 
 it("restarts GNU property ordering for each note", () => {

@@ -56,6 +56,7 @@ async function invoke(
     repositoryId?: string;
     tier?: string;
     successfulRuns?: unknown[];
+    successfulRunPages?: unknown[][];
   } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-test-history-");
@@ -69,7 +70,9 @@ async function invoke(
     JSON.stringify({
       artifacts,
       runs,
-      successfulRuns: options.successfulRuns ?? [],
+      successfulRunPages: options.successfulRunPages ?? [
+        options.successfulRuns ?? [],
+      ],
     }),
   );
   await writeFile(output, "");
@@ -84,7 +87,7 @@ async function invoke(
       'if [ "$4" = "repos/example/rea/actions/artifacts" ]; then',
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({artifacts:x.artifacts}));\'',
       'elif [ "$4" = "repos/example/rea/actions/workflows/ci.yml/runs" ]; then',
-      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({workflow_runs:x.successfulRuns}));\'',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({workflow_runs:x.successfulRunPages[Number(process.argv[1].split("=")[1] ?? 1)-1] ?? []}));\' "${12:-page=1}"',
       "else",
       '  run_id="${4##*/}"',
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); const run=x.runs[Number(process.argv[1])]; if(run===null){console.error("gh: Not Found (HTTP 404)"); process.exit(1);} process.stdout.write(JSON.stringify(run ?? {}));\' "$run_id"',
@@ -388,6 +391,59 @@ it("finds an older successful timing artifact beyond five unsuccessful runs", as
   expect(calls).toContain("branch=main");
   expect(calls).toContain("status=success");
 });
+
+it("recovers older timing history beyond the first successful run page", async () => {
+  const failed = [107, 106, 105, 104, 103];
+  const { result, calls } = await invoke(
+    [...failed, 102].map((id) => artifact(id)),
+    Object.fromEntries(
+      failed.map((id) => [id, run(id, { conclusion: "failure" })]),
+    ),
+    {
+      tier: "full",
+      successfulRunPages: [
+        Array.from({ length: 100 }, (_, index) => run(400 - index)),
+        [run(102)],
+      ],
+    },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "102",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls).toContain("page=2");
+  expect(calls).not.toContain("page=3");
+});
+
+it.each([
+  [1, 2],
+  [100, 4],
+])(
+  "stops at the page bound with %i unmatched runs per page",
+  async (pageSize, nextPage) => {
+    const failed = [107, 106, 105, 104, 103];
+    const { result, calls } = await invoke(
+      [...failed, 102].map((id) => artifact(id)),
+      Object.fromEntries(
+        failed.map((id) => [id, run(id, { conclusion: "failure" })]),
+      ),
+      {
+        tier: "full",
+        successfulRunPages: Array.from({ length: 4 }, (_, page) =>
+          Array.from({ length: pageSize }, (_, index) =>
+            run(1000 + page * 100 + index),
+          ),
+        ),
+      },
+    );
+    expect(JSON.parse(result.stdout)).toEqual({
+      run_id: "",
+      artifact_name: "",
+    });
+    expect(calls).toContain(`page=${nextPage - 1}`);
+    expect(calls).not.toContain(`page=${nextPage}`);
+  },
+);
 
 it.each([
   ["the commit SHAs differ", headSha, "b".repeat(40)],

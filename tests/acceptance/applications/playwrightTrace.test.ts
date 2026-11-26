@@ -589,12 +589,21 @@ cliTest(
         detail: "complete",
       }),
     );
-    expect(failed.error.code).toBe("invalid_request");
-    const reference = failed.error.details?.partial_observation;
-    expect(reference).toEqual({
-      kind: "retained-evidence",
-      evidence_id: expect.any(String),
+    expect(failed.error).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      retryable: false,
+      retry: "none",
+      details: {
+        failure_kind: "malformed",
+        format: "zip",
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: expect.any(String),
+        },
+      },
     });
+    const reference = failed.error.details?.partial_observation;
     const { evidence_id } = reference as { evidence_id: string };
     const page = await call("inspect_analysis_view", {
       source: { kind: "retained-evidence", evidence_id },

@@ -8,13 +8,18 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { containsText } from "./verify/clients/result-discovery.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
@@ -91,25 +96,8 @@ await withVerifierCleanup(async () => {
     await mkdir(target);
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const analysisDevice = "xd://mcp__rea_analyze_javascript_application";
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      return (
-        value !== null &&
-        typeof value === "object" &&
-        Object.values(value).some((item) => containsText(item, text))
-      );
-    };
-    const call = (index, name, args) => ({
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        {
-          id: `call_omp_${index}`,
-          type: "function",
-          function: { name, arguments: JSON.stringify(args) },
-        },
-      ],
-    });
+    const call = (index, name, args) =>
+      toolCallMessage(`call_omp_${index}`, name, args);
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "omp",
@@ -457,14 +445,6 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: lineage,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    await publishClientReceipt(lab, receipt);
   },
 ]);

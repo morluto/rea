@@ -18,7 +18,10 @@ import {
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import {
+  PE_MAX_DATA_DIRECTORIES,
+  peOptionalHeaderReadBytes,
   readPeOptionalHeaderFixedFields,
+  readPeOptionalHeaderIdentity,
   readPeOptionalHeaderDirectory,
   readPeOptionalHeaderStructure,
 } from "./peOptionalHeader.js";
@@ -29,7 +32,6 @@ import { isStrictUtf8 } from "./strictUtf8.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
 import {
   hasDosMzMagic,
-  mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
   type MzHeaderEvidence,
   type MzWindowsHeaderSignatureEvidence,
@@ -37,9 +39,13 @@ import {
 import { decodePeMachine, readPeOptionalHeader } from "./peMachine.js";
 import {
   classifyFatContainerEvidence,
+  fatSliceOverlapReason,
+  findOverlappingFatSlices,
+  inspectFatSliceAlignment,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
   validateFatSliceIdentity,
+  type FatSliceDeclaration,
   type FatSliceHeaderEvidence,
 } from "./apple/machoContainer.js";
 import {
@@ -100,6 +106,7 @@ export type ExecutableMetadata =
       readonly availableArchitectures: readonly HeaderArchitecture[];
       readonly universalSlice: UniversalMachOSlice;
       readonly universalSlices: readonly UniversalMachOSliceIdentity[];
+      readonly universalContainerKind: "fat32" | "fat64";
     }
   | {
       readonly format: "pe";
@@ -259,9 +266,10 @@ interface FatDeclaration {
   readonly size: number;
   readonly cpuType: number;
   readonly cpuSubtype: number;
+  readonly declaration: FatSliceDeclaration;
 }
 
-/** Validate a FAT table and its slice identities without selecting a slice. */
+/** Validate container-level FAT framing (header, bounds, overlap, Mach-O identity) without selecting a slice. */
 const validatedFatDeclarations = (
   bytes: Buffer,
   header: Exclude<
@@ -272,19 +280,16 @@ const validatedFatDeclarations = (
 ): Result<readonly FatDeclaration[], string> => {
   if (header.state === "needs-data")
     return err("truncated or invalid FAT architecture table");
-  if (header.state === "malformed") return err(header.reason);
+  if (header.state === "malformed" || header.state === "truncated")
+    return err(header.reason);
   const identityError = fatIdentityError(
     bytes,
     header,
     fatEvidence?.sliceHeadersByOffset,
   );
   if (identityError !== null) return err(identityError);
-  const sliceIdentityError = fatSliceIdentityError(
-    bytes,
-    header,
-    fatEvidence?.sliceHeadersByOffset,
-  );
-  if (sliceIdentityError !== null) return err(sliceIdentityError);
+  const overlap = findOverlappingFatSlices(header.slices);
+  if (overlap !== null) return err(fatSliceOverlapReason(overlap));
   return ok(
     header.slices.flatMap((declaration) => {
       const architecture = machArchitecture(declaration.cpuType);
@@ -297,6 +302,7 @@ const validatedFatDeclarations = (
               size: declaration.size,
               cpuType: declaration.cpuType,
               cpuSubtype: declaration.cpuSubtype,
+              declaration,
             },
           ];
     }),
@@ -375,6 +381,14 @@ const parseFatMachO = (
         : `FAT binary has no ${host} slice and no foreign architecture declared exactly once`,
     );
   }
+  const alignmentIssue = inspectFatSliceAlignment(selected.declaration);
+  if (alignmentIssue !== null) return err(alignmentIssue.reason);
+  const sliceIdentityError = fatSliceIdentityError(
+    bytes,
+    selected.declaration,
+    fatEvidence?.sliceHeadersByOffset,
+  );
+  if (sliceIdentityError !== null) return err(sliceIdentityError);
   return ok({
     format: "mach-o-universal",
     architecture: selected.architecture,
@@ -389,6 +403,8 @@ const parseFatMachO = (
             cpuSubtype,
           }))
         : [],
+    universalContainerKind:
+      header.state === "parsed" && header.wide ? "fat64" : "fat32",
   });
 };
 
@@ -438,37 +454,27 @@ const selectHostFatSlice = (
 
 const fatSliceIdentityError = (
   bytes: Buffer,
-  header: Extract<
-    ReturnType<typeof readFatContainerHeader>,
-    { state: "parsed" }
-  >,
+  declaration: FatSliceDeclaration,
   sliceHeadersByOffset?: ReadonlyMap<
     number,
     ReturnType<typeof readMachoHeaderPrefixFacts>
   >,
 ): string | null => {
-  for (let index = 0; index < header.slices.length; index += 1) {
-    const declaration = header.slices[index];
-    if (declaration === undefined || header.rangeIssues[index] !== null)
-      continue;
-    let facts: ReturnType<typeof readMachoHeaderPrefixFacts> | undefined;
-    if (sliceHeadersByOffset?.has(declaration.offset)) {
-      facts = sliceHeadersByOffset.get(declaration.offset);
-    } else if (
-      declaration.size >= 12 &&
-      declaration.offset <= bytes.length - 12
-    ) {
-      facts = readMachoHeaderPrefixFacts(
-        bytes.subarray(declaration.offset, declaration.offset + 12),
-      );
-    }
-    const identity = facts?.identity;
-    if (identity === null || identity === undefined)
-      return `FAT architecture ${declaration.index} thin Mach-O CPU identity is outside the bounded header`;
-    const identityError = validateFatSliceIdentity(declaration, identity);
-    if (identityError !== null) return identityError;
+  let facts: ReturnType<typeof readMachoHeaderPrefixFacts> | undefined;
+  if (sliceHeadersByOffset?.has(declaration.offset)) {
+    facts = sliceHeadersByOffset.get(declaration.offset);
+  } else if (
+    declaration.size >= 12 &&
+    declaration.offset <= bytes.length - 12
+  ) {
+    facts = readMachoHeaderPrefixFacts(
+      bytes.subarray(declaration.offset, declaration.offset + 12),
+    );
   }
-  return null;
+  const identity = facts?.identity;
+  if (identity === null || identity === undefined)
+    return `FAT architecture ${declaration.index} thin Mach-O CPU identity is outside the bounded header`;
+  return validateFatSliceIdentity(declaration, identity);
 };
 
 const fatHostArchitecture = (
@@ -503,6 +509,7 @@ const fatIdentityError = (
     header,
     bytes,
     sliceHeadersByOffset,
+    { ignoreAlignmentIssues: true },
   );
   if (identity.state === "needs-slice-header")
     return "FAT slice identity is outside the bounded prefix";
@@ -589,8 +596,6 @@ export const parseMzExecutableMetadata = (
     return err("MZ Windows new-header candidate is unresolved");
   if (windowsHeader.state === "declared") {
     const { offset } = windowsHeader;
-    const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
-    if (limitation !== undefined) return err(limitation);
     if (offset > bytes.length - 24)
       return err("invalid or truncated Windows executable header in MZ image");
     if (["NE", "LE", "LX"].includes(windowsHeader.signature))
@@ -603,7 +608,7 @@ export const parseMzExecutableMetadata = (
     const parsed = parsePeRecordFacts(bytes.subarray(offset), codeView);
     return parsed.ok ? ok(parsed.value.metadata) : parsed;
   }
-  const parsed = evidence.dos;
+  const parsed = evidence.declarations;
   return parsed.ok
     ? ok({
         format: "dos-mz",
@@ -647,22 +652,44 @@ export const parsePeRecordStructure = (
       message: "invalid or truncated PE header",
     });
   const { machine, optionalHeaderSize, characteristics } = coff.value;
-  if (optionalHeaderSize > MAX_PE_OPTIONAL_HEADER_BYTES)
-    return err({
-      kind: "malformed",
-      message: "invalid or truncated PE optional header",
-    });
-  const declaredEnd = PE_RECORD_HEADER_BYTES + optionalHeaderSize;
-  if (record.length < declaredEnd)
+  const available = record.length - PE_RECORD_HEADER_BYTES;
+  const optionalLength = Math.min(
+    peOptionalHeaderReadBytes(optionalHeaderSize, available),
+    MAX_PE_OPTIONAL_HEADER_BYTES,
+  );
+  const optionalHeader = record.subarray(
+    PE_RECORD_HEADER_BYTES,
+    PE_RECORD_HEADER_BYTES + optionalLength,
+  );
+  const parsed = readPeOptionalHeaderStructure(optionalHeader);
+  if (!parsed.ok) {
+    if (parsed.error.reason === "unsupported-magic")
+      return err({ kind: "malformed", message: parsed.error.message });
+    let requiredOptionalBytes = 2;
+    if (parsed.error.reason === "truncated-fixed-fields") {
+      const identity = readPeOptionalHeaderIdentity(optionalHeader);
+      requiredOptionalBytes =
+        identity.ok && identity.value.bits === 64 ? 112 : 96;
+    } else if (parsed.error.reason === "truncated-directory-table") {
+      const fixed = readPeOptionalHeaderFixedFields(optionalHeader);
+      if (fixed.ok && optionalHeader.length >= fixed.value.directoryOffset) {
+        const count = Math.min(
+          new BinaryReader(optionalHeader, true, "pe").u32(
+            fixed.value.directoryCountOffset,
+          ),
+          PE_MAX_DATA_DIRECTORIES,
+        );
+        requiredOptionalBytes = fixed.value.directoryOffset + count * 8;
+      } else {
+        requiredOptionalBytes = fixed.ok ? fixed.value.directoryOffset : 112;
+      }
+    }
     return err({
       kind: "incomplete",
-      requiredBytes: declaredEnd,
-      message: "invalid or truncated PE optional header",
+      requiredBytes: PE_RECORD_HEADER_BYTES + requiredOptionalBytes,
+      message: parsed.error.message,
     });
-  const optionalHeader = record.subarray(PE_RECORD_HEADER_BYTES, declaredEnd);
-  const parsed = readPeOptionalHeaderStructure(optionalHeader);
-  if (!parsed.ok)
-    return err({ kind: "malformed", message: parsed.error.message });
+  }
   return ok({ machine, characteristics, optionalHeader });
 };
 

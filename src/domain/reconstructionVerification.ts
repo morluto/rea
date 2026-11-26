@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { evidenceFileTarget } from "./evidence.js";
+import { evidenceFileTarget, evidenceLocalTarget } from "./evidence.js";
 import { z } from "zod";
 import {
   ArtifactInventoryCarrierError,
@@ -17,7 +17,8 @@ import { readEvidenceBundle } from "./evidenceBundle.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
+  targetFailureOfKind,
+  AnalysisTargetFailureError,
 } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
@@ -409,7 +410,11 @@ const assessScreenshotComparison = (
       if (
         !(cause instanceof TypeError) &&
         !(cause instanceof AnalysisResourceConstraintError) &&
-        !(cause instanceof AnalysisUnsupportedTargetError)
+        !(
+          cause instanceof AnalysisTargetFailureError &&
+          targetFailureOfKind(cause, "unsupported", "unrecognized") !==
+            undefined
+        )
       )
         throw cause;
       replayBlocker = `Retained screenshot comparison could not be replayed: ${cause.message}`;
@@ -720,10 +725,13 @@ const authorityLimitations = (
     limitations.push(
       `Source Evidence lacks qualifying ${requiredAuthority} authority.`,
     );
+  // A function lives in one file's bytes; an artifact may also be a
+  // directory named by its complete tree digest.
   if (
-    (claim.kind === "structural-function" ||
-      claim.kind === "structural-artifact") &&
-    sources.some((source) => evidenceFileTarget(source) === undefined)
+    (claim.kind === "structural-function" &&
+      sources.some((source) => evidenceFileTarget(source) === undefined)) ||
+    (claim.kind === "structural-artifact" &&
+      sources.some((source) => evidenceLocalTarget(source) === undefined))
   )
     limitations.push("Structural source artifact identity is unavailable.");
   if (claim.kind === "behavioral") {

@@ -24,7 +24,10 @@ import {
   BinaryReader,
 } from "../../domain/binaryContainer.js";
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+} from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.
@@ -90,7 +93,7 @@ const CONFIGURATION_REFERENCES = [
 
 const align4 = (value: number): number => Math.ceil(value / 4) * 4;
 const formatFailure = (detail: string): ArtifactReaderFailure =>
-  new ArtifactReaderFailure("format", `FIT is malformed: ${detail}`);
+  malformedArtifact("fit", `FIT is malformed: ${detail}`);
 const capacityFailure = (message: string): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", message, { boundary: "capacity" });
 const nodeName = (node: FitNode): string =>

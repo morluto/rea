@@ -633,10 +633,12 @@ describe("managed static provider path boundary", () => {
     ).resolves.toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisUnsupportedTargetError",
+        _tag: "AnalysisTargetFailureError",
         operation: "inspect_managed_artifact",
         path: parsed.value.path,
-        reason: "Managed static triage requires a PE target; observed elf.",
+        failure: {
+          detail: "Managed static triage requires a PE target; observed elf.",
+        },
       },
     });
   });

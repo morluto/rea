@@ -2,7 +2,7 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
-  projectArtifactCloseFailure,
+  closeArtifactResources,
   projectStableArtifactFailure,
   readStableArtifact,
   translateArtifactFailure,
@@ -42,16 +42,12 @@ export class MavenGradleMetadataProvider {
   readonly identity = MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  async close(): Promise<void> {
-    try {
-      await this.#resources.close();
-    } catch (cause: unknown) {
-      throw projectArtifactCloseFailure(
-        cause,
-        MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY.id,
-        OPERATION,
-      );
-    }
+  close(): Promise<void> {
+    return closeArtifactResources(
+      () => this.#resources.close(),
+      MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY,
+      OPERATION,
+    );
   }
 
   async inspect(
@@ -168,7 +164,7 @@ const mavenGradleMetadataFailure = (
         unclassified: (failure, origin) =>
           origin === "owned-or-classified" &&
           failure instanceof ArtifactReaderFailure
-            ? translateArtifactFailure(OPERATION, failure)
+            ? translateArtifactFailure(OPERATION, input.path, failure)
             : new ArtifactOperationError(
                 OPERATION,
                 "io",
