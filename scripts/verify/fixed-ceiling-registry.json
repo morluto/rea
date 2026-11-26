@@ -227,7 +227,7 @@
     }
   },
   "src/native/LldbCallTracer.ts": {
-    "\"The Node Buffer and single-string representation ceiling of the combined LLDB result (smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints, keep a new observation within it)\"": {
+    "\"The combined LLDB result representation ceiling\"": {
       "class": "representation",
       "reason": "The combined tracer result is read into one Buffer and decoded to one string; above min(buffer.constants.MAX_LENGTH, buffer.constants.MAX_STRING_LENGTH) the running Node cannot represent it."
     }

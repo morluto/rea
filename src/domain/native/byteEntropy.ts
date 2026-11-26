@@ -26,8 +26,9 @@ export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
 /**
  * The control a too-large window should change: `block_size` while a larger
- * block admits the window, else `length`, whose largest admitted value is
- * reached at the largest block. Omitting `length` selects `omittedLength`.
+ * block admits the window, else `length`, whose largest admitted value at the
+ * selected `block_size` is that many blocks. Omitting `length` selects
+ * `omittedLength`.
  */
 export const byteEntropyWindowLimit = (
   blockSize: number,
@@ -40,7 +41,7 @@ export const byteEntropyWindowLimit = (
         "length",
         {
           minimum: 0,
-          maximum: MAX_BYTE_ENTROPY_BLOCKS * BYTE_ENTROPY_BLOCK_SIZE.maximum,
+          maximum: MAX_BYTE_ENTROPY_BLOCKS * blockSize,
           default_value: omittedLength,
           unit: "bytes",
         },

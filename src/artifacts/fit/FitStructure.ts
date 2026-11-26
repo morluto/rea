@@ -593,7 +593,7 @@ const parseFit = (fdt: Buffer, path: string) => {
         `FIT devicetree exceeds the fixed ${parserLimit.name} allowance`,
         {
           boundary:
-            parserLimit.name === "decoded_bytes" ? "memory" : "capacity",
+            parserLimit.name === "max_decoded_bytes" ? "memory" : "capacity",
           cause,
           parserLimit,
         },

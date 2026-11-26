@@ -384,7 +384,7 @@ EOF fail rather than silently clipping. The final block may be shorter.
 window may produce at most 32,768 block rows; larger requests fail before the
 file scan with a capacity error. Its `details.limit` names `block_size` (range
 256 to 65536, default 4096) while a larger block admits the window, else
-`length` (at most 2 GiB, the window of 32,768 blocks of 65536 bytes); page a
+`length`, whose maximum is 32,768 blocks of the selected `block_size`; page a
 larger window with `offset` and `length`.
 SHA-256 and `file_entropy` always cover the entire file, including when a window
 is selected. Empty files and empty windows are accepted; empty entropy is zero

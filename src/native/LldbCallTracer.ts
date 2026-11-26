@@ -1223,9 +1223,14 @@ const readTracerOutput = async (
             observed_result_bytes: size,
           },
           fixedAllowanceOptions(
-            "The Node Buffer and single-string representation ceiling of the combined LLDB result (smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints, keep a new observation within it)",
+            "The combined LLDB result representation ceiling",
             "capture",
-            { limit: MAX_NATIVE_CALL_CAPTURE_BYTES, unit: "bytes" },
+            {
+              limit: MAX_NATIVE_CALL_CAPTURE_BYTES,
+              unit: "bytes",
+              narrowing:
+                "Select smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints, before a new authorized observation.",
+            },
           ),
         ),
       );

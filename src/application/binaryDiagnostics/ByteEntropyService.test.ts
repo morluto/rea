@@ -456,6 +456,10 @@ it("names length when no block_size admits the window", () => {
     default_value: 32_768 * 65536 + 1,
     applies_at: "next_call",
   });
+  // The reported maximum is the window this call's block_size admits.
+  expect(
+    byteEntropyWindowLimit(4096, 3 * 1024 ** 3, 3 * 1024 ** 3).maximum,
+  ).toBe(32_768 * 4096);
 });
 
 it("retains a failed descriptor close and retries it before opening another file", async () => {
