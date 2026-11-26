@@ -757,10 +757,12 @@ one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Android sparse images](../guides/firmware/android-sparse-image.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers,
-including repeated readable logical occurrences. Omission retains each
-archive's encoded-size-derived default. The .NET bundle group's
-own `expanded_bytes` controls its independently enforced bundle expansion.
+SEA, PCK, ISO 9660, Deno, wxapkg, tar and Android sparse image readers, and
+bFLT gzip decompression (which is also capped at a fixed 128 MiB in-memory
+inflation ceiling), including repeated readable logical occurrences.
+Omission retains each archive's encoded-size-derived default. The .NET bundle
+group's own `expanded_bytes` controls its independently enforced bundle
+expansion.
 
 `artifact.member_count` (launch seed `REA_ARTIFACT_MEMBER_COUNT`, default
 100,000, range 1 to 2,147,483,647) is the session default for the per-call
