@@ -1068,7 +1068,9 @@ const readClientConfiguration = async (
     configurationFailure,
   });
   if (typeof original !== "string") return original;
-  const parsed = parseClientConfiguration(original, format);
+  // An uninstall establishes ownership from either table, so an ambiguous Muse
+  // document is read rather than refused before its owned row can be removed.
+  const parsed = parseClientConfiguration(original, format, "preserve");
   if (parsed.ok)
     return {
       kind: "configuration",

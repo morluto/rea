@@ -335,6 +335,7 @@ const fxConfigurationServersKey = (
 const readClientDocument = (
   text: string,
   format: Exclude<ClientConfigurationFormat, "unsupported">,
+  ambiguity: "refuse" | "preserve" = "refuse",
 ): ClientConfigurationDocument => {
   // DeepSeek Harness stores a Cordis patch list, not a server table.
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
@@ -395,8 +396,11 @@ const readClientDocument = (
   // `mcpServers` table and the legacy `mcp_servers` table are present, so a
   // registration written into either one would be ignored without an error the
   // user could see. Refuse instead of picking a table.
+  // A removal establishes ownership from either table, so it reads the
+  // ambiguous document instead of refusing it; only a write must choose one.
   if (
     format === "muse" &&
+    ambiguity === "refuse" &&
     document.mcpServers !== undefined &&
     document.mcp_servers !== undefined
   )
@@ -484,6 +488,8 @@ export type ClientConfigurationParseFailure =
 export const parseClientConfiguration = (
   text: string,
   format: ClientConfigurationFormat | undefined,
+  /** Removal paths keep both tables so an owned row stays removable. */
+  ambiguity: "refuse" | "preserve" = "refuse",
 ): Result<ClientConfigurationDocument, ClientConfigurationParseFailure> => {
   if (format === undefined || format === "unsupported")
     return err({
@@ -491,7 +497,7 @@ export const parseClientConfiguration = (
       detail: "client does not have a supported MCP config format",
     });
   try {
-    return ok(readClientDocument(text, format));
+    return ok(readClientDocument(text, format, ambiguity));
   } catch (cause: unknown) {
     if (isNativeDocumentError(cause))
       return err({ kind: "document", detail: cause.message, cause });

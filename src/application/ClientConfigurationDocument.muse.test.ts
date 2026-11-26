@@ -93,3 +93,28 @@ describe("Muse Code write fragment", () => {
     });
   });
 });
+
+/**
+ * A removal path establishes ownership from either table, so it reads an
+ * ambiguous document instead of refusing it; only a write must choose one.
+ */
+describe("Muse Code dual-table documents", () => {
+  const dual =
+    '{"schema_version":1,"mcpServers":{"rea":{"type":"stdio","command":"rea"}},"mcp_servers":{}}';
+
+  it("refuses a write that would have to choose a table", () => {
+    const refused = parseClientConfiguration(dual, "muse");
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.kind).toBe("shape");
+  });
+
+  it("reads both tables when a removal asks it to", () => {
+    const preserved = parseClientConfiguration(dual, "muse", "preserve");
+    expect(preserved.ok).toBe(true);
+    if (!preserved.ok) return;
+    // The owned row is visible, so uninstall can establish ownership and remove it.
+    expect(Object.keys(preserved.value.servers)).toEqual(["rea"]);
+    expect(preserved.value.document.mcp_servers).toEqual({});
+  });
+});
