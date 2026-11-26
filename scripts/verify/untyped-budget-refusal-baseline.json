@@ -35,7 +35,6 @@
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 8,
   "src/javascript/analysis/JavaScriptAnalysisWorkerServer.ts": 1,
   "src/javascript/recovery/RecoveryFiles.ts": 1,
-  "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
   "src/jeb/JebProvider.ts": 1,
   "src/kuna/KunaSessionClient.ts": 1,
   "src/main/StdioStartupInput.ts": 1,
