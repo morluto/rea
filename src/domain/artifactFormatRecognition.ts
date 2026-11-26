@@ -16,6 +16,7 @@ import {
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
+import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasNroMagic, hasNsoMagic } from "./switchExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -61,6 +62,7 @@ export type RecognizedArtifactFormat = Extract<
   | "srec"
   | "uf2"
   | "dfuse"
+  | "bflt"
   | "esp-flash-image"
   | "esp-image"
   | "fit"
@@ -205,6 +207,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       return format === undefined ? undefined : { state: "recognized", format };
     },
     when("uf2", hasUf2Block),
+    when("bflt", hasBfltMagic),
     ({ prefix, suffix, fileSize }) => {
       if (!hasDfuSePrefix(prefix)) return undefined;
       if (suffix === undefined)

@@ -203,6 +203,12 @@ const handleRequest = (socket, server, request, state) => {
       void handleCheckpoint(socket, request, state);
       return;
     }
+    // A tool that never answers, so a caller is still active during close.
+    if (
+      state.mode === "checkpoint_hold_close_hang_tool" &&
+      request.method === "list_documents"
+    )
+      return;
   }
   if (request.method === "ping") {
     handlePing(socket, request, state);
@@ -498,7 +504,9 @@ async function handleCheckpoint(socket, request, state) {
   );
   if (
     (force && state.mode === "checkpoint_hold_startup") ||
-    (!force && state.mode === "checkpoint_hold_close")
+    (!force &&
+      (state.mode === "checkpoint_hold_close" ||
+        state.mode === "checkpoint_hold_close_hang_tool"))
   ) {
     await new Promise((resolve) => {
       const release = (message) => {

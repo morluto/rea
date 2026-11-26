@@ -112,6 +112,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [Intel HEX and S-record images](hex-records.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
 - [U-Boot legacy uImage containers](uimage.md)
+- [uClinux bFLT flat executables](bflt-executables.md)
 
 ## HarmonyOS packages
 
