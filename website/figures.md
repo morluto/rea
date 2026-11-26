@@ -11,7 +11,8 @@ the current SVG source for published labels.
 The published diagrams are SVG source assets:
 
 - `public/assets/figures/rea-investigation-flow.svg` — 1774 × 887 viewBox.
-- `public/assets/figures/dx-ball-sound-pan-investigation.svg` — 1774 × 887 viewBox.
+- `public/assets/figures/dx-ball-sound-pan-investigation.svg` — 1774 × 580 viewBox,
+  cropped to the diagram; the page heading and caption name it.
 - `public/assets/figures/th04-bullet-ring.svg` — 1000 × 520 viewBox.
 - `public/assets/figures/analyst-thinking.svg` — 160 × 120 viewBox.
 
