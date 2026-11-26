@@ -988,6 +988,7 @@
 * **uefi/native:** cache UEFI BinaryReader per buffer and reuse hasDosMzMagic ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi:** exercise only the framed LZMA worker ([#14072](https://github.com/morluto/rea/issues/14072)) ([1f4c8fe](https://github.com/morluto/rea/commit/1f4c8fe5d5c810a7aa7d7702c6fc8142b5afd37c))
 * **uefi:** extract UefiScanContext from UefiImageScan ([#13797](https://github.com/morluto/rea/issues/13797)) ([913b44d](https://github.com/morluto/rea/commit/913b44d1dac95aa09b27dd0fdd91ef7a7524ff75))
+* **uefi:** share view filters, page limits and source indices ([#14680](https://github.com/morluto/rea/issues/14680)) ([37083fd](https://github.com/morluto/rea/commit/37083fd9e6e12bde1c4bca4c81c9b8f24f82c360))
 * **uefi:** unify LZMA frame readers into LzmaFrameReader with backpressure ([#13814](https://github.com/morluto/rea/issues/13814)) ([fc29153](https://github.com/morluto/rea/commit/fc29153d5c0aaed05b011ad5461632d485001799))
 * **uninstall:** extract registration-removal and item-collapse helpers from Uninstall ([#14006](https://github.com/morluto/rea/issues/14006)) ([bc8a0b3](https://github.com/morluto/rea/commit/bc8a0b32f37ef707e71fde55d394087d2b489c71))
 * **uninstall:** extract UninstallDataAndSkills from Uninstall ([#13736](https://github.com/morluto/rea/issues/13736)) ([054bbbc](https://github.com/morluto/rea/commit/054bbbc55e63ff8d4b617a04cb681145f2ca134f))
