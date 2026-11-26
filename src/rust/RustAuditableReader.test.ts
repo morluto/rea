@@ -258,6 +258,63 @@ it("stops an inflate that exceeds the section ratio", async () => {
   );
 });
 
+it("admits a section above the former compressed and inflated ceilings once those budgets are raised", async () => {
+  const name = "n".repeat(8 * 1024 * 1024 + 64);
+  const document = JSON.stringify({
+    packages: [{ name, version: "1", source: "local", root: true }],
+  });
+  const compressed = deflateSync(Buffer.from(document), { level: 0 });
+  const inflatedBytes = Buffer.byteLength(document);
+  expect(compressed.length).toBeGreaterThan(RUST_SECTION_BYTES);
+  expect(inflatedBytes).toBeGreaterThan(8 * 1024 * 1024);
+
+  await expect(readSection(compressed)).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: {
+        name: "max_compressed_dependency_bytes",
+        maximum: RUST_SECTION_BYTES,
+      },
+    },
+  });
+  await expect(
+    readSection(compressed, { compressedBytes: compressed.length }),
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: {
+        name: "max_inflated_dependency_bytes",
+        maximum: 8 * 1024 * 1024,
+      },
+    },
+  });
+  const parsed = await readSection(compressed, {
+    compressedBytes: compressed.length,
+    inflatedBytes,
+  });
+  expect(parsed.packages[0]?.name).toHaveLength(name.length);
+});
+
+it("admits an inflate ratio above 64 after the default ratio refuses it", async () => {
+  const name = "n".repeat(8000);
+  const document = JSON.stringify({
+    packages: [{ name, version: "1", source: "local", root: true }],
+  });
+  const compressed = deflateSync(Buffer.from(document));
+  const inflatedBytes = Buffer.byteLength(document);
+  expect(inflatedBytes).toBeGreaterThan(compressed.length * 64);
+  await expect(readSection(compressed)).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: "max_dependency_inflate_ratio", maximum: 64 },
+    },
+  });
+  const parsed = await readSection(compressed, {
+    inflateRatio: Math.ceil(inflatedBytes / compressed.length),
+  });
+  expect(parsed.packages[0]?.name).toBe(name);
+});
+
 it("names the padded-storage basis when a padded section overflows inflate allocation", async () => {
   // A short stream padded to FileAlignment: the stream-based limit is unknown
   // when inflate stops, so the enforced bound comes from the storage size.
