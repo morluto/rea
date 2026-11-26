@@ -462,9 +462,10 @@ not, the work is never refused or truncated:
     owns, never a symbolic link; files are created exclusively as `0600` by
     the Evidence bundle writer.
   - **Key and lifetime:** each file is named by the SHA-256 of the complete
-    record's exact JSON, so it covers every input and caller choice the
-    record holds, including caller paths the Evidence ID leaves out. A
-    repeat run reuses the file and never rewrites it. A repeat run, or a
+    bundle's canonical JSON, including captured source records and caller
+    paths that semantic Evidence IDs leave out. The separate
+    `record_sha256` receipt still hashes only the complete parent record.
+    A repeat with the same bundle reuses the file and never rewrites it. A repeat run, or a
     `rea inspect-analysis-view` read of the file, renews its age. Each
     retention removes records unused for 7 days, then the least recently
     used until the cache fits `delivery.cli_retained_evidence_bytes`

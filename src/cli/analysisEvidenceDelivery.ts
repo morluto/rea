@@ -17,6 +17,8 @@ import {
   type CallerInputPaths,
 } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
@@ -343,12 +345,40 @@ const retainOverBudgetEvidence = async (
   // so neither its path nor a failure naming it reaches the output.
   if (revealsSensitiveValue(retention.directory, input))
     return err({ reason: sensitiveCachePathReason });
-  const { retainCliEvidence, retainedEvidenceDigest } =
-    await import("./cliEvidenceRetention.js");
-  const sha256 = retainedEvidenceDigest(complete);
+  const {
+    retainCliEvidence,
+    retainedEvidenceDigest,
+    retainedEvidenceBundleDigest,
+  } = await import("./cliEvidenceRetention.js");
+  let prepared: PreparedCliEvidence;
+  let recordSha256: string;
+  let cacheKey: string;
+  try {
+    const projected = await prepareDeliveredEvidence(complete, input, true);
+    if (!projected.ok) {
+      clearCliEvidencePublication();
+      return err({
+        reason: redactExplicitText(
+          projected.error.error.message,
+          input.sensitiveValues ?? [],
+        ),
+      });
+    }
+    prepared = projected.value;
+    recordSha256 = retainedEvidenceDigest(complete);
+    cacheKey = retainedEvidenceBundleDigest(prepared.bundle);
+  } catch (cause: unknown) {
+    clearCliEvidencePublication();
+    return err({
+      reason: redactExplicitText(
+        "The retained-Evidence cache could not be used: " + errorMessage(cause),
+        input.sensitiveValues ?? [],
+      ),
+    });
+  }
   let attemptedPath: string | undefined;
   const kept = await retainCliEvidence<AnalysisError>({
-    sha256,
+    cacheKey,
     completeBytes,
     retention,
     rejectResolvedDirectory: (resolved) =>
@@ -358,11 +388,10 @@ const retainOverBudgetEvidence = async (
     write: async (path) => {
       attemptedPath = path;
       // The bundle writer creates the file exclusively and never overwrites.
-      const published = await publishDeliveredEvidence(
-        complete,
+      const published = await publishPreparedEvidence(
+        prepared,
         path,
         input,
-        true,
       );
       if (published.ok) {
         const { bytes } = published.value.receipt as { readonly bytes: number };
@@ -385,11 +414,10 @@ const retainOverBudgetEvidence = async (
       });
     },
   });
-  const cacheReceipt = (path: string, bytes: number, digest: string) => ({
+  const cacheReceipt = (path: string, bytes: number) => ({
     ...bundleReceipt(path, bytes, input),
-    // The cache key: the digest of the complete record, not of the file,
-    // which is the bundle that holds it.
-    record_sha256: digest,
+    // The parent record digest is independent of the complete bundle's cache key.
+    record_sha256: recordSha256,
   });
   if (!kept.ok) {
     const redactedReason = redactExplicitText(
@@ -405,7 +433,6 @@ const retainOverBudgetEvidence = async (
       const receipt = cacheReceipt(
         kept.error.remainingFile.path,
         kept.error.remainingFile.bytes,
-        kept.error.remainingFile.sha256,
       );
       recordCliEvidencePublication(receipt);
       return ok({
@@ -425,7 +452,7 @@ const retainOverBudgetEvidence = async (
         ...(attemptedPath === undefined
           ? {}
           : { committedPath: attemptedPath }),
-        recordSha256: sha256,
+        recordSha256,
       });
     if (kept.error.cleanupIncomplete !== undefined)
       return err({
@@ -435,11 +462,7 @@ const retainOverBudgetEvidence = async (
       });
     return err({ reason: redactedReason });
   }
-  const receipt = cacheReceipt(
-    kept.value.path,
-    kept.value.bytes,
-    kept.value.sha256,
-  );
+  const receipt = cacheReceipt(kept.value.path, kept.value.bytes);
   recordCliEvidencePublication(receipt);
   return ok({ path: receipt.path, receipt });
 };
@@ -621,36 +644,26 @@ const overBudgetSummary = async (
     : summary.value;
 };
 
-/**
- * Project the requested view, then publish the complete bundle. Projection
- * runs first so a view failure cannot commit an unreported bundle;
- * publication then owns every post-commit outcome. An over-budget delivery
- * publishes its summary when the operation has one, and complete Evidence
- * otherwise.
- */
-const publishDeliveredEvidence = async (
+interface PreparedCliEvidence {
+  readonly complete: Evidence;
+  readonly delivered: Evidence;
+  readonly bundle: EvidenceBundle;
+  readonly summarized: boolean;
+  readonly budgeted: boolean;
+}
+
+interface CliEvidencePublicationFailure {
+  readonly error: AnalysisError;
+  readonly committed: boolean;
+  readonly delivered?: Evidence;
+}
+
+/** Resolve the requested projection and exact bundle once before publication. */
+const prepareDeliveredEvidence = async (
   complete: Evidence,
-  evidenceOutput: string,
   input: CliEvidencePublication,
   overBudget = false,
-): Promise<
-  Result<
-    {
-      readonly delivered: Evidence;
-      readonly receipt: JsonValue;
-      /** Whether `delivered` is a summary of the published complete record. */
-      readonly summarized: boolean;
-      /** Whether that summary replaced over-budget complete Evidence. */
-      readonly budgeted: boolean;
-    },
-    {
-      readonly error: AnalysisError;
-      readonly committed: boolean;
-      /** The projected view, once projection succeeded. */
-      readonly delivered?: Evidence;
-    }
-  >
-> => {
+): Promise<Result<PreparedCliEvidence, CliEvidencePublicationFailure>> => {
   const budgeted = overBudget ? await overBudgetSummary(complete) : undefined;
   const summarized = input.detail === "summary" || budgeted !== undefined;
   const delivered =
@@ -682,11 +695,9 @@ const publishDeliveredEvidence = async (
   const [
     { analysisEvidenceSources },
     { createEvidenceBundle, createImmutableEvidenceBundle },
-    { evidenceDeliveryCommitted, publishEvidenceDelivery },
   ] = await Promise.all([
     import("../application/AnalysisEvidenceSources.js"),
     import("../domain/evidenceBundle.js"),
-    import("../application/EvidenceBundleCommands.js"),
   ]);
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok)
@@ -707,10 +718,37 @@ const publishDeliveredEvidence = async (
   const bundle = records.every(isImmutableEvidence)
     ? createImmutableEvidenceBundle(records)
     : createEvidenceBundle(records);
-  const published = await publishEvidenceDelivery({
-    bundle,
+  return ok({
     complete,
     delivered: selected,
+    bundle,
+    summarized,
+    budgeted: budgeted !== undefined,
+  });
+};
+
+/** Publish the same prepared bundle whose complete contents select the cache file. */
+const publishPreparedEvidence = async (
+  prepared: PreparedCliEvidence,
+  evidenceOutput: string,
+  input: CliEvidencePublication,
+): Promise<
+  Result<
+    {
+      readonly delivered: Evidence;
+      readonly receipt: JsonValue;
+      readonly summarized: boolean;
+      readonly budgeted: boolean;
+    },
+    CliEvidencePublicationFailure
+  >
+> => {
+  const { evidenceDeliveryCommitted, publishEvidenceDelivery } =
+    await import("../application/EvidenceBundleCommands.js");
+  const published = await publishEvidenceDelivery({
+    bundle: prepared.bundle,
+    complete: prepared.complete,
+    delivered: prepared.delivered,
     outputPath: absoluteCallerPath(evidenceOutput),
     operation: input.operation,
     signal: input.signal,
@@ -719,7 +757,7 @@ const publishDeliveredEvidence = async (
     return err({
       error: published.error,
       committed: evidenceDeliveryCommitted(published.error),
-      delivered: selected,
+      delivered: prepared.delivered,
     });
   const { path, bytes } = published.value.evidenceBundle;
   const receipt = bundleReceipt(path, bytes, input);
@@ -727,9 +765,22 @@ const publishDeliveredEvidence = async (
   return ok({
     delivered: published.value.delivered,
     receipt,
-    summarized,
-    budgeted: budgeted !== undefined,
+    summarized: prepared.summarized,
+    budgeted: prepared.budgeted,
   });
+};
+
+/** Project before committing so a view failure cannot publish an unreported bundle. */
+const publishDeliveredEvidence = async (
+  complete: Evidence,
+  evidenceOutput: string,
+  input: CliEvidencePublication,
+  overBudget = false,
+) => {
+  const prepared = await prepareDeliveredEvidence(complete, input, overBudget);
+  return prepared.ok
+    ? publishPreparedEvidence(prepared.value, evidenceOutput, input)
+    : prepared;
 };
 
 /** Whether a caller-selected path contains an excluded sensitive literal. */

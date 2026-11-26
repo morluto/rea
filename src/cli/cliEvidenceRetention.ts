@@ -12,6 +12,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { CLI_RETAINED_EVIDENCE_MAX_AGE_MS } from "../domain/analysisResourceLimits.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
@@ -35,25 +36,31 @@ export const cliRetainedEvidenceDirectory = (
 ): string => reaCacheDirectory(environment, platform, "evidence");
 
 /**
- * The cache key: the SHA-256 of the complete record's exact JSON. The
- * Evidence ID leaves out caller-input paths and local subject metadata, so
- * two runs with the same semantic result can differ in what they record;
- * hashing the whole record keeps each invocation's own record.
+ * The public record_sha256 receipt: SHA-256 of the complete parent's exact JSON.
+ * It preserves caller-input paths and local subject metadata omitted from the
+ * semantic Evidence ID. The bundle cache key separately covers source records.
  */
-export const retainedEvidenceDigest = (evidence: Evidence): string => {
+export const retainedEvidenceDigest = (evidence: Evidence): string =>
+  retainedJsonDigest(evidence);
+
+/** Cache identity includes the exact records and metadata the bundle publishes. */
+export const retainedEvidenceBundleDigest = (bundle: EvidenceBundle): string =>
+  retainedJsonDigest(bundle);
+
+const retainedJsonDigest = (value: Evidence | EvidenceBundle): string => {
   const hash = createHash("sha256");
-  for (const part of jsonParts(evidence)) hash.update(part, "utf8");
+  for (const part of jsonParts(value)) hash.update(part, "utf8");
   return hash.digest("hex");
 };
 
-/** A retained bundle is named by its record's digest, so one record has one file. */
+/** A retained bundle is named by its complete bundle digest. */
 const RETAINED_NAME = /^[0-9a-f]{64}\.json$/u;
 
 /** One retained record: its file, size, digest and whether it was already there. */
 export interface RetainedEvidenceFile {
   readonly path: string;
   readonly bytes: number;
-  readonly sha256: string;
+  readonly cacheKey: string;
   readonly reused: boolean;
 }
 
@@ -190,7 +197,7 @@ const evict = async (
  * file exclusively (0600) and refuses an existing name.
  */
 export const retainCliEvidence = async <Committed>(input: {
-  readonly sha256: string;
+  readonly cacheKey: string;
   readonly completeBytes: number;
   readonly retention: CliEvidenceRetention;
   readonly write: (path: string) => Promise<RetentionWrite<Committed>>;
@@ -198,10 +205,10 @@ export const retainCliEvidence = async <Committed>(input: {
   readonly now?: number;
 }): Promise<Result<RetainedEvidenceFile, RetentionStop<Committed>>> => {
   const { directory, capBytes } = input.retention;
-  const { sha256 } = input;
-  const name = `${sha256}.json`;
+  const { cacheKey } = input;
+  const name = `${cacheKey}.json`;
   if (!RETAINED_NAME.test(name))
-    return err({ reason: `${sha256} is not a SHA-256 digest.` });
+    return err({ reason: `${cacheKey} is not a SHA-256 digest.` });
   const tooLarge = (bytes: number) => ({
     reason: `The complete Evidence (${String(bytes)} bytes) is larger than the retained-Evidence cache (${String(capBytes)} bytes).`,
   });
@@ -228,7 +235,7 @@ export const retainCliEvidence = async <Committed>(input: {
             "A file that is not a retained Evidence record holds its name.",
         });
       await renew(path, now);
-      return ok({ path, bytes, sha256, reused: true });
+      return ok({ path, bytes, cacheKey, reused: true });
     };
     let kept = await reuse();
     if (kept === undefined) {
@@ -244,7 +251,7 @@ export const retainCliEvidence = async <Committed>(input: {
             remainingFile: {
               path,
               bytes: written.value.bytes,
-              sha256,
+              cacheKey,
               reused: false,
             },
           });
@@ -253,7 +260,7 @@ export const retainCliEvidence = async <Committed>(input: {
       }
       // Another run kept the same record between the check and the write.
       kept = written.ok
-        ? ok({ path, bytes: written.value.bytes, sha256, reused: false })
+        ? ok({ path, bytes: written.value.bytes, cacheKey, reused: false })
         : written.error === "exists"
           ? ((await reuse()) ??
             err({ reason: "The retained Evidence file could not be written." }))

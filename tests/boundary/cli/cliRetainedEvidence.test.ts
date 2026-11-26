@@ -11,7 +11,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { expect, it } from "vitest";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
@@ -33,6 +33,7 @@ import {
   createEvidence,
   parseEvidence,
   withEvidenceCallerInputPath,
+  type Evidence,
 } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -119,7 +120,9 @@ it("keeps an over-budget CLI result in the private cache, pages it, and reuses i
   const id = first.delivery.evidence_id;
   const sha256 = first.evidence_bundle!.record_sha256;
   // Paths name the cache directory as the filesystem resolves it.
-  const path = join(await realpath(directory), `${sha256}.json`);
+  const path = first.evidence_bundle!.path;
+  expect(dirname(path)).toBe(await realpath(directory));
+  expect(basename(path)).toMatch(/^[0-9a-f]{64}\.json$/u);
   expect(first.delivery).toMatchObject({ retained: "cache-file" });
   expect(first.evidence_bundle).toEqual({
     path,
@@ -147,7 +150,7 @@ it("keeps an over-budget CLI result in the private cache, pages it, and reuses i
   };
   const complete = await run("--detail", "complete");
   expect(JSON.parse(text)).toEqual(complete);
-  // The file is named by the digest of the complete record's exact JSON.
+  // The public receipt still identifies the parent's exact JSON.
   expect(sha256).toBe(
     createHash("sha256").update(JSON.stringify(complete)).digest("hex"),
   );
@@ -164,7 +167,7 @@ it("keeps an over-budget CLI result in the private cache, pages it, and reuses i
   const after = await stat(path);
   expect(after.ino).toBe(before.ino);
   expect(after.mtimeMs).toBeGreaterThan(before.mtimeMs);
-  expect(await files(directory)).toEqual([`${sha256}.json`]);
+  expect(await files(directory)).toEqual([basename(path)]);
 
   // Paging it through the CLI uses it too, and renews its age again.
   await utimes(path, old, old);
@@ -181,7 +184,7 @@ it("keeps an over-budget CLI result in the private cache, pages it, and reuses i
   const spelled = await runOn(relative(process.cwd(), target));
   expect(spelled.evidence_bundle!.record_sha256).not.toBe(sha256);
   expect((await files(directory)).sort()).toEqual(
-    [`${sha256}.json`, `${spelled.evidence_bundle!.record_sha256}.json`].sort(),
+    [basename(path), basename(spelled.evidence_bundle!.path)].sort(),
   );
 });
 
@@ -240,7 +243,7 @@ it("removes records past their age, then the least recently used over the cap", 
   await writeFile(join(directory, "notes.txt"), "keep");
   const retain = (digit: string, capBytes: number) =>
     retainCliEvidence({
-      sha256: digit.repeat(64),
+      cacheKey: digit.repeat(64),
       completeBytes: 400,
       retention: { directory, capBytes },
       now,
@@ -268,7 +271,7 @@ it("removes records past their age, then the least recently used over the cap", 
 
   // A bundle that outgrows the cache with the sources it cites is removed.
   const oversized = await retainCliEvidence({
-    sha256: "f".repeat(64),
+    cacheKey: "f".repeat(64),
     completeBytes: 100,
     retention: { directory, capBytes: 500 },
     now,
@@ -291,7 +294,7 @@ it("removes records past their age, then the least recently used over the cap", 
     await mkdir(stuckDir, { mode: 0o700 });
     try {
       const stuck = await retainCliEvidence({
-        sha256: "9".repeat(64),
+        cacheKey: "9".repeat(64),
         completeBytes: 100,
         retention: { directory: stuckDir, capBytes: 500 },
         now,
@@ -428,7 +431,7 @@ it.skipIf(HOST_PLATFORM.platform === "win32")(
     // The kernel resolves link/.. to real; lexical joining would give root.
     const directory = join(root, "link") + "/../evidence";
     const kept = await retainCliEvidence({
-      sha256: "e".repeat(64),
+      cacheKey: "e".repeat(64),
       completeBytes: 10,
       retention: { directory, capBytes: 1_000 },
       write: async (path) => {
@@ -534,10 +537,9 @@ it("retains an over-budget partial observation from a failed CLI run, pages it, 
   expect(delivery).toMatchObject({ retained: "cache-file" });
   const receipt = failure.details.diagnostics?.evidence_bundle;
   expect(receipt).toBeDefined();
-  const expectedPath = join(
-    await realpath(defaultRun.directory),
-    `${receipt!.record_sha256}.json`,
-  );
+  const expectedPath = receipt!.path;
+  expect(dirname(expectedPath)).toBe(await realpath(defaultRun.directory));
+  expect(basename(expectedPath)).toMatch(/^[0-9a-f]{64}\.json$/u);
   expect(receipt).toEqual({
     path: expectedPath,
     bytes: (await stat(expectedPath)).size,
@@ -807,3 +809,90 @@ it("preserves failure facts, source closure, sensitive-path redaction, receipt w
   expect(discarded.output.details.diagnostics?.evidence_bundle).toBeUndefined();
   expect(await files(tightDir)).toEqual([]);
 });
+
+it.each([false, true])(
+  "retains the current captured source closure (failure=%s)",
+  async (failed) => {
+    const root = await createTestTempDirectory("rea-retain-source-closure-");
+    const target = join(root, "bytes");
+    await writeFile(target, randomBytes(1024 * 1024));
+    const inspected = await createByteEntropyService().inspect({
+      path: target,
+      block_size: 256,
+    });
+    if (!inspected.ok) throw inspected.error;
+    const complete = inspected.value;
+    const source = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "source_fixture",
+        parameters: {},
+        result: { marker: "captured-source" },
+      },
+    );
+    const firstSource = withEvidenceCallerInputPath(source, "./first-source");
+    const secondSource = withEvidenceCallerInputPath(source, "./second-source");
+    expect(firstSource.evidence_id).toBe(secondSource.evidence_id);
+    const extra = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "source_fixture",
+        parameters: {},
+        result: { marker: "additional-source" },
+      },
+    );
+    const directory = join(root, "cache");
+    const publish = async (sources: readonly Evidence[]) => {
+      const output = await withCliEvidencePublication(
+        () =>
+          publishCliAnalysisEvidence(
+            {
+              ...(failed
+                ? err({
+                    code: "provider_timeout",
+                    message: "Analysis timed out after partial work.",
+                    retryable: true,
+                    details: { partial_observation: complete },
+                  })
+                : ok(complete)),
+              sourceEvidence: sources,
+            },
+            {
+              operation: "inspect_byte_entropy",
+              signal: new AbortController().signal,
+              detail: undefined,
+              evidenceOutput: undefined,
+            },
+          ),
+        { retention: { directory, capBytes: 1024 * 1024 * 1024 } },
+      );
+      const receipt = failed
+        ? (output as FailureOutput).details.diagnostics?.evidence_bundle
+        : (output as unknown as Output).evidence_bundle;
+      expect(receipt).toBeDefined();
+      expect(receipt!.record_sha256).toBe(retainedEvidenceDigest(complete));
+      return receipt!;
+    };
+    const read = async (path: string) =>
+      parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")));
+
+    const first = await publish([firstSource]);
+    expect((await read(first.path)).records).toContainEqual(firstSource);
+    const second = await publish([secondSource]);
+    expect(second.path).not.toBe(first.path);
+    expect((await read(second.path)).records).toContainEqual(secondSource);
+    expect((await read(second.path)).records).not.toContainEqual(firstSource);
+
+    const expanded = await publish([secondSource, extra]);
+    expect(expanded.path).not.toBe(second.path);
+    expect((await read(expanded.path)).records).toEqual(
+      expect.arrayContaining([complete, secondSource, extra]),
+    );
+    const before = await stat(expanded.path);
+    const reordered = await publish([extra, secondSource]);
+    expect(reordered).toEqual(expanded);
+    expect((await stat(reordered.path)).ino).toBe(before.ino);
+  },
+);
