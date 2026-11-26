@@ -42,7 +42,7 @@ import {
   ELF_HARDENING_PROPERTIES,
   MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
-  MAX_BINARY_HARDENING_TABLE_ENTRIES,
+  normalizeBinaryHardeningTableEntryBudget,
 } from "../../domain/native/binaryHardening.js";
 import {
   elfNoteAlignment,
@@ -136,13 +136,6 @@ const exact = (value: bigint, label: string): number => {
     malformed(`${label} exceeds exact host precision`);
   return Number(value);
 };
-
-const normalizeTableEntryBudget = (maxTableEntries?: number): number =>
-  maxTableEntries === undefined
-    ? MAX_BINARY_HARDENING_TABLE_ENTRIES
-    : Number.isSafeInteger(maxTableEntries) && maxTableEntries >= 1
-      ? maxTableEntries
-      : 0;
 
 const budgetFailure = (
   count: number,
@@ -241,7 +234,7 @@ export const readElfHardening = (
     directory,
     signal,
     structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
-    normalizeTableEntryBudget(maxTableEntries),
+    normalizeBinaryHardeningTableEntryBudget(maxTableEntries),
   );
   let next = steps.next();
   while (!next.done) {
@@ -278,7 +271,7 @@ export const readElfHardeningFromHandle = async (
     directory,
     signal,
     structureBytes ?? DEFAULT_NATIVE_STRUCTURE_BYTES,
-    normalizeTableEntryBudget(maxTableEntries),
+    normalizeBinaryHardeningTableEntryBudget(maxTableEntries),
   );
   let next = steps.next();
   while (!next.done) {

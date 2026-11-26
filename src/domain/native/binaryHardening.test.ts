@@ -5,12 +5,12 @@ import {
   ELF_HARDENING_PROPERTIES,
   MACHO_HARDENING_PROPERTIES,
   MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-  MAX_BINARY_HARDENING_TABLE_ENTRIES,
   MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
   PE_HARDENING_PROPERTIES,
   binaryHardeningSchema,
   hardeningPropertiesFor,
   inspectBinaryHardeningInputSchema,
+  normalizeBinaryHardeningTableEntryBudget,
   type BinaryHardening,
   type BinaryHardeningProperty,
 } from "./binaryHardening.js";
@@ -53,8 +53,14 @@ it("defaults the read budget and rejects paths outside the ceiling", () => {
   ).toEqual({
     path: "/artifacts/app",
     max_file_bytes: 67108864,
-    max_table_entries: MAX_BINARY_HARDENING_TABLE_ENTRIES,
+    max_table_entries: BINARY_HARDENING_BUDGETS.max_table_entries.default_value,
   });
+  expect(normalizeBinaryHardeningTableEntryBudget(undefined)).toBe(
+    BINARY_HARDENING_BUDGETS.max_table_entries.default_value,
+  );
+  expect(normalizeBinaryHardeningTableEntryBudget(128)).toBe(128);
+  expect(normalizeBinaryHardeningTableEntryBudget(0)).toBe(0);
+  expect(normalizeBinaryHardeningTableEntryBudget(Number.NaN)).toBe(0);
   for (const input of [
     { path: "relative" },
     { path: "/artifacts/app", extra: true },

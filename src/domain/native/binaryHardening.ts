@@ -31,9 +31,15 @@ export type BinaryHardeningBudget = keyof typeof BINARY_HARDENING_BUDGETS;
 /** Structured `details.limit` payload for `inspect_binary_hardening` table-entry refusals. */
 export const binaryHardeningBudgetLimit =
   parameterBudgetLimitFor<BinaryHardeningBudget>(BINARY_HARDENING_BUDGETS);
-/** Default dynamic-entry and symbol-table entry budget (`max_table_entries`). */
-export const MAX_BINARY_HARDENING_TABLE_ENTRIES =
-  BINARY_HARDENING_BUDGETS.max_table_entries.default_value;
+/** Normalize an optional direct-caller `max_table_entries` budget fail-closed. */
+export const normalizeBinaryHardeningTableEntryBudget = (
+  maxTableEntries?: number,
+): number =>
+  maxTableEntries === undefined
+    ? BINARY_HARDENING_BUDGETS.max_table_entries.default_value
+    : Number.isSafeInteger(maxTableEntries) && maxTableEntries >= 1
+      ? maxTableEntries
+      : 0;
 /** Bytes examined for one symbol name. A longer run is not a terminated name. */
 export const MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES = 65536;
 /** Aggregate string-table bytes examined while resolving symbol names. */

@@ -35,7 +35,7 @@ import {
   MACHO_HARDENING_PROPERTIES,
   MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
-  MAX_BINARY_HARDENING_TABLE_ENTRIES,
+  normalizeBinaryHardeningTableEntryBudget,
 } from "../../domain/native/binaryHardening.js";
 import {
   assertArtifactReadActive,
@@ -104,13 +104,6 @@ type SliceRef = {
     readonly reason: string;
   } | null;
 };
-
-const normalizeTableEntryBudget = (maxTableEntries?: number): number =>
-  maxTableEntries === undefined
-    ? MAX_BINARY_HARDENING_TABLE_ENTRIES
-    : Number.isSafeInteger(maxTableEntries) && maxTableEntries >= 1
-      ? maxTableEntries
-      : 0;
 
 /** Read Mach-O hardening per slice. One slice's defect leaves the others intact. */
 export const readMachoHardening = async (
@@ -182,7 +175,7 @@ export const readMachoHardeningFromHandle = async (
         fileSize,
         ref,
         encrypted,
-        normalizeTableEntryBudget(maxTableEntries),
+        normalizeBinaryHardeningTableEntryBudget(maxTableEntries),
       ),
     );
   }
