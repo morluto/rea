@@ -1,6 +1,5 @@
 import type {
   AnalysisClient,
-  AnalysisOperation,
   CapabilityDescriptor,
 } from "../../ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";

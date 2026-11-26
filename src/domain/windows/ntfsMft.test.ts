@@ -551,7 +551,7 @@ describe("parseMftIndex refusals and limits", () => {
       {
         ok: false,
         error: {
-          kind: "format",
+          kind: "malformed",
           message: "stream ended before the admitted file length",
         },
       },
@@ -562,7 +562,7 @@ describe("parseMftIndex refusals and limits", () => {
     expect(long.value.write(stream)).toMatchObject({
       ok: false,
       error: {
-        kind: "format",
+        kind: "malformed",
         message: "received more bytes than the admitted file length",
       },
     });

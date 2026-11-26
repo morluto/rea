@@ -2,14 +2,14 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
   type PeResources,
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
-import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import { observedPeEvidence } from "./observedPeEvidence.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
@@ -39,29 +39,8 @@ export class PeResourcesService {
         validateReport: (report, parameters) =>
           report.artifact.path === parameters.path &&
           validReport(report, parameters.max_entries),
-        buildEvidence: (value, identity, parameters) => {
-          const architecture = peSubjectArchitecture(
-            value.machine,
-            value.format,
-          );
-          return createEvidence(
-            {
-              path: value.artifact.path,
-              format: "pe",
-              sha256: value.artifact.sha256,
-              ...(architecture === undefined ? {} : { architecture }),
-            },
-            identity,
-            {
-              operation: OPERATION,
-              parameters,
-              result: value,
-              confidence: "observed",
-              limitations: value.limitations,
-              locations: [{ kind: "artifact-path", path: value.artifact.path }],
-            },
-          );
-        },
+        buildEvidence: (value, identity, parameters) =>
+          observedPeEvidence(value, identity, OPERATION, parameters),
       },
       rawInput,
       options,

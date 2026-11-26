@@ -1,4 +1,4 @@
-import { BinaryReader } from "./binaryContainer.js";
+import { hasElfMagic, BinaryReader } from "./binaryContainer.js";
 import type {
   BinaryArchitecture,
   RawOnlyArchitecture,
@@ -42,8 +42,7 @@ export const readElfHeaderFacts = (
   bytes: Buffer,
   totalBytes = bytes.length,
 ): Result<ElfHeaderFacts, string> => {
-  if (bytes.length >= 4 && bytes.toString("hex", 0, 4) !== "7f454c46")
-    return err("not an ELF image");
+  if (bytes.length >= 4 && !hasElfMagic(bytes)) return err("not an ELF image");
   if (bytes.length < 16) return err("ELF identification is truncated");
   const classByte = bytes[4];
   if (classByte !== 1 && classByte !== 2) return err("unsupported ELF class");

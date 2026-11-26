@@ -108,6 +108,7 @@ const registerContractBinaryCommands = (
     {
       description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
       sessionTarget: program,
+      evidenceDelivery: true,
       positionals: ["address"],
       selectorOptions: {
         address: {
@@ -261,7 +262,9 @@ const registerDecompileCommand = (
 };
 
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
-const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
+export const isJavaScriptApplicationPath = async (
+  path: string,
+): Promise<boolean> => {
   try {
     const canonical = await realpath(path);
     if (canonical.toLowerCase().endsWith(".asar")) return true;

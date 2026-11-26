@@ -1,4 +1,4 @@
-import { serializeCanonicalValue } from "./canonicalDigest.js";
+import { canonicalJsonSerializer } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import type {
@@ -6,6 +6,10 @@ import type {
   UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import {
+  DIRECTORY_TREE_DIGEST_ALGORITHM,
+  DIRECTORY_TREE_DIGEST_VERSION,
+} from "./directoryTreeDigest.js";
 import {
   rawBinaryEntryPointSchema,
   rawLoadIdentity,
@@ -68,6 +72,27 @@ export interface FileTargetIdentity {
   readonly format: string;
   readonly architecture: string | null;
   readonly selection: FileTargetSelection | null;
+}
+
+/**
+ * A local directory, path-free, named by the complete root digest of its
+ * tree. The algorithm and its version are part of the identity, so a later
+ * encoding never collides with this one. A directory whose walk was partial
+ * has no such identity.
+ */
+export const directoryTargetIdentitySchema = z.strictObject({
+  kind: z.literal("directory"),
+  algorithm: z.literal(DIRECTORY_TREE_DIGEST_ALGORITHM),
+  version: z.literal(DIRECTORY_TREE_DIGEST_VERSION),
+  sha256: digestSchema,
+});
+
+/** A local directory named by the complete root digest of its tree. */
+export interface DirectoryTargetIdentity {
+  readonly kind: "directory";
+  readonly algorithm: typeof DIRECTORY_TREE_DIGEST_ALGORITHM;
+  readonly version: typeof DIRECTORY_TREE_DIGEST_VERSION;
+  readonly sha256: string;
 }
 
 /**
@@ -202,13 +227,17 @@ export interface SessionTargetIdentity {
  */
 export type TargetIdentity =
   | FileTargetIdentity
+  | DirectoryTargetIdentity
   | UrlTargetIdentity
   | ProcessTargetIdentity
   | SessionTargetIdentity
   | UnknownTargetIdentity;
 
-/** A target identity that names no file, and so has no file display facts. */
-export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
+/** A target identity that names no local path, and so has no display facts. */
+export type NonFileTargetIdentity = Exclude<
+  TargetIdentity,
+  FileTargetIdentity | DirectoryTargetIdentity
+>;
 
 /**
  * The identities without a nested target that a subject without file display
@@ -283,13 +312,13 @@ export const binaryTargetIdentity = (
   selection: binaryTargetSelection(target),
 });
 
+const serializeIdentity = canonicalJsonSerializer(
+  "RFC 8785 canonicalization rejected a target identity",
+);
+
 /** The only comparison of two target identities: an RFC 8785 canonical digest. */
-export const targetIdentityKey = (identity: TargetIdentity): string => {
-  const encoded = serializeCanonicalValue(identity);
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
-  return `target_${sha256Hex(encoded)}`;
-};
+export const targetIdentityKey = (identity: TargetIdentity): string =>
+  `target_${sha256Hex(serializeIdentity(identity))}`;
 
 /** Whether two identities name the same target. */
 export const sameTargetIdentity = (
@@ -314,7 +343,7 @@ const coordinateKey = (identity: TargetIdentity): string => {
       : undefined;
   if (identity.kind !== "file" || load === undefined)
     return targetIdentityKey(identity);
-  const encoded = serializeCanonicalValue({
+  const encoded = serializeIdentity({
     kind: "raw-load-coordinates",
     sha256: identity.sha256,
     format: identity.format,
@@ -323,8 +352,6 @@ const coordinateKey = (identity: TargetIdentity): string => {
     base_address: load.base_address,
     architecture_variant: load.architecture_variant ?? null,
   });
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
   return `coordinates_${sha256Hex(encoded)}`;
 };
 

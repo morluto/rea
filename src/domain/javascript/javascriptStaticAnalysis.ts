@@ -1,9 +1,9 @@
+import { stringValue } from "./javascriptAstValues.js";
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   failedJavaScriptStaticAnalysis,
   detectVendors,
   registrationKey,
-  stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {

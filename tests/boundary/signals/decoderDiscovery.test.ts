@@ -1,14 +1,9 @@
 import { expect, it } from "vitest";
-import { fixedAllowanceOptions } from "../../../src/domain/fixedAllowanceRemediation.js";
 import {
-  isParseLimit,
-  parseLimitConstraint,
-} from "../../../src/domain/parseFailureAnalysisError.js";
-import { inspectSignalDecodersInputSchema } from "../../../src/domain/signals/signalDecoders.js";
-import {
-  DECODER_CATALOG_FORMAT,
-  parseDecoderDiscovery,
-} from "../../../src/signals/parseDecoderDiscovery.js";
+  inspectSignalDecodersInputSchema,
+  SIGNAL_DECODER_PAGE_RECORDS,
+} from "../../../src/domain/signals/signalDecoders.js";
+import { parseDecoderDiscovery } from "../../../src/signals/parseDecoderDiscovery.js";
 
 it("rejects malformed catalogs and the wrong decoder identity", () => {
   for (const text of [
@@ -49,49 +44,45 @@ it("keeps help line ordinals, blank lines and literal special characters through
   expect(result.output_window.examined).toBe(4);
 });
 
-it("bounds line expansion before constructing help records", () => {
-  const input = inspectSignalDecodersInputSchema.parse({
-    decoder: "uart",
-    offset: 65534,
-    limit: 1,
-  });
-  expect(parseDecoderDiscovery("ID: uart" + "\n".repeat(65535), input)).toEqual(
-    {
-      decoders: [],
-      help_lines: [{ line_number: 65535, text: "" }],
-      output_window: {
-        unit: "help-lines",
-        examined: 65535,
-        matching: 65535,
-        returned: 1,
-        has_more: false,
-      },
-    },
+it("ends a help page at the page record budget without refusing longer output", () => {
+  const text = "ID: uart" + "\n".repeat(SIGNAL_DECODER_PAGE_RECORDS + 4);
+  const all = parseDecoderDiscovery(
+    text,
+    inspectSignalDecodersInputSchema.parse({ decoder: "uart", limit: null }),
   );
-  let thrown: unknown;
-  try {
-    parseDecoderDiscovery(
-      "ID: uart\n" + "\n".repeat(65536),
-      inspectSignalDecodersInputSchema.parse({ decoder: "uart" }),
-    );
-  } catch (cause) {
-    thrown = cause;
-  }
-  expect(isParseLimit(thrown, DECODER_CATALOG_FORMAT)).toBe(true);
-  if (!isParseLimit(thrown, DECODER_CATALOG_FORMAT))
-    throw new Error("Expected decoder catalog parse limit");
+  expect(all.help_lines).toHaveLength(SIGNAL_DECODER_PAGE_RECORDS);
+  expect(all.output_window).toEqual({
+    unit: "help-lines",
+    examined: SIGNAL_DECODER_PAGE_RECORDS + 4,
+    matching: SIGNAL_DECODER_PAGE_RECORDS + 4,
+    returned: SIGNAL_DECODER_PAGE_RECORDS,
+    has_more: true,
+    record_budget_reached: true,
+  });
   expect(
-    parseLimitConstraint(
-      "inspect_signal_decoders",
-      "memory",
-      thrown,
-      fixedAllowanceOptions(
-        "The sigrok decoder-discovery line allowance",
-        "capture",
-      ),
+    parseDecoderDiscovery(
+      text,
+      inspectSignalDecodersInputSchema.parse({
+        decoder: "uart",
+        offset: SIGNAL_DECODER_PAGE_RECORDS,
+        limit: null,
+      }),
     ),
-  ).toMatchObject({
-    reason: expect.stringContaining("representation budget"),
-    reportedLimits: { boundary: "line_budget", maximum: 65536 },
+  ).toEqual({
+    decoders: [],
+    help_lines: [
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 1, text: "" },
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 2, text: "" },
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 3, text: "" },
+      { line_number: SIGNAL_DECODER_PAGE_RECORDS + 4, text: "" },
+    ],
+    output_window: {
+      unit: "help-lines",
+      examined: SIGNAL_DECODER_PAGE_RECORDS + 4,
+      matching: SIGNAL_DECODER_PAGE_RECORDS + 4,
+      returned: 4,
+      has_more: false,
+      record_budget_reached: false,
+    },
   });
 });

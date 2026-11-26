@@ -1,3 +1,4 @@
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
 import type { Logger } from "pino";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -185,9 +186,14 @@ export const runDirectOnTarget =
         logger,
         signal,
         ...directAnalysisOpening(opening),
-        ...(evidenceOutput === undefined
-          ? {}
-          : { includeEvidenceSources: true }),
+        // A bundle needs the sources its record cites: a requested one, or
+        // the retained-Evidence cache an over-budget result may go to.
+        ...(evidenceOutput !== undefined ||
+        (delivery !== undefined &&
+          delivery.detail === undefined &&
+          cliPublicationInvocation().retention !== undefined)
+          ? { includeEvidenceSources: true }
+          : {}),
       },
     );
     if (delivery === undefined) return projectCliAnalysisResult(result);

@@ -44,7 +44,6 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -253,7 +252,7 @@ export class HistoricalCaptureDecoder {
           encodedReplyBytes = decodedReply.bytes;
           replyFinalization = decodedReply.finalization;
           if (!reply.ok) {
-            if (reply.reason === "format")
+            if (reply.reason === "malformed")
               throw new AnalysisInputError(OPERATION, undefined, [
                 {
                   path: ["capture_path", reply.pointer],

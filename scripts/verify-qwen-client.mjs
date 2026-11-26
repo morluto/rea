@@ -17,7 +17,8 @@ import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { publishClientReceipt } from "./verify/clients/receipt.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
   assertClientJavaScriptFixtureEvidence,
@@ -101,13 +102,13 @@ await withVerifierCleanup(async () => {
       REA_PROCESS_RUN_ID: verifier.run_id,
     };
     try {
-      clientVersion = (
-        await commands.exec(...launch(["--version"]), {
-          env: baseEnvironment,
-          timeout: 30_000,
-          stdin: "pipe",
-        })
-      ).stdout.trim();
+      const [binary, args] = launch(["--version"]);
+      clientVersion = await readClientVersion(
+        commands,
+        binary,
+        baseEnvironment,
+        { args },
+      );
     } catch (cause) {
       const windowsHint =
         process.platform === "win32"
@@ -452,7 +453,7 @@ await withVerifierCleanup(async () => {
 }, [
   async () => {
     const lineage = await completeVerifierRun(verifier);
-    const receipt = {
+    await publishReceipt({
       client: "Qwen Code",
       clientVersion,
       mode,
@@ -460,13 +461,7 @@ await withVerifierCleanup(async () => {
       ...(reducedPath ? { clientPath } : {}),
       registrationCommand,
       passed,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback deterministic OpenAI-compatible endpoint; no live model-provider claim",
       skillDiscovery:
@@ -482,7 +477,6 @@ await withVerifierCleanup(async () => {
       finalSeen,
       fixtureFailure: fixture?.failure,
       verifier: lineage,
-    };
-    await publishClientReceipt(lab, receipt);
+    });
   },
 ]);

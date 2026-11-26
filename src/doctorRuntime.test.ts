@@ -19,7 +19,10 @@ import * as pythonRuntime from "./application/LinuxHopperPython.js";
 import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
-import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
+import {
+  createDoctorHostFixture,
+  scopeChecksOf,
+} from "./application/Doctor.fixture.js";
 import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./hopperPaths/MacHopperPaths.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
@@ -27,15 +30,6 @@ import { AnalysisCleanupLease } from "./resources/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import * as configurationFiles from "./application/ClientConfigurationFiles.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
-
-/** The explicit scope's checks; an audit-wide report has none. */
-const scopeChecksOf = <Check>(report: {
-  readonly scope_checks?: readonly Check[];
-}): readonly Check[] => {
-  if (report.scope_checks === undefined)
-    throw new Error("Expected an explicit-scope doctor report");
-  return report.scope_checks;
-};
 
 const readyDisplay = {
   ok: true,

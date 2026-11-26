@@ -38,3 +38,21 @@ export const writeWord = (
   if (bits === 64) write64(bytes, offset, value, little);
   else write32(bytes, offset, Number(value), little);
 };
+
+export const uint32LE = (value: number): Buffer => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeUInt32LE(value);
+  return bytes;
+};
+
+export const int32LE = (value: number): Buffer => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeInt32LE(value);
+  return bytes;
+};
+
+export const uint64LE = (value: number | bigint): Buffer => {
+  const bytes = Buffer.alloc(8);
+  bytes.writeBigUInt64LE(BigInt(value));
+  return bytes;
+};

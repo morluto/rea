@@ -1,3 +1,4 @@
+import { createGhidraVerifierMcpOperations } from "./lib/ghidra-verifier-mcp.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -16,9 +17,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
-  requireMcpOperationResult,
-  requireMcpOutput,
   requireMcpToolError,
+  requireMcpAnalysisEvidenceOrSessionResult,
 } from "./lib/mcp-verifier-results.mjs";
 import {
   assertVerifierCleanupComplete,
@@ -30,6 +30,10 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-6502.mjs");
@@ -101,11 +105,16 @@ const transport = new StdioClientTransport({
   env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-6502-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-6502-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
+const call = createGhidraVerifierMcpOperations(client, {
+  timeout: 240000,
+}).decodedCall(requireMcpAnalysisEvidenceOrSessionResult);
 let connected = false;
 let verifierRun;
 let report;
@@ -199,12 +208,18 @@ await withVerifierFixture(workspaceFixture, async () => {
       ),
     );
     const pseudo = evidence(
-      await call("procedure_pseudo_code", { procedure: "0x8010" }),
+      await call("procedure_pseudo_code", {
+        detail: "complete",
+        procedure: "0x8010",
+      }),
       sha256,
     );
     assert.match(pseudo.normalized_result, /\+\s*(?:3|0x3|'\\x03')/u);
     const filePseudo = evidence(
-      await call("procedure_pseudo_code", { procedure: "file-offset:0xf" }),
+      await call("procedure_pseudo_code", {
+        detail: "complete",
+        procedure: "file-offset:0xf",
+      }),
       sha256,
     );
     assert.equal(filePseudo.normalized_result, pseudo.normalized_result);
@@ -243,6 +258,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       [
         entrypoint,
         "inspect-native-load-image",
+        "--detail",
+        "complete",
         path,
         "--target-format",
         "raw-binary",
@@ -265,6 +282,8 @@ await withVerifierFixture(workspaceFixture, async () => {
       [
         entrypoint,
         "decompile",
+        "--detail",
+        "complete",
         path,
         "--file-offset=0xf",
         "--target-format",
@@ -378,6 +397,8 @@ await withVerifierFixture(workspaceFixture, async () => {
         [
           entrypoint,
           "inspect-native-load-image",
+          "--detail",
+          "complete",
           lowPath,
           "--target-format",
           "raw-binary",
@@ -437,7 +458,10 @@ await withVerifierFixture(workspaceFixture, async () => {
         });
         // open_binary selects a lazy session; the first analysis admits the snapshot.
         const linkedImage = await client.callTool(
-          { name: "inspect_native_load_image", arguments: {} },
+          {
+            name: "inspect_native_load_image",
+            arguments: { detail: "complete" },
+          },
           { timeout: 240000 },
         );
         // Native Windows admission refuses the junction before Ghidra imports it.
@@ -460,27 +484,33 @@ await withVerifierFixture(workspaceFixture, async () => {
         );
         await call("close_binary");
         const snapshotPath = join(workspace, "direct-snapshot.json");
-        const cliArgs = (selectedPath) => [
+        const cliArgs = async (selectedPath) => [
           entrypoint,
-          "analyze",
-          selectedPath,
-          "--target-format",
-          "raw-binary",
-          "--architecture",
-          "6502",
-          "--entry-point",
-          "0x8001",
-          "--provider",
-          "ghidra",
-          "--snapshot",
-          snapshotPath,
-          "--json",
+          ...(await completeEvidenceCliArguments([
+            "analyze",
+            selectedPath,
+            "--target-format",
+            "raw-binary",
+            "--architecture",
+            "6502",
+            "--entry-point",
+            "0x8001",
+            "--provider",
+            "ghidra",
+            "--snapshot",
+            snapshotPath,
+            "--json",
+          ])),
         ];
-        const saved = await commands.exec(process.execPath, cliArgs(path), {
-          env,
-          timeout: 240000,
-          maxBuffer: 16 * 1024 * 1024,
-        });
+        const saved = await commands.exec(
+          process.execPath,
+          await cliArgs(path),
+          {
+            env,
+            timeout: 240000,
+            maxBuffer: 16 * 1024 * 1024,
+          },
+        );
         assert.equal(
           evidence(JSON.parse(saved.stdout), sha256).operation,
           "binary_overview",
@@ -494,7 +524,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         assert.deepEqual(await readdir(runtime), []);
         // Replaying a matching snapshot must still reach native path admission.
         await assert.rejects(
-          commands.exec(process.execPath, cliArgs(linkedPath), {
+          commands.exec(process.execPath, await cliArgs(linkedPath), {
             env,
             timeout: 240000,
             maxBuffer: 16 * 1024 * 1024,
@@ -565,16 +595,6 @@ if (process.platform !== "win32")
 process.stdout.write(
   JSON.stringify({ verifier_run: verifierRun, ...report }) + "\n",
 );
-
-async function call(name, args = {}) {
-  const result = await client.callTool(
-    { name, arguments: args },
-    { timeout: 240000 },
-  );
-  if (["open_binary", "binary_session", "close_binary"].includes(name))
-    return requireMcpOperationResult(result, name);
-  return requireMcpOutput(result, name);
-}
 
 function evidence(value, sha256) {
   const result = parseEvidence(value);

@@ -62,6 +62,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
   ): Promise<PositionalArtifactEntries<AndroidBootImageMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
+      "android-boot-image",
       handle,
       0,
       Math.min(initial.size, ANDROID_BOOT_HEADER_PROBE_BYTES),
@@ -146,6 +147,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
       throw formatFailure("vendor ramdisk table is missing its section");
     this.assertOpen(signal);
     const bytes = await readArtifactFileBytes(
+      "android-boot-image",
       handle,
       range.offset,
       range.size,
@@ -189,6 +191,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     const tail =
       offset !== null
         ? await readArtifactFileBytes(
+            "android-boot-image",
             handle,
             offset,
             AVB_FOOTER_SIZE,
@@ -239,6 +242,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     for (const plan of plans) {
       this.assertOpen(signal);
       const prefix = await readArtifactFileBytes(
+        "android-boot-image",
         handle,
         plan.offset,
         Math.min(4, plan.size),

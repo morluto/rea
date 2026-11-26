@@ -66,20 +66,23 @@ facts and do not reopen the file. Each page carries fixed-size context
 large `bootargs` value does not repeat on every page. Source indices are scoped to the selected
 collection and parent Evidence; property indices are scoped to their node.
 
-| Input budget     | Default | Ceiling |
-| ---------------- | ------: | ------: |
-| `max_file_bytes` |   4 MiB |  16 MiB |
-| `max_nodes`      |   8,192 |  65,536 |
-| `max_properties` |  32,768 | 262,144 |
-| `max_depth`      |      64 |     256 |
+| Input budget        | Default | Ceiling |
+| ------------------- | ------: | ------: |
+| `max_file_bytes`    |   4 MiB |  16 MiB |
+| `max_nodes`         |   8,192 |  65,536 |
+| `max_properties`    |  32,768 | 262,144 |
+| `max_depth`         |      64 |     256 |
+| `max_decoded_bytes` |  32 MiB | 256 MiB |
 
-Decoded names, paths, values and row overhead share a fixed 32 MiB representation
-allowance, charged before expansion. It has no runtime override.
+`max_decoded_bytes` bounds the estimated decoded names, paths, values and row
+overhead, charged before expansion. Its minimum is 1,024 bytes.
 
-A parser budget refusal names the allowance in `details.reported_limits.boundary`
-and its effective bound in `details.reported_limits.maximum`. For example,
-`--max-nodes 1` reports `{ "boundary": "max_nodes", "maximum": 1 }` if the
-blob contains more than one node.
+A budget refusal reports `details.limit` with `control_kind: "parameter"`, the
+field in `parameter`, its effective value, range and default, and
+`applies_at: "next_call"`. `details.reported_limits` keeps the parser's
+`boundary` and `maximum`. For example, `--max-nodes 1` reports
+`{ "boundary": "max_nodes", "maximum": 1 }` and a `max_nodes` limit with
+effective value 1 if the blob contains more than one node.
 
 The reservation count also uses `max_properties`. CLI flags use kebab case,
 for example `--max-nodes 16384`. View pages contain at most 256 rows.

@@ -12,10 +12,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { compareEvidenceBundlesCommand } from "../../../src/application/EvidenceBundleCommands.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import {
-  bundleComparisonInputSchema,
-  bundleComparisonResultSchema,
-} from "../../../src/domain/bundleComparison.js";
+import { bundleComparisonInputSchema } from "../../../src/domain/bundleComparison.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   createEvidenceBundle,

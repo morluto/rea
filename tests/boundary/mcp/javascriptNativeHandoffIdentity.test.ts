@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -16,8 +16,6 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const mcp = fileLocalToolsMcp();
 
-const sha256 = (value: Uint8Array) =>
-  createHash("sha256").update(value).digest("hex");
 const nativeObservation = (path: string, sha256: string) =>
   createEvidence(
     { path, sha256, format: "raw-binary" },
