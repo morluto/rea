@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** Rust dependency-parser refusals report details.limit for the binding parameter instead of a fixed_ceiling allowance.
 * **limits:** apktool and assetutil output refusals report details.limit for producer_limits.output_bytes instead of a fixed_ceiling refusal.
 * **native:** Go and Rust structural refusals and the WebAssembly section refusal report details.limit instead of a fixed_ceiling refusal.
 * **limits:** register producer.output_bytes as the session default for bounded producer output ([#14648](https://github.com/morluto/rea/issues/14648))
@@ -373,6 +374,7 @@
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
 * **javascript:** verify Expo context getter ownership ([#13803](https://github.com/morluto/rea/issues/13803)) ([8c16d7d](https://github.com/morluto/rea/commit/8c16d7d18f71c0057240db4122c5df9a8b907a95))
+* **limits:** budget Rust dependency parser ceilings per call ([#14666](https://github.com/morluto/rea/issues/14666)) ([1557159](https://github.com/morluto/rea/commit/155715942e6d8f549bb240529b887e0f86457d2b))
 * **limits:** let apktool and assetutil take producer_limits.output_bytes and type Android and process capture refusals ([#14624](https://github.com/morluto/rea/issues/14624)) ([0eb19a3](https://github.com/morluto/rea/commit/0eb19a395ec42ed40b575663dc8a8b2defce0643))
 * **limits:** let inspect_pcap_capture take producer_limits for its snapshot and TShark output ([#14280](https://github.com/morluto/rea/issues/14280)) ([fd09e2b](https://github.com/morluto/rea/commit/fd09e2b9a1ca8e6730d3d030ae23d012c5dea6f9))
 * **limits:** let inspect_sqlite_database take producer_limits.input_bytes and type SQLite, Kuna and web-bundle refusals ([#14627](https://github.com/morluto/rea/issues/14627)) ([a5c71e8](https://github.com/morluto/rea/commit/a5c71e8c88e75b1c8906a47996dbe4b360bb65a0))
