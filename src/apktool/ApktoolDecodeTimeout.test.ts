@@ -142,6 +142,8 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     expect(projected.details?.limit).not.toHaveProperty("cli_flag");
     expect(projected.details).not.toHaveProperty("refusal");
     expect(decodeTimeouts).toEqual([DEFAULT_APKTOOL_DECODE_TIMEOUT_MS, 200]);
+    // A selected deadline leaves the separate output capture budget unchanged.
+    expect(outputBudgets).toEqual([4 * 1024 * 1024, 4 * 1024 * 1024]);
 
     const selected = await decode(provider, path, 5_000);
     expect(selected.ok).toBe(true);

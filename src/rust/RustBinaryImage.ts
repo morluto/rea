@@ -72,6 +72,8 @@ export const readRustBinaryImageFromHandle = async (
   maxRustcHashes: number | undefined,
   maxOutputBytes: number | undefined,
   pause: ZstandardFramePause,
+  structureBytes?: number,
+  maxWasmSections?: number,
 ): Promise<RustBinaryImage> => {
   const effectiveMaxHashes = maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT;
   const effectiveMaxOutputBytes =
@@ -82,12 +84,13 @@ export const readRustBinaryImageFromHandle = async (
     Math.min(source.size, 8),
   );
   const layout: RustImageLayout = hasWasmPreamble(preamble)
-    ? await wasmLayoutFromReader(source, pause)
+    ? await wasmLayoutFromReader(source, pause, maxWasmSections)
     : nativeLayoutFromContainer(
         await readBinaryContainerFromReader(
           source,
           "inspect_rust_binary",
           pause,
+          structureBytes,
         ),
       );
   const { section_name, dependency, compiler_strings, ...identity } = layout;
@@ -121,9 +124,10 @@ export const readRustBinaryImageFromHandle = async (
 const wasmLayoutFromReader = async (
   source: ByteSource,
   pause: ZstandardFramePause,
+  maxSections: number | undefined,
 ): Promise<RustImageLayout> => {
   const { dependency_sections, data_section } =
-    await readRustWasmSectionsFromReader(source, pause);
+    await readRustWasmSectionsFromReader(source, pause, maxSections);
   if (dependency_sections.length > 1) throw duplicateDependencySection();
   return {
     format: "wasm",

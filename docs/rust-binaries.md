@@ -173,7 +173,7 @@ selects a universal Mach-O slice.
 | Compressed `.dep-v0` zlib | 1 MiB                                         | Fixed                          |
 | Inflated JSON             | Smaller of 8 MiB and 64 × the consumed stream | Fixed                          |
 | Distinct rustc hashes     | 64                                            | `max_rustc_hashes`             |
-| WebAssembly sections      | 65,536                                        | Fixed (`max_wasm_sections`)    |
+| WebAssembly sections      | 65,536 (at most 16,777,216)                   | `max_wasm_sections`            |
 
 Empty sections,
 truncated streams, nonpadding bytes after a zlib stream, invalid JSON, duplicate
@@ -236,11 +236,15 @@ to retain a larger prefix; no restart is required. The complete-report byte
 allowance still applies. Optional compiler paths are shortened before they can
 displace independently observed dependency facts.
 
-The synchronous WebAssembly section walk admits at most 65,536 section
-payloads. A further section with a valid length and file extent triggers a
-`cpu` resource constraint whose `reported_limits` name `max_wasm_sections`.
-Invalid lengths and truncated extents retain their format diagnosis at the
-limit. This allowance is fixed, so `producer_limits` does not raise it.
+The synchronous WebAssembly section walk admits at most `max_wasm_sections`
+section payloads (default 65,536, at most 16,777,216; see
+[limits and recovery](reference/limits-and-recovery.md#native-table-structure-budget)).
+A further section with a valid length and file extent triggers a `cpu` resource
+constraint whose `details.limit` names `max_wasm_sections`. Raise
+`max_wasm_sections` (CLI `--max-wasm-sections`) on the next call. The walk
+stops at the first excess, so no `required_value` is reported. Invalid lengths
+and truncated extents retain their format diagnosis at the limit.
+`producer_limits` does not raise it.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and

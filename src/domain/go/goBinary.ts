@@ -13,6 +13,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import { maxStructureBytesSchema } from "../native/nativeStructureBudget.js";
 
 const sourceRangeSchema = z.strictObject({
   offset: z.int().nonnegative(),
@@ -191,6 +192,7 @@ export const inspectGoBinaryInputSchema = z
         "Also recover bounded inferred Go UTF-8 string literals referenced by static (ptr, len) headers in non-executable mapped data",
       ),
     ...goResourceBudgetFields,
+    max_structure_bytes: maxStructureBytesSchema,
     detail: z
       .enum(["complete", "summary"])
       .optional()

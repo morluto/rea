@@ -29,7 +29,7 @@ import {
   BinaryResourceFailure,
   isNativeStructureFailure,
 } from "../../domain/binaryContainer.js";
-import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
+import { nativeStructureConstraint } from "../../domain/native/nativeStructureBudget.js";
 import { requireSelectedNativeImageFromReader } from "../../domain/apple/machoSliceSelection.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {

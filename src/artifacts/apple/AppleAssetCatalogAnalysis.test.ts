@@ -20,6 +20,10 @@ import {
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
+  DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+  MAX_ASSETUTIL_OUTPUT_BYTES,
+} from "../../domain/apple/appleAssetCatalog.js";
+import {
   analyzeAppleAssetCatalogs,
   collectInterfaceBuilderResourceKeys,
   type AssetUtilLauncher,
@@ -844,7 +848,12 @@ it.each([
       capturedOutput: { stderr: "specific catalog diagnostic" },
       ...(reason === "timeout" ? { timeoutMs: 60000 } : {}),
       ...(reason === "output-limit"
-        ? { fixedAllowance: { limit: 64 * 1024 * 1024, unit: "bytes" } }
+        ? {
+            limit: {
+              parameter: "producer_limits.output_bytes",
+              effective_value: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+            },
+          }
         : {}),
     });
   },
@@ -1084,3 +1093,84 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+describe("assetutil producer_limits.output_bytes", () => {
+  const noInterfaceBuilder = async () =>
+    ({
+      graph: { nodes: [], truncated: false, coverage: [] },
+    }) as unknown as Awaited<ReturnType<typeof analyzeInterfaceBuilderBundle>>;
+  const outputLimit = (effective: number) => ({
+    control_kind: "parameter",
+    parameter: "producer_limits.output_bytes",
+    effective_value: effective,
+    unit: "bytes",
+    minimum: 1,
+    maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
+    default_value: DEFAULT_ASSETUTIL_OUTPUT_BYTES,
+    applies_at: "next_call",
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses one assetutil stream above the selected budget with details.limit",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-output-");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      await writeFile(join(resources, "Assets.car"), "catalog");
+      const launcher = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(256) }]));`,
+      );
+      const refused = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        page: { producer_limits: { output_bytes: 64 } },
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: launcher,
+        platform: "darwin",
+      }).catch((cause: unknown) => cause);
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the assetutil output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toEqual(
+        outputLimit(64),
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses combined catalog output above the selected budget and admits it once raised",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-combined-");
+      for (const name of ["A", "B"]) {
+        const resources = join(bundle, name, "Resources");
+        await mkdir(resources, { recursive: true });
+        await writeFile(join(resources, "Assets.car"), `catalog ${name}`);
+      }
+      const output = JSON.stringify([{ Name: "Toolbar" }]);
+      const launcher = standInAssetUtil(
+        `process.stdout.write(${JSON.stringify(output)});`,
+      );
+      const inspect = (outputBytes: number) =>
+        analyzeAppleAssetCatalogs({
+          environment: {},
+          bundlePath: bundle,
+          targetSha256: "a".repeat(64),
+          page: { producer_limits: { output_bytes: outputBytes } },
+          analyzeInterfaceBuilder: noInterfaceBuilder,
+          assetUtilLauncher: launcher,
+          platform: "darwin",
+        });
+      const refused = await inspect(output.length * 2 - 1).catch(
+        (cause: unknown) => cause,
+      );
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the combined assetutil output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toEqual(
+        outputLimit(output.length * 2 - 1),
+      );
+      await expect(inspect(output.length * 2)).resolves.toMatchObject({
+        total_records: 2,
+      });
+    },
+  );
+});

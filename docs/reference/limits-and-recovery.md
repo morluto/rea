@@ -132,8 +132,13 @@ are bounded by the PE format.
 For `inspect_native_exports` it also bounds the ELF dynamic, symbol and version
 tables located through PT_DYNAMIC.
 
-The Go, Rust and IL2CPP readers read the same tables with the 16 MiB default and
-report it as a fixed allowance.
+`inspect_go_binary` and `inspect_rust_binary` accept it for their ELF directory
+and Mach-O load commands. The IL2CPP reader reads the same tables with the 16
+MiB default and reports it as a fixed allowance.
+
+`inspect_rust_binary` also accepts `max_wasm_sections` (WebAssembly sections
+walked; default 65,536, at most 16,777,216). The walk stops at the first excess,
+so the refusal reports no `required_value`.
 
 `inspect_native_exports` also accepts `max_entries` (export rows and declared
 symbol counts; default 262,144, at most 4,194,304) and `max_text_bytes` (name and
@@ -202,6 +207,8 @@ rejected.
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
 | `inspect_sqlite_database`                                    | `input_bytes` 256 MiB (the database and WAL copied to the private snapshot)                                                                                                                   |
 | `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
+| `decode_android_resources`                                   | `output_bytes` 4 MiB of retained `apktool d` stdout and stderr, at most the JavaScript string limit                                                                                           |
+| `inspect_asset_catalog`                                      | `output_bytes` 64 MiB for each assetutil stream and the JSON retained across all catalogs, at most 128 MiB (the in-process decode bound)                                                      |
 
 #### Session default for producer output
 
@@ -217,13 +224,15 @@ override, then the launch seed, then the default. An output refusal reports the
 setting's limit with `parameter: "producer_limits.output_bytes"` and the
 `source` of the value in force, so its recovery names both the per-call field
 and the setting. `inspect_packet_fields` keeps its own 32 MiB glossary default
-and is not covered by the setting.
+and is not covered by the setting. `decode_android_resources` and
+`inspect_asset_catalog` keep their own defaults and maxima, so the setting does
+not supply their omitted `producer_limits.output_bytes`.
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
 inherited OS ceiling can appear as `0`. When packet, signal, pwntools, Rust,
-pcap or SQLite work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
+pcap, SQLite, Apktool or assetutil work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
 the other producers name the field to raise in their remediation. A pwntools
