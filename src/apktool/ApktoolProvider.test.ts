@@ -1187,6 +1187,12 @@ describe("decoded manifest package fallback", () => {
       "com.rea.manifest",
     ],
     [
+      "explicitly empty manifest package",
+      '<manifest package=""/>',
+      "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",
+      null,
+    ],
+    [
       "truncated manifest",
       "<manifest/>" + " ".repeat(512 * 1024),
       "version: 3.0.3\nresourcesInfo:\n  packageName: com.rea.resources\n",

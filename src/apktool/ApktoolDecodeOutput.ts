@@ -158,9 +158,15 @@ const apktool3String = (source: string): string => {
 };
 
 /** Read the package attribute from the decoded Android manifest root. */
-export const parseManifestPackage = (manifest: string): string | null => {
+export const parseManifestPackage = (
+  manifest: string,
+  packageNameWhenAbsent: string | null = null,
+): string | null => {
   const parsed = parseDecodedAndroidManifest(manifest, "allow");
-  if (parsed.ok) return parsed.value.packageName;
+  if (parsed.ok)
+    return parsed.value.hasPackageAttribute
+      ? parsed.value.packageName
+      : packageNameWhenAbsent;
   if (parsed.error.kind === "unexpected-root")
     throw new TypeError("AndroidManifest.xml root must be <manifest>");
   throw new TypeError(
