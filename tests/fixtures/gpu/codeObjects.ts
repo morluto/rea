@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { encode } from "@msgpack/msgpack";
+import { lz4LiteralBlock } from "../lz4LiteralBlock.js";
+
 export const ptxFixture = `// Producer-shaped static PTX; portable tests do not invoke a GPU compiler.
 .version 8.8
 .target sm_80
@@ -22,6 +24,34 @@ interface ElfFixtureSection {
   link?: number;
   entrySize?: number;
 }
+/** Names up to this length are found through an index of entry suffixes. */
+const INDEXED_SECTION_NAME_LENGTH = 256;
+/**
+ * Find each sh_name: the first offset where `${name}\0` occurs, which may be a
+ * suffix of an earlier name (".strtab" inside ".shstrtab"). Searching the
+ * table per section is quadratic for an extended section count, and indexing
+ * every suffix is quadratic for a long name. Index each entry's suffixes up to
+ * a bounded length once, and search the table directly for the few longer
+ * names; both give the same first occurrence.
+ */
+const sectionNameOffsets = (names: Buffer): ((name: string) => number) => {
+  const offsets = new Map<string, number>();
+  let start = 0;
+  for (const entry of names.toString("latin1").split("\0")) {
+    const first = Math.max(0, entry.length - INDEXED_SECTION_NAME_LENGTH);
+    for (let index = first; index <= entry.length; index++) {
+      const suffix = entry.slice(index);
+      if (!offsets.has(suffix)) offsets.set(suffix, start + index);
+    }
+    start += entry.length + 1;
+  }
+  return (name) => {
+    const key = Buffer.from(name).toString("latin1");
+    return key.length > INDEXED_SECTION_NAME_LENGTH
+      ? names.indexOf(Buffer.from(`${name}\0`))
+      : offsets.get(key)!;
+  };
+};
 /** Format boundary fixtures, including numeric records checked against nvcc 12.9 cuobjdump. */
 export const elfFixture = (
   machine: number,
@@ -36,6 +66,7 @@ export const elfFixture = (
     { name: ".shstrtab", type: 3, bytes: names },
     ...sections,
   ];
+  const nameOffset = sectionNameOffsets(names);
   const extendedSectionCount = rows.length >= 0xff00;
   let position = 64;
   const entries = rows.map((row) => {
@@ -70,7 +101,7 @@ export const elfFixture = (
   for (let index = 1; index < entries.length; index++) {
     const { row, offset } = entries[index]!,
       h = table + index * 64;
-    result.writeUInt32LE(names.indexOf(Buffer.from(`${row.name}\0`)), h);
+    result.writeUInt32LE(nameOffset(row.name), h);
     result.writeUInt32LE(row.type ?? 1, h + 4);
     result.writeBigUInt64LE(row.flags ?? 0n, h + 8);
     result.writeBigUInt64LE(BigInt(offset), h + 24);
@@ -270,20 +301,95 @@ export const amdFixture = (
   ]);
 };
 /**
- * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
- * A single sequence is valid LZ4: separate sequences need an intervening match.
+ * MessagePack with `Map` keys kept as written: PAL `.registers` maps use
+ * unsigned register-offset keys, which plain objects cannot express.
  */
-const lz4LiteralBlock = (data: Buffer): Buffer => {
-  const head = [Math.min(data.length, 15) << 4];
-  if (data.length >= 15) {
-    let extra = data.length - 15;
-    while (extra >= 255) {
-      head.push(255);
-      extra -= 255;
-    }
-    head.push(extra);
-  }
-  return Buffer.concat([Buffer.from(head), data]);
+export const msgpackWithIntegerKeys = (value: unknown): Buffer => {
+  const header = (fix: number, wide: number, count: number) => {
+    if (count < 16) return Buffer.from([fix | count]);
+    const head = Buffer.alloc(3);
+    head[0] = wide;
+    head.writeUInt16BE(count, 1);
+    return head;
+  };
+  if (value instanceof Map)
+    return Buffer.concat([
+      header(0x80, 0xde, value.size),
+      ...[...value].flatMap(([key, item]) => [
+        msgpackWithIntegerKeys(key),
+        msgpackWithIntegerKeys(item),
+      ]),
+    ]);
+  if (Array.isArray(value))
+    return Buffer.concat([
+      header(0x90, 0xdc, value.length),
+      ...value.map(msgpackWithIntegerKeys),
+    ]);
+  if (value !== null && typeof value === "object")
+    return msgpackWithIntegerKeys(new Map(Object.entries(value)));
+  return Buffer.from(encode(value, { useBigInt64: true }));
+};
+/** Producer-shaped `amdpal.pipelines` metadata (LLVM AMDGPUUsage, AMDPAL). */
+export const amdPalMetadataFixture = (): Buffer =>
+  msgpackWithIntegerKeys({
+    "amdpal.version": [3, 0],
+    "amdpal.pipelines": [
+      {
+        ".name": "triangle",
+        ".type": "VsPs",
+        ".api": "Vulkan",
+        ".internal_pipeline_hash": [0x0123456789abcdefn, 0xfedcba9876543210n],
+        ".shaders": {
+          ".vertex": {
+            ".api_shader_hash": [1, 0],
+            ".hardware_mapping": [".vs"],
+          },
+          ".pixel": {
+            ".api_shader_hash": [2, 0],
+            ".hardware_mapping": [".ps"],
+          },
+        },
+        ".hardware_stages": {
+          ".vs": {
+            ".entry_point": "_amdgpu_vs_main",
+            ".entry_point_symbol": "main_vs",
+            ".sgpr_count": 20,
+            ".vgpr_count": 12,
+            ".wavefront_size": 32,
+            ".scratch_memory_size": 0,
+          },
+          ".ps": {
+            ".entry_point": "_amdgpu_ps_main",
+            ".sgpr_count": 10,
+            ".vgpr_count": 6,
+            ".lds_size": 256,
+          },
+        },
+        // SPI_SHADER_PGM_RSRC1_PS and _VS register offsets with raw values.
+        ".registers": new Map([
+          [0x2c0a, 0x002c0041],
+          [0x2c4a, 0x002c0083],
+        ]),
+      },
+    ],
+  });
+/**
+ * A minimal AMDGPU ELF64 code object for gfx1030 (EF_AMDGPU_MACH 0x36) with
+ * the given EI_OSABI and an optional NT_AMDGPU_METADATA note.
+ */
+export const amdAbiFixture = (
+  osAbi: number,
+  metadata: Buffer | null,
+): Buffer => {
+  const bytes = elfFixture(
+    224,
+    metadata === null
+      ? []
+      : [{ name: ".note", type: 7, bytes: amdDescriptorNoteFixture(metadata) }],
+  );
+  bytes[7] = osAbi;
+  bytes.writeUInt32LE(0x36, 48);
+  return bytes;
 };
 export const cudaFixture = (
   compression: "none" | "zstd" | "lz4" | "legacy" = "none",
@@ -340,21 +446,33 @@ export const cudaFixture = (
 export const hipFixture = (
   payload = amdFixture(),
   targetId = "hipv4-amdgcn-amd-amdhsa--gfx900",
+  siblings: readonly { readonly id: string; readonly bytes: Buffer }[] = [],
 ): Buffer => {
-  const ids = ["host-x86_64-unknown-linux", targetId];
-  const headers = ids.map((id) => Buffer.alloc(24 + Buffer.byteLength(id)));
-  const start = 32 + headers.reduce((total, row) => total + row.length, 0);
-  for (let index = 0; index < headers.length; index++) {
+  const entries = [
+    { id: "host-x86_64-unknown-linux", bytes: Buffer.alloc(0) },
+    { id: targetId, bytes: payload },
+    ...siblings,
+  ];
+  const headers = entries.map(({ id }) =>
+    Buffer.alloc(24 + Buffer.byteLength(id)),
+  );
+  let offset = 32 + headers.reduce((total, row) => total + row.length, 0);
+  for (const [index, { id, bytes }] of entries.entries()) {
     const row = headers[index]!;
-    row.writeBigUInt64LE(BigInt(start));
-    row.writeBigUInt64LE(index === 0 ? 0n : BigInt(payload.length), 8);
-    row.writeBigUInt64LE(BigInt(Buffer.byteLength(ids[index]!)), 16);
-    row.write(ids[index]!, 24);
+    row.writeBigUInt64LE(BigInt(offset));
+    row.writeBigUInt64LE(BigInt(bytes.length), 8);
+    row.writeBigUInt64LE(BigInt(Buffer.byteLength(id)), 16);
+    row.write(id, 24);
+    offset += bytes.length;
   }
   const head = Buffer.alloc(32);
   head.write("__CLANG_OFFLOAD_BUNDLE__");
-  head.writeBigUInt64LE(2n, 24);
-  return Buffer.concat([head, ...headers, payload]);
+  head.writeBigUInt64LE(BigInt(entries.length), 24);
+  return Buffer.concat([
+    head,
+    ...headers,
+    ...entries.map(({ bytes }) => bytes),
+  ]);
 };
 /** Representation recognition only; these bytes do not establish valid LLVM IR. */
 export const llvmBitcodeFixture = (wrapped = false): Buffer => {

@@ -10,6 +10,8 @@ import { pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { readClientVersion } from "./verify/clients/version.mjs";
+import { receiptContext, publishReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -25,31 +27,17 @@ import {
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  hasDeepSeekFinalEvent,
+  hasDeepSeekSkillBody,
+} from "./verify/clients/deepseek-evidence.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const expectedFinal = "REA_CLIENT_COMPATIBILITY_OK";
-
-// The headless --json producer emits newline-delimited events and ends
-// the projection with exactly one final event carrying the full answer.
-function hasExpectedHeadlessFinal(stdout) {
-  let start = 0;
-  while (start < stdout.length) {
-    const end = stdout.indexOf("\n", start);
-    if (end === -1) return false;
-    let event;
-    try {
-      event = JSON.parse(stdout.slice(start, end));
-    } catch {
-      return false;
-    }
-    if (typeof event?.type !== "string") return false;
-    if (event.type === "final")
-      return end + 1 === stdout.length && event.text === expectedFinal;
-    start = end + 1;
-  }
-  return false;
-}
 
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
@@ -122,14 +110,9 @@ await withVerifierCleanup(async () => {
       },
     );
     await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
-    clientVersion = (
-      await commands.exec(command, ["--version"], {
-        env: environment,
-        cwd: workspace,
-        timeout: 30_000,
-        stdin: "pipe",
-      })
-    ).stdout.trim();
+    clientVersion = await readClientVersion(commands, command, environment, {
+      cwd: workspace,
+    });
     const runRea = async (args, artifact) => {
       const result = await commands.exec(
         process.execPath,
@@ -202,34 +185,13 @@ await withVerifierCleanup(async () => {
         const toolMessages = (body.messages ?? []).filter(
           (message) => message.role === "tool",
         );
-        skillLoaded ||= toolMessages.some((message) => {
-          if (
-            typeof message.content !== "string" ||
-            expectedSkillBody === undefined
-          )
-            return false;
-          const open =
-            '<skill_content name="reverse-engineer-anything">\n<skill_resources>\n';
-          const start = message.content.indexOf(open);
-          if (start < 0) return false;
-          const resourcesStart = start + open.length;
-          const instructions = `\n</skill_resources>\n\n<skill_instructions>\n${expectedSkillBody}\n</skill_instructions>\n</skill_content>`;
-          const resourcesEnd = message.content.indexOf(
-            instructions,
-            resourcesStart,
+        skillLoaded ||=
+          expectedSkillBody !== undefined &&
+          hasDeepSeekSkillBody(
+            toolMessages,
+            dirname(skillPath),
+            expectedSkillBody,
           );
-          if (resourcesEnd < 0) return false;
-          const expectedPath = dirname(skillPath)
-            .replaceAll("&", "&amp;")
-            .replaceAll("<", "&lt;")
-            .replaceAll(">", "&gt;");
-          const resources = message.content.slice(resourcesStart, resourcesEnd);
-          return (
-            !resources.includes("</skill_content>") &&
-            !resources.includes("</skill_resources>") &&
-            resources.includes(expectedPath)
-          );
-        });
         for (const message of toolMessages) {
           const found = findClientResult(
             message.content,
@@ -249,17 +211,8 @@ await withVerifierCleanup(async () => {
           finalSeen = true;
           return { role: "assistant", content: expectedFinal };
         }
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_${requestIndex}`, name, args);
         if (!skillRequested) {
           assert(tools.some((tool) => tool.name === "skill"));
           skillRequested = true;
@@ -385,10 +338,13 @@ await withVerifierCleanup(async () => {
           .catch((cause) => {
             const stdout = cause?.snapshot?.stdout;
             if (stdout !== undefined && stdout.bytes === stdout.observedBytes)
-              clientFinalSeen = hasExpectedHeadlessFinal(stdout.text);
+              clientFinalSeen = hasDeepSeekFinalEvent(
+                stdout.text,
+                expectedFinal,
+              );
             throw cause;
           });
-        clientFinalSeen = hasExpectedHeadlessFinal(result.stdout);
+        clientFinalSeen = hasDeepSeekFinalEvent(result.stdout, expectedFinal);
         return result;
       },
       {
@@ -436,13 +392,7 @@ await withVerifierCleanup(async () => {
       lifecycle,
       passed: passed && reason === undefined,
       interruption: reason?.message,
-      artifacts: lab,
-      runtimeRoot,
-      host: {
-        platform: process.platform,
-        architecture: process.arch,
-        node: process.versions.node,
-      },
+      ...receiptContext(lab, runtimeRoot),
       modelFixture:
         "loopback custom OpenAI-compatible adapter; no live DeepSeek provider claim",
       modelContextWindow: 1000000,
@@ -460,15 +410,6 @@ await withVerifierCleanup(async () => {
       fixtureFailure: fixture?.failure,
       verifier: completed,
     };
-    const publishReceipt = () =>
-      withVerifierCleanup(
-        () =>
-          writeFile(
-            join(lab, "receipt.json"),
-            JSON.stringify(receipt, null, 2),
-          ),
-        [() => console.log(JSON.stringify(receipt))],
-      );
     await withVerifierCleanup(() => {
       if (!receipt.passed) return;
       try {
@@ -477,7 +418,7 @@ await withVerifierCleanup(async () => {
         receipt.passed = false;
         throw cause;
       }
-    }, [publishReceipt]);
+    }, [() => publishReceipt(receipt)]);
   },
   () => {
     const reason = commands.finish();

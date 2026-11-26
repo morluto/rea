@@ -20,6 +20,7 @@ import {
   verifyHopperSearch,
   verifyHopperRegexIsolation,
 } from "./real-hopper-search.mjs";
+import { completeEvidenceCliArguments } from "./complete-evidence.mjs";
 
 const dispatcher = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 
@@ -228,6 +229,7 @@ export async function verifyHopperBoundaryContracts(
     );
     assert.equal(await call("address_name", { address }), renamed);
     const matches = await call("search_procedures", {
+      detail: "complete",
       pattern: renamed,
       case_sensitive: true,
     });
@@ -250,7 +252,7 @@ export async function verifyHopperBoundaryContracts(
       true,
     );
     assert.equal(
-      await call("procedure_address", { procedure: "add" }),
+      await call("procedure_address", { detail: "complete", procedure: "add" }),
       address,
     );
     assert.equal(
@@ -262,7 +264,10 @@ export async function verifyHopperBoundaryContracts(
       address,
     );
     assert.equal(
-      await call("procedure_address", { procedure: address.slice(2) }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: address.slice(2),
+      }),
       address,
     );
 
@@ -480,7 +485,10 @@ export async function verifyHopperLifecycleAndCli(
     });
     await call("open_binary", { path: primary });
     const query = "REA_C_LEAF __rea_missing_phrase__";
-    const expectedTrace = await call("trace_feature", { query });
+    const expectedTrace = await call("trace_feature", {
+      detail: "complete",
+      query,
+    });
     assert.deepEqual(expectedTrace.matches, []);
     await call("close_binary");
 
@@ -505,26 +513,30 @@ export async function verifyHopperLifecycleAndCli(
     assert.deepEqual(evidence.normalized_result, expected);
     const traced = await runCli([
       dispatcher,
-      "trace",
-      primary,
-      query,
-      "--provider",
-      "hopper",
-      "--format",
-      "json",
+      ...(await completeEvidenceCliArguments([
+        "trace",
+        primary,
+        query,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ])),
     ]);
     const traceEvidence = JSON.parse(traced.stdout);
     assert.equal(traceEvidence.subject.local_path, primary);
     assert.deepEqual(traceEvidence.normalized_result, expectedTrace);
     const analyzed = await runCli([
       dispatcher,
-      "function",
-      primary,
-      entry.value,
-      "--provider",
-      "hopper",
-      "--format",
-      "json",
+      ...(await completeEvidenceCliArguments([
+        "function",
+        primary,
+        entry.value,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ])),
     ]);
     assert.deepEqual(
       JSON.parse(analyzed.stdout).normalized_result,
@@ -548,13 +560,15 @@ export async function verifyHopperLifecycleAndCli(
       await call("close_binary");
       const analyzed = await runCli([
         dispatcher,
-        "function",
-        objc,
-        delegate.address,
-        "--provider",
-        "hopper",
-        "--format",
-        "json",
+        ...(await completeEvidenceCliArguments([
+          "function",
+          objc,
+          delegate.address,
+          "--provider",
+          "hopper",
+          "--format",
+          "json",
+        ])),
       ]);
       assert.deepEqual(JSON.parse(analyzed.stdout).normalized_result, expected);
       cliTerminalFunctionParity = true;
@@ -615,7 +629,10 @@ const verifyBatchCancellation = async (client, options, procedures) => {
     client.callTool(
       {
         name: "batch_decompile",
-        arguments: { addresses: procedures.map((item) => item.address) },
+        arguments: {
+          detail: "complete",
+          addresses: procedures.map((item) => item.address),
+        },
       },
       {
         ...options,
@@ -634,7 +651,10 @@ const verifyBatchCancellation = async (client, options, procedures) => {
   );
   assert.ok(cancelled, "cancellation did not follow a real Hopper response");
   const recovered = requireMcpEvidenceResult(
-    await client.callTool({ name: "list_procedures", arguments: {} }, options),
+    await client.callTool(
+      { name: "list_procedures", arguments: { detail: "complete" } },
+      options,
+    ),
     "list_procedures",
   );
   assert.deepEqual(recovered, procedures);

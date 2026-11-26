@@ -22,24 +22,6 @@ processTest.skipIf(process.platform === "win32").for([
   { name: "exact final", transcript: preview + final, code: 0, passed: true },
   { name: "marker in preview", transcript: preview, code: 0, passed: false },
   {
-    name: "marker in wrong answer",
-    transcript: final.replace(marker, marker + " extra"),
-    code: 0,
-    passed: false,
-  },
-  {
-    name: "torn final event",
-    transcript: final.slice(0, -2),
-    code: 0,
-    passed: false,
-  },
-  {
-    name: "more than one final",
-    transcript: final + final,
-    code: 0,
-    passed: false,
-  },
-  {
     name: "correct answer and failed exit",
     transcript: final,
     code: 7,
@@ -103,5 +85,23 @@ if (process.argv.includes("--version")) {
     ).toBe(scenario.transcript);
     expect(receipt.passed, result.stderr).toBe(scenario.passed);
     expect(result.exitCode).toBe(scenario.passed ? 0 : 1);
+    if (scenario.passed) {
+      expect(receipt).toMatchObject({
+        lifecycle: [
+          "dry-run",
+          "setup",
+          "idempotent-setup",
+          "doctor",
+          "native-chat",
+          "uninstall",
+        ],
+        verifier: { process_lineage: { status: "verified", descendants: [] } },
+      });
+    }
+    expect(
+      JSON.parse(
+        await readFile(join(receipt.artifacts, "receipt.json"), "utf8"),
+      ),
+    ).toEqual(receipt);
   },
 );

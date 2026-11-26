@@ -82,7 +82,13 @@ it("applies a caller budget before walking each table", () => {
     err({ kind: "budget", label: "DT_GNU_HASH symbol index", count: 9 }),
   );
   expect(budget(gnuTable([2], [0, 0, 0, 1]), 3)).toEqual(
-    err({ kind: "budget", label: "DT_GNU_HASH symbol table", count: 4 }),
+    err({
+      kind: "budget",
+      label: "DT_GNU_HASH symbol table",
+      count: 4,
+      // The chain walk stops at the budget, so 4 is a lower bound.
+      lowerBound: true,
+    }),
   );
 });
 

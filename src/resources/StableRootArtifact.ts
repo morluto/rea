@@ -87,7 +87,7 @@ export const openRootArtifact = async (
           )
         : primary instanceof NonRegularFileReadError
           ? new ArtifactReaderFailure(
-              "format",
+              "path",
               `Artifact root is not a regular file: ${path}`,
               { cause: primary },
             )

@@ -7,8 +7,10 @@ import { isAbsolute } from "node:path";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
-import { defaultKunaCacheDirectory } from "../filesystem/cacheDirectory.js";
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import {
+  defaultKunaCacheDirectory,
+  reaCacheLocationSettings,
+} from "../filesystem/cacheDirectory.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -109,6 +111,15 @@ export const kunaProjectDeadline = (
     configuration.projectTimeoutLaunchValid,
   );
 
+/** A literal Kuna cache setting bypasses all default-location inputs. */
+export const kunaCacheLocationSettings = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): readonly string[] =>
+  environment.REA_KUNA_CACHE_DIR === undefined
+    ? reaCacheLocationSettings(environment, platform)
+    : [];
+
 /** Why the configured environment cannot select a Kuna installation. */
 export interface KunaConfigurationFailure {
   readonly code: "not_configured" | "open_options_invalid" | "unsupported_host";
@@ -183,7 +194,7 @@ export const readKunaConfiguration = (
 ): Result<KunaConfiguration, KunaConfigurationFailure> => {
   const command = environment.REA_KUNA_COMMAND;
   if (command === undefined || command.length === 0)
-    return failure("not_configured", KUNA_COMMAND_REMEDIATION);
+    return failure("not_configured", "REA_KUNA_COMMAND is not set.");
   if (!isAbsolute(command))
     return failure(
       "open_options_invalid",
@@ -259,13 +270,7 @@ export const readKunaConfiguration = (
 
   return ok({
     command,
-    cacheRoot:
-      cacheRoot ??
-      defaultKunaCacheDirectory(
-        homeDirectoryFromEnvironment(environment, platform),
-        environment,
-        platform,
-      ),
+    cacheRoot: cacheRoot ?? defaultKunaCacheDirectory(environment, platform),
     cacheMaxBytes,
     projectTimeoutMs: projectTimeout.value.ms,
     projectTimeoutSource: projectTimeout.value.source,

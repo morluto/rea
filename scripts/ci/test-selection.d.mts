@@ -2,6 +2,7 @@ export type TestSelectionPlan =
   | {
       readonly version: 3;
       readonly mode: "full";
+      readonly shadowFiles?: readonly string[];
       readonly reason: string;
     }
   | {

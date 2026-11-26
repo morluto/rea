@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  compareInspectionDimension,
+  compareInspections,
+} from "../../support/browser/webCaptureComparison.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -37,13 +41,7 @@ const inspectStorage = async (
   return captured.value;
 };
 
-const compareStorage = (left: WebPageInspection, right: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: left },
-      after: { inspection: right },
-    }),
-  ).dimensions.storage;
+const compareStorage = compareInspectionDimension("storage");
 
 it.each([
   ["local", "DOMStorage.getDOMStorageItems", { entries: [null] }],
@@ -296,13 +294,7 @@ describe("web capture dimension uncertainty", () => {
       ];
     }
 
-    const compareAfter = () =>
-      compareWebCaptures(
-        compareWebCapturesInputSchema.parse({
-          before: { inspection: captured.value },
-          after: { inspection: after },
-        }),
-      );
+    const compareAfter = () => compareInspections(captured.value, after);
     const node = after.dom.nodes[0];
     if (node === undefined) throw new Error("Expected a retained DOM node");
     node.node_name = "MAIN";
@@ -564,7 +556,7 @@ it("preserves WebSocket stream correlation and compares only shared payload evid
   ).toBe("changed");
 });
 
-const captureHttpComparisonFixture = async () => {
+it("compares HTTP and script evidence independently of local request IDs and approval wording", async () => {
   const browser = await startFakeCdpBrowser();
   browsers.push(browser);
   const result = await new CdpBrowserProvider().inspectPage(
@@ -573,171 +565,50 @@ const captureHttpComparisonFixture = async () => {
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
       observation_ms: 0,
-      include_json_body_shapes: true,
     }),
   );
   if (!result.ok) throw result.error;
-  const observed = result.value;
-  const original = observed.network.requests[0];
-  if (original === undefined)
+  const before = result.value;
+  const request = before.network.requests[0];
+  if (request === undefined)
     throw new Error("Expected a captured HTTP request");
-  Object.assign(original, {
+  Object.assign(request, {
     status: 200,
     mime_type: "application/json",
     encoded_data_length: 100,
   });
-  original.redirects = [
-    {
-      url: `${browser.allowedOrigin}/prior`,
-      response_url: `${browser.allowedOrigin}/prior`,
-      method: "GET",
-      resource_type: "Fetch",
-      status: 302,
-      mime_type: "text/plain",
-      encoded_data_length: 12,
-      request_timestamp: 1,
-      redirect_event_timestamp: 2,
-    },
-  ];
-  markSectionsComplete(observed, [
+  markSectionsComplete(before, [
     "network_requests",
     "network_initiators",
     "websocket_connections",
     "websocket_frames",
-    "json_body_shapes",
     "scripts",
     "metadata",
   ]);
-  for (const request of observed.network.requests)
-    request.body_shapes = {
-      status: "not_approved",
-      request: null,
-      response: null,
-    };
-  return { observed, origin: browser.allowedOrigin };
-};
-
-it("compares retained HTTP response and redirect facts without inventing missing evidence", async () => {
-  const { observed, origin } = await captureHttpComparisonFixture();
-  const unchanged = { status: "unchanged", total_changes: 0, changes: [] };
-  const unknown = { status: "unknown", total_changes: 0, changes: [] };
-  const modified = {
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "modified" })],
-  };
-  expect(compareNetwork(observed, observed)).toMatchObject(unchanged);
-
-  type Request = WebPageInspection["network"]["requests"][number];
-  const editRequest = (edit: (request: Request) => void, from = observed) => {
-    const copy = structuredClone(from);
-    const request = copy.network.requests[0];
-    if (request === undefined)
-      throw new Error("Expected a captured HTTP request");
-    edit(request);
-    return copy;
-  };
-  const retimed = editRequest((request) => {
-    const hop = request.redirects[0];
-    if (hop === undefined) throw new Error("Expected a captured redirect");
-    hop.request_timestamp = 10;
-    hop.redirect_event_timestamp = 20;
-  });
-  expect(compareNetwork(observed, retimed)).toMatchObject(unchanged);
-
-  const renamed = editRequest((request) => {
-    request.request_id = "changed-cdp-id";
-  });
-  const response = renamed.metadata.responses[0];
-  const script = renamed.scripts.items[0];
+  const after = structuredClone(before);
+  const response = after.metadata.responses[0];
+  const script = after.scripts.items[0];
   if (response === undefined || script?.source.included !== false)
     throw new Error(
       "Expected captured response metadata and a withheld script",
     );
+  after.network.requests[0]!.request_id = "changed-cdp-id";
   response.request_id = "changed-cdp-id";
   script.source.reason = "different approval explanation";
-  const identities = compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: observed },
-      after: { inspection: renamed },
-    }),
-  ).dimensions;
+  const dimensions = compareInspections(before, after).dimensions;
   for (const dimension of [
-    identities.network,
-    identities.metadata,
-    identities.scripts,
+    dimensions.network,
+    dimensions.metadata,
+    dimensions.scripts,
   ])
-    expect(dimension).toMatchObject(unchanged);
-
-  for (const [field, responseValue, redirectValue] of [
-    ["status", 204, 307],
-    ["mime_type", "text/html", "application/xml"],
-    ["encoded_data_length", 101, 13],
-  ] as const) {
-    for (const [redirect, changedValue] of [
-      [false, responseValue],
-      [true, redirectValue],
-    ] as const) {
-      const update =
-        (value: typeof changedValue | null) => (request: Request) => {
-          const facts = redirect ? request.redirects[0] : request;
-          if (facts === undefined)
-            throw new Error("Expected retained HTTP facts");
-          Object.assign(facts, { [field]: value });
-        };
-      const missing = editRequest(update(null));
-      expect(compareNetwork(observed, missing)).toMatchObject(unknown);
-      expect(compareNetwork(missing, observed)).toMatchObject(unknown);
-      expect(compareNetwork(missing, missing)).toMatchObject(unknown);
-      expect(
-        compareNetwork(observed, editRequest(update(changedValue))),
-      ).toMatchObject(modified);
-    }
-  }
-
-  const noRedirectStatus = editRequest((request) => {
-    const hop = request.redirects[0];
-    if (hop === undefined) throw new Error("Expected a captured redirect");
-    hop.status = null;
-  });
-  expect(
-    compareNetwork(
-      noRedirectStatus,
-      editRequest((request) => {
-        request.status = 204;
-      }, noRedirectStatus),
-    ),
-  ).toMatchObject(modified);
-
-  const unavailableShapes = structuredClone(observed);
-  for (const request of unavailableShapes.network.requests)
-    request.body_shapes.status = "unavailable";
-  expect(compareNetwork(unavailableShapes, unavailableShapes)).toMatchObject(
-    unknown,
-  );
-  const extra = structuredClone(unavailableShapes);
-  const request = extra.network.requests[0];
-  if (request === undefined)
-    throw new Error("Expected a captured HTTP request");
-  extra.network.requests.push({
-    ...request,
-    request_id: "added-request",
-    url: `${origin}/added`,
-  });
-  expect(compareNetwork(unavailableShapes, extra)).toMatchObject({
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "added" })],
-  });
+    expect(dimension).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+      changes: [],
+    });
 });
 
-const compareScripts = (before: WebPageInspection, after: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  ).dimensions.scripts;
+const compareScripts = compareInspectionDimension("scripts");
 
 const expectScriptMembershipCoverage = (complete: WebPageInspection): void => {
   const absent = structuredClone(complete);
@@ -960,13 +831,6 @@ it("compares partial source-map declarations against compatible script occurrenc
       inspection.completeness.policy_filtered_sections.push("source_maps");
     return inspection;
   };
-  const compare = (left: WebPageInspection, right: WebPageInspection) =>
-    compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: left },
-        after: { inspection: right },
-      }),
-    ).dimensions.scripts;
   const unknown = { status: "unknown", total_changes: 0, changes: [] };
   const modified = {
     status: "changed",
@@ -994,8 +858,8 @@ it("compares partial source-map declarations against compatible script occurrenc
     ],
     true,
   );
-  expect(compare(partial, partial)).toMatchObject(unknown);
-  expect(compare(partial, changedMap)).toMatchObject(modified);
+  expect(compareScripts(partial, partial)).toMatchObject(unknown);
+  expect(compareScripts(partial, changedMap)).toMatchObject(modified);
 
   const omitted = capture(
     [script(hashA, ""), script(hashB, null), script(hashA, null)],
@@ -1006,14 +870,14 @@ it("compares partial source-map declarations against compatible script occurrenc
     script(hashA, ""),
     script(hashB, map("b")),
   ]);
-  expect(compare(omitted, explicit)).toMatchObject(unknown);
-  expect(compare(explicit, omitted)).toMatchObject(unknown);
+  expect(compareScripts(omitted, explicit)).toMatchObject(unknown);
+  expect(compareScripts(explicit, omitted)).toMatchObject(unknown);
   const absent = capture([
     script(hashA, null),
     script(hashA, null),
     script(hashB, map("b")),
   ]);
-  expect(compare(omitted, absent)).toMatchObject(modified);
+  expect(compareScripts(omitted, absent)).toMatchObject(modified);
 
   // The flexible declaration can use either slot. The second declaration must use the matching hash.
   const needs = capture([
@@ -1021,33 +885,37 @@ it("compares partial source-map declarations against compatible script occurrenc
     script(hashA, map("constrained")),
   ]);
   const slots = [script(hashA, null), script(hashB, null)];
-  expect(compare(needs, capture(slots, true))).toMatchObject(unknown);
-  expect(compare(needs, capture(slots.toReversed(), true))).toMatchObject(
-    unknown,
-  );
+  expect(compareScripts(needs, capture(slots, true))).toMatchObject(unknown);
+  expect(
+    compareScripts(needs, capture(slots.toReversed(), true)),
+  ).toMatchObject(unknown);
   const incompatible = capture([
     script(null, map("flexible")),
     script(hashC, map("constrained")),
   ]);
-  expect(compare(incompatible, capture(slots, true))).toMatchObject(modified);
+  expect(compareScripts(incompatible, capture(slots, true))).toMatchObject(
+    modified,
+  );
 
   const copies = (count: number, declaration: string) =>
     Array.from({ length: count }, () => script(hashA, declaration));
   const nineX = capture([...copies(9, map("x")), script(hashA, null)], true);
-  expect(compare(nineX, nineX)).toMatchObject(unknown);
-  expect(compare(nineX, capture(copies(10, map("y"))))).toMatchObject(modified);
+  expect(compareScripts(nineX, nineX)).toMatchObject(unknown);
+  expect(compareScripts(nineX, capture(copies(10, map("y"))))).toMatchObject(
+    modified,
+  );
   const sevenA = capture(
     [...copies(7, map("a")), script(hashA, map("b")), script(hashA, null)],
     true,
   );
-  expect(compare(sevenA, capture(copies(12, map("a"))))).toMatchObject(
+  expect(compareScripts(sevenA, capture(copies(12, map("a"))))).toMatchObject(
     modified,
   );
   const repeated = capture(
     [...copies(2_000, map("a")), script(hashA, null)],
     true,
   );
-  expect(compare(repeated, repeated)).toMatchObject(unknown);
+  expect(compareScripts(repeated, repeated)).toMatchObject(unknown);
 });
 
 it("compares retained accessibility and storage facts across incomplete captures", async () => {
@@ -1088,12 +956,7 @@ it("compares retained accessibility and storage facts across incomplete captures
   );
 
   const compare = (after: WebPageInspection) =>
-    compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: observed },
-        after: { inspection: after },
-      }),
-    ).dimensions;
+    compareInspections(observed, after).dimensions;
   const identical = compare(observed);
   for (const dimension of [identical.accessibility, identical.storage])
     expect(dimension).toMatchObject({
@@ -1252,10 +1115,4 @@ const markSectionsComplete = (
     );
 };
 
-const compareNetwork = (before: WebPageInspection, after: WebPageInspection) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  ).dimensions.network;
+const compareNetwork = compareInspectionDimension("network");

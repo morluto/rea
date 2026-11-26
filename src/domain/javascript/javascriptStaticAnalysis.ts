@@ -1,9 +1,9 @@
+import { stringValue } from "./javascriptAstValues.js";
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   failedJavaScriptStaticAnalysis,
   detectVendors,
   registrationKey,
-  stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
@@ -72,6 +72,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
+  type JavaScriptReceiverIndex,
 } from "./javascriptSemanticAnalysis.js";
 import {
   commonJsWrapperRedeclarationCount,
@@ -155,21 +156,29 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
   };
 };
 
-/** Static analysis that yields during its source traversal; results are unchanged. */
+/**
+ * Static analysis that yields during its source traversal; results are
+ * unchanged. A caller that also runs the semantic phase on this file passes
+ * the `lexicalIndex` it built for `file.program` with this precision and
+ * allowance, so both phases read one index.
+ */
 export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
   precision?: JavaScriptSemanticPrecisionInput,
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+  lexicalIndex?: JavaScriptReceiverIndex,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
-  const index = yield* indexJavaScriptBindingsWithReceiversSteps(
-    file.program,
-    undefined,
-    precision,
-    memberMutationAllowance,
-  );
+  const index =
+    lexicalIndex ??
+    (yield* indexJavaScriptBindingsWithReceiversSteps(
+      file.program,
+      undefined,
+      precision,
+      memberMutationAllowance,
+    ));
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
   if (hasPossibleCommonJsDelegateWrite(bindings))
@@ -274,7 +283,7 @@ const finalizeStaticAnalysis = (
   const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
   const electronObserved = referencesElectronModule(accumulator.references);
-  const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const resourceLimits = [...bindings.observations.valueResourceLimits].sort();
   const controls = semanticPrecisionControls(
     resourceLimits,
     accumulator.electronCallPathLimits ?? [],
@@ -303,7 +312,7 @@ const finalizeStaticAnalysis = (
         ...(accumulator.unknownFindings > 0
           ? ["dynamic-findings" as const]
           : []),
-        ...(bindings.returnedReferenceWidenings.size > 0
+        ...(bindings.observations.returnedReferenceWidenings.size > 0
           ? ["returned-reference-widening" as const]
           : []),
         ...(typeOnlySideEffect
@@ -332,10 +341,10 @@ const finalizeStaticAnalysis = (
   };
   const limitations = [
     ...(loaderCondition === undefined ? [] : [loaderCondition]),
-    ...(bindings.valueResourceLimits.has("alias-selections")
+    ...(bindings.observations.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections", bindings.precision)]
       : []),
-    ...(bindings.returnedReferenceWidenings.size > 0
+    ...(bindings.observations.returnedReferenceWidenings.size > 0
       ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
       : []),
     ...(accumulator.electronCallPaths?.length

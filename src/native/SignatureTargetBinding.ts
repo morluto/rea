@@ -288,6 +288,33 @@ const snapshotIO = async <T>(
   }
 };
 
+const SIGNATURE_COPY_CHUNK_BYTES = 1024 * 1024;
+
+const writeAllSignatureBytes = async (
+  target: BinaryTarget,
+  snapshot: FileHandle,
+  chunk: Buffer,
+  length: number,
+  fileOffset: number,
+  signal?: AbortSignal,
+): Promise<void> => {
+  let written = 0;
+  while (written < length) {
+    assertRegularFileActive(signal);
+    const { bytesWritten } = await snapshotIO(target, "write", () =>
+      snapshot.write(chunk, written, length - written, fileOffset + written),
+    );
+    assertRegularFileActive(signal);
+    if (bytesWritten === 0)
+      throw snapshotFailure(
+        target,
+        "write",
+        "Signature snapshot write made no progress",
+      );
+    written += bytesWritten;
+  }
+};
+
 const copySignatureBytes = async (
   target: BinaryTarget,
   source: { readonly file: FileHandle; readonly stat: BigIntStats },
@@ -307,9 +334,12 @@ const copySignatureBytes = async (
       }),
     );
   const hash = createHash("sha256");
-  const chunk = Buffer.alloc(64 * 1024);
+  const chunk =
+    size === 0
+      ? null
+      : Buffer.allocUnsafe(Math.min(SIGNATURE_COPY_CHUNK_BYTES, size));
   let position = 0;
-  while (position < size) {
+  while (position < size && chunk !== null) {
     assertRegularFileActive(signal);
     const { bytesRead } = await source.file.read(
       chunk,
@@ -324,10 +354,17 @@ const copySignatureBytes = async (
         target.path,
         `Signature target was truncated while hashing: ${target.path}`,
       );
-    const bytes = chunk.subarray(0, bytesRead);
+    const bytes =
+      bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead);
     hash.update(bytes);
-    // writeFile retries short writes; memory remains bounded to this chunk.
-    await snapshotIO(target, "write", () => snapshot.writeFile(bytes));
+    await writeAllSignatureBytes(
+      target,
+      snapshot,
+      chunk,
+      bytesRead,
+      position,
+      signal,
+    );
     position += bytesRead;
   }
   return hash.digest("hex");

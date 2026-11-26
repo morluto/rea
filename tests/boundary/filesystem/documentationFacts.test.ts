@@ -54,7 +54,7 @@ describe("literal tool counts", () => {
     ]);
   });
 
-  it("invalidates the cached documentation check for every scanned root", async () => {
+  it("invalidates the cached documentation check for prose and directly inspected files", async () => {
     const turbo = JSON.parse(
       await readFile(join(root, "turbo.json"), "utf8"),
     ) as {
@@ -74,7 +74,14 @@ describe("literal tool counts", () => {
         : [`${start}/nested/page.md`, `${start}/nested/page.html`],
     );
     expect(samples.every(isLivingProsePath)).toBe(true);
-    expect(samples.filter((path) => !cached(path))).toEqual([]);
+    const directlyInspected = [
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+      ".github/pull_request_template.md",
+      "website/locales/languages.json",
+    ];
+    expect(
+      [...samples, ...directlyInspected].filter((path) => !cached(path)),
+    ).toEqual([]);
   });
 });
 

@@ -11,7 +11,6 @@ import type {
   JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import { collectJavaScriptSemanticPromises } from "./javascriptSemanticPromises.js";
-import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
@@ -44,7 +43,6 @@ type DerivedSemanticAnalysis = Pick<
   | "eventOperations"
   | "frontiers"
   | "functionFingerprints"
-  | "objectOperations"
   | "promiseOperations"
   | "requestOperations"
   | "resourceOperations"
@@ -96,12 +94,6 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     callables,
   );
   yield;
-  const objectOperations = collectJavaScriptSemanticObjects(
-    program,
-    state,
-    callables,
-  );
-  yield;
   const assignmentFlows = yield* collectAssignmentFlowsSteps(
     program,
     state,
@@ -140,7 +132,6 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     ...childProcesses,
     ...dataEffects,
     resourceOperations,
-    objectOperations,
     functionFingerprints,
   };
 }
@@ -199,7 +190,7 @@ function* collectExpressionFlowsSteps(
             value.status === "unknown" &&
             value.resourceLimit === "primitive-bytes"
           )
-            state.valueResourceLimits.add("primitive-bytes");
+            state.observations.valueResourceLimits.add("primitive-bytes");
         }
       }
       if (
@@ -277,7 +268,7 @@ function* collectExpressionFlowsSteps(
         literal?.status === "unknown" &&
         literal.resourceLimit === "primitive-bytes"
       )
-        state.valueResourceLimits.add("primitive-bytes");
+        state.observations.valueResourceLimits.add("primitive-bytes");
       operands.push({
         location: range(operand),
         conditional,

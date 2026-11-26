@@ -3,13 +3,14 @@ import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics/nativeInitializers.js";
 import {
   elf64PieInitializers,
   machoInitializerSymbolKinds,
 } from "../../../src/native/initializers/NativeInitializers.fixture.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("native initializer stable filesystem boundary", () => {
   it.each([
@@ -44,30 +45,18 @@ describe("native initializer stable filesystem boundary", () => {
     },
   );
 
-  it("reports non-file and malformed selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-native-init-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elf64PieInitializers());
-    await writeFile(malformed, Buffer.from("not an executable image"));
     await symlink(path, alias);
     const service = createNativeInitializersService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing"), "invalid_value"],
-      [join(path, "child"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_native_initializers",
-        issues: [{ path: ["path"], reason, message: expect.any(String) }],
-      });
-    }
+    await expectFileSelectionErrors(service, "inspect_native_initializers", {
+      root,
+      alias,
+      path,
+    });
   });
 
   it("reads a stable file and returns typed budget and cancellation failures", async () => {

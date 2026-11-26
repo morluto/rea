@@ -8,10 +8,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import {
-  AnalysisUnsupportedTargetError,
-  cancelledBy,
-} from "../domain/analysisErrorCore.js";
+import { cancelledBy, unsupportedTarget } from "../domain/analysisErrorCore.js";
 import { resolveGhidraComImport } from "./GhidraComImport.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -33,7 +30,12 @@ import {
   ghidraPowerPcLanguage,
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
-import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import {
+  GHIDRA_RAW_ENTRY_CONTEXT,
+  ghidraRawBinaryLanguage,
+  ghidraVariantProcessorLabels,
+} from "./GhidraRawBinaryLanguage.js";
+import { isLegacyRawLoad, rawLoadIdentity } from "../domain/rawBinary.js";
 import {
   GHIDRA_GAMECUBE_DOL_LANGUAGE,
   ghidraDolLanguage,
@@ -145,9 +147,10 @@ export const resolveGhidraAnalysisProfile = async (
   if (mipsReason !== null)
     return Promise.resolve(
       err(
-        new AnalysisUnsupportedTargetError(
+        unsupportedTarget(
           "resolve_analysis_profile",
           target.path,
+          target.format,
           mipsReason,
         ),
       ),
@@ -216,7 +219,16 @@ export const resolveGhidraAnalysisProfile = async (
           ),
         ),
       );
-    const language = ghidraRawBinaryLanguage(target.architecture);
+    const { rawLoad } = target;
+    const language = ghidraRawBinaryLanguage(
+      target.architecture,
+      rawLoad.architectureVariant,
+    );
+    // A legacy-equivalent load commits exactly the parameters it always did.
+    const identity = rawLoadIdentity(rawLoad);
+    const processorLabels = ghidraVariantProcessorLabels(
+      rawLoad.architectureVariant,
+    );
     return Promise.resolve(
       ok({
         profile: createProfile({
@@ -225,7 +237,22 @@ export const resolveGhidraAnalysisProfile = async (
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId,
           language_selection: "caller-supplied",
-          entry_point: target.entryPoint,
+          // A legacy load commits its entry, which is also its base; any other
+          // load commits raw_load, which holds both.
+          ...(identity === undefined
+            ? { entry_point: rawLoad.entryPoint }
+            : { raw_load: identity }),
+          // How Ghidra seeds the entry's instruction set; raw_load records only
+          // the mode.
+          ...(rawLoad.entryIsaMode === undefined
+            ? {}
+            : {
+                entry_context:
+                  GHIDRA_RAW_ENTRY_CONTEXT[rawLoad.entryIsaMode].commitment,
+              }),
+          ...(processorLabels === undefined
+            ? {}
+            : { processor_labels: processorLabels }),
           ...analyzerParameters,
         }),
       }),
@@ -456,7 +483,17 @@ const createGhidraProfile = (
             compiler_spec_id: parameters.compiler_spec_id ?? null,
             load_segment: parameters.load_segment ?? null,
             address_coordinates: parameters.address_coordinates ?? null,
-            entry_point: parameters.entry_point ?? null,
+            // Resolved values only. A legacy raw load maps file offset 0 at its
+            // entry, so its entry is its base. Any other raw load maps at
+            // base_address, and its entry address and how it was chosen move
+            // no coordinates.
+            ...(target.format === "raw-binary" &&
+            !isLegacyRawLoad(target.rawLoad)
+              ? { base_address: target.rawLoad.baseAddress }
+              : { entry_point: parameters.entry_point ?? null }),
+            ...(parameters.entry_context === undefined
+              ? {}
+              : { entry_context: parameters.entry_context }),
           }),
         }
       : {}),

@@ -1,3 +1,7 @@
+import {
+  swiftFixtureEvidence,
+  swiftFixtureLocation,
+} from "./AppleSwiftReaders.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -140,10 +144,7 @@ it("preserves unsupported type-metadata tag reasons instead of reporting null", 
     readers: {
       u32: () => 0,
       relative: () => ({ kind: "null" }),
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
+      location: swiftFixtureLocation,
       evidence: () => [],
       executable: () => false,
       admit: () => true,
@@ -156,10 +157,7 @@ it("preserves unsupported type-metadata tag reasons instead of reporting null", 
       reason: "Unsupported Swift type metadata record tag 2",
     }),
     string: () => "unused",
-    location: (address) => ({
-      address: `0x${address.toString(16)}`,
-      file_offset: Number(address),
-    }),
+    location: swiftFixtureLocation,
     evidence: () => [],
     executable: () => false,
     admit: () => true,
@@ -196,17 +194,12 @@ it("preserves a required conformance pointer's unknown reason", () => {
     segments: [],
     readers: {
       u32: () => 0,
+      i32: () => 0,
       pointer: () => 0n,
       resolvePointer: () => ({ kind: "raw", target: 0n }),
       string: () => "unused",
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      targetLocation: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
+      location: swiftFixtureLocation,
+      targetLocation: swiftFixtureLocation,
       evidence: () => [],
       offset: (address) => Number(address),
     },
@@ -245,22 +238,8 @@ it("counts examined slots and reports an unresolved async slot", () => {
     readers: {
       u32: (address) => values.get(address) ?? 0,
       relative: () => ({ kind: "target", target: 0x400n }),
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      evidence: (address, description) => [
-        {
-          kind: "binary_metadata",
-          description,
-          location: {
-            address: `0x${address.toString(16)}`,
-            file_offset: Number(address),
-          },
-          artifact_path: "/fixture",
-          artifact_sha256: "a".repeat(64),
-        },
-      ],
+      location: swiftFixtureLocation,
+      evidence: swiftFixtureEvidence,
       executable: (address) => address === 0x400n,
       admit: () => true,
     },
@@ -366,32 +345,16 @@ it("returns a located issue for an emitted unresolved witness slot", () => {
     segments: [],
     readers: {
       u32: (address) => values.get(address) ?? 0,
+      i32: (address) => values.get(address) ?? 0,
       pointer: (address) => (address === 0x380n ? 0x200n : 0x900n),
       resolvePointer: (address) => ({
         kind: "raw",
         target: address === 0x380n ? 0x200n : 0x900n,
       }),
       string: (address) => (address === 0x600n ? "Proto" : "Widget"),
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      targetLocation: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      evidence: (address, description) => [
-        {
-          kind: "binary_metadata",
-          description,
-          location: {
-            address: `0x${address.toString(16)}`,
-            file_offset: Number(address),
-          },
-          artifact_path: "/fixture",
-          artifact_sha256: "a".repeat(64),
-        },
-      ],
+      location: swiftFixtureLocation,
+      targetLocation: swiftFixtureLocation,
+      evidence: swiftFixtureEvidence,
       offset: (address) => Number(address),
     },
     relative: (field) => ({
@@ -451,6 +414,7 @@ it("decodes a retroactive static witness slot when flags include retroactive bit
     ],
     readers: {
       u32: (address) => values.get(address) ?? 0,
+      i32: (address) => values.get(address) ?? 0,
       pointer: (address) => (address === 0x380n ? 0x200n : 0x900n),
       resolvePointer: (address) => ({
         kind: "raw",
@@ -458,26 +422,9 @@ it("decodes a retroactive static witness slot when flags include retroactive bit
           address === 0x2a0n ? 0x2b0n : address === 0x380n ? 0x200n : 0x900n,
       }),
       string: (address) => (address === 0x600n ? "Proto" : "Widget"),
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      targetLocation: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      evidence: (address, description) => [
-        {
-          kind: "binary_metadata",
-          description,
-          location: {
-            address: `0x${address.toString(16)}`,
-            file_offset: Number(address),
-          },
-          artifact_path: "/fixture",
-          artifact_sha256: "a".repeat(64),
-        },
-      ],
+      location: swiftFixtureLocation,
+      targetLocation: swiftFixtureLocation,
+      evidence: swiftFixtureEvidence,
       offset: (address) => Number(address),
     },
     relative: (field) => ({
@@ -539,32 +486,16 @@ it("retains partial coverage for retroactive conformance when conditional requir
     segments: [],
     readers: {
       u32: (address) => values.get(address) ?? 0,
+      i32: (address) => values.get(address) ?? 0,
       pointer: () => 0n,
       resolvePointer: (address) => ({
         kind: "raw",
         target: address === 0x2a0n ? 0x2b0n : 0x200n,
       }),
       string: (address) => (address === 0x600n ? "Proto" : "Widget"),
-      location: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      targetLocation: (address) => ({
-        address: `0x${address.toString(16)}`,
-        file_offset: Number(address),
-      }),
-      evidence: (address, description) => [
-        {
-          kind: "binary_metadata",
-          description,
-          location: {
-            address: `0x${address.toString(16)}`,
-            file_offset: Number(address),
-          },
-          artifact_path: "/fixture",
-          artifact_sha256: "a".repeat(64),
-        },
-      ],
+      location: swiftFixtureLocation,
+      targetLocation: swiftFixtureLocation,
+      evidence: swiftFixtureEvidence,
       offset: (address) => Number(address),
     },
     relative: (field) => ({

@@ -1,4 +1,5 @@
 import {
+  artifactFileCleanupError,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
@@ -354,19 +355,12 @@ export class KunaTargetCommands {
     try {
       return await this.#resources.run(work);
     } catch (cause: unknown) {
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        cause.cleanup !== undefined
-      ) {
-        const failure = new ProviderCleanupError(
-          KUNA_PROVIDER_ID,
-          cause.cleanup.resources,
-          { reason: cause.cleanup.reason },
-          { cause, operation },
-        );
-        bindArtifactFileCleanup(cause, failure);
-        return err(failure);
-      }
+      const fileCleanup = artifactFileCleanupError(
+        cause,
+        KUNA_PROVIDER_ID,
+        operation,
+      );
+      if (fileCleanup !== undefined) return err(fileCleanup);
       if (this.#closing && cause instanceof ArtifactReaderFailure)
         return err(cancelledBy(operation, carriedReason(cause)));
       throw cause;

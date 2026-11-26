@@ -13,9 +13,10 @@ import {
   renderCliCommandFailure,
 } from "../../../src/cli/argumentErrors.js";
 
-import { readCliOutputArguments } from "../../../src/cliOutput.js";
+import { readCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { renderedText } from "../../support/cli/renderedText.js";
 
 afterAll(() => disposeMdItInstance());
 
@@ -62,17 +63,11 @@ cliTest(
     const renderer = await createMarkdownRenderer(process.cwd(), {
       linkify: false,
     });
-    const visibleText = (node: DefaultTreeAdapterTypes.Node): string =>
-      node.nodeName === "#text" && "value" in node
-        ? node.value
-        : "childNodes" in node
-          ? node.childNodes.map(visibleText).join("")
-          : "";
     const renderedCells = (output: string): string[] => {
       const cells: string[] = [];
       const visit = (node: DefaultTreeAdapterTypes.Node): void => {
         if ("tagName" in node && node.tagName === "td") {
-          cells.push(visibleText(node));
+          cells.push(renderedText(node));
         } else if ("childNodes" in node) node.childNodes.forEach(visit);
       };
       visit(parseFragment(renderer.render(output)));
@@ -81,15 +76,16 @@ cliTest(
     expect(renderedCells(markdown.stdout)).toContain(message);
     expect(renderedCells(full.stdout)).toContain(message);
     expect(Number(count.stdout.trim())).toBe(
-      estimateTokenCount(markdown.stdout.trimEnd()),
+      estimateTokenCount(markdown.stdout),
     );
     expect(
-      visibleText(parseFragment(renderer.render(window.stdout))),
+      renderedText(parseFragment(renderer.render(window.stdout))),
     ).toContain("[truncated: showing tokens 0–20 of ");
     expect(window.stdout).toContain("nextOffset");
 
-    // A different parser error has a much longer enum. Compare the visible
-    // cell with the unmodified machine-readable diagnostic, not a subset.
+    // A different parser error echoes the pipe-containing input before a much
+    // longer choice list. Compare the visible cell with the unmodified
+    // machine-readable diagnostic, not a subset.
     const doctorArgs = ["doctor", "--client", "x|y"];
     const doctorMd = await cli.run({
       arguments: [...doctorArgs, "--format", "md"],
@@ -101,7 +97,8 @@ cliTest(
     expect(doctorJson.exitCode).toBe(1);
     const doctorMessage = JSON.parse(doctorJson.stdout).fieldErrors[0]
       .message as string;
-    expect(doctorMessage.split("|").length).toBeGreaterThan(2);
+    expect(doctorMessage).toContain("Unknown client 'x|y'.");
+    expect(doctorMessage.split(", ").length).toBeGreaterThan(2);
     expect(renderedCells(doctorMd.stdout)).toContain(doctorMessage);
   },
 );
@@ -230,14 +227,10 @@ it("retains upstream Markdown literal-cell protections after redaction", async (
   const renderer = await createMarkdownRenderer(process.cwd(), {
     linkify: false,
   });
-  const text = (node: DefaultTreeAdapterTypes.Node): string =>
-    node.nodeName === "#text" && "value" in node
-      ? node.value
-      : "childNodes" in node
-        ? node.childNodes.map(text).join("")
-        : "";
-  const rendered = text(parseFragment(renderer.render(md)));
-  const redactedRendered = text(parseFragment(renderer.render(redactedMd)));
+  const rendered = renderedText(parseFragment(renderer.render(md)));
+  const redactedRendered = renderedText(
+    parseFragment(renderer.render(redactedMd)),
+  );
   expect(rendered).toContain(value);
   expect(redactedRendered).not.toContain(secret);
   expect(redactedRendered).toContain("[REDACTED]");
