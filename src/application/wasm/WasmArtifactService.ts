@@ -1,12 +1,12 @@
 import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { constants as bufferConstants } from "node:buffer";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   createAnalysisExecutionEvidence,
 } from "../../domain/analysisObservation.js";
-import type { WasmArtifactPort } from "./WasmArtifactPort.js";
+import type { WasmArtifactPort } from "../../ports/wasm/WasmArtifactPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
@@ -55,6 +55,11 @@ export class WasmArtifactService {
     if (!input.ok) return input;
     const maximumPaths =
       input.value.max_artifact_paths ?? DEFAULT_WASM_ARTIFACT_PATHS;
+    // Each selection field is bounded alone, so the retry needs the larger.
+    const requiredPaths = Math.max(
+      input.value.glue_paths.length,
+      input.value.candidate_paths.length,
+    );
     for (const field of ["glue_paths", "candidate_paths"] as const) {
       if (input.value[field].length > maximumPaths)
         return err(
@@ -74,7 +79,17 @@ export class WasmArtifactService {
             },
             {
               retryable: false,
-              remediationAction: `Raise max_artifact_paths to at least ${String(input.value[field].length)} (maximum ${String(MAX_WASM_ARTIFACT_PATHS)}), or use --max-artifact-paths on the CLI; then retry the same selection. The value applies on the next inspection without restart. File and command byte budgets remain independent.`,
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_artifact_paths",
+                effective_value: maximumPaths,
+                unit: "count",
+                minimum: 1,
+                maximum: MAX_WASM_ARTIFACT_PATHS,
+                default_value: DEFAULT_WASM_ARTIFACT_PATHS,
+                applies_at: "next_call",
+                required_value: requiredPaths,
+              },
             },
           ),
         );
@@ -92,12 +107,7 @@ export class WasmArtifactService {
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const admission = requireAuthenticationHeadroom(
-      analysisExecutionEnvelopeForAdmission(
-        OPERATION,
-        input.value,
-        execution,
-        "observed",
-      ),
+      analysisExecutionEnvelopeForAdmission(OPERATION, input.value, execution),
       {
         operation: OPERATION,
         path: input.value.path,

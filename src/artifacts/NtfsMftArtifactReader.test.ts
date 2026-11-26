@@ -1,16 +1,23 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { truncate, writeFile } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
-import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+
+// The constructed FILE records intentionally use the 1024-byte default.
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import {
+  ArtifactFileSource,
+  translateArtifactFailure,
+} from "../resources/index.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 /** A 1 KiB FILE record whose update sequence array covers both sectors. */
 const recordBytes = (options: {
@@ -54,12 +61,8 @@ const recordBytes = (options: {
   return record;
 };
 
-const writeMft = async (name: string, bytes: Buffer): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-ntfs-mft-");
-  const path = join(directory, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const writeMft = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-ntfs-mft-", name, bytes);
 
 it("reports a $MFT stream's record headers as the root occurrence", async () => {
   const inventory = await scanCanonicalArtifactInventory(
@@ -212,7 +215,7 @@ it("retries a shared preparation cancelled by another traversal", async () => {
     const cancelledResult = expect(cancelled).rejects.toMatchObject({
       reason: "cancelled",
     });
-    await started;
+    await awaitAcknowledgement(started, cancelled, "NTFS traversal read");
     const other = reader.entries()[Symbol.asyncIterator]().next();
     controller.abort("cancelled first traversal");
     await cancelledResult;
@@ -221,6 +224,22 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   } finally {
     controller.abort();
     spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports cancellation during MFT coverage", async () => {
+  const path = await writeMft("$MFT", recordBytes({}));
+  const reader = new NtfsMftArtifactReader(path);
+  const controller = new AbortController();
+  try {
+    const entries = reader
+      .entries(controller.signal, {
+        onCoverage: () => controller.abort(),
+      })
+      [Symbol.asyncIterator]();
+    await expect(entries.next()).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
     await reader.close();
   }
 });
@@ -272,4 +291,87 @@ it("delivers acquired extension metadata through the canonical inventory schema"
       ],
     },
   });
+});
+
+it("does not finish a traversal when close begins during final source verification", async () => {
+  const reader = new NtfsMftArtifactReader(
+    await writeMft("$MFT", recordBytes({})),
+  );
+  const read = ArtifactFileSource.prototype.read;
+  let calls = 0;
+  const closeRead = phaseGate();
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(async function (this: ArtifactFileSource, signal) {
+      const result = await read.call(this, signal);
+      if (++calls === 2) {
+        await closeRead.hold();
+      }
+      return result;
+    });
+  try {
+    const traversal = reader.entries()[Symbol.asyncIterator]().next();
+    const rejected = expect(traversal).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    await closeRead.reached(traversal, "NTFS close read");
+    const closing = reader.close();
+    closeRead.release();
+    await rejected;
+    await closing;
+    expect(calls).toBe(2);
+  } finally {
+    closeRead.release();
+    spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports a $MFT stream that shrinks during decoding as a changed file, not malformed", async () => {
+  const path = await writeMft(
+    "$MFT",
+    Buffer.concat([recordBytes({}), recordBytes({ index: 1 })]),
+  );
+  const reader = new NtfsMftArtifactReader(path);
+  const read = ArtifactFileSource.prototype.read;
+  const spy = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementationOnce(async function (this: ArtifactFileSource, signal) {
+      const admitted = await read.call(this, signal);
+      // The decoder now meets EOF before the admitted length.
+      await truncate(path, MFT_DEFAULT_RECORD_BYTES);
+      return admitted;
+    });
+  try {
+    const failure = await reader
+      .entries()
+      [Symbol.asyncIterator]()
+      .next()
+      .then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+    expect(failure).toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
+    // The public projection names the model's kind: a changed target.
+    expect(
+      projectAnalysisError(
+        translateArtifactFailure(
+          "inspect_artifact",
+          "/selected/artifact",
+          failure,
+        ),
+      ),
+    ).toMatchObject({
+      code: "artifact_changed",
+      retry: "backoff",
+      retryable: true,
+      details: { failure_kind: "changed" },
+    });
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+  }
 });

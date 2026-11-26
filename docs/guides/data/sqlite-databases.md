@@ -5,10 +5,10 @@ selected local SQLite database snapshot without an active native analysis
 target. Use it to understand application storage, configuration or retained
 database evidence. No separate SQLite installation is required.
 
-This operation requires Node.js 24.x >=24.15 or 26+ with the native
-`DatabaseSync.limits` API. The worker verifies that capability before querying
-the copied database. Other REA features retain their published Node.js 22.x,
-24.x or 26+ requirements.
+This operation needs the native `DatabaseSync.limits` API, which REA's
+supported Node.js 24.x (>=24.22.1) and 26.x (>=26.12.1) releases provide; it is
+unavailable on the supported 22.x line. The worker verifies that capability
+before querying the copied database.
 
 `rea capabilities` reports `inspect_sqlite_database` availability and the
 runtime requirement without opening a database. Unsupported runtimes show
@@ -95,14 +95,19 @@ the selected limit, returned count and whether more rows were observed.
 Rows are read in a stated unique order reported as `rows.order`: `rowid` for
 rowid tables, and `primary_key` for `WITHOUT ROWID` tables, reusing the
 primary-key index's own direction and declared collation. `rows.row_offset`
-reports the rows skipped before the window and `rows.next_row_offset` the offset
-to request for the following page; it is `null` once the window reaches the end.
-Pass `row_offset` (CLI `--row-offset`, requires `table`, default 0) to skip into
-a table rather than repeating earlier rows. A table that declares all of
-`rowid`, `_rowid_` and `oid` as columns and has no primary key reports
-`order: "unspecified"` and refuses a non-zero `row_offset`, because the skipped
-prefix would be arbitrary. Pages compose only while the reported database and
-WAL SHA-256 match; re-inspecting a changed snapshot restarts the sequence.
+reports the rows skipped before the window. Pass `rows.next_row_offset` as the
+next `row_offset` (CLI `--row-offset`, requires `table`, default 0) to continue
+an ordered sample. A `null` next offset means there is no next page. Check
+`rows.truncated` to distinguish an exhausted window from an unordered sample
+with more rows. If columns shadow all three
+built-in names (`rowid`, `_rowid_`, and `oid`), REA can use a declared
+[`INTEGER PRIMARY KEY` rowid alias](https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key),
+even when that column is outside the requested projection. A separately
+indexed key, including inline `INTEGER PRIMARY KEY DESC`, does not name the
+rowid. With no usable order, the first sample reports `order: "unspecified"`
+and a non-zero `row_offset` is refused. Pages compose only while the reported
+database and WAL SHA-256 match; re-inspecting a changed snapshot restarts the
+sequence.
 View, virtual-table and shadow-table row reads are unsupported.
 
 SQLite integers are decimal strings so every signed 64-bit value survives JSON
@@ -137,7 +142,10 @@ and cleanup. Additional requests receive a typed capacity error before reading
 files or creating workers; retry after an active inspection finishes. This
 bounds simultaneous input buffering and private snapshot/worker counts.
 
-The database and WAL together are limited to 256 MiB. SQLite values/records,
+The database and WAL together are limited to `producer_limits.input_bytes`,
+default 2 GiB (CLI `--producer-limits '{"input_bytes":4294967296}'`). The
+snapshot is copied to private disk, so raising it costs disk, not memory, and
+applies on the next call without restart. SQLite values/records,
 SQL statements and the complete worker JSON reply each have a 16 MiB limit.
 Schema names count by their returned JSON text, including escaping, for UTF-8,
 UTF-16le and UTF-16be databases. Internal raw-byte lookup keys do not consume
@@ -153,8 +161,7 @@ in the MCP client's whole-call deadline; increasing only that deadline does not
 change the worker budget. No server restart is needed.
 
 The result's `worker_timeout_ms` reports the actual parent-supervised budget,
-including the default. Historical Evidence without this field has unknown
-execution settings, not an inferred default. Explicit input selection is also
+including the default, and Evidence without it is malformed. Explicit input selection is also
 retained in Evidence parameters; omission stays omitted. Completed observations
 retained under cancellation or cleanup failure keep the same budget facts.
 Timeout errors name the selected milliseconds, exact CLI/MCP controls, and
@@ -171,12 +178,14 @@ override these byte and resource limits. Resource-limit failures do not return
 an incomplete schema as successful complete evidence.
 
 If the combined database and WAL exceed the snapshot budget, the refusal is a
-`resource_constraint` and reports both the configured byte limit and the exact
-observed combined size as a decimal string. The remediation directs callers to
-create a smaller consistent offline snapshot containing only relevant data
-through the application's supported export workflow. A generic backup or copy
-does not guarantee a smaller result; REA does not truncate or modify the
-selected source.
+`resource_constraint` and reports both the effective byte limit and the exact
+observed combined size as a decimal string. `details.limit` names
+`producer_limits.input_bytes` with its effective value and default; raise it to
+at least the observed size on the next call. Alternatively, create a smaller
+consistent offline snapshot containing only relevant data through the
+application's supported export workflow. A generic backup or copy does not
+guarantee a smaller result; REA does not truncate or modify the selected
+source.
 
 On hosts that cannot address the derived WAL or rollback-journal path for a
 long selected database name, REA reports that the SQLite capability is
@@ -216,9 +225,10 @@ tests automatically. `npm run test:sqlite:run` runs the same cases when the
 compiled runtime and generated test artifacts are already current.
 
 The reusable SQLite CI workflow consumes the shared build artifact and tests
-the latest Node 22.x unavailable-runtime diagnostics, the minimum supported
-24.15.0 release, and the latest 24.x and 26.x releases. The repository-pinned
-runtime also runs the full suite. CI's required gate waits for every selected
+Node 22.x unavailable-runtime diagnostics, the repository-pinned 24.x release,
+and the latest 24.x and 26.x releases; `.github/workflows/sqlite-runtime.yml`
+owns the exact versions. The repository-pinned runtime also runs the full
+suite. CI's required gate waits for every selected
 SQLite matrix job; a failed, cancelled, skipped or missing selected lane blocks
 the gate. Workflow changes themselves select the build and compatibility lane.
 

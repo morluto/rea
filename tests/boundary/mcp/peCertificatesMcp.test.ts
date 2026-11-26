@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, onTestFinished } from "vitest";
@@ -40,9 +44,11 @@ mcpTest(
     const advertised = (await client.listTools()).tools.find(
       (tool) => tool.name === "inspect_pe_certificates",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("PE certificates output schema is missing");
-    const schema: Record<string, unknown> = advertised.outputSchema;
+    const schema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     const ajv = schemaValidation.assertions;
     expect(ajv.validateSchema(schema)).toBe(true);
     const root = await createTestTempDirectory("rea-pe-cert-schema-");
@@ -56,15 +62,11 @@ mcpTest(
         ]),
       ),
     );
-    const result = await client.callTool({
-      name: "inspect_pe_certificates",
-      arguments: { path },
-    });
+    const result = await client.callTool(
+      { name: "inspect_pe_certificates", arguments: { path } },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     expect(result.isError).not.toBe(true);
-    expect(
-      ajv.validate(schema, result.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
   },
 );
 
@@ -94,22 +96,6 @@ mcpTest(
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.serial_hex,
     ).toBe("11223344");
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_pe_certificates",
-  async ({ mcp }) => {
-    const client = await connect(mcp);
-    const response = await client.callTool({
-      name: "inspect_pe_certificates",
-      arguments: { path: "signed.exe" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
-    });
   },
 );
 

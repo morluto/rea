@@ -1,9 +1,11 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { BinaryLayoutService } from "./BinaryLayoutService.js";
 import {
   binaryLayoutFixture,
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../../../tests/fixtures/binaryDiagnostics/layout.js";
+import { inspectionTestProvider } from "../../../tests/fixtures/binaryDiagnostics/inspectionProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { err, ok } from "../../domain/result.js";
@@ -16,15 +18,11 @@ it.each([
 ])(
   "rejects malformed selection before starting the provider: %j",
   async (input) => {
-    const service = new BinaryLayoutService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: BINARY_LAYOUT_TEST_PROVIDER,
-      inspect: () => {
+    const service = new BinaryLayoutService(
+      inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () => {
         throw new Error("must not run");
-      },
-    });
+      }),
+    );
     const result = await service.inspect(input);
     expect(result).toMatchObject({
       ok: false,
@@ -42,13 +40,11 @@ it.each([
 
 it("records the decoded layout once in its Evidence", async () => {
   const layout = binaryLayoutFixture();
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(layout)),
-  });
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+      Promise.resolve(ok(layout)),
+    ),
+  );
   const result = await service.inspect({ path: layout.artifact.path });
   if (!result.ok) throw result.error;
   const evidence = parseEvidence(result.value);
@@ -66,16 +62,16 @@ it.each([
   "names the reported %j machine in its Evidence subject",
   async (architecture, expected) => {
     const layout = { ...binaryLayoutFixture(), architecture };
-    const service = new BinaryLayoutService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: BINARY_LAYOUT_TEST_PROVIDER,
-      inspect: () => Promise.resolve(ok(layout)),
-    });
+    const service = new BinaryLayoutService(
+      inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+        Promise.resolve(ok(layout)),
+      ),
+    );
     const result = await service.inspect({ path: layout.artifact.path });
     if (!result.ok) throw result.error;
-    expect(parseEvidence(result.value).subject?.architecture).toBe(expected);
+    expect(fileIdentity(parseEvidence(result.value).subject).architecture).toBe(
+      expected,
+    );
   },
 );
 
@@ -85,13 +81,11 @@ it("preserves a provider's actionable unsupported reason", async () => {
     "inspect_binary_layout",
     "ELF core belongs to recorded-crash analysis.",
   );
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => Promise.resolve(err(failure)),
-  });
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+      Promise.resolve(err(failure)),
+    ),
+  );
   expect(await service.inspect({ path: "/source.elf" })).toEqual(err(failure));
 });
 
@@ -100,16 +94,12 @@ it("preserves the caller's exact abort reason before invocation", async () => {
   const reason = Object.freeze({ requested: "layout-stop" });
   controller.abort(reason);
   let calls = 0;
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => {
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () => {
       calls++;
       return Promise.resolve(ok(binaryLayoutFixture()));
-    },
-  });
+    }),
+  );
   const result = await service.inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: controller.signal },
@@ -124,16 +114,12 @@ it("preserves the caller's exact abort reason before invocation", async () => {
 
 it("retains the acquired observation when cancellation arrives during inspection", async () => {
   const controller = new AbortController();
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => {
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () => {
       controller.abort();
       return Promise.resolve(ok(binaryLayoutFixture()));
-    },
-  });
+    }),
+  );
   const late = await service.inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: controller.signal },
@@ -183,13 +169,11 @@ it.each([
       flags: "0x5",
       permissions: { read: true, write: false, execute: true },
     });
-  const service = new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => Promise.resolve(ok(fixture)),
-  });
+  const service = new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () =>
+      Promise.resolve(ok(fixture)),
+    ),
+  );
   expect(
     await service.inspect({ path: "/artifacts/source-owned.elf" }),
   ).toMatchObject({
@@ -200,16 +184,12 @@ it.each([
     },
   });
   const controller = new AbortController();
-  const lateInvalid = await new BinaryLayoutService({
-    inspectAndClose(input, options) {
-      return this.inspect(input, options);
-    },
-    identity: BINARY_LAYOUT_TEST_PROVIDER,
-    inspect: () => {
+  const lateInvalid = await new BinaryLayoutService(
+    inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, () => {
       controller.abort();
       return Promise.resolve(ok(fixture));
-    },
-  }).inspect(
+    }),
+  ).inspect(
     { path: "/artifacts/source-owned.elf" },
     { signal: controller.signal },
   );
@@ -343,13 +323,11 @@ it.each([
       entry_size: "0x0",
       file_backing: backing,
     });
-    const service = new BinaryLayoutService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: BINARY_LAYOUT_TEST_PROVIDER,
-      inspect: async () => ok(layout),
-    });
+    const service = new BinaryLayoutService(
+      inspectionTestProvider(BINARY_LAYOUT_TEST_PROVIDER, async () =>
+        ok(layout),
+      ),
+    );
     const result = await service.inspect({ path: layout.artifact.path });
     if (valid) {
       if (!result.ok) throw result.error;

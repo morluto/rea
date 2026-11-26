@@ -1,3 +1,4 @@
+import { countValues } from "../valueCounts.js";
 import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -142,9 +143,9 @@ const finiteTraceOmissions = (
   let observed = 0;
   const missing: string[] = [];
   for (const token of tokens) {
-    const remaining = new Map<string, number>();
-    for (const id of typeof token === "string" ? [token] : token.unordered)
-      remaining.set(id, (remaining.get(id) ?? 0) + 1);
+    const remaining = countValues(
+      typeof token === "string" ? [token] : token.unordered,
+    );
     while (observed < ids.length) {
       const id = ids[observed];
       const count = id === undefined ? 0 : (remaining.get(id) ?? 0);
@@ -195,9 +196,7 @@ const evaluateFiniteTrace = (
     for (const token of variant.trace) {
       const expected = typeof token === "string" ? [token] : token.unordered;
       const actual = ids.slice(offset, offset + expected.length);
-      const remaining = new Map<string, number>();
-      for (const eventId of expected)
-        remaining.set(eventId, (remaining.get(eventId) ?? 0) + 1);
+      const remaining = countValues(expected);
       const unexpected: Array<{ readonly id: string; readonly index: number }> =
         [];
       for (const [index, eventId] of actual.entries()) {

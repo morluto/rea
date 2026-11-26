@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { RetainedBrowserScenarioCapture } from "../browserScenarioCapture.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { compareAsciiStrings } from "../canonicalOrdering.js";
+import { incrementCount } from "../valueCounts.js";
+import { sortedCountEntries } from "./analysisViewCounts.js";
 
 const count = z.int().nonnegative();
 const statusClass = z
@@ -133,22 +134,6 @@ export const browserScenarioTransactionGroups = (
   return result;
 };
 
-const increment = <Key>(values: Map<Key, number>, key: Key): void => {
-  values.set(key, (values.get(key) ?? 0) + 1);
-};
-const sorted = <Key extends string | null>(
-  values: ReadonlyMap<Key, number>,
-): [Key, number][] =>
-  [...values].sort(([left], [right]) =>
-    left === right
-      ? 0
-      : left === null
-        ? -1
-        : right === null
-          ? 1
-          : compareAsciiStrings(left, right),
-  );
-
 /** Null selection/counts preserve legacy unknowns and unrequested network observation. */
 export const summarizeBrowserScenarioNetwork = (
   capture: RetainedBrowserScenarioCapture,
@@ -174,9 +159,9 @@ export const summarizeBrowserScenarioNetwork = (
     if (!group.has_request) withoutRequest += 1;
     if (group.ambiguous) ambiguous += 1;
     if (group.failed) failed += 1;
-    increment(origins, group.origin);
-    increment(resources, group.resource_type);
-    increment(statuses, group.status_class);
+    incrementCount(origins, group.origin);
+    incrementCount(resources, group.resource_type);
+    incrementCount(statuses, group.status_class);
   }
   return {
     selected,
@@ -184,16 +169,18 @@ export const summarizeBrowserScenarioNetwork = (
     without_request: withoutRequest,
     ambiguous_transactions: ambiguous,
     failed_transactions: failed,
-    by_origin: sorted(origins).map(([origin, transactions]) => ({
+    by_origin: sortedCountEntries(origins).map(([origin, transactions]) => ({
       origin,
       transactions,
     })),
-    by_resource_type: sorted(resources).map(
+    by_resource_type: sortedCountEntries(resources).map(
       ([resource_type, transactions]) => ({ resource_type, transactions }),
     ),
-    by_status_class: sorted(statuses).map(([status_class, transactions]) => ({
-      status_class,
-      transactions,
-    })),
+    by_status_class: sortedCountEntries(statuses).map(
+      ([status_class, transactions]) => ({
+        status_class,
+        transactions,
+      }),
+    ),
   };
 };

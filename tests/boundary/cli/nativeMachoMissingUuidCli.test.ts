@@ -58,9 +58,7 @@ describe.skipIf(process.platform !== "darwin")(
           ["clang", "-o", control, source],
           ["clang", "-c", source, "-o", object],
         ]) {
-          const compiled = await processes.run("/usr/bin/xcrun", arguments_, {
-            timeoutMs: 30_000,
-          });
+          const compiled = await processes.run("/usr/bin/xcrun", arguments_);
           expect(compiled.exitCode, compiled.stderr).toBe(0);
         }
 
@@ -98,9 +96,10 @@ describe.skipIf(process.platform !== "darwin")(
             exhaustive: false,
           },
           provenance: expect.arrayContaining([
+            // Xcode 26 dyld_info exits 1 after the diagnostic; Xcode 16 exits 0.
             expect.objectContaining({
               tool: "dyld_info",
-              exit: { code: 1, signal: null },
+              exit: { code: expect.toBeOneOf([0, 1]), signal: null },
             }),
           ]),
         });
@@ -145,13 +144,24 @@ describe.skipIf(process.platform !== "darwin")(
           const expectedRefusal = {
             code: "unsupported_target",
             category: "unsupported_target",
-            remediation: { action: expect.stringContaining("linked Mach-O") },
+            retry: "none",
             details: {
               path,
-              reason: expect.stringMatching(diagnosticPattern),
+              failure_kind: "unsupported",
+              format: "macho",
+              field: "filetype",
+              // The refusal names the file types dyld_info reads; recovery
+              // comes from the shared target-failure table.
+              reason: expect.stringMatching(
+                new RegExp(
+                  `it reads linked executables and relocatable objects: ${diagnosticPattern.source}`,
+                  "u",
+                ),
+              ),
               captured_output: {
                 stdout: expect.stringMatching(diagnosticPattern),
-                exit_code: 1,
+                // Xcode 26 dyld_info exits 1 after the refusal; Xcode 16 exits 0.
+                exit_code: expect.toBeOneOf([0, 1]),
                 signal: null,
                 truncated: false,
               },

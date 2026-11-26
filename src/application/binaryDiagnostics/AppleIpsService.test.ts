@@ -1,61 +1,28 @@
-import { parseEvidence } from "../../domain/evidence.js";
+import { expectInvalidInspectionInputs } from "../../../tests/support/expectInvalidInspectionInputs.js";
+import { lateCancellationEvidence } from "../../../tests/support/lateCancellationEvidence.js";
+import { createHash } from "node:crypto";
+import { parseAppleIps } from "../../native/apple/AppleIpsParser.js";
+import { inspectAppleIpsInputSchema } from "../../domain/native/appleIps.js";
 import { expect, it } from "vitest";
 import { AppleIpsService } from "./AppleIpsService.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import type { AppleIps } from "../../domain/native/appleIps.js";
 import { ok } from "../../domain/result.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../domain/analysisErrorCore.js";
 
 const identity = APPLE_IPS_PROVIDER;
-const report: AppleIps = {
-  artifact: {
-    path: "/artifacts/report.ips",
-    sha256: "a".repeat(64),
-    bytes: 128,
+const bytes = Buffer.from(
+  '{"bug_type":"309"}\n{"procName":"rea-crash-fixture","threads":[],"usedImages":[]}',
+);
+const path = "/artifacts/report.ips";
+const report = parseAppleIps(
+  bytes,
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  metadata: {
-    bug_type: "309",
-    timestamp: null,
-    os_version: null,
-    bundle_id: null,
-    incident_id: null,
-    name: null,
-    build_version: null,
-    platform: null,
-    unlisted_keys: [],
-  },
-  process: {
-    name: "rea-crash-fixture",
-    path: null,
-    pid: null,
-    parent: null,
-    parent_pid: null,
-    cpu_type: null,
-    translated: null,
-    os_version: null,
-  },
-  exception: null,
-  termination: null,
-  faulting_thread: null,
-  threads: [],
-  images: [],
-  classification: { status: "unclassified", matches: [] },
-  coverage: {
-    status: "complete",
-    reason: null,
-    threads: 0,
-    frames: 0,
-    images: 0,
-    registers: 0,
-    type_mismatches: [],
-  },
-  unlisted_body_keys: [],
-  join: null,
-  limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
-};
+  inspectAppleIpsInputSchema.parse({ path }),
+);
 
 it.each([0, 5])(
   "rejects an unresolved faulting thread %s without its mismatch",
@@ -150,26 +117,12 @@ it.each([null, { caller: "selected IPS request" }])(
   },
 );
 
-it("rejects a relative path and extra arguments before reading", async () => {
-  let calls = 0;
-  const service = new AppleIpsService({
-    identity,
-    inspect: () => {
-      calls += 1;
-      return Promise.resolve(ok(report));
-    },
-  });
-  const relative = await service.inspect({ path: "report.ips" });
-  const extra = await service.inspect({
-    path: report.artifact.path,
-    extra: true,
-  });
-  expect(relative.ok).toBe(false);
-  expect(extra.ok).toBe(false);
-  if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
-  if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
-  expect(calls).toBe(0);
-});
+it("rejects a relative path and extra arguments before reading", () =>
+  expectInvalidInspectionInputs(
+    report,
+    "report.ips",
+    (inspect) => new AppleIpsService({ identity, inspect }),
+  ));
 
 it("records the selected report as a file subject", async () => {
   const result = await new AppleIpsService({
@@ -179,7 +132,7 @@ it("records the selected report as a file subject", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "file" },
+    subject: { identity: { format: "file" } },
     normalized_result: report,
   });
 });
@@ -234,23 +187,12 @@ it.each([
 );
 
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
-  const controller = new AbortController();
-  const reason = { request: "late AppleIps cancellation" };
-  const service = new AppleIpsService({
-    identity,
-    inspect: () => {
-      controller.abort(reason);
-      return Promise.resolve(ok(report));
-    },
-  });
-  const result = await service.inspect(
-    { path: report.artifact.path },
-    { signal: controller.signal },
+  const evidence = await lateCancellationEvidence(
+    report,
+    "late AppleIps cancellation",
+    (inspect) => new AppleIpsService({ identity, inspect }),
   );
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+  expect(evidence).toMatchObject({
     operation: "inspect_apple_ips",
     normalized_result: report,
   });
@@ -313,10 +255,12 @@ it.each([
               inline: null,
               recorded_symbol: "main",
               symbol_location: { decimal: "12345", hex: "0x3039" },
+              unlisted_keys: [],
             },
           ],
           state_flavor: null,
           registers: [],
+          unlisted_keys: [],
         },
       ],
       coverage: { ...report.coverage, threads: 1, frames: 1 },

@@ -1,17 +1,13 @@
-import { RuleTester } from "oxlint/plugins-dev";
-import { describe, it } from "vitest";
+import { createRuleTester } from "../../support/createRuleTester.js";
 
 import cancellationCauseRule from "../../../scripts/lint/cancellation-cause.mjs";
-
-RuleTester.describe = describe;
-RuleTester.it = it;
 
 const core =
   'import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";';
 const options =
-  'import type { ExecutionOptions } from "./application/AnalysisProvider.js";';
+  'import type { ExecutionOptions } from "./ports/AnalysisProvider.js";';
 
-new RuleTester({
+createRuleTester({
   languageOptions: { parserOptions: { lang: "ts" }, sourceType: "module" },
 }).run("cancellation-cause", cancellationCauseRule, {
   valid: [
@@ -115,7 +111,7 @@ new RuleTester({
     },
     {
       code: `${core}\nimport type { ExecutionOptions as Options } from
-        "./application/AnalysisProvider.js";
+        "./ports/AnalysisProvider.js";
         function run(options?: Options) {
           if (options?.signal?.aborted)
             return err(new AnalysisCancelledError("inspect"));

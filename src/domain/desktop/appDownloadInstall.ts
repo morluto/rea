@@ -23,7 +23,7 @@ const archivePathSchema = z
   .string()
   .max(255)
   .regex(
-    /^[A-Za-z0-9_+@-][A-Za-z0-9._+@-]*(?:\/[A-Za-z0-9_+@-][A-Za-z0-9._+@-]*)*$/u,
+    /^[A-Za-z0-9_+@\x2d][A-Za-z0-9._+@\x2d]*(?:\/[A-Za-z0-9_+@\x2d][A-Za-z0-9._+@\x2d]*)*$/u,
   );
 
 /** The fields every download names: where it is, its SHA-256 and the one architecture it runs on. */
@@ -65,7 +65,7 @@ export const tarballFields = {
 
 const desktopEntryId = z
   .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._\x2d]*$/u)
   .max(255)
   .transform((id) => id.replace(/\.desktop$/u, ""));
 
@@ -138,22 +138,9 @@ const appImageScript = (install: DownloadInstall): string =>
     "fi",
     'chmod -R a+rX "$prefix"',
     // The installer and export share this format-aware rewrite.
-    `python3 - "$desktop" "${APPLICATIONS}/$entry.desktop" "$prefix/squashfs-root/AppRun" <<'PY'`,
+    `python3 - "$desktop" "${APPLICATIONS}/$entry.desktop" "$prefix/squashfs-root/AppRun" /usr/local/share/icons/hicolor/scalable/apps /usr/local/share/pixmaps <<'PY'`,
     rewriteAppImageDesktop,
     "PY",
-    `icon=$(sed -n 's/^Icon=//p' "$desktop" | head -n 1)`,
-    'case "$icon" in',
-    "  '' | */*) ;;",
-    "  *)",
-    '    if [ -f "squashfs-root/$icon.svg" ]; then',
-    "      mkdir -p /usr/local/share/icons/hicolor/scalable/apps",
-    '      cp "squashfs-root/$icon.svg" /usr/local/share/icons/hicolor/scalable/apps/',
-    '    elif [ -f "squashfs-root/$icon.png" ]; then',
-    "      mkdir -p /usr/local/share/pixmaps",
-    '      cp "squashfs-root/$icon.png" /usr/local/share/pixmaps/',
-    "    fi",
-    "    ;;",
-    "esac",
     "",
   ].join("\n");
 

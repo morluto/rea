@@ -1,3 +1,7 @@
+import { appendToMapList } from "../appendToMapList.js";
+import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
+import { isRecord } from "../../kernel/isRecord.js";
+import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
   iterateUrlQueryParameters,
   parseUrlQueryParameterNames,
@@ -5,9 +9,8 @@ import {
 import type { OffsetDateTimeInstant } from "../offsetDateTime.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { ListQuery } from "./environmentStateListQuery.js";
-import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues as same, type JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import {
   respellClock,
@@ -36,6 +39,9 @@ export interface StateRecordFacts {
     readonly endMs: number | undefined;
   };
 }
+
+export const requestLine = (record: StateRecordFacts): string =>
+  record.path + (record.query ?? "");
 
 /** The manifest tool facts extraction uses. */
 export interface StateToolFacts {
@@ -318,7 +324,7 @@ export const segmentsOf = (path: string): string[] => {
 export const isParam = (segment: string): boolean =>
   segment.startsWith("{") && segment.endsWith("}");
 export const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  isRecord(value);
 export const scalarText = (value: JsonValue | undefined): string | undefined =>
   typeof value === "string"
     ? value
@@ -348,15 +354,7 @@ export const setOwnMember = (
   });
 };
 
-/** Equal JSON values; object member order carries no meaning. */
-export const same = (
-  left: JsonValue | undefined,
-  right: JsonValue | undefined,
-): boolean =>
-  left === undefined || right === undefined
-    ? left === right
-    : canonicalJson(left, "Environment state") ===
-      canonicalJson(right, "Environment state");
+export { same };
 
 /** A path segment percent-decoded, or as written when it does not decode. */
 export const decodedSegment = (segment: string): string => {
@@ -447,8 +445,14 @@ export const isQueryPost = (method: string, path: string): boolean =>
 export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
 
+/** A 2xx record: the only status whose response shows what a request did. */
+export const succeeded = (record: Pick<StateRecordFacts, "status">): boolean =>
+  isSuccessfulHttpStatus(record.status);
+
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
-export const isStateWrite = (record: StateRecordFacts): boolean =>
+export const isStateWrite = (
+  record: Pick<StateRecordFacts, "method" | "path" | "status">,
+): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
@@ -508,9 +512,7 @@ export const apiBaseLengths = (
   for (const template of templates) {
     const segments = segmentsOf(template);
     const first = segments[0] ?? "";
-    const group = groups.get(first);
-    if (group === undefined) groups.set(first, [segments]);
-    else group.push(segments);
+    appendToMapList(groups, first, segments);
   }
   return new Map(
     [...groups.entries()].map(([first, members]) => {
@@ -556,34 +558,8 @@ export const stateValueRetentionBytes = (value: JsonValue): number => {
   return ENTRY_BYTES;
 };
 
-/** Whether a JSON value nests more than `limit` levels below its root. */
-export const deeperThan = (value: JsonValue, limit: number): boolean => {
-  const pending: { readonly value: JsonValue; readonly depth: number }[] = [
-    { value, depth: 0 },
-  ];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (next.depth > limit) return true;
-    const children = Array.isArray(next.value)
-      ? next.value
-      : isObject(next.value)
-        ? Object.values(next.value)
-        : [];
-    for (const child of children)
-      pending.push({ value: child, depth: next.depth + 1 });
-  }
-  return false;
-};
-
 export const pointerTo = (name: string): string =>
-  `/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`;
-/** The unescaped reference tokens of a pointer. */
-export const pointerTokens = (pointer: string): string[] =>
-  pointer === ""
-    ? []
-    : pointer
-        .slice(1)
-        .split("/")
-        .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+  `/${escapeJsonPointerToken(name)}`;
 
 const memberOf = (
   body: JsonValue | undefined,
@@ -597,7 +573,7 @@ const soleElement = (value: JsonValue | undefined): JsonValue | undefined =>
 
 /** The value at a pointer: the root, one member, or element 0 of a one-element array at the root or in one member. */
 export const at = (body: JsonValue, pointer: string): JsonValue | undefined => {
-  const [first, second, ...rest] = pointerTokens(pointer);
+  const [first, second, ...rest] = jsonPointerTokens(pointer);
   if (first === undefined) return body;
   if (second !== undefined)
     return second === "0" && rest.length === 0
@@ -616,7 +592,7 @@ export const replaceAt = (
   pointer: string,
   value: JsonValue,
 ): JsonValue => {
-  const [first, second] = pointerTokens(pointer);
+  const [first, second] = jsonPointerTokens(pointer);
   if (first === undefined) return value;
   if (at(body, pointer) === undefined) return body;
   if (!isObject(body)) return [value];
@@ -757,12 +733,15 @@ export const listItems = (
 /** An observed item count, retaining the original value separately for rendering. */
 export const recordedItemCount = (
   value: JsonValue | undefined,
-): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
+): number | undefined => {
+  if (typeof value === "number")
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  if (typeof value === "string" && /^\d+$/u.test(value)) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : undefined;
+  }
+  return undefined;
+};
 
 /** Spell a changed count with the recorded numeric/string type and digit width. */
 export const formatItemCount = (

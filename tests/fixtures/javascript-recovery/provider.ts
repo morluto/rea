@@ -1,7 +1,7 @@
-import { access, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, onTestFinished } from "vitest";
+import { onTestFinished } from "vitest";
 import { JavaScriptRecoveryService } from "../../../src/application/javascript/JavaScriptRecoveryService.js";
 import { createJavaScriptRecoveryProvider } from "../../../src/composition/javascriptRecovery.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
@@ -71,21 +71,4 @@ export const recoveryFixture = async (
     root,
     launches,
   };
-};
-
-/** Verify the owned process groups and workspaces are absent. */
-export const assertRecoveryCleanup = async (
-  launches: Awaited<ReturnType<typeof recoveryFixture>>["launches"],
-): Promise<void> => {
-  for (const launch of launches) {
-    const pid = launch.pid;
-    if (pid !== undefined)
-      expect(() => process.kill(-pid, 0)).toThrowError(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
-    if (launch.cwd !== undefined)
-      await expect(access(launch.cwd)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-  }
 };

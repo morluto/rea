@@ -1,10 +1,11 @@
+import { defaultedNumberSettingParser } from "./optionalSetting.js";
 import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { err, ok, type Result } from "../domain/result.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import type { Result } from "../domain/result.js";
+import { readRuntimeSetting } from "./runtimeAnalysisSettings.js";
 
 import {
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
@@ -13,12 +14,6 @@ import {
 } from "../domain/analysisResourceLimits.js";
 
 export const BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES";
-
-export {
-  DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
-  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-};
 
 /**
  * Smallest ceiling that still admits the largest bounded bridge request.
@@ -76,42 +71,27 @@ export const bridgeMaxRequestBytesSchema = positiveDecimalIntegerSchema(
 );
 
 /** Resolve the effective ceiling from one environment value. */
-export const parseBridgeMaxRequestBytes = (
-  value: string | undefined,
-): Result<BridgeMaxRequestBytes, ConfigurationError> => {
-  if (value === undefined) return ok(DEFAULT_BRIDGE_MAX_REQUEST);
-  const parsed = bridgeMaxRequestBytesSchema.safeParse(value);
-  return parsed.success
-    ? ok({ maximumBytes: parsed.data, source: "setting" })
-    : err(
-        new ConfigurationError(bridgeMaxRequestBytesConstraint, {
-          settings: [
-            {
-              setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-              constraint: bridgeMaxRequestBytesConstraint,
-            },
-          ],
-        }),
-      );
-};
+export const parseBridgeMaxRequestBytes =
+  defaultedNumberSettingParser<BridgeMaxRequestBytes>(
+    BRIDGE_MAX_REQUEST_BYTES_SETTING,
+    bridgeMaxRequestBytesSchema,
+    bridgeMaxRequestBytesConstraint,
+    DEFAULT_BRIDGE_MAX_REQUEST,
+    (maximumBytes) => ({ maximumBytes, source: "setting" }),
+  );
 
 /**
- * Resolve the ceiling from a composition root's selected environment. An
- * invalid setting is refused, not ignored. Callers that already resolved it
- * at startup pass that value through instead of reading the environment again.
+ * Copy the effective request ceiling when a request is admitted, in the
+ * caller's async context, so a queued request is written under the ceiling it
+ * was admitted with. A malformed launch seed no override covers is refused.
  */
-export const resolveBridgeMaxRequestBytes = (
-  environment: Readonly<Record<string, string | undefined>>,
-): BridgeMaxRequestBytes => {
-  const override = currentAnalysisSettingOverride("bridge.max_request_bytes");
-  if (override !== undefined)
-    return { maximumBytes: override, source: "runtime" };
-  const parsed = parseBridgeMaxRequestBytes(
-    environment[BRIDGE_MAX_REQUEST_BYTES_SETTING],
-  );
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value;
-};
+export const admitBridgeRequestLimit = (
+  limit: BridgeMaxRequestBytes,
+): Result<BridgeMaxRequestBytes, ConfigurationError> =>
+  readRuntimeSetting(() => ({
+    maximumBytes: limit.maximumBytes,
+    source: limit.source,
+  }));
 
 /** How to read and change the effective bridge request ceiling. */
 export const bridgeRequestLimit = (limit: BridgeMaxRequestBytes) =>
@@ -142,7 +122,7 @@ const limitFacts = (
 export const bridgeRequestOversizeError = (
   operation: string,
   limit: BridgeMaxRequestBytes,
-  payloadBytes: number,
+  payload: number | { readonly bytesAtLeast: number },
   peer: BridgePeer,
 ): AnalysisResourceConstraintError => {
   const recovery = bridgeMaxRequestBytesRecovery(limit, peer);
@@ -154,11 +134,17 @@ export const bridgeRequestOversizeError = (
     operation,
     "transport",
     `${refusal} ${recovery}`,
-    { ...limitFacts(limit), payload_bytes: payloadBytes },
+    {
+      ...limitFacts(limit),
+      ...(typeof payload === "number"
+        ? { payload_bytes: payload }
+        : { payload_bytes_at_least: payload.bytesAtLeast }),
+    },
     {
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: false,
     },
   );
 };
@@ -184,6 +170,7 @@ export const bridgeRequestLimitMismatchError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: false,
     },
   );
 };
@@ -202,6 +189,7 @@ export const bridgeResponseOversizeError = (
       remediationAction: recovery,
       retryable: false,
       limit: bridgeRequestLimit(limit),
+      requestSent: true,
     },
   );
 };

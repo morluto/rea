@@ -1,5 +1,10 @@
 import { z } from "zod";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -9,21 +14,30 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
-  clientConfigurationRecordSchema,
+  clientServerForcedEnabled,
+  clientServerListedDisabled,
   clientRegistrationEntry,
   clientRegistrationLauncherEntry,
+  clientServerRowsReplace,
+  openCodeDisabled,
+  type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
+import {
+  stdioSelectingFields,
+  type ClientRegistrationTarget,
+} from "./ClientRegistrationProfile.js";
 import {
   classifyClientRegistrationCommand,
   equivalentClientRegistrationCommands,
   type ClientRegistrationCommandIdentity,
 } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { dshToolCallTimeout } from "./DshCordisPatch.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
@@ -66,6 +80,38 @@ const registrationSchema = launcherSchema.extend({
 });
 
 export type ClientRegistration = z.output<typeof registrationSchema>;
+const registrationActivationSchema = registrationSchema
+  .pick({ disabled: true, enabled: true })
+  .passthrough();
+
+// Codex, Kimi Code and Pi use enabled. Devin uses disabled. Grok reads its
+// disable list. OpenCode's effective document already uses the selected dialect.
+const ignoresDisabledKey = new Set(["codex", "kimi", "pi"]);
+const ignoresEnabledKey = new Set(["devin"]);
+
+/** Interpret activation on the effective, validated registration. */
+export const clientRegistrationActivation = (
+  registration: z.output<typeof registrationActivationSchema>,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+): "enabled" | "disabled" => {
+  // Shared storage also serves ZCode. Its flag binds every reader of the row.
+  const sharedDisabled =
+    (parsed.dialect === "zcode" ||
+      parsed.dialect === "zcode_fallback" ||
+      client.sharedRegistration === true) &&
+    registration.enable === false;
+  return (client.format !== "grok" &&
+    !ignoresDisabledKey.has(client.name) &&
+    registration.disabled === true) ||
+    (registration.enabled === false &&
+      !ignoresEnabledKey.has(client.name) &&
+      !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
+    sharedDisabled ||
+    clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+    ? "disabled"
+    : "enabled";
+};
 
 // https://developers.openai.com/codex/config-reference/#mcp_servers
 const codexApprovalModeSchema = z.enum(["auto", "prompt", "writes", "approve"]);
@@ -103,6 +149,18 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
     })),
   });
 
+/** Read activation from an effective row regardless of its transport. */
+export const parseClientRegistrationActivation = (
+  value: unknown,
+  client: SetupClient,
+  document: ClientConfigurationDocument,
+): Result<"enabled" | "disabled", ConfigurationError> => {
+  const parsed = registrationActivationSchema.safeParse(value);
+  return parsed.success
+    ? ok(clientRegistrationActivation(parsed.data, client, document))
+    : err(registrationError(parsed.error));
+};
+
 /** Launcher identity remains usable when unrelated readiness settings are invalid. */
 export const parseClientRegistrationLauncher = (
   value: unknown,
@@ -111,15 +169,7 @@ export const parseClientRegistrationLauncher = (
   const { dialect, profile } = target;
   if (profile.connection.kind === "unavailable")
     return err(new ConfigurationError(profile.connection.reason));
-  if (profile.connection.kind === "cline") {
-    const row = clientConfigurationRecordSchema.safeParse(value);
-    if (row.success && Object.hasOwn(row.data, "transport")) {
-      const transport = clientConfigurationRecordSchema.safeParse(
-        row.data.transport,
-      );
-      if (transport.success) value = transport.data;
-    }
-  }
+  value = clientRegistrationSource(value, profile).connection ?? value;
   const parsed =
     dialect === "opencode" ||
     dialect === "opencode_v2" ||
@@ -147,6 +197,8 @@ export const parseClientRegistrationLauncher = (
 export const clientRegistrationOwnership = (
   value: unknown,
   client: SetupClient,
+  /** The REA entry point that owns registrations; update names the new one. */
+  currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
 ): ClientRegistrationCommandIdentity => {
   const parsed = parseClientRegistrationLauncher(value, {
     dialect: client.format ?? "json",
@@ -155,7 +207,7 @@ export const clientRegistrationOwnership = (
   return parsed.ok
     ? classifyClientRegistrationCommand(
         [parsed.value.command, ...parsed.value.args],
-        CURRENT_ENTRYPOINT_PATH,
+        currentCommandPath,
       )
     : "unknown";
 };
@@ -193,13 +245,17 @@ export const parseClientRegistrationPolicy = (
   if (client.format === "dsh") {
     const parsed = registrationSchema
       .pick({ command: true, args: true, serverName: true, transport: true })
+      .extend({
+        toolCallTimeoutMs: z.unknown().transform(dshToolCallTimeout).optional(),
+      })
       .strip()
       .safeParse(value);
     return parsed.success
       ? ok(parsed.data)
       : err(registrationError(parsed.error));
   }
-  if (client.format === "opencode") {
+  // Kilo keeps OpenCode's launcher and environment shape.
+  if (client.format === "opencode" || client.format === "kilo") {
     const entry = opencodeLauncherSchema
       .extend({
         environment: jsonRecordSchema(z.string()).optional(),
@@ -208,7 +264,28 @@ export const parseClientRegistrationPolicy = (
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
+  } else if (client.format === "fx" || client.format === "goose") {
+    // fx's command array and Goose's `cmd` are dialect launcher shapes;
+    // normalize them once through the launcher owner.
+    const launcher = parseClientRegistrationLauncher(value, {
+      dialect: client.format,
+      profile: client.registrationProfile,
+    });
+    if (!launcher.ok) return launcher;
+    const entry = clientConfigurationRecordSchema.safeParse(value);
+    value = {
+      ...(entry.success ? entry.data : {}),
+      command: launcher.value.command,
+      args: launcher.value.args,
+    };
   }
+  const source = clientRegistrationSource(value, client.registrationProfile);
+  if (source.nested)
+    value = {
+      ...source.source,
+      command: source.connection?.command,
+      args: source.connection?.args,
+    };
   const parsed = registrationSchema.safeParse(value);
   if (!parsed.success) return err(registrationError(parsed.error));
   const registration = parsed.data;
@@ -220,6 +297,7 @@ export const parseClientRegistrationPolicy = (
 // defaults and preservation rules are applied below.
 const managedPolicyKeys = new Set([
   "env",
+  "envs",
   "environment",
   "enabled",
   "disabled",
@@ -235,6 +313,8 @@ export const clientRegistrationSourceFacts = (
 ): Result<
   {
     readonly source: Record<string, unknown> | undefined;
+    readonly connection: Record<string, unknown> | undefined;
+    readonly nested: boolean;
     readonly connectionFields: ReadonlySet<string>;
   },
   ConfigurationError
@@ -243,8 +323,8 @@ export const clientRegistrationSourceFacts = (
   const connection = profile.connection;
   if (connection.kind === "unavailable")
     return err(new ConfigurationError(connection.reason));
-  const parsed = clientConfigurationRecordSchema.safeParse(previous);
-  const source = parsed.success ? parsed.data : undefined;
+  const parsed = clientRegistrationSource(previous, profile);
+  const { source } = parsed;
   const fields = new Set(
     Object.keys(clientRegistrationLauncherEntry(target.dialect, command)),
   );
@@ -275,26 +355,38 @@ export const clientRegistrationSourceFacts = (
         ),
       );
   } else {
+    const launcherFields = new Set(fields);
     for (const field of connection.kind === "cline"
       ? ["transport", "type", "transportType", "url"]
       : connection.kind === "commandcode"
         ? ["type", "url"]
         : connection.fields)
       fields.add(field);
+    // An existing selector that already chooses stdio stays, including one
+    // inherited through a YAML merge; only remote selectors are superseded.
+    if (connection.kind === "flat")
+      for (const field of stdioSelectingFields(source ?? {}, connection))
+        if (!launcherFields.has(field)) fields.delete(field);
   }
-  return ok({ source, connectionFields: fields });
+  return ok({ ...parsed, connectionFields: fields });
 };
+
+const inheritsGooseEnvironmentAlias = (inherited: unknown): boolean =>
+  typeof inherited === "object" &&
+  inherited !== null &&
+  Object.hasOwn(inherited, "env");
 
 /** Explicit launcher replacement preserves policy and native environment, while
  * superseding connection selectors that could keep the old remote transport.
- * Goose's single env alias becomes envs; declaring both remains ambiguous. */
+ * Goose's single env alias becomes envs unless a lower layer declares the
+ * alias; declaring both remains ambiguous. */
 export const replaceClientRegistrationLauncher = (
   target: ClientRegistrationTarget,
   command: readonly string[],
   previous: unknown,
   inherited?: unknown,
 ): Result<Record<string, unknown>, ConfigurationError> => {
-  const { dialect, profile } = target;
+  const { dialect } = target;
   const facts = clientRegistrationSourceFacts(target, command, previous);
   if (!facts.ok) return facts;
   const { source, connectionFields: launcherConnectionKeys } = facts.value;
@@ -306,21 +398,10 @@ export const replaceClientRegistrationLauncher = (
             ([key]) => !launcherConnectionKeys.has(key),
           ),
         );
-  if (dialect === "goose" && Object.hasOwn(retained, "env")) {
-    if (Object.hasOwn(retained, "envs"))
-      return err(
-        new ConfigurationError(
-          "Goose environment is ambiguous: keep only envs or its env alias, not both.",
-          {
-            settings: [
-              {
-                setting: "envs",
-                constraint: "env and envs declare the same native field",
-              },
-            ],
-          },
-        ),
-      );
+  const gooseField =
+    dialect === "goose" ? gooseEnvironmentField(retained) : ok("envs");
+  if (!gooseField.ok) return gooseField;
+  if (gooseField.value === "env") {
     const alias = jsonRecordSchema(z.string()).safeParse(retained.env);
     if (!alias.success)
       return err(
@@ -334,59 +415,70 @@ export const replaceClientRegistrationLauncher = (
           ],
         }),
       );
-    retained.envs = alias.data;
-    delete retained.env;
+    // Goose overlays each field separately, so an alias a lower layer also
+    // declares keeps its spelling; `envs` beside it would be ambiguous.
+    if (inheritsGooseEnvironmentAlias(inherited)) retained.env = alias.data;
+    else {
+      retained.envs = alias.data;
+      delete retained.env;
+    }
   }
   const defaults = clientRegistrationEntry(dialect, command, {});
   // Layered native clients inherit policy without copying it into the edited
   // fragment. Defaults must not override an explicitly configured lower layer.
-  const inheritedPolicy = clientConfigurationRecordSchema.safeParse(inherited);
+  const inheritedPolicy = clientConfigurationRecordSchema.safeParse(
+    clientServerRowsReplace(dialect) ? undefined : inherited,
+  );
   if (inheritedPolicy.success)
     for (const key of Object.keys(defaults))
       if (
         !launcherConnectionKeys.has(key) &&
         (Object.hasOwn(inheritedPolicy.data, key) ||
-          (dialect === "opencode" &&
-            key === "enabled" &&
-            Object.hasOwn(inheritedPolicy.data, "disabled")))
+          // Goose reads its `env` alias as `envs`.
+          (dialect === "goose" &&
+            key === "envs" &&
+            inheritsGooseEnvironmentAlias(inherited)))
       )
         delete defaults[key];
-  // V1 already accepts a disabled policy. Adding enabled:true would override
-  // that existing activation dialect when OpenCode migrates the row.
   if (
     dialect === "opencode" &&
-    source !== undefined &&
-    Object.hasOwn(source, "disabled")
+    (openCodeDisabled(retained, dialect) !== undefined ||
+      (inheritedPolicy.success &&
+        openCodeDisabled(inheritedPolicy.data, dialect) !== undefined))
   )
     delete defaults.enabled;
   const launcher = clientRegistrationLauncherEntry(dialect, command);
-  if (profile.connection.kind === "cline" && source !== undefined) {
-    const nested = clientConfigurationRecordSchema.safeParse(source.transport);
-    if (nested.success) {
-      for (const key of Object.keys(launcher)) delete defaults[key];
-      const retainedTransport = Object.fromEntries(
-        Object.entries(nested.data).filter(
-          ([key]) =>
-            key !== "type" && key !== "url" && !Object.hasOwn(launcher, key),
-        ),
-      );
-      return ok({
-        ...defaults,
+  if (facts.value.nested)
+    for (const key of Object.keys(launcher)) delete defaults[key];
+  return ok(
+    writeRegistrationConnection(
+      facts.value,
+      { ...defaults, ...retained },
+      launcher,
+    ),
+  );
+};
+
+const writeRegistrationConnection = (
+  facts: ReturnType<typeof clientRegistrationSource>,
+  retained: Record<string, unknown>,
+  fields: Record<string, unknown>,
+): Record<string, unknown> =>
+  facts.nested
+    ? {
         ...retained,
         transport: {
-          ...retainedTransport,
+          ...Object.fromEntries(
+            Object.entries(facts.connection ?? {}).filter(
+              ([key]) =>
+                key !== "type" && key !== "url" && !Object.hasOwn(fields, key),
+            ),
+          ),
           type: "stdio",
-          ...launcher,
+          ...fields,
         },
-      });
-    }
-  }
-  return ok({
-    ...defaults,
-    ...retained,
-    ...launcher,
-  });
-};
+      }
+    : { ...retained, ...fields };
 
 /** Whether a rea setup repair for this target preserves the row's
  * `enable: false` instead of dropping it. Shared registration doubles as
@@ -408,6 +500,8 @@ export const refreshClientRegistration = (
   environment: Readonly<Record<string, string>>,
   previous: unknown,
   timeoutInputs: McpToolTimeoutInputs,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Result<Record<string, unknown>, ConfigurationError> => {
   const target = { dialect, profile: client.registrationProfile };
   const facts = clientRegistrationSourceFacts(target, command, previous);
@@ -421,18 +515,40 @@ export const refreshClientRegistration = (
     : undefined;
   const launcher =
     priorCommand !== undefined &&
-    equivalentClientRegistrationCommands(priorCommand, command)
+    equivalentClientRegistrationCommands(
+      priorCommand,
+      command,
+      launcherEnvironment,
+      platform,
+    )
       ? priorCommand
       : command;
-  const registration = {
-    ...clientRegistrationEntry(dialect, launcher, environment),
-    ...Object.fromEntries(
-      Object.entries(existing).filter(
-        ([key]) =>
-          !facts.value.connectionFields.has(key) && !managedPolicyKeys.has(key),
+  const defaults = clientRegistrationEntry(dialect, launcher, environment);
+  const fields = facts.value.nested
+    ? {
+        ...clientRegistrationLauncherEntry(dialect, launcher),
+        ...(Object.keys(environment).length === 0
+          ? {}
+          : { env: { ...environment } }),
+      }
+    : clientRegistrationLauncherEntry(dialect, launcher);
+  if (facts.value.nested)
+    for (const key of Object.keys(fields)) delete defaults[key];
+  const registration = writeRegistrationConnection(
+    facts.value,
+    {
+      ...defaults,
+      ...Object.fromEntries(
+        Object.entries(existing).filter(
+          ([key]) =>
+            !facts.value.connectionFields.has(key) &&
+            (!managedPolicyKeys.has(key) ||
+              (facts.value.nested && key === "env")),
+        ),
       ),
-    ),
-  };
+    },
+    fields,
+  );
   if (
     setupPreservesDisabledActivation(client, dialect) &&
     existing.enable === false

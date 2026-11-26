@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 const injected = vi.hoisted(() => ({
   path: "",
@@ -54,11 +53,10 @@ import {
   observeSelectedExecutable,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureReadFailure } from "../../../src/process/capture/ProcessCaptureRead.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
 const createExecutable = async (content: string): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-selected-executable-owner-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-selected-executable-owner-");
   const path = join(root, "selected-fixture");
   await writeFile(path, content);
   return path;
@@ -97,9 +95,6 @@ afterEach(async () => {
   injected.abortOnClose = undefined;
   injected.opened = [];
   injected.closed = [];
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
   vi.restoreAllMocks();
 });
 
@@ -255,14 +250,7 @@ it.each([
     if (systemError) Object.assign(primary, { code: "EIO", syscall: "read" });
     const reason = { request: "cancel while the descriptor read is pending" };
     const controller = new AbortController();
-    let enter!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const selectedExecutableRead = phaseGate();
     injected.path = path;
     injected.closeFailure = closeDenied
       ? new Error("descriptor close denied after failed read")
@@ -272,8 +260,7 @@ it.each([
       open: async (selected: string, flags: number) => {
         const handle = await open(selected, flags);
         handle.read = async () => {
-          enter();
-          await pending;
+          await selectedExecutableRead.hold();
           throw primary;
         };
         return handle;
@@ -287,9 +274,9 @@ it.each([
       ),
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(entered, reading, "selected executable read");
+      await selectedExecutableRead.reached(reading, "selected executable read");
       controller.abort(reason);
-      release();
+      selectedExecutableRead.release();
       const failure = await reading;
       expect(failure.cause).toBe(primary);
       expect(failure.outcome).toMatchObject({ kind: "failed", cause: primary });
@@ -316,7 +303,7 @@ it.each([
       await scope.close();
     }, [
       () => controller.abort(),
-      release,
+      selectedExecutableRead.release,
       async () => {
         await reading;
       },

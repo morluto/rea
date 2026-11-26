@@ -23,6 +23,14 @@ import { parseAdbTransportIdentity } from "../domain/adb/adbTransportIdentity.js
 
 const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
 
+/**
+ * adb prints a wireless-debugging transport's serial as the mDNS instance
+ * `<instance>._adb._tcp` or `<instance>._adb-tls-connect._tcp`. That serial
+ * has neither a colon nor a `usb:` field.
+ */
+const isAdbMdnsTcpSerial = (serial: string): boolean =>
+  serial.endsWith("._adb._tcp") || serial.endsWith("._adb-tls-connect._tcp");
+
 const normalizeAdbOutputLine = (rawLine: string): string => rawLine.trimEnd();
 
 export const isSuccessfulDaemonStartNotice = (line: string): boolean =>
@@ -51,8 +59,18 @@ export const hasOnlySuccessfulAdbStartupNotices = (output: string): boolean => {
   return started;
 };
 
-const metadataValue = (remainder: string, key: string): string | null => {
-  const match = new RegExp(`(?:^|\\s)${key}:(\\S+)`, "u").exec(remainder);
+const ADB_METADATA_PATTERNS = {
+  usb: /(?:^|\s)usb:(\S+)/u,
+  product: /(?:^|\s)product:(\S+)/u,
+  model: /(?:^|\s)model:(\S+)/u,
+  device: /(?:^|\s)device:(\S+)/u,
+} as const;
+
+const metadataValue = (
+  remainder: string,
+  key: keyof typeof ADB_METADATA_PATTERNS,
+): string | null => {
+  const match = ADB_METADATA_PATTERNS[key].exec(remainder);
   return match === null ? null : match[1]!;
 };
 
@@ -122,7 +140,7 @@ export const parseAdbDevicesOutput = (
       transport:
         usb !== null
           ? "usb"
-          : isEmulator || serial.includes(":")
+          : isEmulator || serial.includes(":") || isAdbMdnsTcpSerial(serial)
             ? "tcp"
             : "unknown",
       product: metadataValue(remainder, "product"),
@@ -267,7 +285,7 @@ export interface AdbPackagePathEntry {
  */
 export const parsePmPathOutput = (
   stdout: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): {
   paths: readonly AdbPackagePathEntry[];
   rejectedPaths: readonly {

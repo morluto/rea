@@ -11,10 +11,13 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { kunaAddressFromJsonNumber } from "./KunaJson.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * stream-json 3's synchronous tokenizer behind `parser`, which its
@@ -84,9 +87,6 @@ const ADMISSION_INTERVAL_BYTES = 64 * 1024;
 /** Per-row reserve for the owner's arrays, sorting and projections. */
 const ROW_REFERENCE_BYTES = 16;
 
-const describe = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /**
  * Longest key or kept number assembled. Kuna's field names and u64 decimals
  * are far shorter, so a longer key names no kept field and a longer kept
@@ -135,7 +135,7 @@ const detached = (text: string): string =>
  */
 export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   readonly #hash = createHash("sha256");
-  readonly #decoder = new TextDecoder("utf-8", { fatal: true });
+  readonly #decoder = strictUtf8Decoder("strip-signature");
   readonly #tokens = jsonParser({
     packKeys: false,
     packNumbers: false,
@@ -159,6 +159,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   /** Whether the scalar being assembled is a key. */
   #inKey = false;
   /** The key or kept scalar assembled so far. */
+  // not-an-allowance: the scalar being assembled; keys are capped at MAX_TOKEN_CODE_UNITS and kept values are charged through #charge.
   #text = "";
   #rows = 0;
   #projectedBytes = 0;
@@ -213,7 +214,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         this.#feed(this.#decoder.decode(chunk, { stream: true }));
       } catch (cause: unknown) {
         this.#reject(cause);
-        this.#rejection.abort();
+        this.#rejection.abort(OwnerCancellation.noLongerNeeded);
       }
     callback();
   }
@@ -254,10 +255,10 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
         : cause instanceof KunaDocumentError
           ? new AnalysisOutputError(this.producer, cause.code, {
               cause,
-              diagnostics: { code: cause.code, ...cause.detail },
+              diagnostics: { code: cause.code, ...cause.facts },
               userMessage: `${this.label} cannot be used`,
             })
-          : this.unusable(describe(cause));
+          : this.unusable(errorMessage(cause));
     this.#text = "";
     this.#inKey = false;
     this.#header = {};
@@ -572,6 +573,8 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
           heap_size_limit_bytes: heap.heap_size_limit,
         },
         {
+          // Live heap headroom was measured; no configured budget was exceeded.
+          measuredExhaustion: true,
           remediationAction:
             "Close other targets in this REA process, or start REA with a larger Node.js heap (--max-old-space-size), then reopen the target.",
         },

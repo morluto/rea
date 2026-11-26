@@ -3,15 +3,21 @@ import { createHash } from "node:crypto";
 import { chmod, open, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  PCAP_PRODUCER_LIMITS,
+  pcapProducerLimit,
+} from "../domain/pcap/pcapAnalysis.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { withSecondaryCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   assertRegularFileActive,
@@ -23,18 +29,19 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_pcap_capture";
-const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
 
 /** An owned capture copy and every descriptor needed to release it safely. */
 export class PcapSnapshot {
   private readonly handles = new Set<OwnedFileHandle>();
+  /** Descriptors whose failed completion close an error still reports. */
   private readonly completionCleanup = new Map<
     OwnedFileHandle,
-    AnalysisError
+    AnalysisCleanupLease
   >();
   readonly path: string;
   readonly configurationPath: string;
@@ -62,8 +69,13 @@ export class PcapSnapshot {
   private async release(handle: OwnedFileHandle): Promise<void> {
     await handle.close();
     this.handles.delete(handle);
-    this.completionCleanup.get(handle)?.resolveCleanup();
     this.completionCleanup.delete(handle);
+  }
+  /** Retry through a reported descriptor's lease so its error reads the release. */
+  private retryRelease(handle: OwnedFileHandle): Promise<void> {
+    return (
+      this.completionCleanup.get(handle)?.release() ?? this.release(handle)
+    );
   }
   private async releaseCompleted(
     handle: OwnedFileHandle,
@@ -78,25 +90,29 @@ export class PcapSnapshot {
         { reason: "Owned snapshot descriptor close failed" },
         { operation: OPERATION, cause: cleanupCause },
       );
-      this.completionCleanup.set(handle, cleanup);
+      const lease = new AnalysisCleanupLease(
+        () => this.release(handle),
+        [this.path],
+      );
+      lease.bindCleanupError(cleanup);
+      this.completionCleanup.set(handle, lease);
       if (signal?.aborted !== true) throw cleanup;
-      const cancelled = new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
+      const cancelled = cancelledBy(OPERATION, signal, {
         cleanup: {
           reason: "Owned snapshot descriptor close could not be confirmed",
           resources: [this.path],
         },
       });
-      cancelled
-        .retainSecondaryFailure(cleanup)
-        .bindCleanupDependencies([cleanup]);
+      withSecondaryCleanupFailure(cancelled, cleanup);
       throw cancelled;
     }
   }
 
+  /** `maximumBytes` is the caller's `producer_limits.input_bytes`. */
   async capture(
     path: string,
     signal?: AbortSignal,
+    maximumBytes: number = PCAP_PRODUCER_LIMITS.input_bytes,
   ): Promise<{ bytes: number; sha256: string }> {
     const sourceRead = async <T>(read: () => Promise<T>): Promise<T> => {
       try {
@@ -117,7 +133,7 @@ export class PcapSnapshot {
           {
             path: ["path"],
             reason: "invalid_value",
-            message: `Cannot read selected capture ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Cannot read selected capture ${path}: ${errorMessage(cause)}`,
           },
         ]);
       }
@@ -143,16 +159,20 @@ export class PcapSnapshot {
       const before = await sourceRead(() =>
         source.handle.stat({ bigint: true }),
       );
-      if (before.size > BigInt(MAX_CAPTURE_BYTES))
+      if (before.size > BigInt(maximumBytes))
         throw new AnalysisResourceConstraintError(
           OPERATION,
           "file-size",
-          "Capture exceeds the owned-snapshot disk budget",
-          { max_capture_bytes: MAX_CAPTURE_BYTES },
-          fixedAllowanceOptions(
-            "the owned capture snapshot allowance",
-            "input",
-          ),
+          "Capture exceeds the producer_limits.input_bytes snapshot budget",
+          { max_capture_bytes: maximumBytes },
+          {
+            retryable: false,
+            limit: pcapProducerLimit(
+              "input_bytes",
+              maximumBytes,
+              Number(before.size),
+            ),
+          },
         );
       const destination = this.own(
         new OwnedFileHandle(await open(this.path, "wx", 0o600)),
@@ -225,9 +245,7 @@ export class PcapSnapshot {
         cause instanceof RegularFileAdmissionFailure ? cause.cause : cause;
       const cancellation = regularFileCancellation(primary);
       if (cancellation !== undefined)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(OPERATION, carriedReason(cancellation.reason));
       if (cause instanceof AnalysisError) throw cause;
       throw privateWorkspaceFailure("pcap", OPERATION, primary, this.root.path);
     }
@@ -282,9 +300,7 @@ export class PcapSnapshot {
         cause instanceof RegularFileAdmissionFailure ? cause.cause : cause;
       const cancellation = regularFileCancellation(primary);
       if (cancellation !== undefined)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(OPERATION, carriedReason(cancellation.reason));
       if (cause instanceof AnalysisError) throw cause;
       throw new AnalysisArtifactChangedError(
         OPERATION,
@@ -297,7 +313,7 @@ export class PcapSnapshot {
 
   async close(): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.handles].map((handle) => this.release(handle)),
+      [...this.handles].map((handle) => this.retryRelease(handle)),
     );
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason as unknown] : [],

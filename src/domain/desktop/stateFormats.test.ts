@@ -7,10 +7,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectStateFormat,
-  jsonView,
   keyfileView,
   textSyntaxFormat,
   textView,
+  textualView,
   xmlView,
 } from "./stateFormats.js";
 
@@ -93,17 +93,23 @@ describe("detectStateFormat", () => {
 
 describe("jsonView", () => {
   it("refuses values a JavaScript number would round, or that nest too deeply", () => {
-    expect(jsonView('{"id":9007199254740993}')).toEqual({
+    expect(textualView("json", bytes('{"id":9007199254740993}'))).toEqual({
       ok: false,
       error:
         "a number in it cannot be read exactly, such as an integer above 2^53",
     });
-    expect(jsonView(`${"[".repeat(502)}${"]".repeat(502)}`)).toEqual({
+    expect(
+      textualView("json", bytes(`${"[".repeat(502)}${"]".repeat(502)}`)),
+    ).toEqual({
       ok: false,
       error: "nested deeper than the 500 levels a JSON view keeps",
     });
-    expect(jsonView(`${"[".repeat(501)}${"]".repeat(501)}`).ok).toBe(true);
-    expect(jsonView('{"id":9007199254740991,"x":0.5}')).toEqual({
+    expect(
+      textualView("json", bytes(`${"[".repeat(501)}${"]".repeat(501)}`)).ok,
+    ).toBe(true);
+    expect(
+      textualView("json", bytes('{"id":9007199254740991,"x":0.5}')),
+    ).toEqual({
       ok: true,
       value: { id: 9007199254740991, x: 0.5 },
     });
@@ -111,6 +117,28 @@ describe("jsonView", () => {
 });
 
 describe("views", () => {
+  it.each([
+    ["", []],
+    ["\n", [""]],
+    ["one\r\ntwo\n\n", ["one", "two", ""]],
+    ["one\rtwo\r", ["one\rtwo\r"]],
+    ["one\u2028two\u0085three", ["one\u2028two\u0085three"]],
+    ["one\r\r\ntwo", ["one\r", "two"]],
+  ] as const)(
+    "counts all lines and retains the requested prefix: %j",
+    (text, expected) => {
+      for (const limit of [1, 2, 5]) {
+        expect(
+          textView(text, desktopViewPolicy({ text_lines: limit })),
+        ).toEqual({
+          lines: expected.slice(0, limit),
+          line_count: expected.length,
+          truncated: expected.length > limit,
+        });
+      }
+    },
+  );
+
   it("splits text into lines without a trailing empty line", () => {
     expect(textView("a\nb\n")).toEqual({
       lines: ["a", "b"],
@@ -332,7 +360,11 @@ it("keeps maximum-depth views encodable inside captured ZIP-member Evidence", ()
     `${'<a key="value">'.repeat(495)}${"</a>".repeat(495)}`,
     policy,
   );
-  const json = jsonView(`${"[".repeat(991)}0${"]".repeat(991)}`, policy);
+  const json = textualView(
+    "json",
+    bytes(`${"[".repeat(991)}0${"]".repeat(991)}`),
+    policy,
+  );
   if (!json.ok) throw new Error(json.error);
   expect(xml).toMatchObject({ truncated: false });
   for (const view of [xml, json.value]) {

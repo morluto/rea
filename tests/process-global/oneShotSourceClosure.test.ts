@@ -1,14 +1,15 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import type { UndeliveredSourceClosure } from "../../src/application/AnalysisEvidenceSources.js";
 import * as matchingService from "../../src/application/native/NativeFunctionMatchingService.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { registerNativeFunctionMatchingCommands } from "../../src/cli/nativeFunctionMatchingCommands.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -65,11 +66,15 @@ type FinalClose =
 
 const fixture = async (dependencyText = "Synthetic dependency") => {
   const root = await createTestTempDirectory("rea-source-closure-");
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { source: dependencyText },
-  });
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: dependencyText },
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [{ address: "0x10", value: "main" }],
@@ -143,7 +148,7 @@ const runMatching = async (
           { operation: "match_native_functions" },
         );
     });
-  const cli = Cli.create("one-shot-source-closure-test", { sync: false });
+  const cli = createCommandCli();
   registerNativeFunctionMatchingCommands(
     cli,
     silentLogger,
@@ -271,20 +276,28 @@ it("keeps the fault on the final close when another scope closes first", async (
 
 it("keeps cancellation typed for a captured source with a data-sized link set", async () => {
   // Repeated links are valid Evidence, and only one distinct record backs them.
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_ancestor",
-    parameters: {},
-    result: { source: "Synthetic ancestor" },
-  });
-  const wide = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { source: "Synthetic wide dependency" },
-    evidenceLinks: Array.from(
-      { length: DATA_SIZED_LINKS },
-      () => ancestor.evidence_id,
-    ),
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_ancestor",
+      parameters: {},
+      result: { source: "Synthetic ancestor" },
+    },
+  );
+  const wide = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: "Synthetic wide dependency" },
+      evidenceLinks: Array.from(
+        { length: DATA_SIZED_LINKS },
+        () => ancestor.evidence_id,
+      ),
+    },
+  );
   const input = await fixture();
   const left = nativeMatchingInventory(
     "1",
@@ -318,7 +331,7 @@ it("keeps cancellation typed for a captured source with a data-sized link set", 
     omitted_count: 1,
     omitted: [{ evidence_id: wide.evidence_id, reason: "not_inlined" }],
   });
-}, 60_000);
+});
 
 it("hands off the same closure for summary delivery and permits a clean retry", async () => {
   const input = await fixture();

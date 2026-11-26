@@ -1,6 +1,8 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Host storage exhaustion; only these errors establish a storage constraint. */
 const STORAGE_EXHAUSTION_CODES: ReadonlySet<string> = new Set([
@@ -13,11 +15,6 @@ const DESCRIPTOR_EXHAUSTION_CODES: ReadonlySet<string> = new Set([
   "EMFILE",
   "ENFILE",
 ]);
-
-const systemCode = (cause: unknown): string | null =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : null;
 
 const systemPath = (cause: unknown): string | null =>
   cause instanceof Error && "path" in cause && typeof cause.path === "string"
@@ -39,9 +36,9 @@ export const privateWorkspaceFailure = (
   cause: unknown,
   workspacePath: string | null,
 ): AnalysisError => {
-  const code = systemCode(cause);
+  const code = systemCodeFromError(cause) ?? null;
   const path = systemPath(cause) ?? workspacePath;
-  const reason = cause instanceof Error ? cause.message : String(cause);
+  const reason = errorMessage(cause);
   if (code !== null && (STORAGE_EXHAUSTION_CODES.has(code) || code === "EFBIG"))
     return new AnalysisResourceConstraintError(
       operation,

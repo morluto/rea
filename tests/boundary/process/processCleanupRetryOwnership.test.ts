@@ -1,9 +1,7 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rm, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
-import { createDeferred } from "../../fixtures/binarySession.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
@@ -13,6 +11,7 @@ import {
   type ProcessCaptureCleanupHost,
   type ProcessCaptureResourceCleanupOptions,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cleanupOptions = (
   temporaryRoot: string,
@@ -34,7 +33,7 @@ const cleanupOptions = (
 };
 
 const createRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "rea-process-cleanup-retry-"));
+  createTestTempDirectory("rea-process-cleanup-retry-");
 
 const expectCaptureError = (operation: () => unknown): ProcessCaptureError => {
   try {
@@ -101,7 +100,6 @@ it("resolves the origin and finalization copy after the exact root retry", async
   } finally {
     denyRemoval = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -183,40 +181,38 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
   } finally {
     denied.clear();
     await scope.close();
-    await Promise.all(
-      roots.map((root) => rm(root, { recursive: true, force: true })),
-    );
   }
 });
 
 it("joins an already-started release when shutdown begins", async () => {
   const scope = new ProcessCaptureResourceScope();
   const root = await createRoot();
-  const entered = createDeferred<void>();
-  const unblock = createDeferred<void>();
+  const resourceRelease = phaseGate();
   let attempts = 0;
   const releasing = scope.release(
     cleanupOptions(root, async (path) => {
       attempts += 1;
-      entered.resolve();
-      await unblock.promise;
+      await resourceRelease.hold();
       await rm(path, { recursive: true });
     }),
   );
-  await entered.promise;
   let closed = false;
-  const closing = scope.close().then(() => {
-    closed = true;
-  });
+  let closing: Promise<void> | undefined;
   try {
+    await resourceRelease.reached(releasing, "resource release");
+    closing = scope.close().then(() => {
+      closed = true;
+    });
     await setImmediate();
     expect(closed).toBe(false);
     await expect(stat(root)).resolves.toBeDefined();
   } finally {
-    unblock.resolve();
-    await Promise.all([releasing, closing]);
-    await rm(root, { recursive: true, force: true });
+    resourceRelease.release();
+    await Promise.allSettled([releasing, ...(closing ? [closing] : [])]);
+    await scope.close();
   }
+  await releasing;
+  await closing;
   expect(attempts).toBe(1);
   expect(closed).toBe(true);
   await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
@@ -254,7 +250,6 @@ it("binds a historical failed report after its owner already retried", async () 
   } finally {
     denyRemoval = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -306,7 +301,6 @@ it("blocks scope admission on owner-bound retry failure and resumes after releas
   } finally {
     denyRemoval = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -337,6 +331,5 @@ it("keeps historical report edits separate from cleanup authority", async () => 
   } finally {
     denied = false;
     await scope.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

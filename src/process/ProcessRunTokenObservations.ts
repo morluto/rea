@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   assertProcessOwnershipInspectionActive,
@@ -9,6 +10,7 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Structured native token availability, distinct from failed reads and caller cancellation. */
 export class ProcessRunTokenReadError extends Error {
@@ -22,9 +24,6 @@ export class ProcessRunTokenReadError extends Error {
     this.name = "ProcessRunTokenReadError";
   }
 }
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Only a variable observed on this process supplies its run token. */
 export const processRunIdFromEnvironment = (
@@ -58,12 +57,7 @@ export const readProcessRunToken = async (
     )
       throw cause;
     rethrowProcessOwnershipInspectionFailure(cause);
-    const code =
-      cause instanceof Error &&
-      "code" in cause &&
-      typeof cause.code === "string"
-        ? cause.code
-        : undefined;
+    const code = systemCodeFromError(cause);
     return {
       state: "unavailable",
       ...(code === undefined ? {} : { code }),

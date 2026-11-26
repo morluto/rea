@@ -18,10 +18,8 @@ import {
   wrongClsidShortcut,
 } from "../../../tests/fixtures/binaryDiagnostics/windowsShortcut.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const input = inspectWindowsShortcutInputSchema.parse({
   path: "/artifacts/shortcut.lnk",
@@ -259,6 +257,194 @@ it.each([
   },
 );
 
+it("keeps icon comparison unknown when the Unicode network target points into its header", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: {
+      netName: "\\\\server\\other",
+      unicode: true,
+      networkUnicode: true,
+    },
+    iconLocation: "\\\\server\\target",
+    extraData: [],
+  });
+  const network = 76 + bytes.readUInt32LE(76 + 20);
+  bytes.writeUInt32LE(4, network + 20);
+  const report = await parse(bytes);
+  const icon = report.observations.find(
+    ({ kind }) => kind === "icon_location_differs_from_target",
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(icon).toMatchObject({ value: null });
+  expect(
+    report.observations.find(({ kind }) => kind === "target_extension"),
+  ).toMatchObject({ extension: null });
+});
+
+it.each([
+  { unicode: false, independent: false, expected: null },
+  { unicode: true, independent: false, expected: null },
+  { unicode: false, independent: true, expected: false },
+  { unicode: true, independent: true, expected: false },
+] as const)(
+  "does not match a bare base when its suffix is unreadable (Unicode $unicode, independent $independent)",
+  async ({ unicode, independent, expected }) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: {
+        localBasePath: "C:\\Apps",
+        commonPathSuffix: "run.exe",
+        unicode,
+      },
+      iconLocation: "C:\\Apps",
+      ...(independent ? { relativePath: "C:\\Apps" } : {}),
+      extraData: [],
+    });
+    bytes.writeUInt32LE(4, 76 + 24);
+    if (unicode) bytes.writeUInt32LE(4, 76 + 32);
+    const report = await parse(bytes);
+    expect(report.coverage.status).toBe("partial");
+    expect(
+      report.observations.find(
+        ({ kind }) => kind === "icon_location_differs_from_target",
+      ),
+    ).toMatchObject({ value: expected });
+  },
+);
+
+it("retains an independent network match when the local target is unreadable", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: {
+      localBasePath: "C:\\Apps",
+      netName: "\\\\server\\share",
+      unicode: true,
+      networkUnicode: true,
+    },
+    iconLocation: "\\\\server\\share",
+    extraData: [],
+  });
+  bytes.writeUInt32LE(4, 76 + 28);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: false });
+});
+
+it("does not match an ANSI fallback when the preferred Unicode target is unreadable", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { localBasePath: "C:\\Apps\\same.exe", unicode: true },
+    iconLocation: "C:\\Apps\\same.exe",
+    extraData: [],
+  });
+  bytes.writeUInt32LE(4, 76 + 28);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: null });
+});
+
+it("does not match an ANSI network fallback when its Unicode target is unreadable", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: {
+      netName: "\\\\server\\share",
+      unicode: true,
+      networkUnicode: true,
+    },
+    iconLocation: "\\\\server\\share",
+    extraData: [],
+  });
+  const network = 76 + bytes.readUInt32LE(76 + 20);
+  bytes.writeUInt32LE(4, network + 20);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: null });
+});
+
+it("retains a known target match alongside an unreadable network target", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: {
+      netName: "\\\\server\\other",
+      unicode: true,
+      networkUnicode: true,
+    },
+    relativePath: "C:\\Apps\\same.exe",
+    iconLocation: "C:\\Apps\\same.exe",
+    extraData: [],
+  });
+  const network = 76 + bytes.readUInt32LE(76 + 20);
+  bytes.writeUInt32LE(4, network + 20);
+  const report = await parse(bytes);
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: false });
+});
+
+it("keeps a valid Unicode local target when only its ANSI offset is malformed", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { localBasePath: "C:\\Apps\\safe.exe", unicode: true },
+    iconLocation: "C:\\Apps\\other.exe",
+    extraData: [],
+  });
+  bytes.writeUInt32LE(4, 76 + 16);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.link_info?.local_base_path_unicode).toBe("C:\\Apps\\safe.exe");
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: true });
+  expect(
+    report.observations.find(({ kind }) => kind === "target_extension"),
+  ).toMatchObject({ extension: ".exe" });
+});
+
+it.each([28, 32] as const)(
+  "keeps icon comparison unknown for an unreadable LinkInfo path field at %s",
+  async (field) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Apps\\safe.exe", unicode: true },
+      iconLocation: "C:\\Apps\\other.exe",
+      extraData: [],
+    });
+    const valid = await parse(bytes);
+    expect(
+      valid.observations.find(
+        ({ kind }) => kind === "icon_location_differs_from_target",
+      ),
+    ).toMatchObject({ value: true });
+    bytes.writeUInt32LE(4, 76 + field);
+    const report = await parse(bytes);
+    expect(report.coverage.status).toBe("partial");
+    expect(
+      report.observations.find(
+        ({ kind }) => kind === "icon_location_differs_from_target",
+      ),
+    ).toMatchObject({ value: null });
+    expect(
+      report.observations.find(({ kind }) => kind === "target_extension"),
+    ).toMatchObject({ extension: null });
+  },
+);
+
 it("reads ANSI StringData when IsUnicode is unset", async () => {
   const report = await parse(ansiShortcut());
   expect(report.string_data.name?.encoding).toBe("ansi");
@@ -274,9 +460,16 @@ it("reports truncated StringData as partial coverage with a failing offset", asy
   expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
 });
 
-it.each([12, 16, 20, 24, 28, 32])(
+it.each([
+  [12, "truncated"],
+  [16, "malformed_structure"],
+  [20, "truncated"],
+  [24, "malformed_structure"],
+  [28, "malformed_structure"],
+  [32, "malformed_structure"],
+] as const)(
   "points an out-of-range LinkInfo offset at its field at byte %i",
-  async (field) => {
+  async (field, code) => {
     const bytes = windowsShortcutBytes({
       idList: null,
       linkInfo: {
@@ -288,6 +481,9 @@ it.each([12, 16, 20, 24, 28, 32])(
     const report = await parse(bytes);
     expect(report.coverage.status).toBe("partial");
     expect(report.coverage.failing_offset).toBe(76 + field);
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ code, offset: 76 + field }),
+    );
     expect(report.issues.every((issue) => issue.offset < bytes.length)).toBe(
       true,
     );
@@ -311,7 +507,7 @@ it("lists an unknown ExtraData signature instead of dropping it", async () => {
 
 it("rejects a Shell Link whose CLSID is not the documented value", async () => {
   await expect(parse(wrongClsidShortcut())).rejects.toBeInstanceOf(
-    WindowsShortcutFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -319,26 +515,51 @@ it("rejects a HeaderSize other than 0x4C", async () => {
   await expect(
     parse(windowsShortcutBytes({ headerSize: 0x50, extraData: [] })),
   ).rejects.toMatchObject({
-    name: "WindowsShortcutFormatFailure",
-    kind: "malformed",
+    failure: {
+      kind: "malformed",
+      format: "windows-shortcut",
+      offset: 0,
+      field: "HeaderSize",
+    },
   });
 });
 
-it("reports an ExtraData size that overruns the file", async () => {
-  const bytes = windowsShortcutBytes({ extraData: [], terminalBlock: false });
-  const overrun = Buffer.concat([
-    bytes,
-    Buffer.from([0x40, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xa0]),
-  ]);
-  const report = await parse(overrun);
-  expect(report.coverage.status).toBe("partial");
-  expect(
-    report.issues.some((issue) => issue.code === "block_size_overrun"),
-  ).toBe(true);
-});
-
-const HAS_EXP_STRING = 0x00000200;
-const HAS_EXP_ICON = 0x00004000;
+it.each([
+  [0xa0000001, null, null],
+  [0xa0000007, true, ".dll"],
+] as const)(
+  "uses an admitted ExtraData signature to retain target uncertainty (%s)",
+  async (signature, difference, extension) => {
+    const prefix = withLinkFlags(
+      windowsShortcutBytes({
+        idList: null,
+        linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
+        iconLocation: "C:\\Tools\\intended.exe",
+        extraData: [],
+        terminalBlock: false,
+      }),
+      LINK_FLAG.HasExpIcon,
+    );
+    const header = Buffer.alloc(8);
+    header.writeUInt32LE(0x314);
+    header.writeUInt32LE(signature, 4);
+    const report = await parse(Buffer.concat([prefix, header]));
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: prefix.length,
+    });
+    expect(report.extra_data.blocks).toEqual([]);
+    expect(report.issues).toMatchObject([
+      { code: "block_size_overrun", offset: prefix.length },
+    ]);
+    expect(iconDifference(report)).toBe(difference);
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension,
+    });
+  },
+);
 
 /** Set extra LinkFlags on an already built shortcut. */
 const withLinkFlags = (bytes: Buffer, added: number): Buffer => {
@@ -350,46 +571,71 @@ const withLinkFlags = (bytes: Buffer, added: number): Buffer => {
 const missingBlockIssues = (report: { issues: readonly { code: string }[] }) =>
   report.issues.filter((issue) => issue.code === "missing_extra_data_block");
 
-it("reports an expected block as absent once the TerminalBlock is read", async () => {
-  const report = await parse(
-    withLinkFlags(
-      windowsShortcutBytes({ extraData: [] }),
-      HAS_EXP_STRING | HAS_EXP_ICON,
-    ),
-  );
-  expect(report.extra_data.terminal_offset).toEqual(expect.any(Number));
-  expect(missingBlockIssues(report)).toEqual([
-    expect.objectContaining({
-      message: "HasExpString is set and EnvironmentVariableDataBlock is absent",
-    }),
-    expect.objectContaining({
-      message: "HasExpIcon is set and IconEnvironmentDataBlock is absent",
-    }),
-  ]);
-  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
-});
+it.each([
+  ["terminal", "intended.exe", true, ".dll", "missing_extra_data_block"],
+  ["end of file", "intended.exe", null, null, "truncated"],
+  ["block overrun", "intended.exe", null, null, "block_size_overrun"],
+  ["block overrun", "ordinary.dll", false, null, "block_size_overrun"],
+] as const)(
+  "uses %s coverage with a declared environment target and icon %s",
+  async (ending, icon, difference, extension, issueCode) => {
+    const prefix = withLinkFlags(
+      windowsShortcutBytes({
+        idList: null,
+        linkInfo: { localBasePath: "C:\\Tools\\ordinary.dll" },
+        iconLocation: `C:\\Tools\\${icon}`,
+        extraData: [],
+        terminalBlock: false,
+      }),
+      LINK_FLAG.HasExpString | LINK_FLAG.HasExpIcon,
+    );
+    const trailer =
+      ending === "terminal"
+        ? Buffer.alloc(4)
+        : ending === "block overrun"
+          ? Buffer.from("40000000070000a0", "hex")
+          : Buffer.alloc(0);
+    const report = await parse(Buffer.concat([prefix, trailer]));
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: prefix.length,
+    });
+    expect(report.extra_data.terminal_offset).toBe(
+      ending === "terminal" ? prefix.length : null,
+    );
+    expect(report.issues[0]).toMatchObject({
+      code: issueCode,
+      offset: prefix.length,
+    });
+    expect(missingBlockIssues(report)).toMatchObject(
+      ending === "terminal"
+        ? [
+            {
+              message:
+                "HasExpString is set and EnvironmentVariableDataBlock is absent",
+            },
+            {
+              message:
+                "HasExpIcon is set and IconEnvironmentDataBlock is absent",
+            },
+          ]
+        : [],
+    );
+    expect(iconDifference(report)).toBe(difference);
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension,
+    });
+  },
+);
 
 it("keeps an expected block unknown when StringData stops before ExtraData", async () => {
   const report = await parse(
-    withLinkFlags(truncatedStringDataShortcut(), HAS_EXP_STRING),
+    withLinkFlags(truncatedStringDataShortcut(), LINK_FLAG.HasExpString),
   );
   expect(report.coverage.status).toBe("partial");
   expect(report.extra_data.terminal_offset).toBeNull();
-  expect(missingBlockIssues(report)).toEqual([]);
-});
-
-it("keeps an expected block unknown when an ExtraData block overruns the file", async () => {
-  const bytes = windowsShortcutBytes({ extraData: [], terminalBlock: false });
-  const report = await parse(
-    withLinkFlags(
-      Buffer.concat([
-        bytes,
-        Buffer.from([0x40, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xa0]),
-      ]),
-      HAS_EXP_ICON,
-    ),
-  );
-  expect(report.coverage.status).toBe("partial");
   expect(missingBlockIssues(report)).toEqual([]);
 });
 
@@ -404,49 +650,50 @@ it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
   }
 });
 
-it("derives target facts from a stored environment target alone", async () => {
+it("reports bytes appended after the ExtraData TerminalBlock", async () => {
+  const link = powershellHiddenIconSpoofShortcut();
   const report = await parse(
-    windowsShortcutBytes({
-      flags: LINK_FLAG.IsUnicode | LINK_FLAG.HasIconLocation,
-      iconLocation: "C:\\Tools\\app.exe",
-      extraData: [
-        {
-          kind: "environment",
-          ansi: "C:\\Tools\\app.exe",
-          unicode: "C:\\Tools\\app.exe",
-        },
-      ],
-    }),
+    Buffer.concat([link, Buffer.from("PK\x03\x04appended", "latin1")]),
   );
-  expect(report.observations).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        kind: "target_extension",
-        extension: ".exe",
-      }),
-      expect.objectContaining({
-        kind: "icon_location_differs_from_target",
-        value: false,
-      }),
-    ]),
-  );
-});
-
-it("reports partial coverage when an expected block has no ExtraData to read", async () => {
-  const report = await parse(
-    withLinkFlags(
-      windowsShortcutBytes({ extraData: [], terminalBlock: false }),
-      HAS_EXP_STRING,
-    ),
-  );
-  expect(report.coverage.status).toBe("partial");
+  expect(report.extra_data.terminal_offset).toBe(link.length - 4);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: link.length,
+  });
   expect(report.issues).toEqual([
-    expect.objectContaining({
-      code: "truncated",
-      message: "ExtraData TerminalBlock is absent",
-    }),
+    {
+      code: "malformed_structure",
+      offset: link.length,
+      message:
+        "12 byte(s) follow the ExtraData TerminalBlock and are not part of the Shell Link",
+    },
   ]);
 });
+
+it.each([
+  ["an undeclared block before the terminal", 0, true, "complete"],
+  ["a declared block before EOF", LINK_FLAG.HasExpString, false, "partial"],
+] as const)(
+  "derives target facts from %s",
+  async (_, declarations, terminalBlock, status) => {
+    const target = "C:\\Tools\\app.exe";
+    const report = await parse(
+      windowsShortcutBytes({
+        flags: LINK_FLAG.IsUnicode | LINK_FLAG.HasIconLocation | declarations,
+        terminalBlock,
+        iconLocation: target,
+        extraData: [{ kind: "environment", ansi: target, unicode: target }],
+      }),
+    );
+    expect(report.coverage.status).toBe(status);
+    expect(iconDifference(report)).toBe(false);
+    expect(report.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension: ".exe",
+    });
+  },
+);
 
 it("reports an odd Unicode StringData remainder", async () => {
   const header = windowsShortcutBytes({
@@ -610,12 +857,315 @@ it("reports a VolumeID that selects a Unicode label it cannot hold", async () =>
   );
 });
 
+it.each([
+  { kind: "environment" },
+  { kind: "icon_environment" },
+  { kind: "tracker" },
+  { kind: "console_fe" },
+  { kind: "special_folder" },
+  { kind: "known_folder" },
+] as const)(
+  "keeps oversized $kind ExtraData raw and reads the next block",
+  async (entry) => {
+    const valid = windowsShortcutBytes({
+      extraData: [entry, { kind: "unknown", signature: 0xa00000fe }],
+    });
+    const control = await parse(valid);
+    expect(control.coverage.status).toBe("complete");
+    const [first, next] = control.extra_data.blocks;
+    if (first === undefined || next === undefined)
+      throw new Error("Expected two blocks");
+    const tail = Buffer.from([0xab, 0xcd]);
+    const bytes = Buffer.concat([
+      valid.subarray(0, next.offset),
+      tail,
+      valid.subarray(next.offset),
+    ]);
+    bytes.writeUInt32LE(first.size + tail.length, first.offset);
+
+    const report = await parse(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: first.offset,
+    });
+    expect(report.issues).toEqual([
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: first.offset,
+      }),
+    ]);
+    const payload = bytes.subarray(first.offset + 8, next.offset + tail.length);
+    expect(report.extra_data.blocks).toEqual([
+      {
+        ...first,
+        size: first.size + tail.length,
+        decoded: {
+          kind: "raw",
+          bytes: payload.length,
+          sha256: createHash("sha256").update(payload).digest("hex"),
+        },
+      },
+      { ...next, offset: next.offset + tail.length },
+    ]);
+  },
+);
+
+it.each([
+  { field: 16, key: "local_base_path" },
+  { field: 24, key: "common_path_suffix" },
+  { field: 28, key: "local_base_path_unicode" },
+  { field: 32, key: "common_path_suffix_unicode" },
+] as const)(
+  "reports LinkInfo strings that point into their header ($key)",
+  async ({ field, key }) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Apps\\safe.exe", commonPathSuffix: "" },
+      extraData: [],
+    });
+    const control = await parse(bytes);
+    expect(control.coverage.status).toBe("complete");
+    bytes.writeUInt32LE(4, 76 + field);
+    const report = await parse(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: 76 + field,
+    });
+    expect(report.link_info?.[key]).toBeNull();
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: 76 + field,
+      }),
+    );
+    expect(report.extra_data.terminal_offset).toBe(
+      control.extra_data.terminal_offset,
+    );
+  },
+);
+
+it.each([
+  { field: 16, key: "local_base_path" },
+  { field: 24, key: "common_path_suffix" },
+] as const)(
+  "treats a $key inside the mandatory header as unreadable when HeaderSize is below 0x1C",
+  async ({ field, key }) => {
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo: { localBasePath: "C:\\Apps\\safe.exe", commonPathSuffix: "" },
+      iconLocation: "C:\\Apps\\other.exe",
+      extraData: [],
+    });
+    const link = 76;
+    // HeaderSize 0x10 is below the mandatory 0x1C, and 0x14 still sits in that
+    // header. The bytes there would otherwise decode as the full path "C:\\x".
+    bytes.writeUInt32LE(0x10, link + 4);
+    bytes.writeUInt32LE(0x14, link + field);
+    bytes.write("C:\\x", link + 0x14, "latin1");
+    if (field !== 24) bytes.writeUInt32LE(0, link + 24);
+    const report = await parse(bytes);
+    expect(report.link_info?.header_size).toBe(0x10);
+    expect(report.link_info?.[key]).toBeNull();
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: link + field,
+      }),
+    );
+    expect(
+      report.observations.find(
+        ({ kind }) => kind === "icon_location_differs_from_target",
+      ),
+    ).toMatchObject({ value: null });
+    expect(
+      report.observations.find(({ kind }) => kind === "target_extension"),
+    ).toMatchObject({ extension: null });
+  },
+);
+
+it("reads a LinkInfo path that starts at the mandatory header when HeaderSize is below 0x1C", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { localBasePath: "C:\\Apps\\safe.exe", commonPathSuffix: "" },
+    iconLocation: "C:\\ok.exe",
+    extraData: [],
+  });
+  const link = 76;
+  bytes.writeUInt32LE(0x10, link + 4);
+  bytes.writeUInt32LE(0, link + 12);
+  bytes.writeUInt32LE(0x1c, link + 16);
+  bytes.writeUInt32LE(0, link + 24);
+  bytes.write("C:\\ok.exe\0", link + 0x1c, "latin1");
+  const report = await parse(bytes);
+  expect(report.link_info?.local_base_path).toBe("C:\\ok.exe");
+  expect(report.issues).not.toContainEqual(
+    expect.objectContaining({
+      code: "malformed_structure",
+      offset: link + 16,
+    }),
+  );
+  expect(
+    report.observations.find(
+      ({ kind }) => kind === "icon_location_differs_from_target",
+    ),
+  ).toMatchObject({ value: false });
+  expect(
+    report.observations.find(({ kind }) => kind === "target_extension"),
+  ).toMatchObject({ extension: ".exe" });
+});
+
+it.each([
+  {
+    name: "ANSI volume label",
+    kind: "volume",
+    unicode: false,
+    field: 12,
+    key: "label",
+  },
+  {
+    name: "Unicode volume label",
+    kind: "volume",
+    unicode: true,
+    field: 16,
+    key: "label_unicode",
+  },
+  {
+    name: "ANSI network name",
+    kind: "network",
+    unicode: false,
+    field: 8,
+    key: "net_name",
+  },
+  {
+    name: "ANSI network device",
+    kind: "network",
+    unicode: false,
+    field: 12,
+    key: "device_name",
+  },
+  {
+    name: "Unicode network name",
+    kind: "network",
+    unicode: true,
+    field: 20,
+    key: "net_name_unicode",
+  },
+  {
+    name: "Unicode network device",
+    kind: "network",
+    unicode: true,
+    field: 24,
+    key: "device_name_unicode",
+  },
+] as const)(
+  "rejects $name offsets into their structure header",
+  async ({ kind, unicode, field, key }) => {
+    const linkInfo =
+      kind === "volume"
+        ? { localBasePath: "C:\\Apps\\safe.exe", label: "DATA", unicode }
+        : {
+            netName: "\\\\server\\share",
+            deviceName: "Z:",
+            unicode,
+            networkUnicode: unicode,
+          };
+    const bytes = windowsShortcutBytes({
+      idList: null,
+      linkInfo,
+      extraData: [],
+    });
+    const control = await parse(bytes);
+    expect(control.coverage.status).toBe("complete");
+    const linkOffset = 76;
+    const nested =
+      linkOffset +
+      bytes.readUInt32LE(linkOffset + (kind === "volume" ? 12 : 20));
+    bytes.writeUInt32LE(4, nested + field);
+    const report = await parse(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      failing_offset: nested + field,
+    });
+    const block =
+      kind === "volume"
+        ? report.link_info?.volume
+        : report.link_info?.common_network_relative_link;
+    expect(block).toMatchObject({ [key]: null });
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_structure",
+        offset: nested + field,
+      }),
+    );
+    expect(report.extra_data.terminal_offset).toBe(
+      control.extra_data.terminal_offset,
+    );
+  },
+);
+
 it("keeps readable dates for FILETIME values before 1970", async () => {
   // 1950-01-01T00:00:00Z in 100 ns intervals since 1601.
   const report = await parse(
     windowsShortcutBytes({ creationTime: 110133216000000000n }),
   );
   expect(report.header.creation_time.iso8601).toBe("1950-01-01T00:00:00.000Z");
+});
+
+it.each([
+  [-10_001n, "1969-12-31T23:59:59.998Z"],
+  [-10_000n, "1969-12-31T23:59:59.999Z"],
+  [-9_999n, "1969-12-31T23:59:59.999Z"],
+  [-1n, "1969-12-31T23:59:59.999Z"],
+  [0n, "1970-01-01T00:00:00.000Z"],
+  [1n, "1970-01-01T00:00:00.000Z"],
+  [9_999n, "1970-01-01T00:00:00.000Z"],
+  [10_000n, "1970-01-01T00:00:00.001Z"],
+] as const)(
+  "projects 100-ns clocks into their containing millisecond (%s)",
+  async (delta, iso8601) => {
+    const filetime = 116444736000000000n + delta;
+    const timestamp = 122192928000000000n + delta;
+    const uuid = uuidV1Bytes(timestamp, 1, TRACKER_MAC);
+    const report = await parse(
+      windowsShortcutBytes({
+        creationTime: filetime,
+        accessTime: filetime,
+        writeTime: filetime,
+        extraData: [
+          { kind: "tracker", droid: [uuid, uuid], birthDroid: [uuid, uuid] },
+        ],
+      }),
+    );
+    for (const time of [
+      report.header.creation_time,
+      report.header.access_time,
+      report.header.write_time,
+    ])
+      expect(time).toEqual({ raw: filetime.toString(), iso8601 });
+    const tracker = report.extra_data.blocks[0]?.decoded;
+    if (tracker?.kind !== "tracker")
+      throw new Error("Expected TrackerDataBlock");
+    for (const time of [
+      ...tracker.droid_uuid_v1,
+      ...tracker.birth_droid_uuid_v1,
+    ])
+      expect(time).toMatchObject({
+        timestamp_100ns: timestamp.toString(),
+        timestamp_iso8601: iso8601,
+      });
+  },
+);
+
+it("keeps missing FILETIMEs distinct from the earliest nonzero instant", async () => {
+  const report = await parse(
+    windowsShortcutBytes({ creationTime: 0n, accessTime: 1n }),
+  );
+  expect(report.header.creation_time).toEqual({ raw: "0", iso8601: null });
+  expect(report.header.access_time).toEqual({
+    raw: "1",
+    iso8601: "1601-01-01T00:00:00.000Z",
+  });
 });
 
 it("marks an IDList without a TerminalID as partial", async () => {
@@ -631,6 +1181,35 @@ it("marks an IDList without a TerminalID as partial", async () => {
     expect.objectContaining({
       code: "malformed_structure",
       offset: 78 + declared,
+    }),
+  );
+});
+
+it("reports bytes after an early TerminalID and preserves the next section", async () => {
+  const valid = windowsShortcutBytes({
+    idList: [{ kind: "volume", name: "C:" }],
+    name: "Example shortcut",
+  });
+  const size = valid.readUInt16LE(76);
+  const tailOffset = 78 + size;
+  const tail = Buffer.from([1, 2, 3]);
+  const bytes = Buffer.concat([
+    valid.subarray(0, tailOffset),
+    tail,
+    valid.subarray(tailOffset),
+  ]);
+  bytes.writeUInt16LE(size + tail.length, 76);
+  const report = await parse(bytes);
+  expect(report.id_list?.item_count).toBe(1);
+  expect(report.string_data.name?.value).toBe("Example shortcut");
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: tailOffset,
+  });
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_structure",
+      offset: tailOffset,
     }),
   );
 });
@@ -881,4 +1460,165 @@ it("charges the string budget before decoding a LinkInfo string", async () => {
       { max_string_bytes: 1 },
     ),
   ).rejects.toBeInstanceOf(WindowsShortcutResourceFailure);
+});
+
+it.each(
+  (["link-info", "environment"] as const).flatMap((origin) =>
+    [
+      {
+        label: "DBCS trail case",
+        target: "C:\\Tools\\\x83A.exe",
+        icon: "C:\\Tools\\\x83a.exe",
+        targetUnicode: "C:\\Tools\\ア.exe",
+        iconUnicode: "C:\\Tools\\ヂ.exe",
+        unicodeDiffers: true,
+      },
+      {
+        label: "fullwidth case",
+        target: "C:\\Tools\\\x82\x60.exe",
+        icon: "C:\\Tools\\\x82\x81.exe",
+        targetUnicode: "C:\\Tools\\Ａ.exe",
+        iconUnicode: "C:\\Tools\\ａ.exe",
+        unicodeDiffers: false,
+      },
+      {
+        label: "DBCS trail separator",
+        target: "C:\\Tools\\\x83\\..\\app.exe",
+        icon: "C:\\Tools\\app.exe",
+        targetUnicode: "C:\\Tools\\ソ..\\app.exe",
+        iconUnicode: "C:\\Tools\\app.exe",
+        unicodeDiffers: true,
+      },
+    ].map((test) => ({ origin, ...test })),
+  ),
+)(
+  "keeps $origin $label unknown without a system code page",
+  async ({
+    origin,
+    target,
+    icon,
+    targetUnicode,
+    iconUnicode,
+    unicodeDiffers,
+  }) => {
+    const options = (path: string, iconLocation: string, unicode: boolean) => ({
+      unicode,
+      flags:
+        LINK_FLAG.HasIconLocation |
+        (unicode ? LINK_FLAG.IsUnicode : 0) |
+        (origin === "link-info"
+          ? LINK_FLAG.HasLinkInfo
+          : LINK_FLAG.HasExpString),
+      idList: null,
+      relativePath: "",
+      linkInfo:
+        origin === "link-info" ? { localBasePath: path, unicode } : null,
+      extraData:
+        origin === "environment"
+          ? [
+              {
+                kind: "environment" as const,
+                ansi: path,
+                unicode: unicode ? path : "",
+              },
+            ]
+          : [],
+      iconLocation,
+    });
+    const opaque = await parse(
+      windowsShortcutBytes(options(target, icon, false)),
+    );
+    expect(iconDifference(opaque)).toBeNull();
+    expect(opaque.string_data.icon_location?.value).toBe(icon);
+    expect(opaque.observations).toContainEqual({
+      kind: "target_extension",
+      evidence_kind: "derived",
+      extension: ".exe",
+    });
+    // Equal byte spellings remain equal without choosing any code page.
+    expect(
+      iconDifference(
+        await parse(windowsShortcutBytes(options(target, target, false))),
+      ),
+    ).toBe(false);
+    // The same names supplied as UTF-16 have known, comparable characters.
+    expect(
+      iconDifference(
+        await parse(
+          windowsShortcutBytes(options(targetUnicode, iconUnicode, true)),
+        ),
+      ),
+    ).toBe(unicodeDiffers);
+  },
+);
+
+it("does not reinterpret an ANSI trail backslash while joining LinkInfo parts", async () => {
+  const base = "C:\\Tools\\\x83\\";
+  const report = await parse(
+    windowsShortcutBytes({
+      unicode: false,
+      idList: null,
+      relativePath: "",
+      linkInfo: { localBasePath: base, commonPathSuffix: "app.exe" },
+      extraData: [],
+      iconLocation: base + "app.exe",
+    }),
+  );
+  expect(report.link_info?.local_base_path).toBe(base);
+  expect(report.link_info?.common_path_suffix).toBe("app.exe");
+  expect(iconDifference(report)).toBeNull();
+  expect(report.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: ".exe",
+  });
+  for (const [knownTarget, expected] of [
+    ["C:\\Known\\other.exe", null],
+    ["C:\\Known\\icon.exe", false],
+  ] as const) {
+    const mixed = await parse(
+      windowsShortcutBytes({
+        unicode: false,
+        idList: null,
+        relativePath: "",
+        linkInfo: { localBasePath: base, commonPathSuffix: "app.exe" },
+        extraData: [{ kind: "environment", unicode: knownTarget }],
+        iconLocation: "C:\\Known\\icon.exe",
+      }),
+    );
+    expect(iconDifference(mixed)).toBe(expected);
+  }
+});
+
+it("leaves non-ASCII ANSI extensions uninterpreted", async () => {
+  const path = "C:\\Tools\\report.\x83A";
+  const report = await parse(
+    windowsShortcutBytes({
+      unicode: false,
+      idList: null,
+      relativePath: "",
+      linkInfo: { localBasePath: path },
+      extraData: [],
+      iconLocation: path,
+    }),
+  );
+  expect(report.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: null,
+  });
+  expect(report.link_info?.local_base_path).toBe(path);
+  expect(iconDifference(report)).toBe(false);
+  const known = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools\\report.ア" },
+      extraData: [],
+      iconLocation: "C:\\Tools\\report.ア",
+    }),
+  );
+  expect(known.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: ".ア",
+  });
 });

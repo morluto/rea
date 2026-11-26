@@ -7,10 +7,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import {
-  planEnvironmentBundle,
-  registryPackageSource,
-} from "./environmentBundle.js";
+import { planEnvironmentBundle } from "./environmentBundle.js";
 import { replayEnvironmentTool } from "./environmentReplay.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
 import { prepareServedState } from "./environmentState.js";
@@ -116,7 +113,6 @@ describe("environment manifests from capture_browser_scenario parents", () => {
       replay: { body_encoding: "base64" },
     });
     const planned = planEnvironmentBundle(source.value, {
-      packageSource: registryPackageSource(),
       served: (name) =>
         prepareServedState(source.value, fixture.capture, { name }),
     });

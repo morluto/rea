@@ -19,7 +19,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment,
-        timeoutMs: 30_000,
       });
     const schema = await run([
       "mcp",
@@ -83,7 +82,14 @@ cliTest(
     const original = '{"existing":true}\n';
     await writeFile(path, original);
     for (const flag of ["--schema", "--version", "--help"]) {
-      const result = await run(["mcp", "add", "--agent", "amp", flag]);
+      const result = await run([
+        "mcp",
+        "add",
+        "--agent",
+        "amp",
+        "--no-global",
+        flag,
+      ]);
       expect(result.exitCode, result.stderr).toBe(0);
       expect(await readFile(path, "utf8")).toBe(original);
     }
@@ -110,7 +116,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment,
-        timeoutMs: 30_000,
       });
     const filtered = await run([
       "mcp",

@@ -1,35 +1,37 @@
-import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { normalizeArtifactPath } from "../ArtifactPaths.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+  artifactFixedLimitFailure,
+  artifactReaderLimitFailure,
+  normalizeArtifactPath,
+  abortIfNeeded,
+} from "../../resources/index.js";
+import {
+  DEFAULT_DENO_READER_LIMITS,
+  type DenoReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 
-/** Directory, file, and symlink records admitted from one virtual filesystem. */
-export const MAX_DENO_VFS_ENTRIES = 100_000;
-/** Logical path parts admitted before an indexed fallback. */
-export const MAX_DENO_LOGICAL_PATH_PARTS = 256;
 /**
  * UTF-16 code units retained for one virtual name. Longer names are indexed
  * and the original spelling is not copied into members.
  */
-export const MAX_DENO_VFS_NAME_UNITS = 4_096;
+const MAX_DENO_VFS_NAME_UNITS = 4_096;
 /**
- * Nested `walkEntries` calls. This is the recursion budget, separate from
- * the logical-path part fallback.
- */
-export const MAX_DENO_VFS_DEPTH = 512;
-/**
+ * Nested `walkEntries` calls. This is the recursion budget that keeps a
+ * deeply nested VFS from exhausting the call stack, separate from the
+ * logical-path part fallback. `artifact_limits.deno.vfs_name_units` bounds the
  * UTF-16 code units of the source path built for each entry, directories
- * included, plus retained symlink parts. Each path is rebuilt and normalized
- * once, so this also bounds the synchronous walk.
+ * included, plus retained symlink parts; each path is rebuilt and normalized
+ * once, so that control also bounds the synchronous walk.
  */
-export const MAX_DENO_VFS_RETAINED_UNITS = 32 * 1024 * 1024;
+const MAX_DENO_VFS_DEPTH = 512;
 /** POSIX NAME_MAX. A longer component makes extraction fail with ENAMETOOLONG. */
-export const MAX_DENO_PATH_COMPONENT_BYTES = 255;
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 /**
  * Natural logical path bytes. Half of the 1,024-byte Darwin PATH_MAX, leaving
  * the rest for the output root, so a long path does not abort extraction.
  */
-export const MAX_DENO_LOGICAL_PATH_BYTES = 512;
+const MAX_DENO_LOGICAL_PATH_BYTES = 512;
 /** Logical path suffixes of the regions stored beside an original file. */
 export const DENO_CHILD_SUFFIXES = {
   transpiled: ".deno-transpiled",
@@ -37,10 +39,12 @@ export const DENO_CHILD_SUFFIXES = {
   sourceMap: ".deno-sourcemap",
 } as const;
 
-const INDEXED_PATH_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_LOGICAL_PATH_PARTS)}-part logical path allowance; an indexed path is used and the original name is retained.`;
+/** The indexed-fallback limitation for a name deeper than the selected path parts. */
+export const denoPathPartsLimitation = (maximumParts: number): string =>
+  `The virtual name exceeds artifact_limits.deno.path_parts (${String(maximumParts)} parts); an indexed path is used and the original name is retained.`;
 const NAME_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_VFS_NAME_UNITS)}-unit name allowance; an indexed path is used and the original name is not retained.`;
 export const DENO_PATH_LENGTH_LIMITATION = `The virtual name exceeds the fixed ${String(MAX_DENO_PATH_COMPONENT_BYTES)}-byte path component or ${String(MAX_DENO_LOGICAL_PATH_BYTES)}-byte logical path allowance; an indexed path is used and the original name is retained.`;
-const UNSAFE_PATH_LIMITATION =
+export const DENO_UNSAFE_PATH_LIMITATION =
   "The virtual name is not a safe relative path; an indexed path is used and the original name is retained.";
 const MTIME_LIMITATION = "The file mtime is not a safe integer; it is omitted.";
 const SYMLINK_PART_LIMITATION = `A symlink target part exceeds the fixed ${String(MAX_DENO_VFS_NAME_UNITS)}-unit name allowance; the target parts are not retained.`;
@@ -76,6 +80,7 @@ class UnsupportedVfsShape {
 }
 
 interface WalkState {
+  readonly limits: DenoReaderLimits;
   count: number;
   retainedUnits: number;
   readonly indexed: Set<number>;
@@ -130,11 +135,13 @@ export const walkDenoVirtualFs = (
   value: unknown,
   fileDataLength: number,
   signal?: AbortSignal,
+  limits: DenoReaderLimits = DEFAULT_DENO_READER_LIMITS,
 ): DenoVfsWalk => {
   abortIfNeeded(signal);
   if (!Array.isArray(value)) return { listing: "unsupported", members: [] };
   const members: DenoVfsMember[] = [];
   const state: WalkState = {
+    limits,
     count: 0,
     retainedUnits: 0,
     indexed: new Set(),
@@ -204,7 +211,8 @@ const walkEntries = (
     const tagged = taggedEntry(entry);
     if (tagged === undefined) throw new UnsupportedVfsShape();
     const index = state.count;
-    if (index >= MAX_DENO_VFS_ENTRIES) throw denoVfsEntryLimit(index + 1);
+    if (index >= state.limits.vfs_entries)
+      throw denoVfsEntryLimit(state.limits);
     state.count += 1;
     const name = tagged.body.n;
     if (typeof name !== "string") throw new UnsupportedVfsShape();
@@ -219,6 +227,7 @@ const walkEntries = (
       source,
       index,
       Math.max(0, ...(regions?.children ?? []).map((c) => c.suffix.length)),
+      state.limits.path_parts,
     );
     const childParent: Parent = {
       path: destination.forceChildren ? null : destination.path,
@@ -370,6 +379,7 @@ const logicalDestination = (
   source: string | null,
   index: number,
   reservedBytes: number,
+  maximumParts: number,
 ): Destination => {
   const indexed = (
     limitation: string,
@@ -384,10 +394,10 @@ const logicalDestination = (
   if (parent.limitation !== null) return indexed(parent.limitation, source);
   if (name.length > MAX_DENO_VFS_NAME_UNITS)
     return indexed(NAME_LIMITATION, null);
-  if (unsafeName(name)) return indexed(UNSAFE_PATH_LIMITATION, source);
+  if (unsafeName(name)) return indexed(DENO_UNSAFE_PATH_LIMITATION, source);
   const parts = parent.parts + 1;
-  if (parts > MAX_DENO_LOGICAL_PATH_PARTS)
-    return indexed(INDEXED_PATH_LIMITATION, source);
+  if (parts > maximumParts)
+    return indexed(denoPathPartsLimitation(maximumParts), source);
   const joined = parent.path === null ? name : `${parent.path}/${name}`;
   try {
     const path = normalizeArtifactPath(joined);
@@ -402,7 +412,7 @@ const logicalDestination = (
     };
   } catch (cause) {
     if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
-      return indexed(UNSAFE_PATH_LIMITATION, source);
+      return indexed(DENO_UNSAFE_PATH_LIMITATION, source);
     throw cause;
   }
 };
@@ -441,7 +451,15 @@ const boundedSymlinkParts = (
 const retainText = (state: WalkState, text: string | null): string | null => {
   if (text === null || text.length === 0) return text;
   const next = state.retainedUnits + text.length;
-  if (next > MAX_DENO_VFS_RETAINED_UNITS) throw denoVfsRetainedLimit(next);
+  if (next > state.limits.vfs_name_units)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.deno.vfs_name_units",
+      state.limits.vfs_name_units,
+      "count",
+      // The walk stops here, so the units counted so far are only a lower bound.
+      undefined,
+      "memory",
+    );
   state.retainedUnits = next;
   return text;
 };
@@ -471,9 +489,10 @@ const readRange = (
   )
     return undefined;
   if (BigInt(offset) + BigInt(length) > BigInt(fileDataLength))
-    throw new ArtifactReaderFailure(
-      "format",
+    throw malformedArtifact(
+      "deno-standalone",
       `Deno compile section is malformed: vfs ${label} region overruns vfs file data`,
+      { field: `vfs.${label}` },
     );
   return { offset, length };
 };
@@ -495,29 +514,21 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   return Object.fromEntries(Object.entries(value));
 };
 
-const denoVfsEntryLimit = (count: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem entry allowance of ${String(MAX_DENO_VFS_ENTRIES)} entries`;
-  const message = `Deno compile virtual filesystem claims ${String(count)} entries, exceeding MAX_DENO_VFS_ENTRIES (${String(MAX_DENO_VFS_ENTRIES)} entries). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
-  });
-};
+/** The walk stops at the first entry past the allowance; the total is unknown. */
+const denoVfsEntryLimit = (limits: DenoReaderLimits): ArtifactReaderFailure =>
+  artifactReaderLimitFailure(
+    "artifact_limits.deno.vfs_entries",
+    limits.vfs_entries,
+    "count",
+  );
 
-const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem depth allowance of ${String(MAX_DENO_VFS_DEPTH)} levels`;
-  const message = `Deno compile virtual filesystem nests ${String(depth)} levels, exceeding MAX_DENO_VFS_DEPTH (${String(MAX_DENO_VFS_DEPTH)} levels). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
-  });
-};
-
-const denoVfsRetainedLimit = (units: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem retained name allowance of ${String(MAX_DENO_VFS_RETAINED_UNITS)} UTF-16 code units`;
-  const message = `Deno compile virtual filesystem paths use ${String(units)} UTF-16 code units, exceeding MAX_DENO_VFS_RETAINED_UNITS (${String(MAX_DENO_VFS_RETAINED_UNITS)} units). ${fixedAllowanceRemediation(allowance, "bytes")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "memory",
-    userMessage: message,
-  });
-};
+const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem depth allowance",
+      kind: "count",
+      limit: MAX_DENO_VFS_DEPTH,
+      unit: "levels",
+    },
+    `Deno compile virtual filesystem nests ${String(depth)} levels, exceeding MAX_DENO_VFS_DEPTH (${String(MAX_DENO_VFS_DEPTH)} levels).`,
+  );

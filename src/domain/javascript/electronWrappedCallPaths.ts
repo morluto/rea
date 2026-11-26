@@ -1,6 +1,11 @@
+import { appendToMapList } from "../appendToMapList.js";
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
+import {
+  referencesElectronModule,
+  referencesUnresolvedModule,
+} from "./javascriptElectronMemberWrites.js";
 import {
   symbolicVariants,
   symbolicTruth,
@@ -179,9 +184,7 @@ const indexIpcFinding = (
       facts.reached.get(valueKey) ?? new Map<string, ReachedChain[]>();
     facts.reached.set(valueKey, byLast);
     const last = reached.calls.at(-1) ?? "";
-    const chains = byLast.get(last);
-    if (chains === undefined) byLast.set(last, [reached]);
-    else chains.push(reached);
+    appendToMapList(byLast, last, reached);
   }
 };
 
@@ -260,15 +263,24 @@ export function* collectElectronWrappedCallPathsSteps(
   source: string,
   accumulator: JavaScriptAnalysisAccumulator,
   identity: JavaScriptElectronIdentity,
+  indexMemberMutationFactsSteps: () => Generator<void, void>,
 ): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
   let remainingVisits = state.precision.wrapper_visits;
+  // Unknowns met on the walk are attributed to the file only where the walk
+  // could have reached Electron; see the end of this function.
+  let unknownFindings = 0;
   const prefixes = new ElectronCallPathBlockPrefixes(
     () => --remainingVisits >= 0,
     state.parentsByNode,
   );
-  const resolver = new JavaScriptSymbolicBindings(state, program, identity);
+  const resolver = new JavaScriptSymbolicBindings(
+    state,
+    program,
+    identity,
+    () => false,
+  );
   const paths: ElectronCallPath[] = [];
   const seen = new Set<string>();
   const unconditionalRegistrations = new Set<string>();
@@ -324,7 +336,7 @@ export function* collectElectronWrappedCallPathsSteps(
         : source.slice(part.start, part.end);
     const discriminant = text(node.discriminant);
     if (discriminant === undefined) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       return context;
     }
     const choices: string[] = [];
@@ -364,7 +376,7 @@ export function* collectElectronWrappedCallPathsSteps(
       }
       const match = compare(branch.test, "===");
       if (match === undefined || !append(choices, match)) {
-        accumulator.unknownFindings += 1;
+        unknownFindings += 1;
         return context;
       }
     }
@@ -375,7 +387,7 @@ export function* collectElectronWrappedCallPathsSteps(
         if (branch.test == null) continue;
         const mismatch = compare(branch.test, "!==");
         if (mismatch === undefined || !append(unmatched, mismatch)) {
-          accumulator.unknownFindings += 1;
+          unknownFindings += 1;
           return context;
         }
       }
@@ -383,10 +395,10 @@ export function* collectElectronWrappedCallPathsSteps(
     }
     // Earlier case bodies may terminate or change state before reaching this
     // case. The selection disjunction is necessary but not a complete path.
-    if (fallthrough) accumulator.unknownFindings += 1;
+    if (fallthrough) unknownFindings += 1;
     const expression = choices.map((choice) => `(${choice})`).join(" || ");
     if (expression.length > 512) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       return context;
     }
     if (expression === "") return context;
@@ -427,7 +439,7 @@ export function* collectElectronWrappedCallPathsSteps(
     value: SymbolicValue,
   ): PathContext | null => {
     if (value.conditionUnresolved) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       return null;
     }
     const authorityContext =
@@ -821,7 +833,7 @@ export function* collectElectronWrappedCallPathsSteps(
   }> {
     if (active.has(value)) return;
     if (active.size >= state.precision.wrapper_depth) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       (accumulator.electronCallPathLimits ??= new Set()).add("wrapper_depth");
       return;
     }
@@ -914,7 +926,7 @@ export function* collectElectronWrappedCallPathsSteps(
     const body = resolver.callBody(fn);
     if (body === undefined || context.active.has(fn.node)) return;
     if (fn.conditionUnresolved === true) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       return;
     }
     const name =
@@ -957,7 +969,7 @@ export function* collectElectronWrappedCallPathsSteps(
     };
     const first = args[0];
     if (first?.kind !== "literal" || typeof first.value !== "string") {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       return open();
     }
     const channelContext = metadataContext(context, first);
@@ -1130,11 +1142,9 @@ export function* collectElectronWrappedCallPathsSteps(
           // Its call chain can never deduplicate a later path.
           perInvocationHandler ? undefined : { calls: context.calls, slot },
         );
-        if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
-          accumulator.unknownFindings += 1;
       }
     } else if (guardedOnly) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       // A guarded registration is a path candidate even when its callback has
       // no observable body. Keep its predicate instead of promoting it to an
       // unconditional IPC fact or dropping the registration entirely.
@@ -1213,9 +1223,9 @@ export function* collectElectronWrappedCallPathsSteps(
       worldValue === null
         ? null
         : electronStaticSymbolicValue(worldValue, worldNode);
-    if (worldId?.status === "dynamic") accumulator.unknownFindings += 1;
+    if (worldId?.status === "dynamic") unknownFindings += 1;
     if (key?.kind !== "literal" || typeof key.value !== "string" || !object) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       return unresolved();
     }
     const keyContext = metadataContext(worldContext, key);
@@ -1233,7 +1243,7 @@ export function* collectElectronWrappedCallPathsSteps(
       guardedObject ||
       guardedDispatch;
     if (guarded) {
-      accumulator.unknownFindings += 1;
+      unknownFindings += 1;
       unresolved();
     } else if (site !== undefined) {
       // Each invocation binds its own key and object, so one helper's exposure
@@ -1274,7 +1284,7 @@ export function* collectElectronWrappedCallPathsSteps(
           prior.value.world_id?.status === "literal" &&
           worldId?.status === "literal"
         )
-          accumulator.unknownFindings += 1;
+          unknownFindings += 1;
         prior.value = merged;
       }
     }
@@ -1525,8 +1535,8 @@ export function* collectElectronWrappedCallPathsSteps(
           }
           if (index < owner.cases.length)
             context = switchCaseContext(owner, index, context);
-          else accumulator.unknownFindings += 1;
-        } else accumulator.unknownFindings += 1;
+          else unknownFindings += 1;
+        } else unknownFindings += 1;
       } else if (t.isLogicalExpression(parent) && child === parent.right) {
         const right = symbolicLogicalRight(
           parent.operator,
@@ -1578,7 +1588,15 @@ export function* collectElectronWrappedCallPathsSteps(
     for (;;) {
       const batch = traversal.next();
       for (const node of seeds) {
-        yield* seed(node);
+        for (;;) {
+          const priorUnknownFindings = unknownFindings;
+          resolver.memberMutationFactsRequired = false;
+          yield* seed(node);
+          if (!resolver.memberMutationFactsRequired) break;
+          unknownFindings = priorUnknownFindings;
+          yield* indexMemberMutationFactsSteps();
+          resolver.memberMutationFactsIndexed();
+        }
         if (remainingVisits < 0) break;
       }
       seeds.length = 0;
@@ -1590,7 +1608,7 @@ export function* collectElectronWrappedCallPathsSteps(
   }
   recordBridgeExposures();
   if (remainingVisits < 0 || resolver.truncated) {
-    accumulator.unknownFindings += 1;
+    unknownFindings += 1;
     const limits = (accumulator.electronCallPathLimits ??= new Set());
     if (remainingVisits < 0) limits.add("wrapper_visits");
     for (const limit of resolver.resourceLimits) limits.add(limit);
@@ -1622,6 +1640,29 @@ export function* collectElectronWrappedCallPathsSteps(
           },
         };
     }
-  if (resolver.unresolved) accumulator.unknownFindings += 1;
+  unknownFindings += accumulator.ipc.filter(
+    ({ value }) =>
+      value.resolution_basis === "wrapper-substitution" &&
+      value.mode !== "send" &&
+      value.mode !== "invoke" &&
+      value.handler_kind !== "inline-function",
+  ).length;
+  if (resolver.unresolved) unknownFindings += 1;
+  // Every path starts at an Electron exposure or IPC registration, and the
+  // resolver reaches an Electron value only through a require or import of
+  // the Electron module. Where none of that happened, no read gave up before
+  // an initializer that could supply a loader, and no budget ran out, the
+  // walk could not have hidden a path, so its unresolved reads describe no
+  // fact this analysis could have found.
+  if (
+    identity.bindings.size > 0 ||
+    resolver.reachedElectron ||
+    resolver.unresolvedRequire ||
+    resolver.unresolvedLoader ||
+    (accumulator.electronCallPathLimits?.size ?? 0) > 0 ||
+    referencesElectronModule(accumulator.references) ||
+    referencesUnresolvedModule(accumulator.references)
+  )
+    accumulator.unknownFindings += unknownFindings;
   return paths;
 }

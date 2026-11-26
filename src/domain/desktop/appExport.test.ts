@@ -4,14 +4,13 @@ import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 
 import {
-  capturedHomePath,
+  capturedHomePlan,
   exportedStateFiles,
   appModuleFile,
   className,
   environmentName,
   launchCommand,
   launchDocumentLimitation,
-  launchDocumentNote,
   ownedPaths,
   renderAppClass,
   renderEnvToml,
@@ -20,6 +19,9 @@ import {
   type DesktopAppExportPlan,
 } from "./appExport.js";
 import type { LaunchDocument } from "./seedDocument.js";
+
+const capturedHomePath = (capture: DesktopApplicationCapture) =>
+  capturedHomePlan(capture).homePath;
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",
@@ -378,16 +380,19 @@ describe("README and class wording", () => {
 
     expect(command.join(" ")).toContain(`"$HOME"/'Documents/todo.txt'`);
     expect(bare).toContain(`\`${command.join(" ")}\``);
-    for (const opens of [seed, none]) {
-      const note = launchDocumentNote({ opens });
-      expect(note).not.toBe("");
-      expect(readme(opens).replace(note, "")).toBe(bare);
-    }
+    const seedNote =
+      "\n- At launch the app opens `~/Documents/todo.txt`, the seed's one document.";
+    const noneNote =
+      "\n- The app opens no document at launch, since the test gives this reason.";
+    expect(readme(seed)).toContain(seedNote);
+    expect(readme(none)).toContain(noneNote);
+    expect(readme(seed).replace(seedNote, "")).toBe(bare);
+    expect(readme(none).replace(noneNote, "")).toBe(bare);
     expect(readme(seed)).toContain("`~/Documents/todo.txt`");
     expect(bare).not.toContain("~/Documents/todo.txt");
     const limitation = launchDocumentLimitation(none);
     expect(limitation).toContain(none.reason);
-    expect(launchDocumentNote({ opens: none })).toContain(limitation);
+    expect(readme(none)).toContain(limitation);
     expect(readme({ kind: "captured" })).toBe(bare);
     for (const opens of [
       seed,

@@ -7,22 +7,23 @@ import {
   FileOptionsSchema,
 } from "@bufbuild/protobuf/wkt";
 import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { protobufHar } from "../../fixtures/protobufCapture.js";
+import {
+  protobufBomDescriptor,
+  protobufHar,
+} from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const sha256 = (bytes: Uint8Array) =>
-  createHash("sha256").update(bytes).digest("hex");
 const body = Buffer.from("0a020801", "hex"); // Message { payload { value=1 } }
 const descriptorDefinition = () =>
   create(FileDescriptorSetSchema, {
@@ -85,6 +86,11 @@ const conflictingFiles = (change: string, reverse: boolean) => {
   } else if (change === "presence") {
     shared.options = create(FileOptionsSchema);
     duplicate.options = create(FileOptionsSchema, { javaMultipleFiles: false });
+  } else if (change === "bom-option") {
+    shared.options = create(FileOptionsSchema, { javaPackage: "plain" });
+    duplicate.options = create(FileOptionsSchema, {
+      javaPackage: "\uFEFFplain",
+    });
   } else if (change === "opaque-file") {
     duplicate.$unknown = [
       { no: 50000, wireType: WireType.Varint, data: Uint8Array.of(1) },
@@ -125,6 +131,7 @@ cliTest(
       "package",
       "imports",
       "presence",
+      "bom-option",
       "opaque-file",
       "opaque-option",
     ])
@@ -142,12 +149,13 @@ cliTest(
               {
                 path: ["protobuf", "schema", "descriptor_set_path"],
                 reason: "invalid_format",
+                message: expect.stringContaining("Conflicting file identity"),
               },
             ],
           },
         };
-        if (change === "declarations") {
-          const output = await cli.sharedCliRun!({
+        if (change === "declarations" && !reverse) {
+          const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
               capture,
@@ -206,6 +214,75 @@ cliTest(
   },
 );
 
+cliTest(
+  "preserves protoc BOM-prefixed imports and their capture evidence through CLI/MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-protobuf-bom-imports-");
+    const descriptor = join(root, "schema.pb");
+    const capture = join(root, "capture.har");
+    const bytes = protobufBomDescriptor();
+    const text = protobufHar(
+      Buffer.from("0a02080712050a036f6e65", "hex"),
+      "application/x-protobuf",
+    );
+    await writeFile(descriptor, bytes);
+    await writeFile(capture, text);
+    const output = await cli.run({
+      arguments: [
+        "inspect-web-network-capture",
+        capture,
+        "har",
+        "--record",
+        "0",
+        "--protobuf-schema",
+        descriptor,
+        "--protobuf-message",
+        "capture.Root",
+        "--json",
+      ],
+    });
+    expect(output.exitCode, output.stdout + output.stderr).toBe(0);
+    const evidence = parseEvidence(output.json);
+    const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    expect(report.artifact).toMatchObject({
+      path: capture,
+      sha256: sha256(Buffer.from(text)),
+    });
+    expect(report.protobuf_coverage?.status).toBe("complete");
+    expect(report.records[0]?.protobuf?.[0]).toMatchObject({
+      schema: {
+        descriptor_set_path: descriptor,
+        descriptor_set_sha256: sha256(bytes),
+        descriptor_set_bytes: bytes.length,
+      },
+      fields: [
+        { schema_name: "plain", schema_type: "plain.Item" },
+        { schema_name: "number", schema_value: "7" },
+        { schema_name: "marked", schema_type: "marked.Item" },
+        { schema_name: "text", schema_value: "one" },
+      ],
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_web_network_capture", {
+      capture_path: capture,
+      format: "har",
+      record_ordinals: [0],
+      protobuf: {
+        schema: {
+          descriptor_set_path: descriptor,
+          message_type: "capture.Root",
+        },
+      },
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(parseEvidence(response.structuredContent).evidence_id).toBe(
+      evidence.evidence_id,
+    );
+    expect((await readFile(descriptor)).equals(bytes)).toBe(true);
+    expect(await readFile(capture, "utf8")).toBe(text);
+  },
+);
+
 /** Reorder known FileDescriptorProto fields without changing their facts. */
 const reorderedSharedFile = () => {
   const shared = descriptorDefinition().file[0]!;
@@ -254,7 +331,7 @@ cliTest(
       const bytes = writer.finish();
       const descriptor = join(root, `${mode}.pb`);
       await writeFile(descriptor, bytes);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           capture,

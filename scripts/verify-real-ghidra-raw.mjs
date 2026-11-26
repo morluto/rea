@@ -1,18 +1,10 @@
+import { sha256File } from "./lib/verifier-file-sha256.mjs";
+import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -23,16 +15,28 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   withVerifierCleanup,
   closeVerifierResources,
 } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-raw.mjs");
@@ -44,17 +48,14 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 assert.equal(installation.status, "available", JSON.stringify(installation));
 
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-raw-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-raw-proof-",
+});
+const workspace = workspaceFixture.path;
 let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -94,13 +95,21 @@ const env = {
           process.env.REA_GHIDRA_DISABLED_ANALYZERS,
       }),
 };
+// The public CLI launch uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-raw-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-raw-proof", version: "1" }),
+);
 let stderr = "";
 transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
@@ -109,14 +118,42 @@ let connected = false;
 let verifierRun;
 let report;
 let searchDefinition;
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  assert.equal(
+    fixtureCleaned,
+    true,
+    "Owned Java fixture cleanup remains pending",
+  );
+  verifierRun = await completeVerifierRun(run);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
+});
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
+await withVerifierFixture(workspaceFixture, async () => {
+  let primaryFailure;
   try {
-    await client.connect(transport);
-    connected = true;
-    searchDefinition = (await client.listTools()).tools.find(
-      (tool) => tool.name === "search_bytes",
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
     );
-    assert.ok(searchDefinition?.outputSchema);
+    connected = true;
+    const listedSearch = (
+      await untilInterrupted(
+        client.listTools(undefined, { signal: commandInterruption.signal }),
+      )
+    ).tools.find((tool) => tool.name === "search_bytes");
+    assert.ok(listedSearch);
+    searchDefinition = withCanonicalOutputSchema(listedSearch);
     const profiles = [];
     const sessions = [];
     for (const entryPoint of ["0x08000000", "0x8000000", "0x09000000"]) {
@@ -197,23 +234,33 @@ await withVerifierCleanup(async () => {
       name: "retained_after_failed_open",
       comment: "Owned session annotation",
     });
-    const rejected = await client.callTool({
-      name: "open_binary",
-      arguments: {
+    throwIfInterrupted();
+    const rejected = await client.callTool(
+      {
+        name: "open_binary",
+        arguments: {
+          path,
+          format: "raw-binary",
+          architecture: "arm64",
+          entry_point: "0x8000001",
+        },
+      },
+      { signal: commandInterruption.signal },
+    );
+    const rejection = requireMcpToolError(rejected);
+    // admitRawBinary refuses an arm64 entry that is not a multiple of 4.
+    // The completion facts are the session that the failed open must leave in place.
+    assert.partialDeepStrictEqual(rejection, {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
         path,
-        format: "raw-binary",
-        architecture: "arm64",
-        entry_point: "0x8000001",
+        reason: "raw-binary arm64 entry_point 0x8000001 must be 4-byte aligned",
+        constraint: "load_selection_rejected",
+        target_at_open_completion: { entry_point: "0x9000000" },
+        provider_id_at_open_completion: "ghidra",
       },
     });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), /must be 4-byte aligned/);
-    const rejection = JSON.parse(rejected.content[0].text).error;
-    assert.equal(
-      rejection.details.target_at_open_completion.entry_point,
-      "0x9000000",
-    );
-    assert.equal(rejection.details.provider_id_at_open_completion, "ghidra");
     const unchanged = await call("binary_session");
     assert.equal(unchanged.analysis_run.run_id, sessions[2]);
     assert.equal(unchanged.entry_point, "0x9000000");
@@ -232,11 +279,13 @@ await withVerifierCleanup(async () => {
     );
     await call("close_binary");
 
-    const { stdout } = await promisify(execFile)(
+    const { stdout } = await execOwned(
       process.execPath,
       [
         entrypoint,
         "inspect-native-load-image",
+        "--detail",
+        "complete",
         path,
         "--target-format",
         "raw-binary",
@@ -251,7 +300,7 @@ await withVerifierCleanup(async () => {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const cli = parseEvidence(JSON.parse(stdout));
-    assert.equal(cli.subject.digest.sha256, sha256);
+    assert.equal(cli.subject.identity.sha256, sha256);
     assert.equal(cli.normalized_result.status, "verified");
     assert.equal(cli.normalized_result.base_address, "0x8000000");
     assert.equal(cli.analysis_profile.digest, profiles[0]);
@@ -268,7 +317,11 @@ await withVerifierCleanup(async () => {
         architecture,
         entry_point: "0x1000",
       });
-      const image = await call("inspect_native_load_image", {}, x86Sha256);
+      const image = await call(
+        "inspect_native_load_image",
+        { detail: "complete" },
+        x86Sha256,
+      );
       assert.equal(
         image.normalized_result.status,
         "verified",
@@ -291,7 +344,7 @@ await withVerifierCleanup(async () => {
       );
       const pseudo = await call(
         "procedure_pseudo_code",
-        { procedure: "0x1000" },
+        { detail: "complete", procedure: "0x1000" },
         x86Sha256,
       );
       assert.match(pseudo.normalized_result, /\b(?:42|0x2a)\b/iu);
@@ -360,11 +413,27 @@ await withVerifierCleanup(async () => {
       overlapping.normalized_result.matches.map((match) => match.address),
       ["0x1002", "0x1003"],
     );
-    const wrongCursor = await client.callTool({
-      name: "search_bytes",
-      arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
+    throwIfInterrupted();
+    const wrongCursor = await client.callTool(
+      {
+        name: "search_bytes",
+        arguments: {
+          pattern: "c3",
+          cursor: page.normalized_result.next_cursor,
+        },
+      },
+      { signal: commandInterruption.signal },
+    );
+    const cursorError = requireMcpToolError(wrongCursor);
+    assert.partialDeepStrictEqual(cursorError, {
+      code: "invalid_request",
+      details: {
+        operation: "search_bytes",
+        issues: [{ path: ["cursor"], reason: "invalid_value" }],
+        diagnostics: { remote_code: "byte_search_cursor_mismatch" },
+      },
     });
-    assert.equal(wrongCursor.isError, true);
+    assert.equal(cursorError.recovery, undefined);
     await call("close_binary");
     assert.deepEqual(await readFile(repeatedPath), repeatedBytes);
 
@@ -592,36 +661,39 @@ await withVerifierCleanup(async () => {
     };
   } catch (error) {
     if (stderr.trim()) process.stderr.write(stderr);
-    throw error;
+    primaryFailure = error;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw workspaceFixture.retainedError(
+      `Raw-binary verification failed; retained workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "Raw-binary verification and command cleanup both failed",
+                ),
       },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
     );
-    assert.equal(
-      fixtureCleaned,
-      true,
-      "Owned Java fixture cleanup remains pending",
+  const interrupted = commandInterruption.reason();
+  if (interrupted !== undefined)
+    throw workspaceFixture.retainedError(
+      `Raw-binary verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
     );
-    verifierRun = await completeVerifierRun(run);
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
-verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,
@@ -636,10 +708,12 @@ async function call(
   targetSha256 = sha256,
   targetFormat = "raw-binary",
 ) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: args },
     {
       timeout: 240000,
+      signal: commandInterruption.signal,
       ...(name === "search_bytes" ? { toolDefinition: searchDefinition } : {}),
     },
   );
@@ -647,8 +721,8 @@ async function call(
     return requireMcpLifecycleResult(result, name);
   const output = requireMcpOutput(result, name);
   const evidence = parseEvidence(output);
-  assert.equal(evidence.subject.digest.sha256, targetSha256);
-  assert.equal(evidence.subject.format, targetFormat);
+  assert.equal(evidence.subject.identity.sha256, targetSha256);
+  assert.equal(evidence.subject.identity.format, targetFormat);
   return evidence;
 }
 
@@ -704,6 +778,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     env,
     runId: run.run_id,
     expectedCommand: null,
+    signal: commandInterruption.signal,
   });
   fixtureCleaned = false;
   const supervisor = new ProviderProcessSupervisor({
@@ -712,9 +787,12 @@ async function verifyCrossBlockProject(target, targetSha256) {
     cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
   });
   await withVerifierCleanup(async () => {
-    assert.ok(await supervisor.waitForExit(180000), "Fixture setup timed out");
     assert.ok(
-      await supervisor.waitForOutputClose(1000),
+      await untilInterrupted(supervisor.waitForExit(180000)),
+      "Fixture setup timed out",
+    );
+    assert.ok(
+      await untilInterrupted(supervisor.waitForOutputClose(1000)),
       "Fixture output did not close",
     );
     const snapshot = supervisor.snapshot();
@@ -741,21 +819,33 @@ async function verifyCrossBlockProject(target, targetSha256) {
     },
     stderr: "pipe",
   });
-  const projectClient = new Client({
-    name: "rea-cross-block-project-proof",
-    version: "1",
-  });
+  const projectClient = completeEvidenceClient(
+    new Client({
+      name: "rea-cross-block-project-proof",
+      version: "1",
+    }),
+  );
   try {
-    await projectClient.connect(projectTransport);
-    const definition = (await projectClient.listTools()).tools.find(
-      (tool) => tool.name === "search_bytes",
+    await untilInterrupted(
+      projectClient.connect(projectTransport, {
+        signal: commandInterruption.signal,
+      }),
     );
-    assert.ok(definition?.outputSchema);
+    const definition = (
+      await untilInterrupted(
+        projectClient.listTools(undefined, {
+          signal: commandInterruption.signal,
+        }),
+      )
+    ).tools.find((tool) => tool.name === "search_bytes");
+    assert.ok(definition);
     const projectCall = async (name, args) => {
+      throwIfInterrupted();
       const reply = await projectClient.callTool(
         { name, arguments: args },
         {
           timeout: 240000,
+          signal: commandInterruption.signal,
           ...(name === "search_bytes" ? { toolDefinition: definition } : {}),
         },
       );
@@ -763,7 +853,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
         return requireMcpLifecycleResult(reply, name);
       const output = requireMcpOutput(reply, name);
       const evidence = parseEvidence(output);
-      assert.equal(evidence.subject.digest.sha256, targetSha256);
+      assert.equal(evidence.subject.identity.sha256, targetSha256);
       return evidence.normalized_result;
     };
     await projectCall("open_binary", { path: target, provider_id: "ghidra" });
@@ -831,12 +921,7 @@ async function fingerprintFiles(directory) {
       const name = join(relative, entry.name);
       if (entry.isDirectory()) await visit(name);
       else if (entry.isFile())
-        result.push([
-          name,
-          createHash("sha256")
-            .update(await readFile(join(directory, name)))
-            .digest("hex"),
-        ]);
+        result.push([name, await sha256File(join(directory, name))]);
       else throw new Error(`Unexpected project entry: ${name}`);
     }
   };

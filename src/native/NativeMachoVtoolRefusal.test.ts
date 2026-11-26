@@ -6,11 +6,10 @@ import {
   NativeFixtureRunner,
   nativeMachoTarget,
 } from "../../tests/fixtures/nativeCommands.js";
+import { inspectNativeMacho } from "./NativeMachoInspection.js";
 import {
-  inspectNativeMacho,
-  VTOOL_CONTAINER_REFUSAL_LIMITATION,
-} from "./NativeMachoInspection.js";
-import {
+  inspectionFatContext,
+  inspectionInvocation,
   inspectionReader,
   unreadEncryption,
 } from "./NativeMachoInspection.fixture.js";
@@ -27,8 +26,11 @@ const inspect = async (options: {
       ? { lipo: `Non-fat file: ${path} is architecture: arm64\n` }
       : {},
   );
+  const context = inspectionFatContext();
   return inspectNativeMacho({
-    readCommandNames: inspectionReader(),
+    resolveSlice: context.resolveSlice,
+    readCommandNames:
+      options.format === "thin" ? inspectionReader() : context.readCommandNames,
     readEncryption: unreadEncryption,
     target: nativeMachoTarget(path),
     run: async (tool, args, _signal, acceptNonZeroIf) => {
@@ -47,16 +49,7 @@ const inspect = async (options: {
         ? ok(refused)
         : err(new AnalysisOutputError("inspect_macho", "vtool failed"));
     },
-    invocation: (value) => ({
-      tool: value.tool,
-      command: [value.executable, ...value.arguments],
-      tool_version: value.toolVersion,
-      version_reason: value.versionReason,
-      executable_sha256: value.executableSha256,
-      exit: { code: value.exitCode, signal: value.signal },
-      stdout_bytes: value.stdoutBytes,
-      stderr_bytes: value.stderrBytes,
-    }),
+    invocation: inspectionInvocation,
   });
 };
 
@@ -65,8 +58,12 @@ const refusal = "/usr/bin/vtool error: /fixture/universal file is not mach-o\n";
 it("retains required facts and failed vtool provenance for its universal-container refusal", async () => {
   const result = await inspect({ diagnostic: refusal });
   if (!result.ok) throw result.error;
-  expect(result.value.limitations).toContain(
-    VTOOL_CONTAINER_REFUSAL_LIMITATION,
+  expect(result.value.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(
+        /vtool.*universal container.*build metadata.*binary load commands/iu,
+      ),
+    ]),
   );
   expect(result.value.result).toMatchObject({
     format: "mach-o-universal",

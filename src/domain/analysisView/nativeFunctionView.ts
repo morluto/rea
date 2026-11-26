@@ -1,10 +1,12 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  invalidAnalysisViewSubject,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { analysisTextPage } from "./analysisViewText.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { FunctionDossier } from "../native/functionDossier.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
@@ -18,11 +20,6 @@ import {
 } from "./analysisViewCoverage.js";
 
 type Artifact = { readonly path: string; readonly sha256: string };
-
-const viewError = (message: string): AnalysisError =>
-  analysisViewInputError([
-    { path: ["view"], reason: "invalid_value", message },
-  ]);
 
 const parentFields = (
   parent: AnalysisViewParent,
@@ -158,7 +155,9 @@ const summarizeDossier = (dossier: FunctionDossier) => {
     },
     value_flow: {
       available: flow !== undefined,
-      truncated: flow?.truncated ?? false,
+      // Unavailable value-flow examined nothing: whether it would be
+      // truncated is unknown, not false.
+      truncated: flow === undefined ? null : flow.truncated,
     },
     facet_availability: dossier.facet_availability ?? null,
     counts: {
@@ -185,6 +184,11 @@ const summarizeDossier = (dossier: FunctionDossier) => {
       swift_string_literal_omissions: recorded(
         dossier.swift_string_literal_omissions,
       ),
+      prototype_conflicts: recorded(
+        dossier.native_api?.available
+          ? dossier.native_api.prototype_conflicts
+          : undefined,
+      ),
       // Value-flow rows are unknown, not zero, when value flow was not recorded
       // or the provider declared it unavailable; parentFields names which.
       value_flow_operations: flow?.operations.length ?? null,
@@ -205,7 +209,7 @@ const summaryView = (
   kind: "summary" as const,
   view,
   summary: summarizeDossier(dossier),
-  coverage: completeWithinViewCoverage(1, 1),
+  coverage: completeWithinViewCoverage(1),
   ...common,
   unknowns: uniqueSorted([
     ...common.unknowns,
@@ -221,8 +225,8 @@ export const projectNativeFunctionView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "native" && view.kind !== "summary")
-    return err(
-      viewError("analyze_function Evidence requires a native or summary view."),
+    return invalidAnalysisView(
+      "analyze_function Evidence requires a native or summary view.",
     );
   assertOwnedView<SummaryAnalysisView | NativeFacetAnalysisView>(
     view,
@@ -231,15 +235,8 @@ export const projectNativeFunctionView = (
   );
   const artifact = parent.artifact;
   if (!artifact)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Native function Evidence requires an artifact-bound subject.",
-        },
-      ]),
+    return invalidAnalysisViewSubject(
+      "Native function Evidence requires an artifact-bound subject.",
     );
   const common = parentFields(parent, dossier, artifact);
   if (view.kind === "summary") return ok(summaryView(view, dossier, common));
@@ -250,7 +247,7 @@ export const projectNativeFunctionView = (
     kind: "native" as const,
     view,
     item: jsonValueSchema.parse(item),
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     ...common,
   });
   if (availability?.available === false) return ok(singleton(availability));
@@ -261,7 +258,7 @@ export const projectNativeFunctionView = (
     view.facet === "value_flow_summary"
   ) {
     if (view.offset !== 0)
-      return err(viewError("Singleton native facets require offset 0."));
+      return invalidAnalysisView("Singleton native facets require offset 0.");
     if (view.facet === "procedure") return ok(singleton(dossier.procedure));
     if (view.facet === "native_api")
       return ok(

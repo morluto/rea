@@ -41,6 +41,17 @@ export const agentEvaluationPassed = (
         result.answerHeuristicsMet &&
         result.epistemicCuePresent));
 
+/** Fail the runner after publishing a report with any rejected scenario. */
+export const assertAgentEvaluationReportPassed = (
+  results: readonly (AgentEvaluationGateResult & { readonly id: string })[],
+): void => {
+  const failed = results.filter((result) => !agentEvaluationPassed(result));
+  if (failed.length > 0)
+    throw new Error(
+      `Agent routing/workflow/answer checks failed: ${failed.map(({ id }) => id).join(", ")}`,
+    );
+};
+
 /** Keep assessed fixture outcomes and scenarios without truth oracles distinct. */
 export const summarizeFactualCorrectness = (
   results: readonly { readonly factualCorrectness: FixtureCorrectness }[],

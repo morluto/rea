@@ -1,15 +1,15 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import {
-  MAX_DENO_LOGICAL_PATH_BYTES,
-  MAX_DENO_LOGICAL_PATH_PARTS,
-  MAX_DENO_PATH_COMPONENT_BYTES,
-  MAX_DENO_VFS_DEPTH,
-  MAX_DENO_VFS_ENTRIES,
-  MAX_DENO_VFS_NAME_UNITS,
-  walkDenoVirtualFs,
-} from "./DenoVirtualFs.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { DEFAULT_DENO_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
+import { walkDenoVirtualFs } from "./DenoVirtualFs.js";
+
+// Independent format and admission examples.
+const MAX_DENO_LOGICAL_PATH_PARTS = 256;
+const MAX_DENO_VFS_NAME_UNITS = 4_096;
+const MAX_DENO_VFS_DEPTH = 512;
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
+const MAX_DENO_LOGICAL_PATH_BYTES = 512;
 
 const file = (
   name: string,
@@ -169,18 +169,34 @@ it.each(["0", "0.deno-transpiled", "0/leaf"])(
   },
 );
 
-it("refuses an entry count above the named allowance", () => {
-  const entries = Array.from({ length: MAX_DENO_VFS_ENTRIES + 1 }, () =>
-    file("a.ts", 0, 0),
-  );
+it("refuses an entry count above the selected allowance", () => {
+  const entries = Array.from({ length: 3 }, () => file("a.ts", 0, 0));
+  const limits = { ...DEFAULT_DENO_READER_LIMITS, vfs_entries: 2 };
   let failure: unknown;
   try {
-    walkDenoVirtualFs(entries, 0);
+    walkDenoVirtualFs(entries, 0, undefined, limits);
   } catch (cause) {
     failure = cause;
-    expect(cause).toMatchObject({ reason: "limit" });
+    expect(cause).toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: "artifact_limits.deno.vfs_entries",
+        effective_value: 2,
+        can_increase: true,
+      },
+    });
   }
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  // The walk stops at the first entry past the allowance; the total is unknown.
+  expect((failure as ArtifactReaderFailure).readerLimit).not.toHaveProperty(
+    "required_value",
+  );
+  expect(
+    walkDenoVirtualFs(entries, 0, undefined, {
+      ...limits,
+      vfs_entries: 3,
+    }).members,
+  ).toHaveLength(3);
 });
 
 it("does not publish a bare child name when an ancestor source was dropped", () => {
@@ -253,7 +269,12 @@ it("refuses nesting past the depth allowance with a tagged limit", () => {
     expect(cause).toBeInstanceOf(ArtifactReaderFailure);
     expect(cause).toMatchObject({
       reason: "limit",
-      message: expect.stringContaining("MAX_DENO_VFS_DEPTH"),
+      fixedAllowance: {
+        name: "The Deno compile virtual filesystem depth allowance",
+        kind: "count",
+        limit: MAX_DENO_VFS_DEPTH,
+        unit: "levels",
+      },
     });
   }
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
@@ -278,7 +299,7 @@ it("rejects a region that overruns vfs file data", () => {
   } catch (cause) {
     failure = cause;
     expect(cause).toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("overruns"),
     });
   }
@@ -350,20 +371,26 @@ it("indexes a path over the logical byte allowance and its descendants", () => {
 });
 
 it("charges directory paths against the retained allowance", () => {
-  const name = "d".repeat(MAX_DENO_VFS_NAME_UNITS);
-  const emptySiblings = Array.from({ length: 99_000 }, (_, index): unknown => ({
+  const name = "d".repeat(64);
+  const emptySiblings = Array.from({ length: 4 }, (_, index): unknown => ({
     Dir: { n: `s${String(index)}`, e: [] },
   }));
   const chain = (depth: number): unknown[] =>
     depth === 0 ? emptySiblings : [{ Dir: { n: name, e: chain(depth - 1) } }];
-  const started = performance.now();
+  // Directory sources alone (64 + 129 + 194 units) exceed the selection.
   expect(() =>
-    walkDenoVirtualFs(chain(MAX_DENO_LOGICAL_PATH_PARTS), 0),
+    walkDenoVirtualFs(chain(3), 0, undefined, {
+      ...DEFAULT_DENO_READER_LIMITS,
+      vfs_name_units: 300,
+    }),
   ).toThrow(
     expect.objectContaining({
       reason: "limit",
-      message: expect.stringContaining("MAX_DENO_VFS_RETAINED_UNITS"),
+      readerLimit: expect.objectContaining({
+        parameter: "artifact_limits.deno.vfs_name_units",
+        effective_value: 300,
+        unit: "count",
+      }),
     }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
 });

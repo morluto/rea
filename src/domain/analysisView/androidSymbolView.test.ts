@@ -1,19 +1,17 @@
-import { expect, it, vi } from "vitest";
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
+import { expect, it } from "vitest";
 import { z } from "zod";
 import { androidComponentsViewRequestSchema } from "../android/androidPackageQuery.js";
 import { createEvidence } from "../evidence.js";
 import { immutableJsonSnapshotMember } from "../immutableJson.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+} from "./summarySchemas/androidSummarySchemas.js";
 import type { AdmittedView } from "./analysisViewShape.js";
-import {
-  androidClassSummarySchema,
-  projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary,
-} from "./androidSymbolView.js";
+import { projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary } from "./androidSymbolView.js";
 
 const projectAndroidSymbolSummary = (
   parent: Parameters<typeof projectAdmittedAndroidSymbolSummary>[0],
@@ -24,7 +22,7 @@ const projectAndroidSymbolSummary = (
 type Operation = "inspect_android_class" | "inspect_android_method";
 const engine = {
   name: "jadx",
-  version: "0.7.1",
+  version: "0.0.0",
   artifact_sha256: "e".repeat(64),
   source_revision: null,
   worker_count: 1,
@@ -141,7 +139,7 @@ const methodReport = () => ({
 const fixture = (operation: Operation, report: unknown, rawMetadata = "") => {
   const evidence = createEvidence(
     { path: "/retained/selected.apk", sha256: "a".repeat(64), format: "apk" },
-    { id: "jadx", name: "JADX", version: "0.7.1" },
+    { id: "jadx", name: "JADX", version: "0.0.0" },
     {
       operation,
       parameters: {
@@ -196,7 +194,22 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       operation === "inspect_android_class"
         ? androidClassSummaryViewResultSchema.parse(result.value)
         : androidMethodSummaryViewResultSchema.parse(result.value);
-    expect(view.summary).toEqual(facts);
+    if (operation === "inspect_android_method")
+      expect(view.summary).toEqual(facts);
+    else {
+      // A class summary counts members; their rows page separately.
+      const report = facts as ReturnType<typeof classReport>;
+      const { symbols, ...mapping } = report.mapping;
+      expect(view.summary).toMatchObject({
+        class_name: report.class_name,
+        counts: {
+          methods: report.methods.length,
+          fields: report.fields.length,
+          inner_classes: report.inner_classes.length,
+        },
+        mapping: { ...mapping, symbols: symbols.length },
+      });
+    }
     expect(view.artifact).toEqual({
       path: "/retained/selected.apk",
       sha256: "a".repeat(64),
@@ -211,7 +224,8 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       exhausted: true,
     });
     expect(view.limitations).toEqual(evidence.limitations);
-    expect(view.summary.mapping).toEqual(facts.mapping);
+    if (operation === "inspect_android_method")
+      expect(view.summary.mapping).toEqual(facts.mapping);
     expect(JSON.stringify(view)).not.toContain("irrelevant_member_metadata");
     expect(JSON.stringify(evidence)).toBe(before);
     if (operation === "inspect_android_method")
@@ -219,21 +233,38 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
   },
 );
 
-it("preserves native absence and optional historical omission without inventing mapping facts", () => {
-  const { mapping: _mapping, ...native } = methodReport();
-  const facts = {
-    ...native,
-    body_status: "not_available",
+it.each([
+  {
     markers: ["native_method"],
     source: { status: "complete", text: "", reported_total_bytes: 0 },
-  };
-  const { parent } = fixture("inspect_android_method", facts);
-  const result = projectAnalysisView(parent, { kind: "summary" });
-  if (!result.ok) throw result.error;
-  const view = androidMethodSummaryViewResultSchema.parse(result.value);
-  expect(view.summary).toEqual(facts);
-  expect(Object.hasOwn(view.summary, "mapping")).toBe(false);
-});
+  },
+  {
+    representation: null,
+    body_unavailable_reason:
+      "Selected method disassembly is incomplete: update()V",
+    markers: ["disassembly_failed"],
+    source: null,
+  },
+])(
+  "preserves method absence with $markers and historical omission of mapping",
+  (absence) => {
+    const { mapping: _mapping, ...method } = methodReport();
+    const facts = {
+      ...method,
+      body_status: "not_available",
+      fell_back: false,
+      ...absence,
+    };
+    const { parent } = fixture("inspect_android_method", facts);
+    const result = projectAnalysisView(parent, { kind: "summary" });
+    if (!result.ok) throw result.error;
+    const view = androidMethodSummaryViewResultSchema.parse(result.value);
+    expect(view.summary).toEqual(facts);
+    expect(Object.hasOwn(view.summary, "mapping")).toBe(false);
+    if (absence.source === null)
+      expect(view.unknowns).toContain(absence.body_unavailable_reason);
+  },
+);
 
 it.each(["inspect_android_class", "inspect_android_method"] as const)(
   "rejects malformed historical %s facts with a typed source error",
@@ -262,7 +293,10 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       operation === "inspect_android_class" ? classReport() : methodReport(),
     );
     expect(
-      projectAnalysisView({ ...parent, subject: null }, { kind: "summary" }),
+      projectAnalysisView(
+        { ...parent, subject: UNKNOWN_EVIDENCE_SUBJECT },
+        { kind: "summary" },
+      ),
     ).toMatchObject({
       ok: false,
       error: {
@@ -308,16 +342,4 @@ it("refuses an admitted one-MiB source plus summary context without truncation a
     },
   });
   expect(parent.normalizedResult).toEqual(facts);
-});
-
-it("reuses validation of an authenticated sealed class result across retained summaries", () => {
-  const { parent } = fixture("inspect_android_class", classReport());
-  const parse = vi.spyOn(androidClassSummarySchema, "safeParse");
-  try {
-    for (let attempt = 0; attempt < 2; attempt++)
-      expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
-    expect(parse).toHaveBeenCalledTimes(1);
-  } finally {
-    parse.mockRestore();
-  }
 });

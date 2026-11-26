@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
@@ -15,9 +16,18 @@ const transportSystemCode = (error: unknown): string | undefined => {
       : error.classification.error;
     return "systemCode" in failure ? failure.systemCode : undefined;
   }
-  if (!(error instanceof Error) || !("code" in error)) return undefined;
-  return typeof error.code === "string" ? error.code : undefined;
+  return systemCodeFromError(error);
 };
+
+/**
+ * System codes that mean the peer has gone. A pipe reports EPIPE, a socket
+ * ECONNRESET, and macOS can report ENOTCONN for a closed socket-pair stdio.
+ */
+const CONNECTION_LOST_CODES: ReadonlySet<string> = new Set([
+  "EPIPE",
+  "ECONNRESET",
+  "ENOTCONN",
+]);
 
 /** SDK error callbacks also report recoverable validation and protocol errors. */
 export const reportMcpTransportError = (
@@ -29,7 +39,7 @@ export const reportMcpTransportError = (
   const diagnostic =
     error instanceof z.ZodError
       ? { kind: "validation_error", message: MCP_VALIDATION_FAILED }
-      : code === "EPIPE" || code === "ECONNRESET"
+      : code !== undefined && CONNECTION_LOST_CODES.has(code)
         ? { kind: "connection_lost", message: MCP_CONNECTION_LOST }
         : { kind: "unknown", message: MCP_TRANSPORT_ERROR };
   // Do not echo raw frames or exception text, which can contain caller data.

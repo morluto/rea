@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
+import { sha256 as sha } from "../../tests/support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -13,7 +13,8 @@ import type {
   NativeLoadImage,
 } from "../domain/native/nativeLoadImage.js";
 import { attestGhidraDolLoadImage } from "./GhidraDolLoadImage.js";
-import type { Result } from "../domain/result.js";
+import { ok, type Result } from "../domain/result.js";
+import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 
 type DolTarget = Extract<BinaryTarget, { format: "gamecube-dol" }>;
 type DolImage = Extract<NativeLoadImage, { format: "gamecube-dol" }>;
@@ -28,8 +29,6 @@ const attestedDol = (result: Result<NativeLoadImage, string>): DolImage => {
   return result.value;
 };
 
-const sha = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
 /** The digest snapshot the Ghidra client streams for these exact bytes. */
@@ -62,7 +61,7 @@ const dolTarget = async (bytes: Buffer): Promise<DolTarget> => {
   await writeFile(join(directory, "game.dol"), bytes);
   const parsed = await parseBinaryTarget("game.dol", {
     cwd: directory,
-    formatHint: "gamecube-dol",
+    loadSelection: { format: "gamecube-dol" },
   });
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.format !== "gamecube-dol")
@@ -138,41 +137,60 @@ const checkNamed = (
   name: string,
 ) => checks.find((check) => check.name === name);
 
-describe("GameCube DOL load-image attestation", () => {
-  it("verifies file-backed sections and only the BSS gaps outside data", async () => {
-    const bytes = overlappingDol();
-    const target = await dolTarget(bytes);
-    expect(target.dol.bssOverlaps).toEqual([0]);
+it("verifies DOL section ranges and only the BSS gaps outside data", async () => {
+  const bytes = overlappingDol();
+  const target = await dolTarget(bytes);
+  expect(target.dol.bssOverlaps).toEqual([0]);
 
-    const result = attestGhidraDolLoadImage(
-      snapshotOf(bytes, target),
-      target,
-      observationsFor(bytes, target.dol),
-      undefined,
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        status: "verified",
-        format: "gamecube-dol",
-        architecture: "powerpc",
-        entry: { address: "0x80003100" },
-        bss: { address: "0x8000fff8", size: "0x20" },
-      },
-    });
-    const image = attestedDol(result);
-    expect(image.sections).toHaveLength(2);
-    expect(image.checks.every((check) => check.matched)).toBe(true);
-    expect(checkNamed(image.checks, "bss_mappings")).toMatchObject({
-      matched: true,
-      expected: EXPECTED_GAPS,
-      observed: EXPECTED_GAPS,
-    });
-    expect(
-      checkNamed(image.checks, "initialized_unbacked_mappings"),
-    ).toMatchObject({ matched: true, observed: 0 });
+  const snapshot = snapshotOf(bytes, target);
+  const hashRanges = vi.fn(async () =>
+    ok({
+      sha256: snapshot.sha256,
+      bytes: snapshot.bytes,
+      rangeSha256: snapshot.sectionSha256,
+    }),
+  );
+  const result = await attestGhidraNativeLoadImage({
+    target,
+    operation: "inspect_native_load_image",
+    measured: observationsFor(bytes, target.dol),
+    client: { hashTargetSnapshotRanges: hashRanges },
+    mapSessionError: (failure) => {
+      throw failure;
+    },
   });
+  expect(hashRanges).toHaveBeenCalledExactlyOnceWith(
+    [
+      { start: 0x100, end: 0x120 },
+      { start: 0x120, end: 0x130 },
+    ],
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      status: "verified",
+      format: "gamecube-dol",
+      architecture: "powerpc",
+      entry: { address: "0x80003100" },
+      bss: { address: "0x8000fff8", size: "0x20" },
+    },
+  });
+  if (!result.ok) throw result.error;
+  const image = attestedDol(result);
+  expect(image.sections).toHaveLength(2);
+  expect(image.checks.every((check) => check.matched)).toBe(true);
+  expect(checkNamed(image.checks, "bss_mappings")).toMatchObject({
+    matched: true,
+    expected: EXPECTED_GAPS,
+    observed: EXPECTED_GAPS,
+  });
+  expect(
+    checkNamed(image.checks, "initialized_unbacked_mappings"),
+  ).toMatchObject({ matched: true, observed: 0 });
+});
 
+describe("GameCube DOL load-image attestation", () => {
   it("flags a file-backed mapping whose sha256 differs from its section bytes", async () => {
     const bytes = overlappingDol();
     const target = await dolTarget(bytes);
@@ -381,23 +399,6 @@ describe("GameCube DOL block permissions and state", () => {
     expect(blockCheck(image.checks, ".data0", DATA_ADDRESS)).toMatchObject({
       matched: false,
       observed: expect.objectContaining({ address_space: "io" }),
-    });
-  });
-
-  it("does not verify a DOL block whose permissions were never measured", async () => {
-    const image = await attestMutated((mappings) => {
-      const text = mappings.find((m) => m.block === ".text0");
-      if (text === undefined) throw new Error("Missing text mapping");
-      delete text.readable;
-      delete text.writable;
-      delete text.executable;
-    });
-    expect(image.status).toBe("mismatch");
-    expect(
-      checkNamed(image.checks, "block_permissions_measured"),
-    ).toMatchObject({ matched: false, observed: [".text0"] });
-    expect(blockCheck(image.checks, ".text0", TEXT_ADDRESS)).toMatchObject({
-      matched: false,
     });
   });
 

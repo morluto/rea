@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
@@ -7,8 +6,7 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
+import { webBundleWorkerScript } from "../../tests/fixtures/webBundleAnalysis.js";
 import * as observations from "../process/ProcessOwnershipObservation.js";
 import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import type {
@@ -35,29 +33,6 @@ class RecordingWorker extends EventEmitter implements ProviderProcessHandle {
     this.emit("close", 0, null);
   }
 }
-
-const script = (): IncludedScript => {
-  const text = "fetch('/inert-startup');";
-  return {
-    script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
-    frame_id: "frame",
-    url: "https://fixture.invalid/script.js",
-    origin: "https://fixture.invalid",
-    cdp_hash: null,
-    length: Buffer.byteLength(text),
-    is_module: false,
-    language: "JavaScript",
-    source_map_url: null,
-    resource_reconciliation: {
-      status: "unmatched",
-      reason: "no_exact_sanitized_url",
-    },
-    source: {
-      included: true,
-      artifact: createWebTextArtifact(text, "application/javascript"),
-    },
-  };
-};
 
 it.for([
   { interruption: "none", typedReason: false },
@@ -93,8 +68,19 @@ it.for([
       };
     };
     const worker = new WebBundleAnalysisWorker(128, launcher);
+    // A physical output event must settle the handshake while the clock is idle.
+    // The wall-clock watchdog only makes a lost wake fail without waiting for Vitest.
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(2_000),
+    ]);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const result = await worker.analyze(script(), 1_000, controller.signal);
+      const result = await worker.analyze(
+        webBundleWorkerScript("fetch('/inert-startup');"),
+        10_000,
+        signal,
+      );
       if (result.ok)
         throw new Error("Expected startup to stop without a ready frame");
       const failure = result.error.error;
@@ -120,11 +106,15 @@ it.for([
         }
       }
     } finally {
-      await worker.close();
-      preparation.mockRestore();
-      child.stdin.destroy();
-      child.stdout.destroy();
-      child.stderr.destroy();
+      try {
+        await worker.close();
+      } finally {
+        vi.useRealTimers();
+        preparation.mockRestore();
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }
     }
   },
 );

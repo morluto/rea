@@ -1,7 +1,10 @@
+import { machoSectionCarrier } from "../apple/MachoSectionCarrier.fixture.js";
+import { uint64LE as u64 } from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
-import { NODE_SEA_MAGIC } from "./NodeSeaBlob.js";
+/** Node 24 SEA blob magic: https://github.com/nodejs/node/blob/v24.12.0/src/node_sea.h */
+export const NODE_SEA_FIXTURE_MAGIC = 0x143da20;
 
 /** Official Node `NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2` hash. */
 export const NODE_SEA_FUSE_HASH = "fce680ab2cc467b6e072b8b5df1996b2";
@@ -21,6 +24,7 @@ export interface NodeSeaBlobFixtureOptions {
   readonly assets?: readonly NodeSeaAssetFixture[];
   readonly execArgv?: readonly string[];
   readonly execArgvExtension?: 0 | 1 | 2;
+  readonly mainCodeFormat?: 0 | 1;
   readonly disableExperimentalSeaWarning?: boolean;
   readonly trailing?: Buffer;
 }
@@ -35,18 +39,12 @@ export interface NodeSeaCarrierOptions extends NodeSeaBlobFixtureOptions {
 const asBytes = (value: Buffer | string): Buffer =>
   typeof value === "string" ? Buffer.from(value, "utf8") : value;
 
-const u64 = (value: number): Buffer => {
-  const bytes = Buffer.alloc(8);
-  bytes.writeBigUInt64LE(BigInt(value));
-  return bytes;
-};
-
 const sized = (value: Buffer | string): Buffer => {
   const body = asBytes(value);
   return Buffer.concat([u64(body.length), body]);
 };
 
-/** Build a Node 24 SEA blob: magic, flags, extension, then length-prefixed fields. */
+/** Build a SEA blob with the optional main-format byte used by newer Node producers. */
 export const buildNodeSeaBlob = (
   options: NodeSeaBlobFixtureOptions = {},
 ): Buffer => {
@@ -62,10 +60,13 @@ export const buildNodeSeaBlob = (
   if (assets.length > 0) flags |= 1 << 3;
   if (execArgv.length > 0) flags |= 1 << 4;
   const header = Buffer.alloc(9);
-  header.writeUInt32LE(NODE_SEA_MAGIC, 0);
+  header.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   header.writeUInt32LE(flags, 4);
   header[8] = options.execArgvExtension ?? 1;
-  const parts: Buffer[] = [header, sized(codePath), sized(body)];
+  const parts: Buffer[] = [header];
+  if (options.mainCodeFormat !== undefined)
+    parts.push(Buffer.from([options.mainCodeFormat]));
+  parts.push(sized(codePath), sized(body));
   if (options.codeCache !== undefined) parts.push(sized(options.codeCache));
   if (assets.length > 0) {
     parts.push(u64(assets.length));
@@ -80,9 +81,7 @@ export const buildNodeSeaBlob = (
   return Buffer.concat(parts);
 };
 
-export const nodeSeaFuseBytes = (
-  state: NodeSeaFuseFixture = "absent",
-): Buffer => {
+const nodeSeaFuseBytes = (state: NodeSeaFuseFixture = "absent"): Buffer => {
   if (state === "absent") return Buffer.alloc(0);
   const sentinel = (digit: string, hash = NODE_SEA_FUSE_HASH): Buffer =>
     Buffer.from(`\0NODE_SEA_FUSE_${hash}:${digit}\0`, "latin1");
@@ -106,58 +105,14 @@ export const nodeSeaMachO = (options: NodeSeaMachOOptions = {}): Buffer => {
   const blobs = carrierBlobs(options);
   const little = options.littleEndian ?? true;
   const wide = (options.bits ?? 64) === 64;
-  const headerSize = wide ? 32 : 28;
-  const segmentHeader = wide ? 72 : 56;
-  const sectionSize = wide ? 80 : 68;
-  const segmentName = options.segmentName ?? "NODE_SEA";
-  const sectionName = options.sectionName ?? "__NODE_SEA_BLOB";
-  const cmdsize = segmentHeader + blobs.length * sectionSize;
-  const payloadAt = headerSize + cmdsize;
-  const payloadOffsets: number[] = [];
-  let cursor = payloadAt;
-  for (const blob of blobs) {
-    payloadOffsets.push(cursor);
-    cursor += blob.length;
-  }
-  const image = Buffer.alloc(cursor);
-  write32(image, 0, wide ? 0xfeedfacf : 0xfeedface, little);
-  write32(image, 4, wide ? 0x0100000c : 7, little);
-  write32(image, 12, 2, little);
-  write32(image, 16, 1, little);
-  write32(image, 20, cmdsize, little);
-  const command = headerSize;
-  write32(image, command, wide ? 0x19 : 0x1, little);
-  write32(image, command + 4, cmdsize, little);
-  writeName(image, command + 8, segmentName);
-  const payloadSize = cursor - payloadAt;
-  if (wide) {
-    write64(image, command + 32, payloadSize, little);
-    write64(image, command + 40, payloadAt, little);
-    write64(image, command + 48, payloadSize, little);
-    write32(image, command + 56, 7, little);
-    write32(image, command + 60, 5, little);
-    write32(image, command + 64, blobs.length, little);
-  } else {
-    write32(image, command + 28, payloadSize, little);
-    write32(image, command + 32, payloadAt, little);
-    write32(image, command + 36, payloadSize, little);
-    write32(image, command + 40, 7, little);
-    write32(image, command + 44, 5, little);
-    write32(image, command + 48, blobs.length, little);
-  }
-  blobs.forEach((blob, index) => {
-    const section = command + segmentHeader + index * sectionSize;
-    const fileOffset = payloadOffsets[index] ?? payloadAt;
-    writeName(image, section, sectionName);
-    writeName(image, section + 16, segmentName);
-    if (wide) {
-      write64(image, section + 40, blob.length, little);
-      write32(image, section + 48, fileOffset, little);
-    } else {
-      write32(image, section + 36, blob.length, little);
-      write32(image, section + 40, fileOffset, little);
-    }
-    blob.copy(image, fileOffset);
+  const image = machoSectionCarrier(blobs, {
+    wide,
+    little,
+    cpuType: wide ? 0x0100000c : 7,
+    segmentName: options.segmentName ?? "NODE_SEA",
+    sectionName: options.sectionName ?? "__NODE_SEA_BLOB",
+    maxProtection: 7,
+    initialProtection: 5,
   });
   return Buffer.concat([image, nodeSeaFuseBytes(options.fuse)]);
 };
@@ -212,27 +167,3 @@ const carrierBlobs = (options: NodeSeaCarrierOptions): Buffer[] => [
   options.blob ?? buildNodeSeaBlob(options),
   ...(options.extraBlobs ?? []),
 ];
-
-const writeName = (bytes: Buffer, offset: number, name: string): void => {
-  bytes.write(name, offset, Math.min(name.length, 16), "latin1");
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const write64 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-  else bytes.writeBigUInt64BE(BigInt(value), offset);
-};

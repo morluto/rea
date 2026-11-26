@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it, vi } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 
@@ -181,5 +181,7 @@ it("discloses getter-result widening when selecting returned callable targets", 
     node: expect.objectContaining({ type: "Identifier", name: "result" }),
     projection: [],
   });
-  expect(step.value.returnedReferenceWidenings.has(call.callee)).toBe(true);
+  expect(
+    step.value.observations.returnedReferenceWidenings.has(call.callee),
+  ).toBe(true);
 });

@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
-import { symlink, writeFile } from "node:fs/promises";
+import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js";
+import {
+  DEFAULT_NATIVE_EXPORT_ROWS,
+  nativeExportsSchema,
+} from "../../../src/domain/native/nativeExports.js";
 import {
   elfExportImage,
   peExportImage,
+  peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -30,7 +36,7 @@ describe("native export stable filesystem boundary", () => {
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256 },
+        identity: { sha256 },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -71,10 +77,25 @@ describe("native export stable filesystem boundary", () => {
             coverage: { status: "complete", examined_entries: 1, exports: 0 },
           });
         } else {
-          expect(result).toMatchObject({
-            ok: false,
-            error: { _tag: "AnalysisResourceConstraintError" },
+          // 4100 aliases of one 4096-byte name exceed the 16 MiB retained-text
+          // byte budget while staying far below the 262144-entry ceiling, so
+          // recovery must name the byte allowance, not the entry count.
+          if (result.ok) throw new Error("Expected retained-text refusal");
+          expect(result.error).toMatchObject({
+            _tag: "AnalysisResourceConstraintError",
+            resource: "capacity",
+            reportedLimits: { boundary: "retained_text", maximum: 16777216 },
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_text_bytes",
+              effective_value: 16777216,
+              unit: "bytes",
+            },
           });
+          // The text check stops at the first excess, so its need is unknown.
+          expect(
+            "limit" in result.error ? result.error.limit : undefined,
+          ).not.toHaveProperty("required_value");
         }
       }
     } finally {
@@ -111,7 +132,7 @@ describe("native export stable filesystem boundary", () => {
         operation: "inspect_native_exports",
         provider: { id: "rea-native-exports" },
         confidence: "observed",
-        subject: { local_path: path, format, digest: { sha256 } },
+        subject: { local_path: path, identity: { format, sha256 } },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -125,7 +146,87 @@ describe("native export stable filesystem boundary", () => {
   });
 });
 
+it("observes cancellation during a bounded ELF export inventory", async () => {
+  const root = await createTestTempDirectory("rea-native-export-cancel-");
+  const path = join(root, "libfixture.so");
+  const bytes = elfExportImage({
+    symbols: Array.from({ length: 1025 }, () => ({ name: "exported" })),
+  });
+  await writeFile(path, bytes);
+  const service = createNativeExportsService();
+  const controller = new AbortController();
+  const reason = new Error("stop during export rows");
+  const yieldToEventLoop = scheduler.yield.bind(scheduler);
+  const pause = vi
+    .spyOn(scheduler, "yield")
+    .mockImplementationOnce(async () => {
+      await yieldToEventLoop();
+      controller.abort(reason);
+    });
+  try {
+    const result = await service.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation during export rows");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_native_exports",
+      cause: reason,
+      partialObservation: {
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+    });
+    const retry = await service.inspect(
+      { path },
+      { signal: new AbortController().signal },
+    );
+    if (!retry.ok) throw retry.error;
+    expect(retry.value.normalized_result).toMatchObject({
+      coverage: { status: "complete", examined_entries: 1025, exports: 1025 },
+    });
+  } finally {
+    pause.mockRestore();
+    await service.close();
+  }
+});
+
 describe("native export text capacity", () => {
+  it("retains valid exports and partial Evidence when a symbol name exceeds the read allowance", async () => {
+    const root = await createTestTempDirectory("rea-native-export-name-limit-");
+    const path = join(root, "libfixture.so");
+    const bytes = elfExportImage({
+      symbols: [{ name: "n".repeat(65_536) }, { name: "kept" }],
+    });
+    await writeFile(path, bytes);
+    const service = createNativeExportsService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      const evidence = parseEvidence(result.value);
+      const report = nativeExportsSchema.parse(evidence.normalized_result);
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
+      });
+      expect(report).toMatchObject({
+        exports: [expect.objectContaining({ name: "kept" })],
+        coverage: { status: "partial" },
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "name_unreadable",
+            message: expect.stringContaining("65536-byte read allowance"),
+          }),
+        ]),
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it.each(["symbol", "version"] as const)(
     "bounds UTF-8 bytes of retained ELF %s text and its exact-byte spelling",
     async (kind) => {
@@ -223,6 +324,139 @@ describe("native export text capacity", () => {
   });
 });
 
+describe("native export entry allowance", () => {
+  it("names max_structure_bytes when an ELF header table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-native-export-structure-");
+    const path = join(root, "structure.so");
+    await writeFile(path, elfExportImage({ symbols: [{ name: "exported" }] }));
+    const service = createNativeExportsService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_structure_bytes",
+            effective_value: 64,
+          },
+          refusal: {
+            kind: "adjustable_budget",
+            control: "max_structure_bytes",
+          },
+        },
+      });
+      const admitted = await service.inspect({
+        path,
+        max_structure_bytes: 65536,
+      });
+      if (!admitted.ok) throw admitted.error;
+    } finally {
+      await service.close();
+    }
+  });
+
+  it.each([false, true])(
+    "reports whether an oversized ELF dynamic symbol table is file-backed (%s)",
+    async (stored) => {
+      const bytes = elfExportImage({ symbols: [{ name: "exported" }] });
+      const symbolSection = Number(bytes.readBigUInt64LE(40)) + 64;
+      const size = (DEFAULT_NATIVE_EXPORT_ROWS + 1) * 24;
+      bytes.writeBigUInt64LE(BigInt(bytes.length), symbolSection + 24);
+      bytes.writeBigUInt64LE(BigInt(size), symbolSection + 32);
+      const root = await createTestTempDirectory("rea-native-export-dynsym-");
+      const path = join(root, "rows.so");
+      await writeFile(path, bytes);
+      if (stored) await truncate(path, bytes.length + size);
+      const service = createNativeExportsService();
+      try {
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error("Expected a symbol-table refusal");
+        const projected = projectAnalysisError(result.error);
+        if (stored)
+          expect(projected).toMatchObject({
+            code: "resource_constraint",
+            details: {
+              reported_limits: {
+                boundary: "rows",
+                maximum: DEFAULT_NATIVE_EXPORT_ROWS,
+              },
+              limit: {
+                parameter: "max_entries",
+                required_value: DEFAULT_NATIVE_EXPORT_ROWS + 1,
+              },
+            },
+          });
+        else
+          expect(projected).toMatchObject({
+            code: "unsupported_target",
+            category: "unsupported_target",
+            details: {
+              path,
+              reason: expect.stringContaining(
+                "ELF dynamic symbols range is outside the file",
+              ),
+            },
+          });
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
+  it.each([
+    ["stored", () => peStoredExportTableImage(0x40001)],
+    [
+      "truncated",
+      () => peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+    ],
+  ])(
+    "keeps count recovery for a %s export table above the entry allowance",
+    async (caseName, image) => {
+      const root = await createTestTempDirectory("rea-native-export-rows-");
+      const path = join(root, "rows.dll");
+      await writeFile(path, image());
+      const service = createNativeExportsService();
+      try {
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error("Expected entry allowance refusal");
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          resource: "capacity",
+          reportedLimits: {
+            boundary: "rows",
+            maximum: DEFAULT_NATIVE_EXPORT_ROWS,
+          },
+          retryable: false,
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_entries",
+            effective_value: DEFAULT_NATIVE_EXPORT_ROWS,
+            default_value: DEFAULT_NATIVE_EXPORT_ROWS,
+            required_value: 0x40001,
+            applies_at: "next_call",
+          },
+        });
+        const raised = await service.inspect({ path, max_entries: 0x40001 });
+        if (caseName === "stored") {
+          if (!raised.ok) throw raised.error;
+          expect(raised.value.normalized_result).toMatchObject({
+            format: "pe",
+            exports: expect.any(Array),
+          });
+        } else {
+          expect(raised.ok).toBe(false);
+          if (raised.ok) throw new Error("Expected truncated export failure");
+          expect(raised.error._tag).toBe("AnalysisTargetFailureError");
+        }
+      } finally {
+        await service.close();
+      }
+    },
+  );
+});
+
 describe("native export encoding and failures", () => {
   it("keeps ELF symbol bytes while exposing valid UTF-8 text", async () => {
     const root = await createTestTempDirectory("rea-native-export-unicode-");
@@ -256,35 +490,23 @@ describe("native export encoding and failures", () => {
         },
       ],
     });
-    const olderRows = JSON.parse(
+    const withoutEncoding = JSON.parse(
       JSON.stringify(result.value.normalized_result),
     ) as { exports: Record<string, unknown>[] };
-    for (const row of olderRows.exports) {
+    for (const row of withoutEncoding.exports) {
       delete row.name_bytes_base64;
       delete row.name_utf8_decodable;
-      const version = row.version;
-      if (version !== null && typeof version === "object") {
-        Reflect.deleteProperty(version, "name_bytes_base64");
-        Reflect.deleteProperty(version, "name_utf8_decodable");
-      }
     }
-    expect(nativeExportsSchema.parse(olderRows)).toMatchObject({
-      exports: [
-        {
-          name: "café",
-          name_bytes_base64: null,
-          name_utf8_decodable: null,
-          version: {
-            index: 2,
-            name: "libcafé.so",
-            name_bytes_base64: null,
-            name_utf8_decodable: null,
-            hidden: false,
-          },
-        },
-        { name: "ÿ", name_bytes_base64: null, name_utf8_decodable: null },
-      ],
-    });
+    expect(
+      nativeExportsSchema
+        .safeParse(withoutEncoding)
+        .error?.issues.map(({ path }) => path.join(".")),
+    ).toEqual(
+      expect.arrayContaining([
+        "exports.0.name_bytes_base64",
+        "exports.0.name_utf8_decodable",
+      ]),
+    );
     await service.close();
   });
 
@@ -315,7 +537,6 @@ describe("native export encoding and failures", () => {
 
     for (const [candidate, reason] of [
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.dll"), "invalid_value"],
     ] as const)
       expect(await failure({ path: candidate })).toMatchObject({
@@ -323,9 +544,15 @@ describe("native export encoding and failures", () => {
         operation: "inspect_native_exports",
         issues: [{ path: ["path"], reason }],
       });
+    // Malformed bytes are a target refusal, not a request-field error.
+    expect(await failure({ path: malformed })).toMatchObject({
+      _tag: "AnalysisTargetFailureError",
+      operation: "inspect_native_exports",
+      path: malformed,
+    });
     expect(await failure({ path: macho })).toMatchObject({
-      _tag: "AnalysisUnsupportedTargetError",
-      reason: expect.stringContaining("inspect_macho"),
+      _tag: "AnalysisTargetFailureError",
+      failure: { detail: expect.stringContaining("inspect_macho") },
     });
     expect(await failure({ path, max_file_bytes: 64 })).toMatchObject({
       _tag: "AnalysisResourceConstraintError",

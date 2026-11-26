@@ -225,7 +225,6 @@ cliTest(
       ibResult.documents[0]?.archive_sha256,
     );
   },
-  60_000,
 );
 
 cliTest(
@@ -278,5 +277,4 @@ cliTest(
     expect(mcpResult).toEqual(cliResult);
     expect(Buffer.compare(await readFile(archivePath), bytes)).toBe(0);
   },
-  60_000,
 );

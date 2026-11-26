@@ -141,6 +141,63 @@ it.for<TextSourceCase>([
     value: { name: "UTF32 control" },
     conversions: [{ format: "json", output: '{"name":"UTF32 control"}' }],
   },
+  {
+    name: "malformed XML comment that plutil reads",
+    bytes: Buffer.from(
+      '<?xml version="1.0"?><!-- a -- b --><plist><dict><key>name</key><string>x</string></dict></plist>',
+    ),
+    description: "XML 1.0 document text",
+    format: "xml",
+    value: { name: "x" },
+    limitations: [
+      "REA's XML reader refused the source (XML is not well-formed: 1:31: malformed comment.), but plutil read it, so the value comes from plutil's conversion rather than the original text.",
+    ],
+    conversions: [{ format: "json", output: '{"name":"x"}' }],
+  },
+  {
+    name: "XML control character that plutil reads",
+    bytes: Buffer.from(
+      "<plist><dict><key>name</key><string></string></dict></plist>",
+    ),
+    description: "XML 1.0 document text",
+    format: "xml",
+    value: { name: "" },
+    limitations: [
+      "REA's XML reader refused the source (XML is not well-formed: 1:37: disallowed character.), but plutil read it, so the value comes from plutil's conversion rather than the original text.",
+    ],
+    conversions: [{ format: "json", output: '{"name":"\\u0001"}' }],
+  },
+  {
+    // `file -b` reports `data` for this XML, as it does for some shipped
+    // macOS plists such as NeptuneOneWallpaper.appex's Info.plist.
+    name: "XML control character that file calls data",
+    bytes: Buffer.from(
+      '<?xml version="1.0"?><plist><dict><key>name</key><string>\u0003</string></dict></plist>',
+    ),
+    description: "data",
+    format: "xml",
+    value: { name: "\u0003" },
+    limitations: [
+      "REA's XML reader refused the source (XML is not well-formed: 1:58: disallowed character.), but plutil read it, so the value comes from plutil's conversion rather than the original text.",
+    ],
+    conversions: [{ format: "json", output: '{"name":"\\u0003"}' }],
+  },
+  {
+    name: "well-formed XML that file calls data",
+    bytes: Buffer.from(xml),
+    description: "data",
+    format: "xml",
+    value: xmlValue,
+    conversions: [],
+  },
+  {
+    name: "OpenStep control character that file calls data",
+    bytes: Buffer.from('{ name = "\u0003"; }'),
+    description: "data",
+    format: "unknown",
+    value: { name: "\u0003" },
+    conversions: [{ format: "json", output: '{"name":"\\u0003"}' }],
+  },
 ])("owns $name interpretation before optional conversion", async (fixture) => {
   const root = await createTestTempDirectory("rea-plist-text-source-");
   const path = join(root, "selected.plist");
@@ -149,15 +206,21 @@ it.for<TextSourceCase>([
   const tools: string[] = [];
   let conversionIndex = 0;
   let validations = 0;
+  let operand: string | undefined;
   const client = new NativeMacOSProvider(
     {},
     {
       async run(tool, args) {
         tools.push(tool);
+        if (tool === "file") {
+          operand = args[1];
+          expect(operand).toBeDefined();
+          expect(operand).not.toBe(path);
+        }
         const result = await replay.run(tool, args);
         if (tool !== "plutil" || !result.ok) return result;
         if (args[0] === "-lint") {
-          expect(args).toEqual(["-lint", "--", path]);
+          expect(args).toEqual(["-lint", "--", operand]);
           validations += 1;
           return result;
         }
@@ -170,7 +233,7 @@ it.for<TextSourceCase>([
           "-o",
           "-",
           "--",
-          path,
+          operand,
         ]);
         return ok({
           ...result.value,
@@ -213,4 +276,69 @@ it.for<TextSourceCase>([
     ),
   );
   expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
+});
+
+const inspectRefusal = async (
+  bytes: string,
+  conversions: readonly string[],
+): Promise<{ readonly error: unknown; readonly tools: readonly string[] }> => {
+  const root = await createTestTempDirectory("rea-plist-text-refusal-");
+  const path = join(root, "selected.plist");
+  await writeFile(path, bytes);
+  const replay = new NativeFixtureRunner({ file: "XML 1.0 document text" });
+  const tools: string[] = [];
+  const client = new NativeMacOSProvider(
+    {},
+    {
+      async run(tool, args) {
+        tools.push(tool === "plutil" ? `plutil ${args[0]} ${args[1]}` : tool);
+        const result = await replay.run(tool, args);
+        if (
+          tool !== "plutil" ||
+          !result.ok ||
+          !conversions.includes(args[1] ?? "")
+        )
+          return result;
+        return ok({
+          ...result.value,
+          stdout: "",
+          stdoutBytes: 0,
+          stderr: `${path}: Property List error`,
+          exitCode: 1,
+        });
+      },
+    },
+    "darwin",
+  ).createClient(nativeMachoTarget(join(root, "target")));
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const inspected = await client.execute("inspect_plist", { path });
+  return { error: inspected.ok ? undefined : inspected.error, tools };
+};
+
+it("refuses malformed XML that plutil also rejects (#12234)", async () => {
+  const { error, tools } = await inspectRefusal(
+    '<?xml version="1.0"?><!-- a -- b --><plist><dict/></plist>',
+    ["json", "xml1"],
+  );
+  expect(error).toMatchObject({
+    issues: [{ message: expect.stringMatching(/plutil could not decode/u) }],
+  });
+  expect(tools).toEqual([
+    "file",
+    "plutil -convert json",
+    "plutil -convert xml1",
+  ]);
+});
+
+it("keeps refusing a well-formed XML plist with an invalid structure", async () => {
+  const { error, tools } = await inspectRefusal(
+    "<plist><array><unknown/></array></plist>",
+    [],
+  );
+  expect(error).toMatchObject({
+    issues: [{ message: expect.stringMatching(/Invalid PLIST tag unknown/u) }],
+  });
+  expect(tools).toEqual(["file"]);
 });

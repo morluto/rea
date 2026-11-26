@@ -8,7 +8,6 @@ import unittest
 from zipfile import ZipFile
 
 from bs4 import BeautifulSoup
-import yaml
 
 from website_agents import prepare_discovery, prepare_markdown
 
@@ -33,18 +32,18 @@ class AgentPublishingChecks(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), set(expected))
             for name, data in expected.items():
                 self.assertEqual(archive.read(name), data)
-            manifest = archive.read(f"{source.name}/SKILL.md").decode()
-            metadata = yaml.safe_load(manifest[4:].split("\n---\n", 1)[0])
-            self.assertEqual(skill["description"], metadata["description"])
+        self.assertTrue(skill["description"])
         catalog = json.loads((site / ".well-known/ai-catalog.json").read_text())
         self.assertEqual(catalog["specVersion"], "1.0")
         entry, = catalog["entries"]
         self.assertEqual(entry["identifier"], "urn:air:rea.tools:skill:reverse-engineer-anything")
         self.assertEqual(entry["url"], skill["url"])
+        self.assertEqual(entry["description"], skill["description"])
         self.assertNotIn("data", entry)
         ard = json.loads((site / ".well-known/ard.json").read_text())
         resource, = ard["entries"]
         self.assertEqual(resource["url"], skill["url"])
+        self.assertEqual(resource["description"], skill["description"])
         self.assertTrue(2 <= len(resource["representativeQueries"]) <= 5)
 
     def test_reference_changes_invalidate_digest_and_yaml_scalars_are_parsed(self):
@@ -53,7 +52,7 @@ class AgentPublishingChecks(unittest.TestCase):
             source = root / ".agents/skills/reverse-engineer-anything"
             source.mkdir(parents=True)
             (source / "SKILL.md").write_text(
-                '---\nname: reverse-engineer-anything\ndescription: >-\n  Inspect programs:\n  preserve evidence.\n---\n# REA\n'
+                '---\nname: reverse-engineer-anything\ndescription: >-\n  Inspect programs:\n  preserve evidence.\nmetadata:\n  version: "1"\n---\n# REA\n'
             )
             (source / "references").mkdir()
             reference = source / "references/evidence.md"
@@ -67,6 +66,19 @@ class AgentPublishingChecks(unittest.TestCase):
             self.assertEqual(build(), before)
             reference.write_text("Second revision")
             self.assertNotEqual(build()["digest"], before["digest"])
+
+    def test_duplicate_manifest_keys_fail_before_writing_discovery_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / ".agents/skills/reverse-engineer-anything"
+            source.mkdir(parents=True)
+            (source / "SKILL.md").write_text(
+                '---\nname: reverse-engineer-anything\ndescription: First.\ndescription: Second.\nmetadata:\n  version: "1"\n---\n# REA\n'
+            )
+            site = root / "site"
+            with self.assertRaisesRegex(ValueError, "Map keys must be unique"):
+                prepare_discovery(root, site)
+            self.assertFalse((site / ".well-known").exists())
 
     def test_markdown_preserves_content_and_resources_without_publishing_excluded_pages(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -94,7 +106,7 @@ class AgentPublishingChecks(unittest.TestCase):
             self.assertIn('const value = a < b ? "x_y" : "&";\n  keepIndent();', markdown)
             self.assertIn("Hidden evidence remains available.", markdown)
             self.assertIn("Shortened display paths.", markdown)
-            self.assertNotIn("Read`input.exe`", markdown)
+            self.assertRegex(markdown, r"Read\s+`input\.exe`\s+Keep evidence\.")
             self.assertIn("https://rea.tools/zh-CN/guides/other/?q=a%2Fb#code", markdown)
             self.assertIn("https://rea.tools/assets/diagram.svg", markdown)
             for text in ("Outside navigation", "Contents navigation", "Copy code", "doNotPublish"):

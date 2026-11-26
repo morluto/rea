@@ -1,7 +1,12 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
-import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type {
+  EnvironmentStateStore,
+  StateSnapshot,
+} from "../../application/environment/environmentStateStore.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { jsonByteLength } from "../../domain/jsonSerialization.js";
 import {
   CANCELLED,
   DEFAULT_STATE_INTAKE,
@@ -10,11 +15,12 @@ import {
   type RpcError,
   type StateIntake,
 } from "./stateIntake.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
-/** One data-plane method's outcome; undefined from a method table means the method is not served. */
+/** A data-plane outcome, with the exact UTF-8 size when the method already knows its result's encoded size. */
 export type RpcOutcome =
-  | { readonly result: unknown }
-  | { readonly error: RpcError };
+  | { readonly result: unknown; readonly resultBytes?: number }
+  | { readonly error: RpcError; readonly resultBytes?: never };
 
 /** The data-plane methods one environment serves, by JSON-RPC method name; a call is queued when made, and `signal` cancels it. */
 export type RpcMethods = (
@@ -23,17 +29,11 @@ export type RpcMethods = (
   signal?: AbortSignal,
 ) => Promise<RpcOutcome | undefined>;
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const pointerSegment = (segment: string | number): string =>
-  String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** The first document problem as `-32602`, located by a JSON pointer into the document. */
 const documentError = (error: AnalysisInputError): RpcError => {
   const issue = error.issues[0];
   const pointer = (issue?.path ?? [])
-    .map((segment) => `/${pointerSegment(segment)}`)
+    .map((segment) => `/${escapeJsonPointerToken(String(segment))}`)
     .join("");
   return invalidParams(
     `${pointer === "" ? "the document" : pointer} ${issue?.message ?? "is not a rea-state/v1 document"}`,
@@ -79,6 +79,13 @@ type Method = (
   params: unknown,
 ) => RpcOutcome | Promise<RpcOutcome>;
 
+const stateResult = (data: StateSnapshot | null) => ({
+  parts: [{ kind: "data", data }],
+});
+
+const STATE_RESULT_FRAME_BYTES =
+  jsonByteLength(stateResult(null)) - jsonByteLength(null);
+
 const METHODS: ReadonlyMap<string, Method> = new Map<string, Method>([
   [
     "data/reset",
@@ -91,7 +98,8 @@ const METHODS: ReadonlyMap<string, Method> = new Map<string, Method>([
   [
     "data/get",
     ({ store }) => ({
-      result: { parts: [{ kind: "data", data: store.snapshot() }] },
+      result: stateResult(store.snapshot()),
+      resultBytes: STATE_RESULT_FRAME_BYTES + store.byteLength(),
     }),
   ],
 ]);

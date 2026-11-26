@@ -1,13 +1,14 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { describe, expect, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
-import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { sanitizeBrowserUrl } from "../../../src/domain/browserObservation.js";
 import type { BrowserScenario } from "../../../src/domain/browserScenario.js";
@@ -177,7 +178,7 @@ const scenario = (origin = "https://app.example.test") => ({
   ],
 });
 
-test.each(["full", "compact"] as const)(
+test.each(["compact"] as const)(
   "advertises portable browser action patterns (%s)",
   async (profile) => {
     const provider = new FakeBrowserScenarioProvider();
@@ -215,17 +216,6 @@ test.each(["full", "compact"] as const)(
           patterns.push({ where, pattern: value });
         pending.push({ value, where });
       }
-    }
-    if (profile === "full") {
-      expect(
-        patterns.some(({ where }) => where.endsWith("/path/pattern")),
-      ).toBe(true);
-      expect(
-        patterns.some(
-          ({ where }) =>
-            where.includes("/headers/") && where.endsWith("/name/pattern"),
-        ),
-      ).toBe(true);
     }
     const failures = patterns.flatMap(({ where, pattern }) =>
       ["", "u", "v"].flatMap((flags) => {
@@ -354,6 +344,24 @@ describe("browser scenario MCP tool", () => {
         alignment: { status: "aligned", aligned_steps: 2 },
       },
     });
+    // The same capture named by its retained Evidence compares identically.
+    const capturedId = Reflect.get(
+      captured.structuredContent ?? {},
+      "evidence_id",
+    );
+    const reference = { kind: "retained-evidence", evidence_id: capturedId };
+    const referenced = await client.callTool({
+      name: "compare_web_captures",
+      arguments: { before_scenario: reference, after_scenario: reference },
+    });
+    expect(referenced.isError, JSON.stringify(referenced)).not.toBe(true);
+    expect(referenced.structuredContent).toMatchObject({
+      normalized_result: Reflect.get(
+        compared.structuredContent ?? {},
+        "normalized_result",
+      ),
+      evidence_links: [capturedId, capturedId],
+    });
 
     const otherOrigin = await client.callTool({
       name: "capture_browser_scenario",
@@ -363,6 +371,28 @@ describe("browser scenario MCP tool", () => {
     expect(provider.scenarios).toHaveLength(3);
   });
 });
+
+const openScenarioMcp = async (
+  provider: BrowserScenarioCapturePort,
+  name: string,
+) => {
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name, version: "1" },
+    serverOptions: {
+      browserScenarioCapture: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  });
+  return { client, session };
+};
 
 test("records a completed late-close cancellation as server Evidence", async () => {
   const provider: BrowserScenarioCapturePort = {
@@ -376,21 +406,10 @@ test("records a completed late-close cancellation as server Evidence", async () 
       );
     },
   };
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
-  }));
-  const { client } = await createApplicationMcpHarness({
-    session,
-    clientIdentity: { name: "scenario-late-close", version: "1" },
-    serverOptions: {
-      browserScenarioCapture: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
-  });
+  const { client, session } = await openScenarioMcp(
+    provider,
+    "scenario-late-close",
+  );
   const response = await client.callTool({
     name: "capture_browser_scenario",
     arguments: minimalScenario(),
@@ -421,34 +440,21 @@ test("records a completed late-close cancellation as server Evidence", async () 
   await expect(client.ping()).resolves.toEqual({});
 });
 
-test("delivers a retained summary and pages its exact steps and events", async () => {
+test("delivers a retained summary and pages its exact steps", async () => {
   const provider = new FakeBrowserScenarioProvider();
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
-  }));
-  const { client } = await createApplicationMcpHarness({
-    session,
-    clientIdentity: { name: "scenario-summary", version: "1" },
-    serverOptions: {
-      browserScenarioCapture: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
-  });
+  const { client, session } = await openScenarioMcp(
+    provider,
+    "scenario-summary",
+  );
   const tools = (await client.listTools()).tools;
   const advertised = tools.find(
     ({ name }) => name === "capture_browser_scenario",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Missing advertised scenario output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const validateInput = ajv.compile(advertised.inputSchema);
-  const validateOutput = ajv.compile(
-    z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
-  );
+  const validateOutput = ajv.compile(canonicalOutputSchema(advertised.name));
   const request = { ...minimalScenario(), detail: "summary" };
   expect(validateInput(request), JSON.stringify(validateInput.errors)).toBe(
     true,

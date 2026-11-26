@@ -95,23 +95,22 @@ it("retains a completed observation when the caller cancels as the provider comp
     normalized_result: report(),
   });
 });
-it("rejects provider coverage and source-range inconsistencies", async () => {
-  for (const change of [
-    (r: ReturnType<typeof report>) => {
-      r.coverage.examined_nodes++;
+it("keeps invalid provider output primary when the caller also cancels", async () => {
+  const controller = new AbortController();
+  const invalid = report();
+  invalid.coverage.examined_nodes++;
+  const service = new DevicetreeService({
+    identity: DEVICETREE_PROVIDER,
+    inspect: async () => {
+      controller.abort(new Error("later caller cancellation"));
+      return ok(invalid);
     },
-    (r: ReturnType<typeof report>) => {
-      r.nodes[0]!.properties[0]!.offset = r.artifact.bytes;
-    },
-  ]) {
-    const r = report();
-    change(r);
-    const service = new DevicetreeService({
-      identity: DEVICETREE_PROVIDER,
-      inspect: () => Promise.resolve(ok(r)),
-    });
-    const result = await service.inspect({ path: "/board.dtb" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
-  }
+  });
+  const result = await service.inspect(
+    { path: "/board.dtb" },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected invalid provider output");
+  expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  expect(result.error.partialObservation).toBeUndefined();
 });

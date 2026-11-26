@@ -80,7 +80,7 @@ it.runIf(!unsupportedHost).each([
     expect(result.error.message).toContain(
       failure === "EFBIG"
         ? "exact write failure cause is unknown"
-        : "exact signal cause is unknown",
+        : "exact cause is not independently established",
     );
     if (scenario !== "reported")
       expect(result.error.message).toContain("limit report unavailable");
@@ -138,7 +138,7 @@ it.runIf(!unsupportedHost)(
       capturedOutput: { truncated: true, stderr: "" },
       diagnostics: {
         primary_error: {
-          code: "unreadable_output",
+          code: "resource_constraint",
         },
         cleanup_error: {
           code: "cleanup_incomplete",
@@ -288,8 +288,14 @@ it.runIf(!unsupportedHost).each([
       if (result.ok)
         throw new Error("Excess diagnostics must not return partial success");
       expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { captured_output: { truncated: true } },
+        code: "resource_constraint",
+        details: {
+          captured_output: { truncated: true },
+          limit: {
+            parameter: "producer_limits.diagnostic_bytes",
+            effective_value: budget ?? 1048576,
+          },
+        },
       });
     }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -400,14 +406,12 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
           scenario === "cancelled"
             ? "AnalysisCancelledError"
             : scenario === "output-limit"
-              ? "AnalysisOutputError"
+              ? "AnalysisResourceConstraintError"
               : "ProviderAdapterError",
         ...(scenario === "process"
           ? {
-              diagnostics: {
-                exit_code: 7,
-                stderr: "decoder exited unexpectedly",
-              },
+              diagnostics: { exit_code: 7 },
+              capturedOutput: { stderr: "decoder exited unexpectedly" },
             }
           : {}),
       },
@@ -458,7 +462,7 @@ it.runIf(!unsupportedHost)(
           request.reply_path,
           JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "Malformed original ELF table.",
           }),
         );
@@ -479,7 +483,7 @@ it.runIf(!unsupportedHost)(
         cleanupIncomplete: true,
         cleanupResources: [root],
         diagnostics: {
-          primary_error: { category: "invalid_input" },
+          primary_error: { category: "unsupported_target" },
           cleanup_error: {
             code: "cleanup_incomplete",
             details: { diagnostics: { reason: "root cleanup failed" } },
@@ -529,7 +533,7 @@ it
   .runIf(!unsupportedHost)
   .each([
     "success",
-    "format",
+    "malformed",
     "unavailable",
     "unsupported",
     "output-limit",
@@ -563,16 +567,17 @@ it
         } = binaryLayoutFixture(path);
         const encodedReplies: Partial<Record<string, string | Buffer>> = {
           "invalid-utf8": Buffer.concat([
-            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from('{"ok":false,"reason":"malformed","message":"'),
             Buffer.from([0xff]),
             Buffer.from('"}'),
           ]),
           "literal-replacement": JSON.stringify({
             ok: false,
-            reason: "format",
+            reason: "malformed",
             message: "valid �",
           }),
-          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+          "bom-reply":
+            '\uFEFF{"ok":false,"reason":"malformed","message":"valid"}',
         };
         const encodedReply = encodedReplies[scenario];
         if (encodedReply !== undefined)
@@ -584,7 +589,7 @@ it
               ? "broken-json"
               : JSON.stringify(
                   [
-                    "format",
+                    "malformed",
                     "unavailable",
                     "unsupported",
                     "output-limit",
@@ -616,7 +621,7 @@ it
     if (scenario === "literal-replacement")
       expect(result).toMatchObject({
         ok: false,
-        error: { issues: [{ message: "valid �" }] },
+        error: { failure: { kind: "malformed", detail: "valid �" } },
       });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
@@ -631,8 +636,8 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format" || scenario === "literal-replacement"
-              ? "AnalysisInputError"
+            scenario === "malformed" || scenario === "literal-replacement"
+              ? "AnalysisTargetFailureError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"
                 : scenario === "unsupported"

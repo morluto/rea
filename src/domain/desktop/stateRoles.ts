@@ -139,9 +139,9 @@ export interface DesktopRoleFacts {
  * selections of their own. An explicitly selected path is not one of those
  * logs, even when its name ends in `-wal` or `-journal`.
  */
-export const sqliteSidecarRoots = (
+const sqliteSidecarRoots = (
   roots: readonly string[],
-  selected: ReadonlySet<string> = new Set(),
+  selected: ReadonlySet<string>,
 ): ReadonlySet<string> => {
   const present = new Set(roots);
   return new Set(
@@ -219,8 +219,10 @@ const spelledIn = (title: string, spelling: string, bare = false): boolean => {
     at >= 0;
     at = title.indexOf(spelling, at + 1)
   ) {
-    const before = title[at - 1];
-    const after = title[at + spelling.length];
+    const end = at + spelling.length;
+    // Inspect one complete neighboring code point on each side of the match.
+    const before = Array.from(title.slice(Math.max(0, at - 2), at)).at(-1);
+    const after = Array.from(title.slice(end, end + 2))[0];
     if (
       (before === undefined || !FILENAME_CHARACTER.test(before)) &&
       (after === undefined || !FILENAME_CHARACTER.test(after)) &&

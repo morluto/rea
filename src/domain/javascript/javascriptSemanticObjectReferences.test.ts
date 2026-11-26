@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   semanticClassPropertyReferences,
   semanticNativePrototypeChain,
@@ -268,5 +268,7 @@ it("widens a large static getter permutation to one escaped reference", () => {
     path: [],
     escapes: true,
   });
-  expect([...state.getterResourceLimits]).toEqual(["getter-expansion"]);
+  expect([...state.observations.getterResourceLimits]).toEqual([
+    "getter-expansion",
+  ]);
 });

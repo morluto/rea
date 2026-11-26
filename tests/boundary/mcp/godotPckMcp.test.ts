@@ -1,3 +1,8 @@
+import {
+  canonicalOutputSchema,
+  canonicalInputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -19,7 +24,7 @@ import type { ArtifactOccurrence } from "../../../src/domain/artifactGraph.js";
 import {
   artifactInventorySummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   canBorrowParsedJsonSnapshot,
   immutableJsonSnapshotMember,
@@ -33,14 +38,18 @@ const viewValidators = async (client: Client) => {
   const contract = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (contract?.outputSchema === undefined)
+  if (contract === undefined)
     throw new Error("Missing named view output contract");
   const ajv = schemaValidation.assertions;
-  const inputSchema: Record<string, unknown> = contract.inputSchema;
-  const outputSchema: Record<string, unknown> = contract.outputSchema;
+  const inputSchema = canonicalInputSchema(contract.name);
+  const outputSchema = canonicalOutputSchema(contract.name);
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  return { ajv, inputSchema, outputSchema };
+  return {
+    ajv,
+    inputSchema,
+    toolDefinition: withCanonicalOutputSchema(contract),
+  };
 };
 
 const retainedInventoryView =
@@ -58,35 +67,23 @@ const retainedInventoryView =
       validators.ajv.validate(validators.inputSchema, arguments_),
       JSON.stringify(validators.ajv.errors),
     ).toBe(true);
-    const reply = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: arguments_,
-    });
+    const reply = await client.callTool(
+      { name: "inspect_analysis_view", arguments: arguments_ },
+      { toolDefinition: validators.toolDefinition },
+    );
     expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
       true,
     );
-    expect(
-      validators.ajv.validate(validators.outputSchema, reply.structuredContent),
-      JSON.stringify(validators.ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence.evidence_links).toContain(evidenceId);
     return analysisViewResultSchema.parse(evidence.normalized_result);
   };
 
-const assertInvalidNodeField = async (
-  client: Client,
-  evidenceId: string,
-  validators?: Awaited<ReturnType<typeof viewValidators>>,
-) => {
+const assertInvalidNodeField = async (client: Client, evidenceId: string) => {
   const arguments_ = {
     source: { kind: "retained-evidence", evidence_id: evidenceId },
     view: { kind: "inventory", collection: "nodes", fields: ["logical_path"] },
   };
-  if (validators !== undefined)
-    expect(validators.ajv.validate(validators.inputSchema, arguments_)).toBe(
-      false,
-    );
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: arguments_,
@@ -121,19 +118,13 @@ const expectedPckMembers = (
   return expected;
 };
 
-const profiles = ["full", "compact"] as const;
 const members = [
   { path: "res://a.txt", data: "a" },
   { path: "res://b.txt", data: "b" },
 ];
-const inventoryCases = profiles.flatMap((profile) => [
-  { profile, version: 1 as const },
-  { profile, version: 4 as const },
-]);
-it.for(inventoryCases)(
-  "retains PCK ($profile/v$version)",
-  async (input, { mcp }) => {
-    const { profile, version } = input;
+it.for([1, 4] as const)(
+  "retains PCK v%s through compact MCP delivery",
+  async (version, { mcp }) => {
     const root = await createTestTempDirectory("rea-pck-mcp-");
     const path = join(root, "game.pck");
     await writeFile(
@@ -145,7 +136,10 @@ it.for(inventoryCases)(
     const server = createServer(
       { kind: "session", session },
       {
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+        environment: {
+          ...process.env,
+          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+        },
       },
     );
     const client = await mcp.connect(
@@ -188,11 +182,7 @@ it.for(inventoryCases)(
     ).toBe(nested.normalized_result);
     const graph = nested.normalized_result;
     const view = retainedInventoryView(client, parent.evidence_id, validators);
-    await assertInvalidNodeField(
-      client,
-      parent.evidence_id,
-      profile === "full" ? validators : undefined,
-    );
+    await assertInvalidNodeField(client, parent.evidence_id);
     const wanted = graph.occurrences.filter((row) => row.logical_path !== ".");
     const expectedMembers = expectedPckMembers(members, wanted);
     const occurrences = await view({
@@ -205,7 +195,6 @@ it.for(inventoryCases)(
         "format_metadata",
       ],
     });
-    expect(occurrences.kind).toBe("inventory");
     if (occurrences.kind !== "inventory")
       throw new Error("Expected inventory view");
     expect(occurrences.items).toEqual(
@@ -218,13 +207,6 @@ it.for(inventoryCases)(
         declared_integrity: row.declared_integrity,
         format_metadata: row.format_metadata,
       })),
-    );
-    expect(occurrences.items).toEqual(
-      expect.arrayContaining(
-        expectedMembers.map(({ logical_path, source_path, artifact_id }) =>
-          expect.objectContaining({ logical_path, source_path, artifact_id }),
-        ),
-      ),
     );
     const ids = expectedMembers.map((member) => member.artifact_id);
     const nodes = await view({
