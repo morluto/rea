@@ -36,3 +36,14 @@ export function pluginPackageMetadata<Manifest extends PackageManifest>(
   };
   shrinkwrap: PackageLock;
 };
+
+export interface PluginPlatformPackage {
+  name: string;
+  path: string;
+  version: string;
+  integrity: string;
+}
+
+export function pluginPlatformPackages(
+  shrinkwrap: PackageLock,
+): PluginPlatformPackage[];

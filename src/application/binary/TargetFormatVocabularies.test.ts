@@ -141,6 +141,7 @@ const TARGETS: TargetFixtures = {
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   "android-vbmeta": { ...archive, format: "android-vbmeta" },
   "android-sparse-image": { ...archive, format: "android-sparse-image" },
+  "ubi-image": { ...archive, format: "ubi-image" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
   bflt: { ...archive, format: "bflt" },
@@ -164,6 +165,7 @@ const TARGETS: TargetFixtures = {
   "windows-shortcut": { ...artifact, format: "windows-shortcut" },
   "python-pyc": { ...artifact, format: "python-pyc" },
   devicetree: { ...artifact, format: "devicetree" },
+  deb: { ...artifact, format: "deb" },
 };
 
 const provider = { id: "fixture", name: "Fixture", version: "1" } as const;

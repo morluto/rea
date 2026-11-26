@@ -408,6 +408,16 @@ rea extract-artifact ./system.img --json
 See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
 facts, DONT_CARE handling, unverified checksums and the expansion allowance.
 
+Inventory the volumes of a UBI image or NAND dump and reassemble each one:
+
+```sh
+rea inspect-artifact ./nand.ubi --detail summary --evidence_output nand.json --json
+rea extract-artifact ./nand.ubi --json
+```
+
+See [UBI images](../guides/firmware/ubi-images.md) for eraseblock layout, the volume
+table, LEB reassembly and missing-LEB refusals.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -721,6 +731,18 @@ rea inspect-python-pyc /absolute/path/to/module.pyc --json
 The workflow reports the pinned CPython version for the magic, PEP 552 hash or
 mtime/size fields, nested function names, and bytecode SHA-256. Bytecode is
 not decompiled. See [CPython pyc inspection](../python-pyc.md).
+
+Inspect a local Debian `.deb` without installing it or running maintainer
+scripts:
+
+```bash
+rea inspect-deb-package /absolute/path/to/hello_2.03-1_all.deb --json
+```
+
+The workflow reports the ar members, control identity and parsed
+relationships, which maintainer scripts are present, and a bounded data.tar
+inventory. gzip, zstd, xz, and uncompressed members are decoded; bzip2 and
+lzma are unsupported. See [Debian package inspection](../deb-package.md).
 
 Inspect an Erlang BEAM file without executing bytecode:
 

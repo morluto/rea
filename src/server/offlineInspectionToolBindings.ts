@@ -22,6 +22,7 @@ import type { PeOverlayService } from "../application/binaryDiagnostics/PeOverla
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
+import type { DebPackageService } from "../application/deb/DebPackageService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
@@ -222,6 +223,12 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<NugetNupkgService>,
+  debPackage: ((service) => ({
+    inspect_deb_package: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DebPackageService>,
   vsixPackage: ((service) => ({
     inspect_vsix_package: {
       admission: "application",

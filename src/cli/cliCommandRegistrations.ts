@@ -100,6 +100,10 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./pythonPycCommands.js"),
     "registerPythonPycCommands",
   ),
+  debPackage: cliRegistrar(
+    () => import("./debPackageCommands.js"),
+    "registerDebPackageCommands",
+  ),
   nugetNupkg: cliRegistrar(
     () => import("./nugetNupkgCommands.js"),
     "registerNugetNupkgCommands",
@@ -316,6 +320,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "gpu",
     "rust",
     "pythonPyc",
+    "debPackage",
     "nugetNupkg",
     "vsixPackage",
     "ociImageLayout",

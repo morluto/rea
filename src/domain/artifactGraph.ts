@@ -88,6 +88,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "android-ota-payload",
   "android-vbmeta",
   "android-sparse-image",
+  "ubi-image",
   "iso9660",
   "uefi",
   "javascript-bundle",
@@ -123,6 +124,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
   "unknown",
 ] as const;
 
@@ -150,6 +152,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "android-ota-payload",
   "android-vbmeta",
   "android-sparse-image",
+  "ubi-image",
   "iso9660",
   "uefi",
   "intel-hex",
@@ -171,6 +174,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "windows-shortcut",
   "python-pyc",
   "devicetree",
+  "deb",
   "directory",
   "file",
   "unknown",

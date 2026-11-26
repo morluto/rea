@@ -8,6 +8,7 @@ import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
 import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
+import { UBI_IMAGE_LIMITATIONS } from "../domain/firmware/ubiImage.js";
 import {
   ZIP_PACKAGE_FORMATS,
   type ZipPackageFormat,
@@ -56,6 +57,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
+import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { BfltArtifactReader } from "./BfltArtifactReader.js";
 import { SwitchExecutableArtifactReader } from "./SwitchExecutableArtifactReader.js";
@@ -505,6 +507,15 @@ const NON_ZIP_FORMATS = {
         options.readerLimits?.expanded_bytes,
       ),
   }),
+  "ubi-image": container("ubi-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: UBI_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new UbiImageArtifactReader(path, sourceOf(options)),
+  }),
   iso9660: container("iso9660", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -558,6 +569,7 @@ const NON_ZIP_FORMATS = {
   "windows-shortcut": described("windows-shortcut", plain),
   "python-pyc": described("python-pyc", plain),
   devicetree: described("devicetree", plain),
+  deb: described("deb", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",

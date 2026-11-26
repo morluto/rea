@@ -404,6 +404,20 @@ Preserve artifact SHA-256, the 16-byte header fields, nested code names, and
 bytecode SHA-256. Bytecode is not decompiled. A decoded header does not prove
 the matching `.py` is present. See [CPython pyc inspection](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
 
+## Debian packages
+
+Use `inspect_deb_package` for an explicit local `.deb` when the question
+concerns ar members, control identity, relationship alternatives, maintainer
+script presence, or the data.tar inventory. No `dpkg`, package installation,
+or target execution is required. The CLI equivalent is
+`inspect-deb-package PATH`. Preserve artifact SHA-256, the debian-binary
+version, parsed relationship operators and architecture qualifiers, script
+interpreter lines and byte lengths, and md5sums path presence. Script text is
+not returned and is never executed. gzip, zstd, xz, and uncompressed members are
+decoded; bzip2 and lzma members are unsupported. Package signatures are
+not verified. Missing optional fields stay null. See
+[Debian package inspection](https://github.com/morluto/rea/blob/main/docs/deb-package.md).
+
 ## Erlang BEAM files
 
 Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
@@ -1107,6 +1121,14 @@ chunk counts and stored checksums are root facts; checksums are not verified
 and DONT_CARE blocks are written as zeros. The expanded child is classified
 again. See
 [Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
+
+UBI images (`UBI#` at offset 0, from `ubinize` or a NAND dump) use the same
+inspection/extraction workflows. Prefer a retained summary for eraseblock
+layout, PEB counts and volume counts. Each volume is `volumes/<name>`,
+reassembled from its LEBs by highest sqnum. A volume with a missing LEB
+stays inventoried with unavailable content. UBIFS inside a volume is not
+decoded. See
+[UBI images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/ubi-images.md).
 
 Nintendo Switch NSO modules (`NSO0`) and NRO executables (`NRO0` at `0x10`)
 use the same inspection and extraction workflows, without running or
