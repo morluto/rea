@@ -14,7 +14,9 @@ import { compareArtifacts } from "../domain/artifactComparison.js";
 import { createEvidence } from "../domain/evidence.js";
 import {
   MACOS_PKG_MAX_CPIO_MEMBERS,
+  MACOS_PKG_MAX_METADATA_RECORDS,
   MACOS_PKG_MAX_TOC_PATH_BYTES,
+  MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
 } from "../domain/macosPkgFormat.js";
 import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
 import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
@@ -1459,4 +1461,122 @@ it("refuses an ordinary stored XAR member whose TOC size disagrees with its arch
       (row) => row.logical_path === "Resources/note.txt",
     ),
   ).toMatchObject({ hash_status: "unavailable" });
+});
+
+const buildAliasedPackageInfos = (
+  packageInfoBytes: Buffer,
+  aliasCount: number,
+): Buffer => {
+  const checksumSize = 20;
+  const offset = checksumSize;
+  const sha1 = createHash("sha1").update(packageInfoBytes).digest("hex");
+  const dataXml = `<data><offset>${String(offset)}</offset><size>${String(packageInfoBytes.length)}</size><length>${String(packageInfoBytes.length)}</length><encoding style="application/octet-stream"/><extracted-checksum style="sha1">${sha1}</extracted-checksum><archived-checksum style="sha1">${sha1}</archived-checksum></data>`;
+  const filesXml = Array.from(
+    { length: aliasCount },
+    (_, index) =>
+      `<file id="${String(index * 2 + 1)}"><name>P${String(index)}.pkg</name><type>directory</type><file id="${String(index * 2 + 2)}"><name>PackageInfo</name><type>file</type>${dataXml}</file></file>`,
+  ).join("");
+  const toc = `<?xml version="1.0" encoding="UTF-8"?><xar><toc><checksum style="sha1"><offset>0</offset><size>${String(checksumSize)}</size></checksum>${filesXml}</toc></xar>`;
+  const uncompressedToc = Buffer.from(toc, "utf8");
+  const compressedToc = deflateSync(uncompressedToc);
+  const checksum = createHash("sha1").update(compressedToc).digest();
+  const header = Buffer.alloc(28);
+  header.writeUInt32BE(0x78_61_72_21, 0);
+  header.writeUInt16BE(28, 4);
+  header.writeUInt16BE(1, 6);
+  header.writeBigUInt64BE(BigInt(compressedToc.length), 8);
+  header.writeBigUInt64BE(BigInt(uncompressedToc.length), 16);
+  header.writeUInt32BE(1, 24);
+  return Buffer.concat([header, compressedToc, checksum, packageInfoBytes]);
+};
+
+it("bounds total installer metadata bytes when many PackageInfo TOC records alias one stored heap range", async () => {
+  vi.mocked(inflateXarMemberBytes).mockClear();
+  const body = `<pkg-info identifier="com.rea.aliased" version="1.0.0">${" ".repeat(512 * 1024 - 70)}</pkg-info>`;
+  const docBytes = Buffer.from(body, "utf8");
+  const aliasCount = 32;
+  const { reader, coverage } = await entriesOf(
+    buildAliasedPackageInfos(docBytes, aliasCount),
+    "aliased-packageinfo-bytes.pkg",
+  );
+  try {
+    const metadata = reader.formatMetadata();
+    const expectedAdmitted = Math.floor(
+      MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES / docBytes.length,
+    );
+    expect(metadata?.packages).toHaveLength(expectedAdmitted);
+    expect(metadata?.packages[0]).toMatchObject({
+      path: "P0.pkg/PackageInfo",
+      identifier: "com.rea.aliased",
+    });
+    expect(metadata?.refusals).toHaveLength(aliasCount - expectedAdmitted);
+    expect(
+      metadata?.refusals.every((refusal) => refusal.code === "oversize"),
+    ).toBe(true);
+    expect(vi.mocked(inflateXarMemberBytes)).toHaveBeenCalledTimes(
+      expectedAdmitted,
+    );
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("bounds total retained bundle records across aliased PackageInfo entries and stops excessive <bundle/> documents", async () => {
+  vi.mocked(inflateXarMemberBytes).mockClear();
+  const bundleHeavy = Buffer.from(
+    `<pkg-info identifier="com.rea.bundles">${"<bundle/>".repeat(1500)}</pkg-info>`,
+    "utf8",
+  );
+  const { reader, coverage } = await entriesOf(
+    buildAliasedPackageInfos(bundleHeavy, 10),
+    "aliased-packageinfo-bundles.pkg",
+  );
+  try {
+    const metadata = reader.formatMetadata();
+    const retainedRecords = (metadata?.packages ?? []).reduce(
+      (total, pkg) => total + 1 + pkg.bundles.length,
+      0,
+    );
+    expect(metadata?.packages).toHaveLength(2);
+    expect(retainedRecords).toBeLessThanOrEqual(MACOS_PKG_MAX_METADATA_RECORDS);
+    expect(metadata?.refusals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "oversize",
+          path: "P2.pkg/PackageInfo",
+        }),
+      ]),
+    );
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
+  } finally {
+    await reader.close();
+  }
+
+  vi.mocked(inflateXarMemberBytes).mockClear();
+  const oneMibBundles = Buffer.from(
+    `<pkg-info>${"<bundle/>".repeat(110_000)}</pkg-info>`,
+    "utf8",
+  );
+  const dense = await entriesOf(
+    buildAliasedPackageInfos(oneMibBundles, 1000),
+    "aliased-1mib-bundles.pkg",
+  );
+  try {
+    const metadata = dense.reader.formatMetadata();
+    expect(metadata?.packages).toEqual([]);
+    expect(
+      metadata?.refusals.every((refusal) => refusal.code === "oversize"),
+    ).toBe(true);
+    expect(metadata?.refusals).toHaveLength(1000);
+    // Only the 4 reads fitting the 4 MiB package-wide metadata byte cap are decoded.
+    expect(vi.mocked(inflateXarMemberBytes)).toHaveBeenCalledTimes(
+      Math.floor(MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES / oneMibBundles.length),
+    );
+    expect(dense.coverage).toEqual([
+      expect.objectContaining({ status: "unknown" }),
+    ]);
+  } finally {
+    await dense.reader.close();
+  }
 });

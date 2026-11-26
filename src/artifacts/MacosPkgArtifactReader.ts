@@ -12,9 +12,11 @@ import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
   MACOS_PKG_MAX_CPIO_MEMBERS,
+  MACOS_PKG_MAX_METADATA_RECORDS,
   MACOS_PKG_MAX_METADATA_XML_BYTES,
   MACOS_PKG_MAX_TOC_PATH_BYTES,
   MACOS_PKG_MAX_TOC_UNCOMPRESSED_BYTES,
+  MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
   XAR_HEADER_MIN_BYTES,
   XAR_MAGIC_TEXT,
   XAR_VERSION,
@@ -633,10 +635,12 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     this.#coverage = {
       status: unexamined ? "unknown" : "complete",
       limitations: [
-        ...limitations,
-        ...skipped,
-        ...metadata.refusals.map((item) => item.message),
-      ].filter((message, offset, list) => list.indexOf(message) === offset),
+        ...new Set([
+          ...limitations,
+          ...skipped,
+          ...metadata.refusals.map((item) => item.message),
+        ]),
+      ],
     };
   }
 
@@ -789,17 +793,65 @@ export class MacosPkgArtifactReader implements ArtifactReader {
             path: bom.path,
             size: bom.declaredSize,
           };
-    if (distribution !== undefined) {
+    const metadataBudget = {
+      remainingBytes: MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES,
+      remainingRecords: MACOS_PKG_MAX_METADATA_RECORDS,
+    };
+    const readMetadataXml = async (
+      entry: StoredEntry,
+    ): Promise<Buffer | undefined> => {
+      if (this.#refusedContent.has(entry.adapterKey)) return undefined;
+      if (metadataBudget.remainingBytes <= 0) {
+        metadata.refusals.push({
+          code: "oversize",
+          message: `${entry.path} exceeds the ${String(MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES)}-byte package installer metadata XML allowance`,
+          path: entry.path,
+        });
+        return undefined;
+      }
+      const declared = entry.declaredSize;
+      if (declared !== null && declared > metadataBudget.remainingBytes) {
+        metadata.refusals.push({
+          code: "oversize",
+          message: `${entry.path} declares ${String(declared)} bytes, exceeding the ${String(metadataBudget.remainingBytes)} bytes remaining in the ${String(MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES)}-byte package installer metadata XML allowance`,
+          path: entry.path,
+        });
+        return undefined;
+      }
+      const maxBytes = Math.min(
+        MACOS_PKG_MAX_METADATA_XML_BYTES,
+        metadataBudget.remainingBytes,
+      );
       const bytes = await this.#readXarEntry(
         handle,
-        distribution,
-        MACOS_PKG_MAX_METADATA_XML_BYTES,
+        entry,
+        maxBytes,
         metadata,
         signal,
       );
+      if (bytes === undefined) return undefined;
+      // Charge every metadata read, including TOC entries aliasing the same stored heap range.
+      metadataBudget.remainingBytes = Math.max(
+        0,
+        metadataBudget.remainingBytes - bytes.length,
+      );
+      return bytes;
+    };
+    if (distribution !== undefined) {
+      const bytes = await readMetadataXml(distribution);
       if (bytes !== undefined) {
-        const parsed = parseDistributionXml(bytes);
-        if (parsed.ok)
+        const parsed = parseDistributionXml(
+          bytes,
+          metadataBudget.remainingRecords,
+        );
+        if (parsed.ok) {
+          metadataBudget.remainingRecords = Math.max(
+            0,
+            metadataBudget.remainingRecords -
+              (parsed.value.pkgRefs.length +
+                parsed.value.choices.length +
+                parsed.value.allowedOsVersions.length),
+          );
           metadata.distribution = {
             title: parsed.value.title,
             pkg_refs: parsed.value.pkgRefs.map((ref) => ({
@@ -818,26 +870,37 @@ export class MacosPkgArtifactReader implements ArtifactReader {
               parsed.value.installationCheckScriptBytes,
             volume_check_script_bytes: parsed.value.volumeCheckScriptBytes,
           };
-        else
+        } else
           metadata.refusals.push(
             refusalFromParse(parsed.error, distribution.path),
           );
       }
     }
-    for (const pkg of packageInfos) {
-      const bytes = await this.#readXarEntry(
-        handle,
-        pkg,
-        MACOS_PKG_MAX_METADATA_XML_BYTES,
-        metadata,
-        signal,
-      );
+    for (const [index, pkg] of packageInfos.entries()) {
+      if (index % 256 === 0) await setImmediate();
+      this.#assertOpen(signal);
+      if (metadataBudget.remainingRecords <= 0) {
+        metadata.refusals.push({
+          code: "oversize",
+          message: `${pkg.path} exceeds the ${String(MACOS_PKG_MAX_METADATA_RECORDS)}-record package installer metadata allowance`,
+          path: pkg.path,
+        });
+        continue;
+      }
+      const bytes = await readMetadataXml(pkg);
       if (bytes === undefined) continue;
-      const parsed = parsePackageInfoXml(bytes);
+      const parsed = parsePackageInfoXml(
+        bytes,
+        metadataBudget.remainingRecords,
+      );
       if (!parsed.ok) {
         metadata.refusals.push(refusalFromParse(parsed.error, pkg.path));
         continue;
       }
+      metadataBudget.remainingRecords = Math.max(
+        0,
+        metadataBudget.remainingRecords - (1 + parsed.value.bundles.length),
+      );
       metadata.packages.push({
         path: pkg.path,
         identifier: parsed.value.identifier,

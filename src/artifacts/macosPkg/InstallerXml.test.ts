@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
 
+import {
+  MACOS_PKG_MAX_METADATA_RECORDS,
+  MACOS_PKG_MAX_METADATA_XML_NODES,
+} from "../../domain/macosPkgFormat.js";
 import { parseDistributionXml, parsePackageInfoXml } from "./InstallerXml.js";
 
 const distribution = (installKBytes: string): Buffer =>
@@ -57,4 +61,76 @@ it("refuses installer XML with an unrelated root element", () => {
   expect(packageInfo.ok).toBe(false);
   if (!packageInfo.ok)
     expect(packageInfo.error.failure.detail).toContain("pkg-info");
+});
+
+it("refuses PackageInfo XML that exceeds the bundle/record allowance", () => {
+  const xml = Buffer.from(
+    `<pkg-info identifier="com.rea.many">${"<bundle/>".repeat(5)}</pkg-info>`,
+    "utf8",
+  );
+  const okWithinLimit = parsePackageInfoXml(xml, 6);
+  expect(okWithinLimit.ok).toBe(true);
+  if (okWithinLimit.ok) expect(okWithinLimit.value.bundles).toHaveLength(5);
+
+  const overLimit = parsePackageInfoXml(xml, 5);
+  expect(overLimit.ok).toBe(false);
+  if (!overLimit.ok) {
+    expect(overLimit.error).toMatchObject({
+      kind: "limit",
+      failure: {
+        field: "PackageInfo",
+        limit: {
+          name: "macos_pkg_metadata_records",
+          maximum: MACOS_PKG_MAX_METADATA_RECORDS,
+        },
+      },
+    });
+  }
+});
+
+it("refuses PackageInfo XML that exceeds the XML node ceiling before DOM construction", () => {
+  const xml = Buffer.from(
+    `<pkg-info>${"<bundle/>".repeat(MACOS_PKG_MAX_METADATA_XML_NODES)}</pkg-info>`,
+    "utf8",
+  );
+  const parsed = parsePackageInfoXml(xml);
+  expect(parsed.ok).toBe(false);
+  if (!parsed.ok) {
+    expect(parsed.error).toMatchObject({
+      kind: "limit",
+      failure: {
+        field: "PackageInfo",
+        limit: {
+          name: "macos_pkg_metadata_xml_nodes",
+          maximum: MACOS_PKG_MAX_METADATA_XML_NODES,
+        },
+      },
+    });
+  }
+});
+
+it("refuses Distribution XML that exceeds the metadata record allowance", () => {
+  const xml = Buffer.from(
+    `<installer-gui-script minSpecVersion="2">
+      <pkg-ref id="a"/><pkg-ref id="b"/>
+      <choices-outline><line choice="c1"><line choice="c2"/></line></choices-outline>
+      <allowed-os-versions><os-version min="14.0"/></allowed-os-versions>
+    </installer-gui-script>`,
+    "utf8",
+  );
+  expect(parseDistributionXml(xml, 5).ok).toBe(true);
+  const overLimit = parseDistributionXml(xml, 4);
+  expect(overLimit.ok).toBe(false);
+  if (!overLimit.ok) {
+    expect(overLimit.error).toMatchObject({
+      kind: "limit",
+      failure: {
+        field: "Distribution",
+        limit: {
+          name: "macos_pkg_metadata_records",
+          maximum: MACOS_PKG_MAX_METADATA_RECORDS,
+        },
+      },
+    });
+  }
 });

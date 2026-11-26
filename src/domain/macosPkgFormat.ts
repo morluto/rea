@@ -27,6 +27,13 @@ export const MACOS_PKG_MAX_CPIO_NAME_BYTES = 4096;
 export const MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES = 64 * 1024 * 1024;
 /** Resource policy: Distribution or PackageInfo bytes decoded for metadata. */
 export const MACOS_PKG_MAX_METADATA_XML_BYTES = 1 * 1024 * 1024;
+/** Resource policy: total Distribution and PackageInfo bytes decoded across one package. */
+export const MACOS_PKG_MAX_TOTAL_METADATA_XML_BYTES = 4 * 1024 * 1024;
+/** Resource policy: total installer metadata records retained across Distribution and PackageInfo documents in one package. */
+export const MACOS_PKG_MAX_METADATA_RECORDS = 4096;
+/** Resource policy: installer metadata XML nodes counted before the DOM is built, per document. */
+export const MACOS_PKG_MAX_METADATA_XML_NODES =
+  MACOS_PKG_MAX_METADATA_RECORDS * 16;
 export const MACOS_PKG_MAX_SYMLINK_TARGET_BYTES = 4096;
 export const MACOS_PKG_FORMAT = "macos-pkg";
 

@@ -2,12 +2,18 @@ import type { Element } from "@xmldom/xmldom";
 
 import {
   MACOS_PKG_FORMAT,
+  MACOS_PKG_MAX_METADATA_RECORDS,
+  MACOS_PKG_MAX_METADATA_XML_NODES,
+  macosPkgLimitFailure,
   type MacosPkgParseError,
 } from "../../domain/macosPkgFormat.js";
-import { malformedInput } from "../../domain/parseFailure.js";
+import {
+  malformedInput,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
-import { parseXmlDocument } from "../../domain/xmlDocument.js";
+import { parseXmlDocumentWithinNodeLimit } from "../../domain/xmlDocument.js";
 import { attributeOf, childElement, childElements } from "./xmlElements.js";
 
 export interface PkgRefRecord {
@@ -52,6 +58,7 @@ const parseUtf8Xml = (
   bytes: Buffer,
   rootName: string,
   rootElement: string,
+  maxXmlNodes: number = MACOS_PKG_MAX_METADATA_XML_NODES,
 ): Result<Element, MacosPkgParseError> => {
   let text: string;
   try {
@@ -64,17 +71,34 @@ const parseUtf8Xml = (
       }),
     );
   }
-  const document = parseXmlDocument(text, {
-    doctype: "reject",
+  const nodeLimit = Math.max(
+    0,
+    Math.min(maxXmlNodes, MACOS_PKG_MAX_METADATA_XML_NODES),
+  );
+  // Count nodes while streaming so dense documents cannot build an unbounded DOM.
+  const document = parseXmlDocumentWithinNodeLimit(text, {
+    maximumNodes: nodeLimit,
     lineEndings: "preserve",
   });
-  if (!document.ok)
+  if (!document.ok) {
+    const failure = document.error;
     return err(
-      malformedInput(MACOS_PKG_FORMAT, document.error.failure.detail, {
-        field: rootName,
-        cause: document.error,
-      }),
+      failure instanceof ParseFailureError
+        ? malformedInput(MACOS_PKG_FORMAT, failure.failure.detail, {
+            field: rootName,
+            cause: failure,
+          })
+        : macosPkgLimitFailure(
+            `${rootName} XML exceeds ${String(failure.maximum)} nodes`,
+            {
+              name: "macos_pkg_metadata_xml_nodes",
+              maximum: failure.maximum,
+              required: failure.required,
+            },
+            rootName,
+          ),
     );
+  }
   const root = document.value.documentElement;
   if (root === null)
     return err(
@@ -107,11 +131,36 @@ const uint32Attribute = (element: Element, name: string): number | null => {
   return Number.isSafeInteger(value) && value <= UINT32_MAX ? value : null;
 };
 
-const collectChoices = (element: Element, choices: string[]): void => {
+const metadataRecordLimitError = (
+  rootName: "Distribution" | "PackageInfo",
+  recordLimit: number,
+  requiredInDoc: number,
+): MacosPkgParseError =>
+  macosPkgLimitFailure(
+    recordLimit < MACOS_PKG_MAX_METADATA_RECORDS
+      ? `${rootName} XML exceeds the ${String(MACOS_PKG_MAX_METADATA_RECORDS)}-record package installer metadata allowance`
+      : `${rootName} XML declares more than ${String(MACOS_PKG_MAX_METADATA_RECORDS)} metadata records`,
+    {
+      name: "macos_pkg_metadata_records",
+      maximum: MACOS_PKG_MAX_METADATA_RECORDS,
+      required: MACOS_PKG_MAX_METADATA_RECORDS - recordLimit + requiredInDoc,
+    },
+    rootName,
+  );
+
+const collectChoices = (
+  element: Element,
+  choices: string[],
+  maxChoices: number,
+): boolean => {
   const choice = attributeOf(element, "choice");
-  if (choice !== null) choices.push(choice);
+  if (choice !== null) {
+    if (choices.length >= maxChoices) return false;
+    choices.push(choice);
+  }
   for (const child of childElements(element, "line"))
-    collectChoices(child, choices);
+    if (!collectChoices(child, choices, maxChoices)) return false;
+  return true;
 };
 
 const scriptLength = (parent: Element | undefined): number | null => {
@@ -124,23 +173,58 @@ const scriptLength = (parent: Element | undefined): number | null => {
 /** Parse a product-archive `Distribution` document. JavaScript is length-only. */
 export const parseDistributionXml = (
   bytes: Buffer,
+  maxRecords: number = MACOS_PKG_MAX_METADATA_RECORDS,
 ): Result<DistributionFacts, MacosPkgParseError> => {
+  const recordLimit = Math.max(
+    0,
+    Math.min(maxRecords, MACOS_PKG_MAX_METADATA_RECORDS),
+  );
   const root = parseUtf8Xml(bytes, "Distribution", "installer-gui-script");
   if (!root.ok) return root;
   const installer = root.value;
   const title = childElement(installer, "title")?.textContent ?? null;
-  const pkgRefs = childElements(installer, "pkg-ref").map((element) => ({
+  const pkgRefElements = childElements(installer, "pkg-ref");
+  if (pkgRefElements.length > recordLimit)
+    return err(
+      metadataRecordLimitError(
+        "Distribution",
+        recordLimit,
+        pkgRefElements.length,
+      ),
+    );
+  let retained = pkgRefElements.length;
+  const choices: string[] = [];
+  const outline = childElement(installer, "choices-outline");
+  if (
+    outline !== undefined &&
+    !collectChoices(outline, choices, recordLimit - retained)
+  )
+    return err(
+      metadataRecordLimitError(
+        "Distribution",
+        recordLimit,
+        retained + choices.length + 1,
+      ),
+    );
+  retained += choices.length;
+  const osVersionElements = childElements(
+    childElement(installer, "allowed-os-versions") ?? installer,
+    "os-version",
+  );
+  if (retained + osVersionElements.length > recordLimit)
+    return err(
+      metadataRecordLimitError(
+        "Distribution",
+        recordLimit,
+        retained + osVersionElements.length,
+      ),
+    );
+  const pkgRefs = pkgRefElements.map((element) => ({
     id: attributeOf(element, "id"),
     version: attributeOf(element, "version"),
     installKBytes: uint32Attribute(element, "installKBytes"),
   }));
-  const choices: string[] = [];
-  const outline = childElement(installer, "choices-outline");
-  if (outline !== undefined) collectChoices(outline, choices);
-  const allowedOsVersions = childElements(
-    childElement(installer, "allowed-os-versions") ?? installer,
-    "os-version",
-  ).map((element) => ({
+  const allowedOsVersions = osVersionElements.map((element) => ({
     min: attributeOf(element, "min"),
     max: attributeOf(element, "max"),
   }));
@@ -161,10 +245,23 @@ export const parseDistributionXml = (
 /** Parse a component `PackageInfo` / `pkg-info` document. */
 export const parsePackageInfoXml = (
   bytes: Buffer,
+  maxRecords: number = MACOS_PKG_MAX_METADATA_RECORDS,
 ): Result<PackageInfoFacts, MacosPkgParseError> => {
+  const recordLimit = Math.max(
+    0,
+    Math.min(maxRecords, MACOS_PKG_MAX_METADATA_RECORDS),
+  );
+  if (recordLimit < 1)
+    return err(metadataRecordLimitError("PackageInfo", recordLimit, 1));
   const root = parseUtf8Xml(bytes, "PackageInfo", "pkg-info");
   if (!root.ok) return root;
   const info = root.value;
+  const bundleElements = childElements(info, "bundle");
+  const totalRecords = 1 + bundleElements.length;
+  if (totalRecords > recordLimit)
+    return err(
+      metadataRecordLimitError("PackageInfo", recordLimit, totalRecords),
+    );
   const scripts = childElement(info, "scripts");
   const scriptFile = (tag: "preinstall" | "postinstall"): string | null => {
     const holder = scripts ?? info;
@@ -177,7 +274,7 @@ export const parsePackageInfoXml = (
     installLocation: attributeOf(info, "install-location"),
     auth: attributeOf(info, "auth"),
     postinstallAction: attributeOf(info, "postinstall-action"),
-    bundles: childElements(info, "bundle").map((element) => ({
+    bundles: bundleElements.map((element) => ({
       id: attributeOf(element, "id"),
       path: attributeOf(element, "path"),
       cfBundleIdentifier: attributeOf(element, "CFBundleIdentifier"),
