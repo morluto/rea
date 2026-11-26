@@ -5,6 +5,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
@@ -99,6 +100,22 @@ it("keeps dependency-owned resources empty after the final owner releases", () =
   expect(new Set(composed.cleanup?.resources)).toEqual(
     new Set(["file-owner", "trace-owner"]),
   );
+});
+
+it("reports completion from dependencies bound to an error without its own cleanup", () => {
+  const owner = new ProviderCleanupError("fixture", ["composed-owner"], {});
+  const plain = new AnalysisProtocolError("fixture without cleanup", {});
+  expect(plain.cleanupIncomplete).toBe(false);
+
+  plain.bindCleanupDependencies([owner]);
+
+  // The dependency's resources are listed, so completion must follow them
+  // rather than short-circuit on the error's own absent cleanup record.
+  expect(new Set(plain.cleanupResources)).toEqual(new Set(["composed-owner"]));
+  expect(plain.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(owner);
+  expect(plain.cleanupIncomplete).toBe(false);
+  expect(plain.cleanupResources).toEqual([]);
 });
 
 it("reads completion through nested compositions from the releasing owner only", () => {

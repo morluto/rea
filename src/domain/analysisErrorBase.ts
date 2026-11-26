@@ -577,7 +577,18 @@ export abstract class AnalysisError extends Error {
     if (resourceProjection !== undefined)
       this.#cleanupResourceProjection = resourceProjection;
     for (const dependency of dependencies)
-      if (dependency.cleanupIncomplete) pending.add(dependency);
+      if (dependency.cleanupIncomplete) {
+        pending.add(dependency);
+        // Cleanup now follows these dependencies. Only an error that never had
+        // a cleanup record needs this: one that already settled stays settled
+        // (completion is monotonic), and an error constructed without
+        // `cleanup` otherwise short-circuits `cleanupIncomplete` to false
+        // while `cleanupResources` still lists the dependencies' resources.
+        if (!this.#carriesCleanup) {
+          this.#cleanupIncomplete = true;
+          this.#carriesCleanup = true;
+        }
+      }
     return this;
   }
 
