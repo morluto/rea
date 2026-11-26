@@ -39,13 +39,17 @@ permissions.
 project, and private home, cache, and runtime directories. REA imports only the
 requested target, bounds bridge startup and protocol messages, requests bounded CPU
 and heap settings, and deletes the temporary project when the session closes.
-**Hopper bridges** use a private Unix socket (Linux) or loopback TCP (macOS/Windows)
-with per-message framing bounds. **IDA and JEB bridges** use their respective
-native transports with REA-enforced message size limits. Bridge-level bounds
-are distinct from MCP delivery budgets (see `REA_MCP_MAX_RESPONSE_BYTES`,
-`delivery.agent_result_budget_bytes`). These controls limit accidental
-persistence and resource use; they do not make any provider a sandbox. REA does
-not open or modify user-owned Ghidra/IDA/JEB projects.
+**Hopper bridges** use a private Unix socket on Linux and macOS; Windows is
+unsupported. The Python bridge reads requests with `readline()` without a length
+limit and accumulates response chunks without a byte check; the later MCP delivery
+budget cannot bound these reads. **IDA and JEB bridges** use their respective
+native SDK transports without REA byte limits; they decode results returned by
+`callTool` directly. Bridge-level bounds are distinct from MCP delivery budgets
+(see `REA_MCP_MAX_RESPONSE_BYTES`, which governs `resultBudgetBytes`).
+These controls limit accidental persistence and resource use; they do not make
+any provider a sandbox. REA does not open or modify user-owned Ghidra projects.
+JEB's `open_jeb_project` accepts existing `.jdb2` projects and forwards them to
+JEB's `open_project`; the no-existing-project guarantee applies only to Ghidra.
 
 `GHIDRA_INSTALL_DIR` and optional `JAVA_HOME` identify user-managed
 installations. Setup can add those values to detected client configuration only
