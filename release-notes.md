@@ -478,6 +478,7 @@
 * **process:** retain synchronous command launch failures ([#13350](https://github.com/morluto/rea/issues/13350)) ([3a36311](https://github.com/morluto/rea/commit/3a3631100480109a7d2ef8b9ac8ff1f58df5904e))
 * **process:** verify nested worker exit after parent cleanup ([#13242](https://github.com/morluto/rea/issues/13242)) ([75a75a1](https://github.com/morluto/rea/commit/75a75a1bd14eeec233650623e8b839bdf26b793d))
 * **providers:** resolve a PATH-only JDK for Windows Ghidra ([#14654](https://github.com/morluto/rea/issues/14654)) ([d27e728](https://github.com/morluto/rea/commit/d27e7284c715b6dfaa65fbefda4297bab0f26154))
+* **providers:** settle debugger and engine close races ([#14783](https://github.com/morluto/rea/issues/14783)) ([55c7eaa](https://github.com/morluto/rea/commit/55c7eaa0631b072330f522ab64fa7f7abec49101))
 * **pwntools:** release each PLT emulator so CET binaries keep their PLT map ([#13213](https://github.com/morluto/rea/issues/13213)) ([6357f77](https://github.com/morluto/rea/commit/6357f775a01f623b96603cf6237951a5c57a0a93))
 * **pwntools:** report a per-call input ceiling as its producer_limits parameter ([#14208](https://github.com/morluto/rea/issues/14208)) ([fc795dd](https://github.com/morluto/rea/commit/fc795dd260cb28799f4a247ba61a31e9d7aab4cb))
 * **pyinstaller:** distinguish declared-size overruns from limits ([#13648](https://github.com/morluto/rea/issues/13648)) ([ae3a225](https://github.com/morluto/rea/commit/ae3a225f79c1dfd672ef728c104d2d26cd7cbddc))
