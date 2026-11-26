@@ -1730,11 +1730,11 @@ const tlsPositionalSuppliesPipePath = (
     t.isArrayExpression(first) ||
     t.isRegExpLiteral(first) ||
     t.isNewExpression(first) ||
-    t.isNumericLiteral(first) ||
-    t.isNullLiteral(first) ||
-    t.isBooleanLiteral(first) ||
-    t.isBigIntLiteral(first) ||
-    isNullishPlaceholder(first, state) ||
+    t.isFunctionExpression(first) ||
+    t.isArrowFunctionExpression(first) ||
+    t.isClassExpression(first) ||
+    primitiveOwnKeys(first, (child) => isNullishPlaceholder(child, state)) ===
+      "none" ||
     isUnshadowedNonFiniteIdentifier(first, state)
   )
     return false;

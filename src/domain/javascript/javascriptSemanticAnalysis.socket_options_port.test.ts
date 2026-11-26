@@ -229,6 +229,23 @@ it.each([
   expect(acquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
 
+it.each(["() => {}", "function () {}", "class {}", "1 - 1", "1 === 1", "p++"])(
+  "keeps TCP option validation for non-string TLS slot zero: %s",
+  (first) => {
+    expect(
+      acquisitionsFor(`tls.connect(${first}, { port: 443, host: 42 })`),
+    ).toEqual([]);
+    expect(
+      acquisitionsFor(`tls.connect(${first}, { port: -1, host: "localhost" })`),
+    ).toEqual([]);
+    expect(
+      acquisitionsFor(
+        `tls.connect(${first}, { port: 443, host: "localhost" })`,
+      ),
+    ).toEqual([{ kind: "acquire", method: "connect" }]);
+  },
+);
+
 it("keeps the socket acquisition when Object.prototype.path may precede", () => {
   const operations = analyzeCommonJsSemanticFixture(`
     const net = require("node:net");
