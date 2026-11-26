@@ -52,21 +52,21 @@ it("waits for admitted operations and shares concurrent close", async () => {
   }
 });
 
-it("does not report a concurrently released owner as failed during close()", async () => {
+it("does not report an owner released during drain after that drain attempt failed", async () => {
   const scope = new ArtifactResourceScope();
   let owner1Attempt = 0;
-  const owner1Gate = phaseGate();
-  const owner2Gate = phaseGate();
+  const owner1Failure = new Error("owner-1 still busy");
   const owner1 = {
     kind: "lease" as const,
     resource: "owner-1",
     lease: {
       async release() {
         owner1Attempt += 1;
-        if (owner1Attempt === 1) throw new Error("transient owner-1 busy");
+        if (owner1Attempt < 3) throw owner1Failure;
       },
     },
   };
+  const owner2Gate = phaseGate();
   const owner2 = {
     kind: "lease" as const,
     resource: "owner-2",
@@ -76,31 +76,20 @@ it("does not report a concurrently released owner as failed during close()", asy
       },
     },
   };
-  await scope.release(owner1);
-  // Park owner2 directly by failing once, then allow on next attempt.
-  let owner2ShouldFail = true;
-  const owner2Retryable = {
-    kind: "lease" as const,
-    resource: "owner-2-retry",
-    lease: {
-      async release() {
-        if (owner2ShouldFail) throw new Error("owner-2 initial failure");
-        await owner2Gate.hold();
-      },
-    },
-  };
-  await scope.release(owner2Retryable);
-  owner2ShouldFail = false;
+  expect(await scope.release(owner1)).toMatchObject({
+    kind: "failed",
+    cause: owner1Failure,
+  });
+  scope.retain(owner2);
 
   const closing = scope.close();
   await owner2Gate.reached(closing, "drain owner2");
-  // Concurrently release owner1 while drain is awaiting owner2.
-  await scope.release(owner1);
-  owner1Gate.release();
+  expect(owner1Attempt).toBe(2);
+  expect(await scope.release(owner1)).toEqual({ kind: "released" });
+  expect(owner1Attempt).toBe(3);
   owner2Gate.release();
   await expect(closing).resolves.toBeUndefined();
   expect(scope.cleanupResources).toEqual([]);
-  void owner2;
 });
 
 it("stops a close hook even when retained cleanup is still failing", async () => {
