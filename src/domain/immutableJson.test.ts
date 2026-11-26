@@ -29,12 +29,51 @@ describe("owned immutable JSON snapshots", () => {
   });
 
   it("seals a shared subtree once rather than once per path", () => {
-    // Each level references the next twice: 2^60 paths, 61 objects.
+    // Each level references the next twice: 2^60 paths and 61 objects. The
+    // seal is synchronous, so a lost visited set would expand those paths on
+    // this worker before Vitest can time the test out. The budget is one
+    // descriptor per owned edge of this call.
+    const sharingDepth = 60;
     let level: JsonValue = { leaf: true };
-    for (let depth = 0; depth < 60; depth += 1) level = [level, level];
-    const sealed = freezeOwnedJsonTreeSnapshot(level);
+    for (let depth = 0; depth < sharingDepth; depth += 1)
+      level = [level, level];
+    const inspectionBudget = sharingDepth * 2 + 1;
+    const describeProperty = Object.getOwnPropertyDescriptor;
+    let inspections = 0;
+    const observed = vi
+      .spyOn(Object, "getOwnPropertyDescriptor")
+      .mockImplementation((target, property) => {
+        inspections += 1;
+        if (inspections > inspectionBudget)
+          throw Object.assign(
+            new Error("Shared JSON sealing exceeded its inspection budget"),
+            {
+              code: "inspection_budget_exceeded" as const,
+              inspections,
+              budget: inspectionBudget,
+            },
+          );
+        return describeProperty(target, property);
+      });
+    let sealed: JsonValue;
+    try {
+      sealed = freezeOwnedJsonTreeSnapshot(level);
+    } finally {
+      observed.mockRestore();
+    }
+    expect(inspections).toBe(inspectionBudget);
     expect(isImmutableJsonSnapshot(sealed)).toBe(true);
-    expect(Object.isFrozen(sealed)).toBe(true);
+    let cursor: JsonValue = sealed;
+    for (let depth = 0; depth < sharingDepth; depth += 1) {
+      expect(Array.isArray(cursor)).toBe(true);
+      const pair = cursor as readonly JsonValue[];
+      expect(pair).toHaveLength(2);
+      expect(pair[0]).toBe(pair[1]);
+      expect(Object.isFrozen(pair)).toBe(true);
+      cursor = pair[0] as JsonValue;
+    }
+    expect(cursor).toEqual({ leaf: true });
+    expect(Object.isFrozen(cursor)).toBe(true);
   });
 
   it("borrows only the selected own child of a completed sealed root", () => {
