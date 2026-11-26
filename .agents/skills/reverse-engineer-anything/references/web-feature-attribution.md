@@ -17,7 +17,8 @@ page with `list_browser_targets` and request `inspect_web_page` with
 {
   "cdp_endpoint": "http://127.0.0.1:9222",
   "target_id": "TARGET_ID_FROM_LIST_BROWSER_TARGETS",
-  "include_script_sources": true
+  "include_script_sources": true,
+  "detail": "complete"
 }
 ```
 

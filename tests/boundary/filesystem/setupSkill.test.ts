@@ -587,6 +587,7 @@ describe("canonical skill transaction", () => {
       "android-applications.md",
       "runtime-observation.md",
       "evidence-workflows.md",
+      "web-feature-attribution.md",
     ]) {
       const installed = await readFile(
         join(dirname(destination), "references", reference),
