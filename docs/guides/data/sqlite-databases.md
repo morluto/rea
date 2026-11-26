@@ -143,7 +143,7 @@ files or creating workers; retry after an active inspection finishes. This
 bounds simultaneous input buffering and private snapshot/worker counts.
 
 The database and WAL together are limited to `producer_limits.input_bytes`,
-default 256 MiB (CLI `--producer-limits '{"input_bytes":536870912}'`). The
+default 2 GiB (CLI `--producer-limits '{"input_bytes":4294967296}'`). The
 snapshot is copied to private disk, so raising it costs disk, not memory, and
 applies on the next call without restart. SQLite values/records,
 SQL statements and the complete worker JSON reply each have a 16 MiB limit.
