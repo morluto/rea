@@ -135,6 +135,7 @@
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
 * **firmware:** inspect Qualcomm MBN image headers and hash segments offline ([#14649](https://github.com/morluto/rea/issues/14649)) ([f78470e](https://github.com/morluto/rea/commit/f78470e36164aa4f84e7154628499bafebccfab4))
 * **firmware:** inspect uClinux bFLT flat executables offline ([#14663](https://github.com/morluto/rea/issues/14663)) ([04cb70c](https://github.com/morluto/rea/commit/04cb70c1a39270e8a1fd94a69382db01a6c7c159))
+* **firmware:** inventory and extract UBI image volumes offline ([#13333](https://github.com/morluto/rea/issues/13333)) ([14b4d1f](https://github.com/morluto/rea/commit/14b4d1f7ad8ede0c4c8e162e6ab55e2a09e2a6e0))
 * **flutter:** give Flutter APK admission per-call apk_limits ([#14623](https://github.com/morluto/rea/issues/14623)) ([49e2eca](https://github.com/morluto/rea/commit/49e2eca4f971bc154badfae47ac80c7edcf97018))
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
 * **ghidra:** admit RISC-V ilp32f ELF with a derived calling convention ([#8401](https://github.com/morluto/rea/issues/8401)) ([d8aadcc](https://github.com/morluto/rea/commit/d8aadcc69bc65412e1e1545e25f23256f6ab5d8b))
