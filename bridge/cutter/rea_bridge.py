@@ -684,16 +684,21 @@ class _BridgeServer(threading.Thread):
             descriptor_info = os.fstat(descriptor)
             if descriptor_info.st_uid != os.getuid() or stat.S_IMODE(descriptor_info.st_mode) & 0o077:
                 raise RuntimeError("Cutter bridge descriptor must be owned by the current user with mode 0600")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream = os.fdopen(descriptor, "w", encoding="utf-8")
+            # The stream owns the descriptor now; closing the number again
+            # could close a descriptor another thread has since opened.
+            descriptor = None
+            with stream:
                 stream.write(json.dumps(payload))
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, self.descriptor)
         except Exception:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
             try:
                 os.unlink(temporary_path)
             except OSError:
