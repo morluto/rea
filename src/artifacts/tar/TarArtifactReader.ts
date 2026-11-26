@@ -1,3 +1,7 @@
+import {
+  DEFAULT_TAR_READER_LIMITS,
+  type TarReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
@@ -84,6 +88,7 @@ export class TarArtifactReader implements ArtifactReader {
     path: string,
     admitted?: StableRegularFileDescriptor,
     expandedBytes?: number,
+    private readonly limits: TarReaderLimits = DEFAULT_TAR_READER_LIMITS,
   ) {
     this.#source = new ArtifactFileSource(path, "tar archive", admitted);
     this.#expandedBytes = expandedBytes;
@@ -216,7 +221,7 @@ export class TarArtifactReader implements ArtifactReader {
         : new PlainTarStream(handle, initial.size);
     let walk;
     try {
-      walk = await walkTar(stream, signal);
+      walk = await walkTar(stream, signal, this.limits);
     } finally {
       stream.close();
     }

@@ -17,7 +17,6 @@
   "src/application/environment/environmentTools.ts": 1,
   "src/application/investigation/InvestigationRetention.ts": 1,
   "src/application/reverse/ReverseEngineeringService.ts": 1,
-  "src/artifacts/DesktopApplicationReader.ts": 1,
   "src/browser/WebBundleAnalysisWorker.ts": 1,
   "src/browser/history/playwrightTrace/PlaywrightTraceDecoder.ts": 1,
   "src/browser/history/playwrightTrace/TraceFailure.ts": 1,
