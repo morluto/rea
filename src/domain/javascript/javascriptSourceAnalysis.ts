@@ -70,8 +70,8 @@ export interface JavaScriptSourceAnalysisPort {
     onPhase?: (phase: string) => Promise<void>,
     /** Effective package/loader context; declared .js preloads use commonjs. */
     packageType?: JavaScriptPackageType,
-    /** Discover loader declarations without retaining semantic projections. */
-    purpose?: "analysis" | "preload-discovery",
+    /** Discover loader declarations, or return static facts without semantic analysis. */
+    purpose?: "analysis" | "preload-discovery" | "structure-only",
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   close(): Promise<void>;
 }

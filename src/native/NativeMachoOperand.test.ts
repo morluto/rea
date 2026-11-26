@@ -1,7 +1,8 @@
 import { mkdtemp, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
@@ -12,14 +13,6 @@ import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
 import { err, ok } from "../domain/result.js";
 
-const targetDirectories: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    targetDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
-});
 /** A FAT container whose arm64 row matches the canned lipo fixture. */
 const parenthesizedFatTarget = () => {
   const bytes = Buffer.alloc(40_960);
@@ -45,8 +38,7 @@ const parenthesizedFatTarget = () => {
   return bytes;
 };
 const parenthesizedTarget = async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-macho-target-"));
-  targetDirectories.push(directory);
+  const directory = await createTestTempDirectory("rea-macho-target-");
   const path = join(directory, "app(foo)");
   await writeFile(path, parenthesizedFatTarget());
   return { directory, target: await nativeMachoTargetForFile(path) };
@@ -102,7 +94,6 @@ describe("private otool operand lifecycle", () => {
     } finally {
       await client.close();
       await rm(path, { recursive: true, force: true });
-      await rm(selected.directory, { recursive: true, force: true });
     }
   });
 
@@ -171,7 +162,6 @@ describe("private otool operand lifecycle", () => {
     } finally {
       await client.close();
       await rm(path, { recursive: true, force: true });
-      await rm(selected.directory, { recursive: true, force: true });
     }
   });
 });

@@ -7,7 +7,10 @@ import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  expectAdapterErrorParity,
+  parseMcpToolError,
+} from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { closeCliResources, createCli } from "../../src/cli.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
@@ -16,6 +19,10 @@ import { analysisCliErrorEnvelopeSchema } from "../../src/contracts/errorSchemas
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticTraceResultSchema } from "../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
+import {
+  COMPLETE_DETAIL,
+  completeApplicationAnalysis,
+} from "../support/completeDetail.js";
 
 const SEMANTIC_GRAPH_ID = `jsrg_${"0".repeat(64)}`;
 
@@ -32,11 +39,7 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   );
 
   const cli = createCli({});
-  const analyzed = await serveCli(cli, [
-    "analyze-javascript-application",
-    root,
-    "--json",
-  ]);
+  const analyzed = await serveCli(cli, completeApplicationAnalysis(root));
   expect(analyzed.exitCode).toBe(0);
   const sourceEvidence = parseEvidence(JSON.parse(analyzed.stdout));
   const normalizedResult = structuredClone(sourceEvidence.normalized_result);
@@ -116,7 +119,7 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
       arguments: arguments_,
     });
     const { error: mcpError } = parseMcpToolError(mcpTrace);
-    expect(mcpError).toEqual(cliError);
+    expectAdapterErrorParity(mcpError, cliError, "trace_javascript_semantics");
   } finally {
     await harness.close();
   }
@@ -137,11 +140,7 @@ it("excludes local exports from writes-only traces through CLI and MCP", async (
   );
 
   const cli = createCli({});
-  const analyzed = await serveCli(cli, [
-    "analyze-javascript-application",
-    root,
-    "--json",
-  ]);
+  const analyzed = await serveCli(cli, completeApplicationAnalysis(root));
   expect(analyzed.exitCode).toBe(0);
   const application = parseEvidence(JSON.parse(analyzed.stdout));
   const analysisResult = javascriptApplicationAnalysisResultSchema.parse(
@@ -201,11 +200,7 @@ it("traces exact empty property names through CLI and MCP", async () => {
     "const routes = {'': 'HOME', x: 'NAMED'}; const root = routes['']; const named = routes.x;\n",
   );
   const cli = createCli({});
-  const analyzed = await serveCli(cli, [
-    "analyze-javascript-application",
-    root,
-    "--json",
-  ]);
+  const analyzed = await serveCli(cli, completeApplicationAnalysis(root));
   expect(analyzed.exitCode).toBe(0);
   const application = parseEvidence(JSON.parse(analyzed.stdout));
   const { semantic_graph: graph } =
@@ -273,11 +268,7 @@ it("traces transformed operands through CLI and advertised MCP output", async ()
     'const base = "https://example.test"; const url = base + "/x"; fetch(url); consume("only-direct"); const nested = "nested-token"; const box = { url: wrap(nested + "/x") };',
   );
   const cli = createCli({});
-  const analyzed = await serveCli(cli, [
-    "analyze-javascript-application",
-    root,
-    "--json",
-  ]);
+  const analyzed = await serveCli(cli, completeApplicationAnalysis(root));
   expect(analyzed.exitCode, analyzed.stdout).toBe(0);
   const application = parseEvidence(JSON.parse(analyzed.stdout));
   const harness = await createApplicationMcpHarness();
@@ -340,6 +331,7 @@ it("reports offered semantic capacity when a large template exceeds it", async (
   );
   const analyzed = await serveCli(createCli({}), [
     "analyze-javascript-application",
+    ...COMPLETE_DETAIL,
     root,
     "--max-semantic-nodes-per-file",
     "4",

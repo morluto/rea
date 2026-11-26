@@ -40,17 +40,7 @@ it.each([
   },
 );
 
-it.each([
-  "cancelled",
-  "malformed",
-  "truncated",
-  "unsupported",
-  "format",
-  "integrity",
-  "path",
-  "unavailable",
-  "io",
-] as const)(
+it.each(["cancelled", "integrity", "path", "unavailable", "io"] as const)(
   "reports an artifact operation %s failure as its catalogue row",
   (reason) => {
     const projected = projectAnalysisError(
@@ -81,4 +71,38 @@ it("keeps a refused target's constraint category beside its permission code", ()
       "constraint=file_format_rejected; read permission denied",
     ),
   ).toMatchObject({ code: projected.code, category: projected.category });
+});
+
+it("reports a budget-exceeded bundle target as its catalogue row", () => {
+  const projected = projectAnalysisError(
+    new BinaryTargetError("/target", "refused", {
+      constraint: "bundle_info_plist_decode_budget_exceeded",
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "target_unavailable",
+    category: "unavailable",
+  });
+  expect(
+    entry(
+      "BinaryTargetError",
+      "constraint=bundle_info_plist_decode_budget_exceeded",
+    ),
+  ).toMatchObject({ code: projected.code, category: projected.category });
+  const denied = projectAnalysisError(
+    new BinaryTargetError("/target", "refused", {
+      constraint: "bundle_info_plist_decode_budget_exceeded",
+      cause: Object.assign(new Error("denied"), { code: "EACCES" }),
+    }),
+  );
+  expect(denied).toMatchObject({
+    code: "access_denied",
+    category: "unavailable",
+  });
+  expect(
+    entry(
+      "BinaryTargetError",
+      "constraint=bundle_info_plist_decode_budget_exceeded; read permission denied",
+    ),
+  ).toMatchObject({ code: denied.code, category: denied.category });
 });

@@ -1,5 +1,4 @@
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 
 /**
@@ -10,7 +9,9 @@ import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 export const kunaUnavailable = (
   operation: string,
   reason: string,
-  options: AnalysisErrorOptions = {},
+  options: NonNullable<
+    ConstructorParameters<typeof AnalysisCapabilityUnavailableError>[3]
+  > = {},
 ): AnalysisCapabilityUnavailableError =>
   new AnalysisCapabilityUnavailableError(KUNA_PROVIDER_ID, operation, reason, {
     ...options,

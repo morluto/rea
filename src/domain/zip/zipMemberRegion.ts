@@ -1,5 +1,9 @@
 import { BinaryReader } from "../binaryContainer.js";
 import {
+  ZIP_LOCAL_HEADER_BYTES,
+  zipLocalDataOffset,
+} from "./zipLocalHeader.js";
+import {
   apkSigningPairEnd,
   APK_SIGNING_BLOCK_MAX_PAIRS,
 } from "../apkSignature/apkSigningBlock.js";
@@ -28,8 +32,6 @@ export interface ZipMemberRegionAccount {
   readonly unverifiedExtents: number;
 }
 
-const LOCAL_HEADER_BYTES = 30;
-const LOCAL_HEADER_SIGNATURE = 0x04034b50;
 const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const DATA_DESCRIPTOR_FLAG = 0x8;
 const ZIP64_EXTRA = 0x1;
@@ -37,6 +39,11 @@ const ZIP64_SIZE_SENTINEL = 0xffffffff;
 /** The APK Signature Scheme v2+ block sits between the last member and the directory. */
 const APK_SIGNING_BLOCK_MAGIC = "APK Sig Block 42";
 const APK_SIGNING_BLOCK_FOOTER_BYTES = 24;
+/**
+ * apksigner zero-pads the member region so the signing block starts on a
+ * 4 KiB boundary (Android source, ApkSigningBlockUtils `ANDROID_COMMON_PAGE_ALIGNMENT_BYTES`).
+ */
+const APK_SIGNING_BLOCK_ALIGNMENT_BYTES = 4096;
 /** Adjacent small members share one read; a large member costs one read. */
 const READ_WINDOW_BYTES = 64 * 1024;
 
@@ -97,32 +104,43 @@ export const accountZipMemberRegion = async (
     new BinaryReader(Buffer.from(await read(offset, length)), true, "zip");
   let cursor = 0;
   let descriptor: ZipLocalRecord | undefined;
-  const gap = async (end: number) => {
+  const gap = async (end: number, signingBlockPadding = false) => {
     if (end < cursor) return;
     if (descriptor !== undefined) {
-      const bytes = await dataDescriptorBytes(descriptor, cursor, end, view);
+      const at = cursor;
+      const bytes = await dataDescriptorBytes(
+        descriptor,
+        at,
+        end,
+        view,
+        // A layout followed only by signing-block padding also ends the gap.
+        signingBlockPadding
+          ? (bytes) => isSigningBlockPadding(at + bytes, end, view)
+          : undefined,
+      );
       if (bytes === 0) unverifiedExtents += 1;
       cursor += bytes;
     }
     descriptor = undefined;
     const size = end - cursor;
     if (size <= 0) return;
+    if (signingBlockPadding && (await isSigningBlockPadding(cursor, end, view)))
+      return;
     unaccountedBytes += size;
     unaccountedRanges += 1;
     firstUnaccountedOffset ??= cursor;
   };
   for (const record of [...records].sort((a, b) => a.offset - b.offset)) {
-    if (record.offset + LOCAL_HEADER_BYTES > directoryOffset) {
+    if (record.offset + ZIP_LOCAL_HEADER_BYTES > directoryOffset) {
       unlocatedHeaders += 1;
       continue;
     }
-    const header = await view(record.offset, LOCAL_HEADER_BYTES);
-    if (header.u32(0) !== LOCAL_HEADER_SIGNATURE) {
+    const header = await view(record.offset, ZIP_LOCAL_HEADER_BYTES);
+    const dataOffset = zipLocalDataOffset(header, record.offset);
+    if (dataOffset === undefined) {
       unlocatedHeaders += 1;
       continue;
     }
-    const dataOffset =
-      record.offset + LOCAL_HEADER_BYTES + header.u16(26) + header.u16(28);
     const end = dataOffset + record.compressedSize;
     const deferred = (header.u16(6) & DATA_DESCRIPTOR_FLAG) !== 0;
     // A directory/encrypted entry may never be opened. Do not let an unchecked
@@ -160,7 +178,12 @@ export const accountZipMemberRegion = async (
     )
       unverifiedExtents += 1;
   }
-  await gap(await apkSigningBlockStart(cursor, directoryOffset, view));
+  const signingBlock = await apkSigningBlockStart(
+    cursor,
+    directoryOffset,
+    view,
+  );
+  await gap(signingBlock, signingBlock !== directoryOffset);
   return {
     unaccountedBytes,
     unaccountedRanges,
@@ -209,13 +232,15 @@ const localCompressedSize = async (
  * Both size widths are tried, the record's own first: MSIX and APPX packages
  * write 8-byte descriptor sizes without a ZIP64 extra field. Zero sizes match
  * a narrow prefix of a wide descriptor too, so a layout that ends exactly at
- * `end`, the next accounted byte, wins over the first match.
+ * `end`, the next accounted byte, or that `accounts` for the rest of the
+ * range, wins over the first match.
  */
 const dataDescriptorBytes = async (
   record: ZipLocalRecord,
   at: number,
   end: number,
   view: (offset: number, length: number) => Promise<BinaryReader>,
+  accounts?: (bytes: number) => Promise<boolean>,
 ): Promise<number> => {
   const signed =
     end - at >= 16 && (await view(at, 4)).u32(0) === DATA_DESCRIPTOR_SIGNATURE;
@@ -232,13 +257,35 @@ const dataDescriptorBytes = async (
         compressed === BigInt(record.compressedSize) &&
         uncompressed === BigInt(record.uncompressedSize)
       ) {
-        if (at + prefix + body === end) return prefix + body;
+        if (
+          at + prefix + body === end ||
+          (accounts !== undefined && (await accounts(prefix + body)))
+        )
+          return prefix + body;
         if (first === 0) first = prefix + body;
       }
     }
   }
   return first;
 };
+
+const LATIN1_DECODER = new TextDecoder("latin1");
+
+/**
+ * Whether `start..end` is apksigner's alignment pad before a signing block at
+ * `end`. A local file header needs its signature, so all-zero bytes cannot
+ * hold an unlisted entry.
+ */
+const isSigningBlockPadding = async (
+  start: number,
+  end: number,
+  view: (offset: number, length: number) => Promise<BinaryReader>,
+): Promise<boolean> =>
+  end - start < APK_SIGNING_BLOCK_ALIGNMENT_BYTES &&
+  end % APK_SIGNING_BLOCK_ALIGNMENT_BYTES === 0 &&
+  (await view(start, end - start))
+    .range(0, end - start, "APK signing block padding")
+    .every((byte) => byte === 0);
 
 /** Where a well-formed APK signing block ending at the directory starts, else the directory. */
 const apkSigningBlockStart = async (
@@ -252,7 +299,7 @@ const apkSigningBlockStart = async (
     directoryOffset - APK_SIGNING_BLOCK_FOOTER_BYTES,
     APK_SIGNING_BLOCK_FOOTER_BYTES,
   );
-  const magic = new TextDecoder("latin1").decode(
+  const magic = LATIN1_DECODER.decode(
     footer.range(8, 16, "APK signing block magic"),
   );
   if (magic !== APK_SIGNING_BLOCK_MAGIC) return directoryOffset;

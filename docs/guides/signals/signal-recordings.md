@@ -6,7 +6,8 @@ libsigrokdecode on **Linux**. util-linux `prlimit` is required (default
 `/usr/bin/prlimit`, overridable with absolute `REA_SIGROK_PRLIMIT_COMMAND`).
 The limiter sets soft and hard address-space limits before the decoder starts.
 macOS and Windows are refused because this adapter cannot enforce that limit on
-those hosts. It does not acquire samples or communicate with hardware.
+those hosts. `REA_SIGROK_COMMAND` must name sigrok-cli by absolute path; REA
+does not search `PATH`. REA does not acquire samples or communicate with hardware.
 
 ```sh
 export REA_SIGROK_COMMAND=/absolute/path/to/sigrok-cli
@@ -114,19 +115,20 @@ recording expansion cannot exceed the per-process address-space cap. These are
 not aggregate process-memory or filesystem quotas. The selected limiter is
 trusted and its path, digest and arguments are retained in Evidence.
 
-Each capture/recording operation accepts `producer_limits` with positive safe
+Each decoding and discovery call accepts `producer_limits` with positive safe
 integer overrides: `input_bytes`, `output_bytes`, `command_timeout_ms`,
 `address_space_bytes`, `file_bytes`, and `cpu_seconds`. The wall-clock timeout
 is at most 2,147,483,647 milliseconds, matching Node timers. Omitted fields keep
-the defaults above. Discovery accepts the same controls except `input_bytes`,
-since it does not read a capture or recording. Packet field discovery defaults
-to 32 MiB output rather than 4 MiB.
+the defaults above. Decoder discovery accepts the same controls except
+`input_bytes`, since it does not read a recording.
 
 CLI supplies this object as JSON with `--producer-limits`, for example
 `--producer-limits '{"input_bytes":67108864,"output_bytes":8388608,"cpu_seconds":60}'`.
 Values apply to the next call without restarting REA. Effective native ceilings
 still preserve any tighter inherited soft and hard limit. Errors identify the
-exhausted producer control and retain partial output and cleanup status; follow
+exhausted producer control in `details.limit` (`parameter:
+"producer_limits.<field>"`, with its effective value and default) and retain
+partial output and cleanup status; follow
 that repair after cleanup settles. Raising producer budgets does not raise
 separate parser representations, transport buffers or external client deadlines.
 Never truncate the selected artifact to fit an input budget.
@@ -148,8 +150,7 @@ kernel-limit regression checks the inherited soft/hard limits and verifies an
 oversized allocation is refused before it can consume memory. Other formats,
 decoders and physical acquisition are not established by the UART fixture.
 The workflow result must be checked before claiming a specific Linux build
-verified. The earlier macOS tool check does not establish the current bounded
-integration, which deliberately refuses unsupported hosts.
+verified.
 
 One decode is admitted at a time, including acquisition and cleanup. Excess
 requests receive a retryable capacity error before acquiring another file or
@@ -173,16 +174,18 @@ classes and documentation. `query` is a case-insensitive literal substring;
 matching help retains original one-based line numbers. Empty query selects all.
 `offset` skips matches; `limit` defaults to 50. MCP `limit: null` or CLI `--all`
 returns all remaining matches; CLI `--all` and `--limit` conflict.
-The window reports examined, matching and returned records and `has_more`.
-A filtered empty page is not evidence that the installation has no decoders.
+The window reports examined, matching and returned records, `has_more` and
+`record_budget_reached`. A filtered empty page is not evidence that the installation has no decoders.
 When sigrok reports a selected decoder ID as not installed, help and decoding
 return `invalid_request` naming `decoder` or `decoders`; omit `decoder` to list
 installed IDs. An installed decoder that fails to load remains an execution failure.
 
-Discovery refuses more than 65,535 line separators before constructing record
-objects (65,536-line representation budget), in addition to the 4 MiB output cap.
-Exceeding that budget is a resource failure with captured output. Returned text
-is copied so a retained page does not keep the complete producer output alive.
+A page holds at most 65,536 records, so short producer lines cannot expand into
+an unbounded number of record objects; the producer text itself stays within
+`producer_limits.output_bytes`. A longer selection ends at that budget with
+`has_more: true` and `record_budget_reached: true`; continue with `offset` set
+to the previous `offset` plus `returned`. Returned text is copied so a retained
+page does not keep the complete producer output alive.
 
 Discovery shares decoding's owned process, admission slot, resource limits,
 cleanup retries and Evidence delivery. It records the executable and limiter

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, truncate, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -175,19 +175,99 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated image as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-native-init-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("\x7fELF"));
-  const result = await cli.run({
-    arguments: ["inspect-native-initializers", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_native_initializers" },
-  });
-});
+const dynamicTableCeiling = 16 * 1024 * 1024;
+
+cliTest.for([
+  {
+    name: "short partial row",
+    size: 33,
+    backed: true,
+    code: "unsupported_target",
+  },
+  {
+    name: "oversized unbacked declaration",
+    size: dynamicTableCeiling + 16,
+    backed: false,
+    code: "unsupported_target",
+  },
+  {
+    name: "oversized backed partial row",
+    size: dynamicTableCeiling + 1,
+    backed: true,
+    code: "unsupported_target",
+  },
+  {
+    name: "oversized backed whole rows",
+    size: dynamicTableCeiling + 16,
+    backed: true,
+    code: "resource_constraint",
+  },
+])(
+  "adjudicates PT_DYNAMIC admission for $name",
+  async ({ size, backed, code }, { cli }) => {
+    const root = await createTestTempDirectory("rea-native-init-dynamic-cli-");
+    const path = join(root, "library.so");
+    const bytes = elf64PieInitializers();
+    // The second ELF64 program header declares PT_DYNAMIC at file offset 0x300.
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 32);
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 40);
+    await writeFile(path, bytes);
+    if (backed && 0x300 + size > bytes.length)
+      await truncate(path, 0x300 + size);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.json).toMatchObject({
+      code,
+      details: {
+        operation: "inspect_native_initializers",
+        ...(code === "unsupported_target"
+          ? { path, failure_kind: "malformed" }
+          : {
+              reported_limits: {
+                boundary: "max_structure_bytes",
+                maximum: dynamicTableCeiling,
+              },
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_structure_bytes",
+                effective_value: dynamicTableCeiling,
+                default_value: dynamicTableCeiling,
+                applies_at: "next_call",
+              },
+            }),
+      },
+    });
+  },
+);
+
+cliTest(
+  "admits an oversized PT_DYNAMIC with a larger --max-structure-bytes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-native-init-structure-cli-",
+    );
+    const path = join(root, "library.so");
+    const bytes = elf64PieInitializers();
+    const size = dynamicTableCeiling + 16;
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 32);
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 40);
+    await writeFile(path, bytes);
+    await truncate(path, 0x300 + size);
+    const result = await cli.run({
+      arguments: [
+        "inspect-native-initializers",
+        path,
+        "--max-structure-bytes",
+        String(dynamicTableCeiling * 2),
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.entries.length).toBeGreaterThan(0);
+  },
+);
 
 cliTest(
   "keeps unmapped ELF target locations null in public CLI Evidence",

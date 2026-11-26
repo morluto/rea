@@ -1,12 +1,13 @@
 import { expect, it } from "vitest";
 import {
+  compareDocumentedNumericLimits,
   discoverNumericLimitUses,
+  documentedLimitCell,
+  parseDocumentedNumericLimits,
   parseNumericLimitRegistry,
   parseRuntimeSettingEnvironments,
   requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
-
-const ENDPOINT_CANDIDATES = "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES";
 
 it("reads only actual settings environment properties", () => {
   expect([
@@ -102,18 +103,6 @@ it("directs per-call registry declarations to ANALYSIS_SETTINGS", () => {
       }];
     `),
   ).toThrow(/REA_NEW_TIMEOUT_MS.*ANALYSIS_SETTINGS/u);
-});
-
-it("recognizes the documented endpoint-candidate limit as numeric", () => {
-  const discovered = discoverNumericLimitUses([
-    {
-      path: "src/domain/webBundleAnalysis.ts",
-      source: `const candidates = process.env.${ENDPOINT_CANDIDATES};`,
-    },
-  ]);
-  expect(discovered.get(ENDPOINT_CANDIDATES)?.path).toBe(
-    "src/domain/webBundleAnalysis.ts",
-  );
 });
 
 it("does not treat a registry declaration as a producer", () => {
@@ -507,29 +496,144 @@ it("keeps ordinary and optional bracket-access reads", () => {
     ]);
 });
 
-it("requires the tracked endpoint-candidate limit to be an analysis setting", () => {
+it("reports a required limit absent from src as a typed missing result", () => {
+  const name = "REA_ABSENT_MAX_BYTES";
   expect(
-    requiredRuntimeLimitFailure(ENDPOINT_CANDIDATES, {
+    requiredRuntimeLimitFailure(name, {
+      inSource: false,
+      inRuntime: false,
+      inRegistry: false,
+    }),
+  ).toEqual({ code: "required_runtime_limit_missing", name });
+  expect(
+    requiredRuntimeLimitFailure(name, {
+      inSource: true,
       inRuntime: false,
       inRegistry: true,
     }),
-  ).toMatch(/ANALYSIS_SETTINGS/);
+  ).toEqual({ code: "required_runtime_limit_not_analysis_setting", name });
   expect(
-    requiredRuntimeLimitFailure(ENDPOINT_CANDIDATES, {
+    requiredRuntimeLimitFailure(name, {
+      inSource: true,
+      inRuntime: false,
+      inRegistry: false,
+    }),
+  ).toEqual({ code: "required_runtime_limit_not_analysis_setting", name });
+  expect(
+    requiredRuntimeLimitFailure(name, {
+      inSource: false,
+      inRuntime: true,
+      inRegistry: true,
+    }),
+  ).toEqual({ code: "required_runtime_limit_not_analysis_setting", name });
+  expect(
+    requiredRuntimeLimitFailure(name, {
+      inSource: false,
       inRuntime: true,
       inRegistry: false,
     }),
   ).toBeUndefined();
   expect(
-    requiredRuntimeLimitFailure("REA_NTFS_MFT_MAX_FILE_BYTES", {
-      inRuntime: false,
+    requiredRuntimeLimitFailure(name, {
+      inSource: true,
+      inRuntime: true,
       inRegistry: false,
     }),
-  ).toMatch(/ANALYSIS_SETTINGS/);
-  expect(
-    requiredRuntimeLimitFailure("REA_REGF_HIVE_MAX_FILE_BYTES", {
-      inRuntime: true,
-      inRegistry: true,
-    }),
-  ).toMatch(/numericLimitRegistry/);
+  ).toBeUndefined();
+});
+
+const documentedLimits = `
+## Runtime analysis settings
+
+| Setting | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`sample.bytes\` | 10 | 1 | 20 |
+
+## Per-call limits in the runtime system
+
+| Environment | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`REA_SAMPLE_BYTES\` | unset (\`null\`, none) | 1 | \`Number.MAX_SAFE_INTEGER\` |
+
+## Restart-only numeric limits
+
+| Environment | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`REA_FIXED\` | 30 | 30 | 30 |
+`;
+
+it("rejects a fractional documented cell instead of keeping its leading digits", () => {
+  expect(documentedLimitCell("5000.5", {}).ok).toBe(false);
+  expect(documentedLimitCell("5000.", {}).ok).toBe(false);
+  expect(documentedLimitCell("60000 (MCP SDK default)", {})).toEqual({
+    ok: true,
+    value: 60_000,
+  });
+  expect(documentedLimitCell("10485760 when unset", {})).toEqual({
+    ok: true,
+    value: 10_485_760,
+  });
+  const rows = parseDocumentedNumericLimits(
+    documentedLimits.replace(
+      "| `sample.bytes` | 10 |",
+      "| `sample.bytes` | 5000.5 |",
+    ),
+  );
+  const failures = compareDocumentedNumericLimits(
+    rows,
+    [
+      { name: "sample.bytes", defaultValue: 5000, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      { name: "REA_FIXED", defaultValue: 30, minimum: 30, maximum: 30 },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual([
+    'sample.bytes default: documented "5000.5" (unreadable cell "5000.5"), code 5000',
+  ]);
+});
+
+it("names the limit and both values when a documented default drifts", () => {
+  const failures = compareDocumentedNumericLimits(
+    parseDocumentedNumericLimits(documentedLimits),
+    [
+      { name: "sample.bytes", defaultValue: 11, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      { name: "REA_FIXED", defaultValue: 30, minimum: 30, maximum: 30 },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual(["sample.bytes default: documented 10, code 11"]);
+});
+
+it("names a documented limit the code does not export", () => {
+  const failures = compareDocumentedNumericLimits(
+    parseDocumentedNumericLimits(documentedLimits),
+    [
+      { name: "sample.bytes", defaultValue: 10, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual([
+    'REA_FIXED: documented Restart-only numeric limits default "30", floor "30", maximum "30", but code exports no bound',
+  ]);
 });

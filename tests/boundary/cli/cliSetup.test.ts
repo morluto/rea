@@ -126,12 +126,7 @@ const clientStates = [
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
-cliTest.for([
-  "--dry-run=abc",
-  "--dry-run=",
-  "--dryRun=abc",
-  "--dry-run=ab\ncd",
-] as const)(
+cliTest.for(["--dry-run=abc", "--dry-run=", "--dry-run=ab\ncd"] as const)(
   "rejects malformed setup dry-run value %s before approved changes are written",
   async (dryRun, { cli }) => {
     const home = await createTestTempDirectory("rea-cli-invalid-dry-run-");
@@ -140,7 +135,11 @@ cliTest.for([
 
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+    expect(result.json).toMatchObject({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+    });
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
   },
 );
 
@@ -159,23 +158,6 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
       expect(result.json).toMatchObject({ status: "ready" });
       await expect(access(config)).resolves.toBeUndefined();
     }
-  },
-);
-
-cliTest(
-  "reports invalid dry-run through the public CLI without a stack trace",
-  async ({ cli }) => {
-    const home = await createTestTempDirectory(
-      "rea-cli-public-invalid-dry-run-",
-    );
-    const config = join(home, ".codex", "config.toml");
-    const result = await runSetup(cli, home, "--dry-run=abc");
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
-    expect(result.stdout).toContain("--dry-run");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
-    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
@@ -216,44 +198,61 @@ cliTest(
         "codex",
         "--skill=false",
         "--dry-run=abc",
-        "--dryRun=false",
+        "--dry-run=false",
         "--json",
       ],
       cwd: selectedHome,
       environment: isolatedSetupEnvironment(selectedHome),
     });
     expect(result.exitCode, result.stderr).toBe(1);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(result.json).toMatchObject({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+    });
     expect(await readFile(config, "utf8")).toBe(original);
     expect((await lstat(config)).mtimeMs).toBe(before.mtimeMs);
     expect(await readdir(dirname(config))).toEqual(["config.toml"]);
   },
 );
 
+/**
+ * Approval asks about one change, or names the count when the host can also
+ * install Hopper. Either question is the consent prompt.
+ */
+const setupApprovalQuestion = /Apply this change\?|Apply these \d+ changes\?/u;
+
 const runSetupInTty = async (
   home: string,
   arguments_: readonly string[],
   approval?: boolean,
   environment: NodeJS.ProcessEnv = {},
+  { terminalStdin = true }: { readonly terminalStdin?: boolean } = {},
 ): Promise<{ readonly exitCode: number; readonly output: string }> => {
-  const terminal = spawn(
-    process.execPath,
-    ["scripts/rea.mjs", "setup", ...arguments_],
-    {
-      cwd: process.cwd(),
-      // Client locations such as CODEX_HOME must follow the temporary home.
-      env: {
-        ...process.env,
-        ...isolatedSetupEnvironment(home),
-        REA_LOG_LEVEL: "silent",
-        NO_COLOR: "1",
-        ...environment,
-      },
-      name: "xterm-256color",
-      cols: 120,
-      rows: 40,
+  // Without a terminal stdin, only stdout and stderr stay on the terminal.
+  const command = terminalStdin
+    ? { file: process.execPath, args: ["scripts/rea.mjs", "setup"] }
+    : {
+        file: "/bin/sh",
+        args: [
+          "-c",
+          'exec "$0" scripts/rea.mjs setup "$@" < /dev/null',
+          process.execPath,
+        ],
+      };
+  const terminal = spawn(command.file, [...command.args, ...arguments_], {
+    cwd: process.cwd(),
+    // Client locations such as CODEX_HOME must follow the temporary home.
+    env: {
+      ...process.env,
+      ...isolatedSetupEnvironment(home),
+      REA_LOG_LEVEL: "silent",
+      NO_COLOR: "1",
+      ...environment,
     },
-  );
+    name: "xterm-256color",
+    cols: 120,
+    rows: 40,
+  });
   let output = "";
   let answered = false;
   terminal.onData((data) => {
@@ -261,7 +260,7 @@ const runSetupInTty = async (
     if (
       approval !== undefined &&
       !answered &&
-      output.includes("Apply this change?")
+      setupApprovalQuestion.test(output)
     ) {
       answered = true;
       terminal.write(approval ? "\r" : "\u001b[C\r");
@@ -379,6 +378,66 @@ describe("TTY setup dry run", () => {
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "shows the unapproved plan it asks a terminal reader to review",
+    async () => {
+      const home = await createTestTempDirectory("rea-cli-setup-unapproved-");
+      const { exitCode, output } = await runSetupInTty(
+        home,
+        ["--client", "codex", "--skill=false"],
+        undefined,
+        {},
+        { terminalStdin: false },
+      );
+
+      expect(output).toContain(
+        "Review the setup plan, then rerun interactively or with --yes.",
+      );
+      expect(output).toContain("CREATE  Codex");
+      expect(output).toContain(join(home, ".codex/config.toml"));
+      expect(output).toContain("No changes were made.");
+      expect(exitCode, output).not.toBe(0);
+      await expect(
+        access(join(home, ".codex/config.toml")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it.each([
+    { flag: "--full-output", document: /plannedActions/u },
+    { flag: "--token-count", document: /^\d+$/u },
+  ])(
+    "writes only the requested document for a TTY dry run with $flag",
+    async ({ flag, document }) => {
+      const home = await createTestTempDirectory("rea-cli-setup-document-");
+      const { exitCode, output } = await runSetupInTty(home, [
+        "--dry-run",
+        "--client",
+        "codex",
+        "--skill=false",
+        flag,
+      ]);
+
+      expect(exitCode, output).toBe(0);
+      expect(output.trim()).toMatch(document);
+      expect(output).not.toContain("Dry run complete. No changes were made.");
+    },
+  );
+
+  it("opens the setup rail once when a scoped run starts at approval", async () => {
+    const home = await createTestTempDirectory("rea-cli-setup-scoped-");
+    const { output } = await runSetupInTty(
+      home,
+      ["--client", "codex", "--skill=false"],
+      false,
+    );
+
+    const prompt = output.search(setupApprovalQuestion);
+    expect(prompt, output).toBeGreaterThanOrEqual(0);
+    const beforePrompt = output.slice(0, prompt);
+    expect(beforePrompt.split("REA setup").length - 1, output).toBe(1);
   });
 
   it("prints the applied result for a non-interactive TTY setup", async () => {
@@ -576,11 +635,13 @@ describe("interactive setup journey", () => {
     expect(result.decision.approved).toBe(true);
   });
 
-  it("shows the launcher, backup, and path before final approval", async () => {
+  it("shows the selected changes before consent and leaves Hopper unselected", async () => {
+    const approvalPrompt = "Apply these 2 changes?";
     const result = await runJourney(
       [
         step("Which agents should use REA?", " \r"),
-        step("Apply these 2 changes?", "\r"),
+        step("Install Hopper for deep binary analysis?", "\r"),
+        step(approvalPrompt, "\r"),
       ],
       false,
       [
@@ -591,13 +652,18 @@ describe("interactive setup journey", () => {
           commands: ["npx -y rea-agents@3.2.1 mcp"],
         },
         actions[1],
+        actions[2],
       ],
     );
-    expect(result.output).toContain("/isolated/.codex/config.toml.bak");
-    expect(result.output).toContain("command: npx -y rea-agents@3.2.1 mcp");
-    expect(result.output.indexOf("command:")).toBeLessThan(
-      result.output.indexOf("Apply these 2 changes?"),
-    );
+    const preflight = result.output.split(approvalPrompt, 1)[0];
+    expect(preflight).toContain("UPDATE  Codex");
+    expect(preflight).toMatch(/\/isolated\/\.codex\/config\.toml\r?\n/u);
+    expect(preflight).toContain("backup: /isolated/.codex/config.toml.bak");
+    expect(preflight).toContain("command: npx -y rea-agents@3.2.1 mcp");
+    expect(result.decision).toEqual({
+      approved: true,
+      selectedActionIds: ["configure_client:codex", "install_skill"],
+    });
   });
 
   it("treats final No as cancellation", async () => {
@@ -626,22 +692,6 @@ describe("interactive setup journey", () => {
     ]);
     expect(result.decision.selectedActionIds).toEqual(["install_skill"]);
     expect(result.decision.approved).toBe(true);
-  });
-
-  it("offers Hopper separately and defaults against installing it", async () => {
-    const result = await runJourney(
-      [
-        step("Which agents should use REA?", " \r"),
-        step("Install Hopper for deep binary analysis?", "\r"),
-        step("Apply these 2 changes?", "\r"),
-      ],
-      false,
-      actions,
-    );
-    expect(result.decision.selectedActionIds).toEqual([
-      "configure_client:codex",
-      "install_skill",
-    ]);
   });
 
   it("uses sequential prompts without auto-selecting detected agents in accessible mode", async () => {
@@ -908,13 +958,14 @@ const runJourney = async (
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
-    'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
+    'import { confirmInteractiveSetup, createSetupJourney } from "./dist/cli/interactiveSetup.js";',
+    "const journey = createSetupJourney();",
     `const actions = ${JSON.stringify(journeyActions)};`,
     `const context = ${JSON.stringify({ stage: "select", clientStates: states, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
-    `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
+    `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context, undefined, journey);`,
     "if (!decision.cancelled && decision.selectedActionIds.length > 0) {",
     "  const selected = new Set(decision.selectedActionIds);",
-    `  decision = await confirmInteractiveSetup(actions.filter(({ id }) => selected.has(id)), ${JSON.stringify(accessible)}, { ...context, stage: "confirm", clientSelectionAllowed: false });`,
+    `  decision = await confirmInteractiveSetup(actions.filter(({ id }) => selected.has(id)), ${JSON.stringify(accessible)}, { ...context, stage: "confirm", clientSelectionAllowed: false }, undefined, journey);`,
     "}",
     `process.stdout.write(${JSON.stringify(`\n${decisionMarker}`)} + JSON.stringify(decision) + "\\n");`,
   ].join("\n");

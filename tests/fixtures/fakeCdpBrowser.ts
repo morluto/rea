@@ -70,12 +70,7 @@ export const startFakeCdpBrowser = async (
       );
       return;
     }
-    if (options.handshakeDelayMs === undefined) {
-      accept();
-      return;
-    }
-    const timer = setTimeout(accept, options.handshakeDelayMs);
-    socket.once("close", () => clearTimeout(timer));
+    accept();
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
@@ -186,11 +181,16 @@ const respondToHttpRequest = (
   const portNumber = port();
   if (serveSourceMap(request, response, options)) return;
   const finish = (body: string): void => {
-    if (options.discoveryDelayMs === undefined) {
+    if (options.discoveryGate === undefined) {
       response.end(body);
       return;
     }
-    setTimeout(() => response.end(body), options.discoveryDelayMs);
+    void options.discoveryGate.hold(request.url ?? "").then(
+      () => {
+        if (!response.destroyed) response.end(body);
+      },
+      () => response.destroy(),
+    );
   };
   if (request.url === "/json/version") {
     finish(

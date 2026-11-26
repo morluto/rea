@@ -2,6 +2,8 @@ import type { JsonValue } from "../../../domain/jsonValue.js";
 import type { TraceEvent } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { CaptureRedaction, captureObject } from "../CaptureRedaction.js";
 import { projectRecordedHarEntry } from "../HarCapture.js";
+import { captureBudgets, withCaptureBudgets } from "../CaptureBudgets.js";
+import { readRecordedResponseDeclaration } from "../../../domain/analysisView/recordedResponseBody.js";
 
 const string = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
@@ -105,12 +107,18 @@ const selectedEvent = (
 export const projectTraceEvent = (
   raw: Record<string, unknown>,
   identity: Pick<TraceEvent, "event_id" | "stream_id" | "ordinal" | "source">,
+  nestingDepth: number,
 ): TraceEvent | undefined => {
   const redactor = new CaptureRedaction([]);
   const selected = selectedEvent(raw, redactor);
   if (selected === undefined) return undefined;
   const { kind } = selected;
-  const projected = projectRecordedHarEntry(selected.selected, []);
+  // The projection walks the record the parser admitted, so it uses the same
+  // trace_limits.nesting_depth rather than the network capture's depth.
+  const projected = withCaptureBudgets(
+    { ...captureBudgets(), depth: nestingDepth },
+    () => projectRecordedHarEntry(selected.selected, []),
+  );
   const facts = object(projected.reported);
   const params = object(facts.params),
     request = object(facts.request),
@@ -159,7 +167,7 @@ export const projectTraceEvent = (
     ),
     method: string(kind === "network" ? request.method : facts.method),
     url: string(kind === "network" ? request.url : params.url),
-    status: number(response.status),
+    status: readRecordedResponseDeclaration(projected.reported)?.status ?? null,
     text: string(
       kind === "console"
         ? facts.text

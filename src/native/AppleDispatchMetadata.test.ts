@@ -1,8 +1,14 @@
+import {
+  CPU,
+  fatImage,
+  fatSliceRange,
+} from "../artifacts/apple/MachoImage.fixture.js";
 import { malformedInput } from "../domain/parseFailure.js";
 import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
+import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 
 /** The slice-selection refusal an admitted decode reports as REA's inconsistency. */
@@ -1132,15 +1138,21 @@ describe("Apple dispatch pointer fixup metadata", () => {
       name: "oversized addend whose tail resembles DO_BIND",
       operand: [0x60, ...Array<number>(10).fill(0x80), 0x90, 0x00],
     },
+    {
+      name: "a located bind with no selected symbol",
+      operand: [0x51, 0x70, 0x80, 0x1d, 0x90, 0],
+      missingTarget: true,
+    },
   ])(
     "keeps decoded bindings when an independent stream has $name",
-    ({ operand }) => {
+    ({ operand, missingTarget }) => {
       const bytes = fixture();
       bytes.writeUInt32LE(2, 16);
       bytes.writeUInt32LE(200, 20);
       bytes.writeUInt32LE(0x80000022, 184);
       bytes.writeUInt32LE(48, 188);
       const bindings = Buffer.from([
+        0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
         0x40,
         ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
         0x51, // SET_TYPE_IMM pointer
@@ -1151,7 +1163,10 @@ describe("Apple dispatch pointer fixup metadata", () => {
         0x00,
       ]);
       bindings.copy(bytes, 0xc00);
-      const invalid = Buffer.from([...bindings.subarray(0, -2), ...operand]);
+      const invalid = Buffer.from([
+        ...(missingTarget ? [] : bindings.subarray(0, -2)),
+        ...operand,
+      ]);
       invalid.copy(bytes, 0xc80);
       bytes.writeUInt32LE(0xc00, 200);
       bytes.writeUInt32LE(bindings.length, 204);
@@ -1165,7 +1180,16 @@ describe("Apple dispatch pointer fixup metadata", () => {
       });
       expect(
         result.coverage.find(({ facet }) => facet === "pointer_fixups"),
-      ).toMatchObject({ status: "partial", examined: 2, decoded: 1 });
+      ).toMatchObject({
+        status: "partial",
+        examined: 2,
+        decoded: missingTarget ? 2 : 1,
+        reason: expect.stringContaining(
+          missingTarget
+            ? "bind_target_unresolved at 0x100000e80: Legacy bind has no selected symbol"
+            : "bind_stream_decode_failed",
+        ),
+      });
     },
   );
 
@@ -1263,6 +1287,7 @@ describe("Apple dispatch binary metadata", () => {
           name: "state",
           type_encoding: "i",
           offset: 8,
+          alignment: 1,
           location: { file_offset: 0x508 },
         },
       ]);
@@ -1331,17 +1356,49 @@ describe("Apple dispatch binary metadata", () => {
       });
     },
   );
+});
 
-  it.each([
-    [0xffffffff, 8],
-    [3, 8],
-    [0xfffffffe, null],
-  ])("decodes ivar alignment raw value %i as %s", (raw, alignment) => {
+describe("Objective-C ivar alignment metadata", () => {
+  it("maps the ivar WORD_ALIGN sentinel to 8 and keeps other raw values unknown", () => {
     const bytes = fixture();
-    bytes.writeUInt32LE(raw, 0x520);
+    bytes.writeUInt32LE(3, 0x504);
+    bytes.writeUInt32LE(3, 0x520);
+    // Second ivar: raw alignment 0xffffffff is objc4's WORD_ALIGN sentinel,
+    // which ivar_t::alignment() maps to 1 << WORD_SHIFT (8 on 64-bit).
+    bytes.writeBigUInt64LE(base + 0x6a0n, 0x528);
+    bytes.writeBigUInt64LE(base + 0x6c0n, 0x530);
+    bytes.writeBigUInt64LE(base + 0x6e0n, 0x538);
+    bytes.writeUInt32LE(0xffffffff, 0x540);
+    bytes.writeUInt32LE(8, 0x544);
+    bytes.writeUInt32LE(16, 0x6a0);
+    bytes.write("sentinel\0", 0x6c0);
+    bytes.write("q\0", 0x6e0);
+    // Third ivar: a non-sentinel out-of-range raw value stays unknown.
+    bytes.writeBigUInt64LE(base + 0x6a8n, 0x548);
+    bytes.writeBigUInt64LE(base + 0x6d0n, 0x550);
+    bytes.writeBigUInt64LE(base + 0x6e8n, 0x558);
+    bytes.writeUInt32LE(0xfffffffe, 0x560);
+    bytes.writeUInt32LE(8, 0x564);
+    bytes.writeUInt32LE(24, 0x6a8);
+    bytes.write("invalid\0", 0x6d0);
+    bytes.write("q\0", 0x6e8);
     const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
     expect(result.objc_ivars).toMatchObject([
-      { name: "state", alignment, decode: { status: "decoded" } },
+      { name: "state", offset: 8, alignment: 8, decode: { status: "decoded" } },
+      {
+        name: "sentinel",
+        offset: 16,
+        size: 8,
+        alignment: 8,
+        decode: { status: "decoded" },
+      },
+      {
+        name: "invalid",
+        offset: 24,
+        size: 8,
+        alignment: null,
+        decode: { status: "decoded" },
+      },
     ]);
   });
 });
@@ -1491,6 +1548,7 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(0x80000022, 264);
     bytes.writeUInt32LE(48, 268);
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_$s4Main3FooCN\0"),
       0x51, // SET_TYPE_IMM pointer
@@ -1519,6 +1577,89 @@ describe("Objective-C category class references without a class name", () => {
       reason: expect.stringMatching(
         /category_class_unresolved.*0x100000b48.*FixtureCategory.*class reference is null/i,
       ),
+    });
+  });
+});
+
+describe("Objective-C categories in __objc_catlist2", () => {
+  /** A category on the local Fixture class, listed in `section`. */
+  const listedCategory = (section: string) => {
+    const bytes = fixture(false, "unmapped-class");
+    bytes.writeBigUInt64LE(base + 0x200n, 0xb48);
+    bytes.fill(0, 184, 200);
+    bytes.write(section, 184);
+    return bytes;
+  };
+  const categoryCoverage = (result: {
+    coverage: readonly { facet: string }[];
+  }) =>
+    result.coverage.find(({ facet }) => facet === "objc_properties_categories");
+
+  it("decodes a category listed in __objc_catlist2 like one in __objc_catlist", () => {
+    const catlist = decodeAppleDispatchMetadata(
+      listedCategory("__objc_catlist"),
+      100,
+      provenance,
+    );
+    const result = decodeAppleDispatchMetadata(
+      listedCategory("__objc_catlist2"),
+      100,
+      provenance,
+    );
+    expect(catlist.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: "Fixture",
+        class_source: "local",
+        instance_methods: ["performAction:"],
+        decode: { status: "decoded", reason: null },
+      },
+    ]);
+    expect(result.objc_categories).toEqual(catlist.objc_categories);
+    expect(result.objc_dispatch_implementations).toEqual(
+      catlist.objc_dispatch_implementations,
+    );
+    expect(categoryCoverage(result)).toEqual({
+      facet: "objc_properties_categories",
+      status: "complete",
+      reason: null,
+      examined: 1,
+      decoded: 1,
+    });
+  });
+
+  it("keeps a category on a Swift class stub without reading the stub as a class", () => {
+    const bytes = listedCategory("__objc_catlist2");
+    // A Swift class stub holds isa 1, then its metadata initializer.
+    bytes.writeBigUInt64LE(1n, 0xc80);
+    bytes.writeBigUInt64LE(base + 0x700n, 0xc88);
+    // Where a class_t keeps its data, the word after the stub can lead to an
+    // unrelated record; here it is Fixture's class_ro_t.
+    bytes.writeBigUInt64LE(base + 0x300n, 0xca0);
+    bytes.writeBigUInt64LE(base + 0xc80n, 0xb48);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: null,
+        class_source: "unresolved",
+        instance_methods: ["performAction:"],
+        decode: { status: "partial", reason: "category_class_unresolved" },
+      },
+    ]);
+    expect(result.objc_dispatch_implementations).toContainEqual(
+      expect.objectContaining({
+        category: "FixtureCategory",
+        class_name: "(FixtureCategory)",
+        implementation_address: "0x100000700",
+      }),
+    );
+    expect(categoryCoverage(result)).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference 0x100000c80 is a Swift class stub, which is not read as an Objective-C class name",
+      examined: 1,
+      decoded: 0,
     });
   });
 });
@@ -1763,25 +1904,42 @@ describe("Objective-C malformed identity recovery", () => {
     "isolates an empty %s before result validation",
     (malformed) => {
       const bytes = fixture(false, "unmapped-class");
+      bytes.writeBigUInt64LE(base + 0xc00n, 0xb88);
+      bytes.write("categoryAction:\0", 0xc00);
       bytes[malformed === "class selector" ? 0x460 : 0xbc0] = 0;
       const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
-      expect(result.objc_categories).toEqual([]);
-      if (malformed === "category name") {
+      if (malformed === "class selector") {
+        expect(result.objc_categories).toMatchObject([
+          { name: "FixtureCategory", instance_methods: ["categoryAction:"] },
+        ]);
+        expect(
+          result.coverage.find(
+            ({ facet }) => facet === "objc_class_method_ivar_metadata",
+          ),
+        ).toMatchObject({
+          status: "partial",
+          reason: expect.stringContaining(
+            "0x100000180: Objective-C method has an empty selector",
+          ),
+        });
+      } else {
+        expect(result.objc_categories).toEqual([]);
         expect(result.objc_classes).toHaveLength(2);
+        expect(result.objc_classes[0]?.methods).toMatchObject([
+          { selector: "performAction:" },
+        ]);
+        expect(
+          result.coverage.find(
+            ({ facet }) => facet === "objc_properties_categories",
+          ),
+        ).toMatchObject({
+          status: "partial",
+          reason: expect.stringContaining("empty name"),
+        });
         expect(result.objc_protocols).toMatchObject([
           { name: "FixtureProtocol" },
         ]);
       }
-      expect(
-        result.coverage.find(
-          ({ facet }) => facet === "objc_properties_categories",
-        ),
-      ).toMatchObject({
-        status: "partial",
-        reason: expect.stringContaining(
-          malformed === "class selector" ? "empty selector" : "empty name",
-        ),
-      });
     },
   );
 
@@ -1794,6 +1952,7 @@ describe("Objective-C malformed identity recovery", () => {
     expect(result.objc_classes[0]).toMatchObject({
       name: "Fixture",
       super_class: null,
+      superclass_address: "0x100000c00",
     });
     expect(
       result.coverage.find(
@@ -2024,74 +2183,92 @@ const decodeAdmitted = (
     admitted,
   );
 
+const dispatchFatOffset = 4096;
+const wrapDispatchSlice = (wide: boolean, littleEndian = false) => {
+  const thin = fixture();
+  return {
+    bytes: Buffer.from(
+      fatImage([{ cpu: CPU.arm64, bytes: thin }], wide, littleEndian),
+    ),
+    admitted: { offset: dispatchFatOffset, size: thin.length },
+  };
+};
+
+const wrapDispatchCapabilities = () => {
+  const slices = [0x81000002, 0x80000002].map((subtype) => {
+    const bytes = fixture();
+    bytes.writeUInt32LE(subtype, 8);
+    return { cpu: { type: CPU.arm64.type, subtype }, bytes };
+  });
+  const bytes = Buffer.from(fatImage(slices));
+  return { bytes, admitted: fatSliceRange(bytes, 1) };
+};
+
 describe("universal Apple dispatch metadata", () => {
-  it.each([false, true])("decodes selected FAT slices (fat64=%s)", (fat64) => {
-    const thin = fixture();
-    const offset = 256;
-    const bytes = Buffer.alloc(offset + thin.length);
-    bytes.writeUInt32BE(fat64 ? 0xcafebabf : 0xcafebabe, 0);
-    bytes.writeUInt32BE(1, 4);
-    bytes.writeUInt32BE(0x0100000c, 8);
-    if (fat64) {
-      bytes.writeBigUInt64BE(BigInt(offset), 16);
-      bytes.writeBigUInt64BE(BigInt(thin.length), 24);
-    } else {
-      bytes.writeUInt32BE(offset, 16);
-      bytes.writeUInt32BE(thin.length, 20);
-    }
-    thin.copy(bytes, offset);
-    const result = decodeAdmitted(bytes, { offset, size: thin.length });
+  it.each([
+    ["big-endian FAT32", false, false],
+    ["big-endian FAT64", true, false],
+    ["byte-swapped FAT32", false, true],
+    ["byte-swapped FAT64", true, true],
+  ] as const)("decodes the selected %s slice", (_, wide, littleEndian) => {
+    // This row also guards against re-selecting a preferred subtype after admission.
+    const { bytes, admitted } =
+      wide || littleEndian
+        ? wrapDispatchSlice(wide, littleEndian)
+        : wrapDispatchCapabilities();
+    const result = decodeAdmitted(bytes, admitted);
     expect(result.objc_classes[0]).toMatchObject({
       name: "Fixture",
-      location: { address: "0x100000200", file_offset: offset + 512 },
+      location: {
+        address: "0x100000200",
+        file_offset: admitted.offset + 512,
+      },
     });
     expect(result.objc_dispatch_implementations[0]).toMatchObject({
       implementation_address: "0x100000700",
-      location: { file_offset: offset + 0x488 },
+      location: { file_offset: admitted.offset + 0x488 },
     });
   });
 });
 
 describe("FAT64 dispatch slice validation", () => {
-  const wrapped = () => {
-    const thin = fixture();
-    const bytes = Buffer.alloc(256 + thin.length);
-    bytes.writeUInt32BE(0xcafebabf, 0);
-    bytes.writeUInt32BE(1, 4);
-    bytes.writeUInt32BE(0x0100000c, 8);
-    bytes.writeBigUInt64BE(256n, 16);
-    bytes.writeBigUInt64BE(BigInt(thin.length), 24);
-    thin.copy(bytes, 256);
-    return bytes;
-  };
-  const admitted = () => ({ offset: 256, size: fixture().length });
-
-  it("does not select from a table that extends past the file", () => {
-    // Generic admission reads such a table as not universal, so the bytes
-    // are read whole and refused as an unsupported header.
+  it("refuses a table that extends past the file as truncated", () => {
+    const { bytes, admitted } = wrapDispatchSlice(true);
+    // A FAT64 header cannot be a JVM class, so a table past the file's end
+    // is a cut-off universal file, measured against the file's size.
     expect(() =>
-      decodeAppleDispatchMetadata(wrapped().subarray(0, 32), 100, provenance),
+      decodeAppleDispatchMetadata(bytes.subarray(0, 32), 100, provenance),
     ).toThrow(
       expect.objectContaining({
-        kind: "unsupported",
-        message: "Only little-endian 64-bit Mach-O metadata is supported",
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
       }),
     );
-    expect(
-      refusalOf(() => decodeAdmitted(wrapped().subarray(0, 32), admitted())),
-    ).toMatchObject({ refusal: "admitted_slice_mismatch" });
+    // Admitted selection reads the same container, so the cut-off file's
+    // own truncation wins over an admission mismatch.
+    expect(() => decodeAdmitted(bytes.subarray(0, 32), admitted)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          extent: { availableBytes: 32, requiredBytes: 40 },
+        }),
+      }),
+    );
   });
 
   it.each([16, 24])(
     "checks the full 64-bit slice extent at field %i",
     (field) => {
-      const bytes = wrapped();
+      const { bytes, admitted } = wrapDispatchSlice(true);
       bytes.writeBigUInt64BE(0x100000000n, field);
       // The declaration still names the admitted range in its other field.
       const range =
         field === 16
-          ? { offset: 0x100000000, size: admitted().size }
-          : { offset: 256, size: 0x100000000 };
+          ? { offset: 0x100000000, size: admitted.size }
+          : { offset: dispatchFatOffset, size: 0x100000000 };
       expect(() => decodeAdmitted(bytes, range)).toThrow(
         "FAT architecture 0 slice range extends beyond the file",
       );
@@ -2099,17 +2276,18 @@ describe("FAT64 dispatch slice validation", () => {
   );
 
   it("rejects an admitted range the FAT table declares twice", () => {
-    const bytes = wrapped();
+    const { bytes, admitted } = wrapDispatchSlice(true);
     bytes.writeUInt32BE(2, 4);
     bytes.copy(bytes, 40, 8, 40);
-    expect(() => decodeAdmitted(bytes, admitted())).toThrow(
+    expect(() => decodeAdmitted(bytes, admitted)).toThrow(
       "Mach-O slices 0 and 1 overlap.",
     );
   });
 
   it("refuses a universal image without the admitted slice", () => {
+    const { bytes } = wrapDispatchSlice(true);
     expect(
-      refusalOf(() => decodeAppleDispatchMetadata(wrapped(), 100, provenance)),
+      refusalOf(() => decodeAppleDispatchMetadata(bytes, 100, provenance)),
     ).toEqual({
       target_path: provenance.path,
       refusal: "admitted_slice_mismatch",
@@ -2117,58 +2295,10 @@ describe("FAT64 dispatch slice validation", () => {
     });
   });
 
-  it("decodes the admitted capability variant rather than re-selecting", () => {
-    const variant = (subtype: number) => {
-      const bytes = fixture();
-      bytes.writeUInt32LE(subtype, 8);
-      return bytes;
-    };
-    const first = variant(0x81000002);
-    const second = variant(0x80000002);
-    const offset = 4096;
-    const secondOffset = offset + Math.ceil(first.length / 4096) * 4096;
-    const bytes = Buffer.alloc(secondOffset + second.length);
-    bytes.writeUInt32BE(0xcafebabe, 0);
-    bytes.writeUInt32BE(2, 4);
-    const writeEntry = (
-      index: number,
-      subtype: number,
-      sliceOffset: number,
-      size: number,
-    ) => {
-      const base = 8 + index * 20;
-      bytes.writeUInt32BE(0x0100000c, base);
-      bytes.writeUInt32BE(subtype, base + 4);
-      bytes.writeUInt32BE(sliceOffset, base + 8);
-      bytes.writeUInt32BE(size, base + 12);
-      bytes.writeUInt32BE(12, base + 16);
-    };
-    writeEntry(0, 0x81000002, offset, first.length);
-    writeEntry(1, 0x80000002, secondOffset, second.length);
-    first.copy(bytes, offset);
-    second.copy(bytes, secondOffset);
-    expect(
-      decodeAppleDispatchMetadata(
-        bytes,
-        100,
-        provenance,
-        "arm64",
-        undefined,
-        true,
-        {
-          offset: secondOffset,
-          size: second.length,
-        },
-      ).objc_classes[0],
-    ).toMatchObject({
-      name: "Fixture",
-      location: { file_offset: secondOffset + 512 },
-    });
-  });
-
   it("rejects an admitted slice of another architecture", () => {
+    const { bytes, admitted } = wrapDispatchSlice(true);
     expect(
-      refusalOf(() => decodeAdmitted(wrapped(), admitted(), "x86_64")),
+      refusalOf(() => decodeAdmitted(bytes, admitted, "x86_64")),
     ).toMatchObject({
       refusal: "admitted_slice_mismatch",
       reason: "Admitted FAT slice does not match the requested architecture",
@@ -2177,77 +2307,48 @@ describe("FAT64 dispatch slice validation", () => {
 });
 
 describe("byte-swapped universal Apple dispatch metadata", () => {
-  const wrapped = (fat64: boolean) => {
-    const thin = fixture();
-    const offset = 256;
-    const bytes = Buffer.alloc(offset + thin.length);
-    bytes.writeUInt32LE(fat64 ? 0xcafebabf : 0xcafebabe, 0);
-    bytes.writeUInt32LE(1, 4);
-    bytes.writeUInt32LE(0x0100000c, 8);
-    if (fat64) {
-      bytes.writeBigUInt64LE(BigInt(offset), 16);
-      bytes.writeBigUInt64LE(BigInt(thin.length), 24);
-    } else {
-      bytes.writeUInt32LE(offset, 16);
-      bytes.writeUInt32LE(thin.length, 20);
-    }
-    thin.copy(bytes, offset);
-    return bytes;
-  };
-  const admitted = () => ({ offset: 256, size: fixture().length });
-
-  it.each([false, true])(
-    "decodes selected little-endian FAT slices (fat64=%s)",
-    (fat64) => {
-      const result = decodeAdmitted(wrapped(fat64), admitted());
-      expect(result.objc_classes[0]).toMatchObject({
-        name: "Fixture",
-        location: { address: "0x100000200", file_offset: 256 + 512 },
-      });
-      expect(result.objc_dispatch_implementations[0]).toMatchObject({
-        implementation_address: "0x100000700",
-        location: { file_offset: 256 + 0x488 },
-      });
-    },
-  );
-
   it("refuses a truncated byte-swapped FAT header", () => {
+    const { bytes } = wrapDispatchSlice(false, true);
     expect(() =>
-      decodeAppleDispatchMetadata(
-        wrapped(false).subarray(0, 6),
-        100,
-        provenance,
-      ),
-    ).toThrow("FAT header is truncated");
+      decodeAppleDispatchMetadata(bytes.subarray(0, 6), 100, provenance),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "truncated",
+          format: "macho",
+          extent: { availableBytes: 6, requiredBytes: 8 },
+        }),
+      }),
+    );
   });
 
   it("reads the selected thin slice's CPU identity in its own byte order", () => {
-    const bytes = wrapped(false);
-    bytes.writeUInt32BE(0xfeedfacf, 256);
-    bytes.writeUInt32BE(0x0100000c, 260);
-    bytes.writeUInt32BE(0, 264);
-    expect(() => decodeAdmitted(bytes, admitted())).toThrow(
+    const { bytes, admitted } = wrapDispatchSlice(false, true);
+    bytes.writeUInt32BE(0xfeedfacf, dispatchFatOffset);
+    bytes.writeUInt32BE(0x0100000c, dispatchFatOffset + 4);
+    bytes.writeUInt32BE(0, dispatchFatOffset + 8);
+    expect(() => decodeAdmitted(bytes, admitted)).toThrow(
       "Unsupported big-endian Mach-O CPU type",
     );
   });
 
   it("rejects a 32-bit slice payload inside a little-endian container", () => {
-    const bytes = wrapped(false);
+    const { bytes, admitted } = wrapDispatchSlice(false, true);
     bytes.writeUInt32LE(12, 8);
     bytes.writeUInt32LE(0, 12);
-    bytes.writeUInt32LE(0xfeedface, 256);
-    bytes.writeUInt32LE(12, 260);
-    bytes.writeUInt32LE(0, 264);
-    expect(() => decodeAdmitted(bytes, admitted(), "arm")).toThrow(
+    bytes.writeUInt32LE(0xfeedface, dispatchFatOffset);
+    bytes.writeUInt32LE(12, dispatchFatOffset + 4);
+    bytes.writeUInt32LE(0, dispatchFatOffset + 8);
+    expect(() => decodeAdmitted(bytes, admitted, "arm")).toThrow(
       "Unsupported 32-bit Mach-O metadata",
     );
   });
 
   it("checks the full little-endian FAT64 slice extent", () => {
-    const bytes = wrapped(true);
+    const { bytes, admitted } = wrapDispatchSlice(true, true);
     bytes.writeBigUInt64LE(0x100000000n, 16);
     expect(() =>
-      decodeAdmitted(bytes, { offset: 0x100000000, size: admitted().size }),
+      decodeAdmitted(bytes, { offset: 0x100000000, size: admitted.size }),
     ).toThrow("FAT architecture 0 slice range extends beyond the file");
   });
 });
@@ -2985,6 +3086,7 @@ describe("Objective-C category class property applicability", () => {
   it("reports a class property list bound to another image as not decoded", () => {
     const bytes = withLegacyFixups(categoryImage(0x40, 0));
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_external_list\0"),
       0x51, // SET_TYPE_IMM pointer
@@ -3050,5 +3152,473 @@ describe("Objective-C category class property applicability", () => {
         "category_class_properties_not_decoded at 0x100000b70",
       ),
     });
+  });
+});
+
+/**
+ * Minimal Mach-O with one `__objc_protolist` entry pointing at a `protocol_t`
+ * at 0x740 (`instanceProperties` at 0x778, `size` at 0x780, `_classProperties` at 0x798).
+ */
+const protocolClassPropertiesImage = (
+  protocolSize: number,
+  classProperties: number,
+): Buffer => {
+  const bytes = Buffer.alloc(4096);
+  const u32 = (offset: number, value: number) =>
+    bytes.writeUInt32LE(value, offset);
+  const ptr = (offset: number, target: number) =>
+    bytes.writeBigUInt64LE(base + BigInt(target), offset);
+  u32(0, 0xfeedfacf);
+  u32(4, 0x0100000c);
+  u32(16, 1);
+  u32(20, 152);
+  u32(32, 0x19);
+  u32(36, 152);
+  bytes.write("__DATA", 40);
+  ptr(56, 0);
+  bytes.writeBigUInt64LE(4096n, 64);
+  bytes.writeBigUInt64LE(4096n, 80);
+  u32(92, 5);
+  u32(96, 1);
+  bytes.write("__objc_protolist", 104);
+  bytes.write("__DATA", 120);
+  ptr(136, 0x708);
+  bytes.writeBigUInt64LE(8n, 144);
+  u32(152, 0x708);
+  ptr(0x708, 0x740);
+  ptr(0x748, 0x900);
+  ptr(0x758, 0x800);
+  ptr(0x778, 0x600);
+  u32(0x780, protocolSize);
+  if (classProperties !== 0) ptr(0x798, classProperties);
+  u32(0x800, 24);
+  u32(0x804, 1);
+  ptr(0x808, 0x920);
+  u32(0x600, 16);
+  u32(0x604, 1);
+  ptr(0x608, 0x640);
+  ptr(0x610, 0x650);
+  bytes.write("title\0", 0x640);
+  bytes.write("Tq,N\0", 0x650);
+  bytes.write("FixtureProtocol\0", 0x900);
+  bytes.write("requiredAction:\0", 0x920);
+  return bytes;
+};
+
+describe("Objective-C protocol class properties", () => {
+  /** Append LC_DYLD_INFO_ONLY at 184; rebase stream is at 192, bind stream is at 200. */
+  const withLegacyFixups = (bytes: Buffer): Buffer => {
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(200, 20);
+    bytes.writeUInt32LE(0x80000022, 184);
+    bytes.writeUInt32LE(48, 188);
+    return bytes;
+  };
+  /** Bind segment 0 offset 0x798 (`_classProperties`) to an external symbol. */
+  const bindClassProperties = (bytes: Buffer, symbol: string): void => {
+    const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
+      0x40,
+      ...Buffer.from(`${symbol}\0`),
+      0x51, // SET_TYPE_IMM pointer
+      0x70, // SET_SEGMENT_AND_OFFSET_ULEB: segment 0, offset 0x798
+      0x98,
+      0x0f,
+      0x90, // DO_BIND
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xf00);
+    bytes.writeUInt32LE(0xf00, 200);
+    bytes.writeUInt32LE(bindings.length, 204);
+  };
+  /** Rebase segment 0 offset 0x798 (`_classProperties`) as a 64-bit pointer. */
+  const rebaseClassProperties = (bytes: Buffer): void => {
+    const rebases = Buffer.from([
+      0x11, // REBASE_OPCODE_SET_TYPE_IMM pointer
+      0x20, // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: segment 0, offset 0x798
+      0x98,
+      0x0f,
+      0x51, // REBASE_OPCODE_DO_REBASE_IMM_TIMES 1
+      0x00,
+    ]);
+    rebases.copy(bytes, 0xf80);
+    bytes.writeUInt32LE(0xf80, 192);
+    bytes.writeUInt32LE(rebases.length, 196);
+  };
+  const protocolFacts = (bytes: Buffer) => {
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    return {
+      protocols: result.objc_protocols,
+      decode: result.objc_protocol_records.map(({ decode }) => decode),
+      coverage: result.coverage.find(
+        ({ facet }) => facet === "objc_class_method_ivar_metadata",
+      ),
+    };
+  };
+
+  it("marks a protocol partial when its class property list is a raw or rebased pointer", () => {
+    for (const withRebase of [false, true]) {
+      const bytes = protocolClassPropertiesImage(96, 0x600);
+      if (withRebase) {
+        withLegacyFixups(bytes);
+        rebaseClassProperties(bytes);
+      }
+      const { protocols, decode, coverage } = protocolFacts(bytes);
+      expect(protocols[0]?.properties.map(({ name }) => name)).toEqual([
+        "title",
+      ]);
+      expect(decode).toEqual([
+        {
+          status: "partial",
+          reason: "protocol class properties are not decoded",
+        },
+      ]);
+      expect(coverage).toMatchObject({
+        status: "partial",
+        reason: expect.stringContaining(
+          "Protocol 0x100000740: Objective-C protocol FixtureProtocol properties: protocol class properties are not decoded",
+        ),
+      });
+    }
+  });
+
+  it.each([
+    ["raw null class property list", 96, 0, false],
+    ["rebased null class property list", 96, 0, true],
+    [
+      "older protocol revision without _classProperties (88 bytes)",
+      88,
+      0x600,
+      false,
+    ],
+    ["protocol record ending before offset 96 (95 bytes)", 95, 0x600, false],
+  ])(
+    "keeps a protocol decoded when it has a %s",
+    (_, size, classProperties, withRebase) => {
+      const bytes = protocolClassPropertiesImage(size, classProperties);
+      if (withRebase) {
+        withLegacyFixups(bytes);
+        rebaseClassProperties(bytes);
+      }
+      const { decode, coverage } = protocolFacts(bytes);
+      expect(decode).toEqual([{ status: "decoded", reason: null }]);
+      expect(coverage).toMatchObject({ status: "complete", reason: null });
+    },
+  );
+
+  it("reports a protocol class property list bound to another image as not decoded", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    bindClassProperties(bytes, "_external_protocol_class_props");
+    const { protocols, decode, coverage } = protocolFacts(bytes);
+    expect(protocols[0]?.methods).toMatchObject([
+      { selector: "requiredAction:" },
+    ]);
+    expect(protocols[0]?.properties.map(({ name }) => name)).toEqual(["title"]);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason:
+          "protocol class properties are bound to _external_protocol_class_props and are not decoded",
+      },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "Protocol 0x100000740: Objective-C protocol FixtureProtocol properties: protocol class properties are bound to _external_protocol_class_props and are not decoded",
+      ),
+    });
+  });
+
+  it("does not read a zero protocol class property field as null when its fixups are unknown", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    // An undecodable rebase stream leaves every raw pointer's fixup unknown.
+    bytes.writeUInt32LE(0xf80, 192);
+    bytes.writeUInt32LE(1, 196);
+    bytes.writeUInt8(0xf0, 0xf80);
+    const { decode, coverage } = protocolFacts(bytes);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason: expect.stringContaining(
+          "protocol class property list at 0x100000798: LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
+        ),
+      },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "Protocol 0x100000740: Objective-C protocol FixtureProtocol properties: protocol class property list at 0x100000798: LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
+      ),
+    });
+  });
+
+  it("marks a nonzero protocol class property field not decoded when its fixups are unknown", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0x600));
+    bytes.writeUInt32LE(0xf80, 192);
+    bytes.writeUInt32LE(1, 196);
+    bytes.writeUInt8(0xf0, 0xf80);
+    const { decode, coverage } = protocolFacts(bytes);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason: "protocol class properties are not decoded",
+      },
+    ]);
+    expect(coverage).toMatchObject({ status: "partial" });
+  });
+
+  it("reports an unsupported fixup on a protocol class property field while retaining decoded facts", () => {
+    const bytes = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    bindClassProperties(bytes, "_external_protocol_class_props");
+    rebaseClassProperties(bytes);
+    const { protocols, decode, coverage } = protocolFacts(bytes);
+    expect(protocols[0]?.properties.map(({ name }) => name)).toEqual(["title"]);
+    expect(decode).toEqual([
+      {
+        status: "partial",
+        reason:
+          "protocol class property list at 0x100000798: Both bind and rebase records target pointer location 0x100000798",
+      },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "protocol class property list at 0x100000798: Both bind and rebase records target pointer location 0x100000798",
+      ),
+    });
+  });
+
+  it("retains protocol facts when _classProperties is unmapped or instance properties also fail", () => {
+    const unmapped = protocolClassPropertiesImage(96, 0);
+    // Place the 96-byte protocol at 0xfa8 so its first 88 bytes are mapped and +88 lies at 0x1000 past the segment end.
+    unmapped.copy(unmapped, 0xfa8, 0x740, 0x798);
+    unmapped.writeBigUInt64LE(base + 0xfa8n, 0x708);
+    const unmappedFacts = protocolFacts(unmapped);
+    expect(unmappedFacts.protocols[0]).toMatchObject({
+      name: "FixtureProtocol",
+      methods: [{ selector: "requiredAction:" }],
+      properties: [{ name: "title" }],
+    });
+    expect(unmappedFacts.decode).toEqual([
+      {
+        status: "partial",
+        reason: expect.stringContaining(
+          "protocol class property list at 0x100001000:",
+        ),
+      },
+    ]);
+    expect(unmappedFacts.coverage).toMatchObject({ status: "partial" });
+
+    const bothFailed = withLegacyFixups(protocolClassPropertiesImage(96, 0));
+    bothFailed.writeBigUInt64LE(base + 0x5000n, 0x778); // unmapped instanceProperties
+    bindClassProperties(bothFailed, "_external_protocol_class_props");
+    const bothFacts = protocolFacts(bothFailed);
+    expect(bothFacts.protocols[0]).toMatchObject({
+      name: "FixtureProtocol",
+      methods: [{ selector: "requiredAction:" }],
+      properties: [],
+    });
+    expect(bothFacts.decode[0]?.status).toBe("partial");
+    expect(bothFacts.decode[0]?.reason).toContain("0x100005000");
+    expect(bothFacts.decode[0]?.reason).toContain(
+      "protocol class properties are bound to _external_protocol_class_props and are not decoded",
+    );
+  });
+
+  it("propagates unexpected errors thrown while resolving _classProperties", () => {
+    const result: Parameters<typeof decodeObjcDispatchFacets>[0]["result"] = {
+      objc_classes: [],
+      objc_protocols: [],
+      objc_categories: [],
+      swift_decls: [],
+      objc_ivars: [],
+      objc_protocol_records: [],
+      objc_dispatch_implementations: [],
+      swift_conformances: [],
+      swift_dispatch_slots: [],
+      swift_symbols: [],
+      relative_pointers: [],
+      coverage: [],
+      db_save_result: null,
+    };
+    const readers: Parameters<typeof decodeObjcDispatchFacets>[0]["readers"] = {
+      pointer: (addr) => {
+        if (addr === 0x1000n) return 0x2000n;
+        if (addr === 0x2008n) return 0x3000n;
+        return 0n;
+      },
+      u32: (addr) => (addr === 0x2040n ? 96 : 0),
+      u64: () => 0n,
+      i32: () => 0,
+      resolvePointer: () => {
+        throw new TypeError("unexpected fixup failure");
+      },
+      bound: () => undefined,
+      string: () => "FixtureProtocol",
+      location: (addr) => ({
+        address: `0x${addr.toString(16)}`,
+        file_offset: 0,
+      }),
+      evidence: (addr, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: { address: `0x${addr.toString(16)}`, file_offset: 0 },
+          artifact_path: "/fixture",
+          artifact_sha256: "0".repeat(64),
+        },
+      ],
+      offset: () => 0,
+    };
+    expect(() =>
+      decodeObjcDispatchFacets({
+        sections: [{ name: "__objc_protolist", address: 0x1000n, size: 8 }],
+        segments: [],
+        readers,
+        budget: {
+          truncated: false,
+          admit: () => true,
+          isFull: () => false,
+          markTruncated: () => {},
+        },
+        maxListSlots: 10,
+        result,
+      }),
+    ).toThrow(TypeError);
+  });
+});
+
+describe("Objective-C class method owner index parity", () => {
+  it("projects instance and class methods accurately across multiple classes without cross-class leakage", () => {
+    const result: Parameters<typeof decodeObjcDispatchFacets>[0]["result"] = {
+      objc_classes: [],
+      objc_protocols: [],
+      objc_categories: [],
+      swift_decls: [],
+      objc_ivars: [],
+      objc_protocol_records: [],
+      objc_dispatch_implementations: [],
+      swift_conformances: [],
+      swift_dispatch_slots: [],
+      swift_symbols: [],
+      relative_pointers: [],
+      coverage: [],
+      db_save_result: null,
+    };
+    const classNames = ["Alpha", "Beta", "Alpha"]; // includes duplicate class name edge case
+    const segments = [
+      {
+        address: 0x1000000n,
+        size: 0x100000n,
+        offset: 0,
+        executable: true,
+      },
+    ];
+    const sections = [
+      {
+        name: "__objc_classlist",
+        address: 0x20000n,
+        size: classNames.length * 8,
+      },
+    ];
+    const readers: Parameters<typeof decodeObjcDispatchFacets>[0]["readers"] = {
+      pointer: (addr) => {
+        if (addr >= 0x20000n && addr < 0x20000n + BigInt(classNames.length * 8))
+          return 0x100000n + BigInt(Number((addr - 0x20000n) / 8n) * 256);
+        if (addr >= 0x100000n && addr < 0x101000n) {
+          const off = Number(addr - 0x100000n) % 256;
+          const baseAddr = addr - BigInt(off);
+          if (off === 0) return baseAddr + 128n;
+          if (off === 32) return baseAddr + 0x100000n;
+          if (off === 160) return baseAddr + 128n + 0x100000n;
+          return 0n;
+        }
+        if (addr >= 0x200000n && addr < 0x201000n) {
+          const rel = Number(addr - 0x200000n) % 256;
+          const baseAddr = addr - BigInt(rel);
+          if (rel === 24 || rel === 152) return baseAddr;
+          if (rel === 32) return baseAddr - 0x100000n + 0x200000n;
+          if (rel === 160) return baseAddr + 128n - 0x100000n + 0x200000n;
+          return 0n;
+        }
+        if (addr >= 0x300000n && addr < 0x301000n) {
+          const off = Number(addr & 0x7fn);
+          if (off === 8) return addr + 0x400000n;
+          if (off === 24) return 0x1000000n + (addr & 0xfffn);
+        }
+        return 0n;
+      },
+      u32: (addr) => {
+        if (addr >= 0x200000n && addr < 0x201000n) {
+          const rel = Number(addr - 0x200000n) % 256;
+          return rel === 0 || rel === 128 ? 2 : 0;
+        }
+        if (addr >= 0x300000n && addr < 0x301000n) {
+          const off = Number(addr & 0x7fn);
+          if (off === 0) return 24;
+          if (off === 4) return 1;
+        }
+        return 0;
+      },
+      u64: () => 0n,
+      i32: () => 0,
+      resolvePointer: () => ({ kind: "raw", target: 0n }),
+      bound: () => undefined,
+      string: (addr) => {
+        if (addr >= 0x200000n && addr < 0x201000n) {
+          const idx = Math.floor(Number(addr - 0x200000n) / 256);
+          return classNames[idx]!;
+        }
+        const meta = (Number(addr - 0x700000n) & 0x80) !== 0;
+        const idx = Math.floor(Number(addr - 0x700000n) / 256);
+        return `${classNames[idx]!}_${meta ? "cls" : "inst"}_${idx}`;
+      },
+      location: (addr) => ({
+        address: `0x${addr.toString(16)}`,
+        file_offset: 0,
+      }),
+      evidence: (addr, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: { address: `0x${addr.toString(16)}`, file_offset: 0 },
+          artifact_path: "/fixture",
+          artifact_sha256: "0".repeat(64),
+        },
+      ],
+      offset: () => 0,
+    };
+    let budget = 1000;
+    decodeObjcDispatchFacets({
+      sections,
+      segments,
+      readers,
+      budget: {
+        truncated: false,
+        admit: () => budget-- > 0,
+        isFull: () => budget <= 0,
+        markTruncated: () => {},
+      },
+      maxListSlots: 100,
+      result,
+    });
+    expect(result.objc_classes).toHaveLength(6);
+    expect(result.objc_classes[0]!.methods.map((m) => m.selector)).toEqual([
+      "Alpha_inst_0",
+    ]);
+    expect(result.objc_classes[1]!.methods.map((m) => m.selector)).toEqual([
+      "Alpha_cls_0",
+    ]);
+    expect(result.objc_classes[2]!.methods.map((m) => m.selector)).toEqual([
+      "Beta_inst_1",
+    ]);
+    expect(result.objc_classes[3]!.methods.map((m) => m.selector)).toEqual([
+      "Beta_cls_1",
+    ]);
+    // Duplicate class name sees prior entries for same (class_name, method_type), matching filter parity.
+    expect(result.objc_classes[4]!.methods.map((m) => m.selector)).toEqual([
+      "Alpha_inst_0",
+      "Alpha_inst_2",
+    ]);
   });
 });

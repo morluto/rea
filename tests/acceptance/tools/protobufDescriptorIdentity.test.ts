@@ -71,134 +71,150 @@ const retainedDetailsSchema = z.object({
 });
 
 cliTest.for([
-  "forward",
-  "reverse",
-  "nested",
-  "oneof",
-  "name-forward",
-  "name-reverse",
-  "nested-name",
-  ...Object.keys(invalidFieldNumbers),
+  {
+    problem: "duplicate field numbers",
+    diagnostic: "Duplicate field number 1",
+    variants: ["forward", "reverse", "nested", "oneof"],
+  },
+  {
+    problem: "duplicate field names",
+    diagnostic: "Duplicate field name",
+    variants: ["name-forward", "name-reverse", "nested-name"],
+  },
+  {
+    problem: "invalid field numbers",
+    diagnostic: "Invalid field number",
+    variants: Object.keys(invalidFieldNumbers),
+  },
 ])(
-  "refuses ambiguous descriptor field identities through CLI/MCP while retaining source Evidence: %s",
-  async (variant, { cli }) => {
+  "refuses $problem through CLI/MCP while retaining source Evidence",
+  async ({ diagnostic, variants }, { cli }) => {
     const root = await createTestTempDirectory("rea-protobuf-field-identity-");
-    const capture = join(root, "capture.har");
-    const text = protobufHar(body, "application/x-protobuf");
-    await writeFile(capture, text);
     const call = await cli.sharedMcpCall!();
-    const definition = descriptorDefinition();
-    const message = definition.file[0]!.messageType[0]!;
-    if (variant in invalidFieldNumbers) {
-      message.field[1]!.number = invalidFieldNumbers[variant]!;
-    } else if (variant === "name-forward" || variant === "name-reverse") {
-      message.field[1]!.name = message.field[0]!.name;
-      if (variant === "name-reverse") message.field.reverse();
-    } else if (variant === "nested-name") {
-      message.nestedType[0]!.field.push(
-        create(FieldDescriptorProtoSchema, {
-          name: "value",
-          number: 2,
-          type: 5,
-          label: 1,
-        }),
-      );
-    } else if (variant === "nested") {
-      message.nestedType[0]!.field.push(
-        create(FieldDescriptorProtoSchema, {
-          name: "alias",
-          number: 1,
-          type: 5,
-          label: 1,
-        }),
-      );
-    } else if (variant === "oneof") {
-      message.oneofDecl.push(
-        create(OneofDescriptorProtoSchema, { name: "choice" }),
-      );
-      message.field.push(
-        create(FieldDescriptorProtoSchema, {
-          name: "alias",
-          number: 1,
-          type: 5,
-          label: 1,
-          oneofIndex: 0,
-        }),
-      );
-    } else {
-      message.field[1]!.number = 1;
-      if (variant === "reverse") message.field.reverse();
-    }
-    const descriptor = join(root, `${variant}.pb`);
-    const bytes = toBinary(FileDescriptorSetSchema, definition);
-    await writeFile(descriptor, bytes);
-    const output = await cli.run({
-      arguments: [
-        "inspect-web-network-capture",
-        capture,
-        "har",
-        "--record",
-        "0",
-        "--protobuf-schema",
-        descriptor,
-        "--protobuf-message",
-        "capture.Message",
-        "--json",
-      ],
-    });
-    const expected = {
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["protobuf", "schema", "descriptor_set_path"],
-            reason: "invalid_format",
+    const text = protobufHar(body, "application/x-protobuf");
+    for (const [index, variant] of variants.entries()) {
+      const capture = join(root, `${variant}.har`);
+      await writeFile(capture, text);
+      const definition = descriptorDefinition();
+      const message = definition.file[0]!.messageType[0]!;
+      if (variant in invalidFieldNumbers) {
+        message.field[1]!.number = invalidFieldNumbers[variant]!;
+      } else if (variant === "name-forward" || variant === "name-reverse") {
+        message.field[1]!.name = message.field[0]!.name;
+        if (variant === "name-reverse") message.field.reverse();
+      } else if (variant === "nested-name") {
+        message.nestedType[0]!.field.push(
+          create(FieldDescriptorProtoSchema, {
+            name: "value",
+            number: 2,
+            type: 5,
+            label: 1,
+          }),
+        );
+      } else if (variant === "nested") {
+        message.nestedType[0]!.field.push(
+          create(FieldDescriptorProtoSchema, {
+            name: "alias",
+            number: 1,
+            type: 5,
+            label: 1,
+          }),
+        );
+      } else if (variant === "oneof") {
+        message.oneofDecl.push(
+          create(OneofDescriptorProtoSchema, { name: "choice" }),
+        );
+        message.field.push(
+          create(FieldDescriptorProtoSchema, {
+            name: "alias",
+            number: 1,
+            type: 5,
+            label: 1,
+            oneofIndex: 0,
+          }),
+        );
+      } else {
+        message.field[1]!.number = 1;
+        if (variant === "reverse") message.field.reverse();
+      }
+      const descriptor = join(root, `${variant}.pb`);
+      const bytes = toBinary(FileDescriptorSetSchema, definition);
+      await writeFile(descriptor, bytes);
+      const expected = {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["protobuf", "schema", "descriptor_set_path"],
+              reason: "invalid_format",
+              message: expect.stringContaining(
+                variant in invalidFieldNumbers
+                  ? `${diagnostic} ${invalidFieldNumbers[variant]}`
+                  : diagnostic,
+              ),
+            },
+          ],
+        },
+      };
+      if (index === 0) {
+        const output = await cli.run({
+          arguments: [
+            "inspect-web-network-capture",
+            capture,
+            "har",
+            "--record",
+            "0",
+            "--protobuf-schema",
+            descriptor,
+            "--protobuf-message",
+            "capture.Message",
+            "--json",
+          ],
+        });
+        expect(output.exitCode, variant).toBe(1);
+        expect(output.json, variant).toMatchObject(expected);
+      }
+      const response = await call("inspect_web_network_capture", {
+        capture_path: capture,
+        format: "har",
+        record_ordinals: [0],
+        protobuf: {
+          schema: {
+            descriptor_set_path: descriptor,
+            message_type: "capture.Message",
           },
-        ],
-      },
-    };
-    expect(output.exitCode, variant).toBe(1);
-    expect(output.json, variant).toMatchObject(expected);
-    const response = await call("inspect_web_network_capture", {
-      capture_path: capture,
-      format: "har",
-      record_ordinals: [0],
-      protobuf: {
-        schema: {
-          descriptor_set_path: descriptor,
-          message_type: "capture.Message",
         },
-      },
-    });
-    const error = parseMcpToolError(response).error;
-    expect(error, variant).toMatchObject(expected);
-    const source = retainedDetailsSchema.parse(
-      error.details,
-    ).partial_observation;
-    const retained = await call("inspect_analysis_view", {
-      source,
-      view: { kind: "summary" },
-    });
-    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-    expect(
-      analysisViewResultSchema.parse(
-        parseEvidence(retained.structuredContent).normalized_result,
-      ),
-    ).toMatchObject({
-      summary: {
-        artifact: {
-          path: capture,
-          bytes: Buffer.byteLength(text),
-          sha256: sha256(text),
+      });
+      const error = parseMcpToolError(response).error;
+      expect(error, variant).toMatchObject(expected);
+      const source = retainedDetailsSchema.parse(
+        error.details,
+      ).partial_observation;
+      const retained = await call("inspect_analysis_view", {
+        source,
+        view: { kind: "summary" },
+      });
+      expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+      expect(
+        analysisViewResultSchema.parse(
+          parseEvidence(retained.structuredContent).normalized_result,
+        ),
+      ).toMatchObject({
+        summary: {
+          artifact: {
+            path: capture,
+            bytes: Buffer.byteLength(text),
+            sha256: sha256(text),
+          },
+          retained_records: 1,
+          protobuf_coverage: { status: "partial", inspected_records: 0 },
         },
-        retained_records: 1,
-        protobuf_coverage: { status: "partial", inspected_records: 0 },
-      },
-    });
-    expect(Buffer.compare(await readFile(descriptor), Buffer.from(bytes))).toBe(
-      0,
-    );
-    expect(await readFile(capture, "utf8")).toBe(text);
+      });
+      expect(
+        Buffer.compare(await readFile(descriptor), Buffer.from(bytes)),
+      ).toBe(0);
+      expect(await readFile(capture, "utf8")).toBe(text);
+    }
   },
 );
 

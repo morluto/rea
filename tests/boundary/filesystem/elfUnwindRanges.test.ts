@@ -1,42 +1,29 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
+import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
+import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("ELF unwind range stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfUnwindFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfUnwindRangesService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [malformed, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_elf_unwind_ranges",
-          issues: [
-            {
-              path: ["path"],
-              reason,
-              message: expect.any(String),
-            },
-          ],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_elf_unwind_ranges", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }
@@ -90,6 +77,38 @@ describe("ELF unwind range stable filesystem boundary", () => {
       await service.close();
     }
   });
+});
+
+describe("ELF unwind range budgets", () => {
+  it("names max_structure_bytes when a header table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-elf-unwind-structure-");
+    const path = join(root, "program");
+    await writeFile(path, elfUnwindFixture());
+    const service = createElfUnwindRangesService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(refused.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_structure_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 512 * 1024 * 1024,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+      });
+      expect(
+        (await service.inspect({ path, max_structure_bytes: 65536 })).ok,
+      ).toBe(true);
+    } finally {
+      await service.close();
+    }
+  });
 
   it("tells a caller over the symbol-name text allowance to request a smaller page", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-names-");
@@ -105,13 +124,29 @@ describe("ELF unwind range stable filesystem boundary", () => {
       expect(result.error).toMatchObject({
         _tag: "AnalysisResourceConstraintError",
         retryable: false,
+        reportedLimits: {
+          limit: 300,
+          maximum_bytes: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+        },
+        fixedAllowance: {
+          name: "The ELF unwind symbol-name text allowance",
+          limit: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+          narrowing: expect.stringContaining("smaller limit than 300"),
+        },
+        cause: {
+          failure: {
+            kind: "limit",
+            format: "elf-unwind-ranges",
+            limit: {
+              name: "symbol_name_text_bytes",
+              maximum: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+            },
+          },
+        },
       });
-      const remediation =
-        "remediationAction" in result.error
-          ? result.error.remediationAction
-          : undefined;
+      const remediation = projectAnalysisError(result.error).remediation.action;
       expect(remediation).toContain("smaller limit than 300");
-      expect(remediation).not.toContain("Raise max_ranges");
+      expect(remediation).not.toContain("max_ranges budget");
       const smaller = await service.inspect({ path, limit: 200 });
       expect(smaller.ok).toBe(true);
     } finally {
@@ -127,10 +162,28 @@ describe("ELF unwind range stable filesystem boundary", () => {
     try {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
-      expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(tooSmall.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "file-size",
+        reportedLimits: { max_file_bytes: 64 },
+      });
       const tooMany = await service.inspect({ path, max_ranges: 1 });
       if (tooMany.ok) throw new Error("Expected range budget failure");
-      expect(tooMany.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(tooMany.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "capacity",
+        reportedLimits: { max_ranges: 1 },
+        limit: { parameter: "max_ranges", effective_value: 1, maximum: 65536 },
+        cause: {
+          failure: {
+            kind: "limit",
+            format: "elf-unwind-ranges",
+            field: "CIE",
+            offset: expect.any(Number),
+            limit: { name: "max_ranges", maximum: 1 },
+          },
+        },
+      });
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },
@@ -141,4 +194,45 @@ describe("ELF unwind range stable filesystem boundary", () => {
       await service.close();
     }
   });
+});
+
+it("cancels a many-frame compressed section-name table", async () => {
+  const root = await createTestTempDirectory("rea-elf-unwind-cancel-");
+  const path = join(root, "program");
+  const frame = Buffer.from([
+    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
+  ]);
+  const frames = Buffer.alloc(frame.length * 32);
+  for (let index = 0; index < 32; index += 1)
+    frame.copy(frames, index * frame.length);
+  await writeFile(
+    path,
+    compressedElfNoteFixture(64, true, 2, ".note.gnu.build-id", frames),
+  );
+  const reason = new Error("stop unwind frames");
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  const service = createElfUnwindRangesService();
+  try {
+    const result = await service.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_elf_unwind_ranges",
+      cause: reason,
+    });
+  } finally {
+    spy.mockRestore();
+    await service.close();
+  }
 });

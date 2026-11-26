@@ -1,8 +1,11 @@
-import type { FileHandle } from "node:fs/promises";
+import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
+import { aps2Relocations } from "../../tests/fixtures/elfAndroidPacked.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const payloadOffset = 132;
 const source = (
@@ -189,5 +192,130 @@ it.each([false, true])(
       },
     });
     expect(reads.includes(4096)).toBe(!compressed);
+  },
+);
+
+const relrWord = Buffer.from([0, 3, 0, 0]);
+const packedRel = aps2Relocations([{ offset: 768n, info: 3n }], "rel");
+
+it.each([
+  { name: "absent", tags: [], payload: Buffer.alloc(0), count: 0 },
+  {
+    name: "ordinary REL",
+    tags: [
+      [17, 512],
+      [18, 8],
+      [19, 8],
+    ],
+    payload: Buffer.from([0, 3, 0, 0, 3, 0, 0, 0]),
+    count: 1,
+  },
+  {
+    name: "standard RELR",
+    tags: [
+      [36, 512],
+      [35, relrWord.length],
+      [37, 4],
+    ],
+    payload: relrWord,
+    reason: "shared RELR relocation declarations",
+  },
+  {
+    name: "Android RELR",
+    tags: [
+      [0x6fffe000, 512],
+      [0x6fffe001, relrWord.length],
+      [0x6fffe003, 4],
+    ],
+    payload: relrWord,
+    reason: "Android relocation declarations",
+  },
+  {
+    name: "Android packed REL",
+    tags: [
+      [0x6000000f, 512],
+      [0x60000010, packedRel.length],
+    ],
+    payload: packedRel,
+    reason: "Android relocation declarations",
+  },
+  {
+    name: "Android RELR section",
+    tags: [],
+    payload: relrWord,
+    sectionType: 0x6fffff00,
+    reason: "section relocation declarations",
+  },
+  {
+    name: "Android packed REL section",
+    tags: [],
+    payload: packedRel,
+    sectionType: 0x60000001,
+    reason: "section relocation declarations",
+  },
+] as const)(
+  "reports only inspected MIPS shared relocations ($name)",
+  async (row) => {
+    const bytes = Buffer.alloc(1024);
+    bytes.set([0x7f, 0x45, 0x4c, 0x46, 1, 1, 1]);
+    bytes.writeUInt16LE(3, 16);
+    bytes.writeUInt16LE(8, 18);
+    bytes.writeUInt32LE(1, 20);
+    bytes.writeUInt32LE(52, 28);
+    bytes.writeUInt32LE(0x70001001, 36);
+    bytes.writeUInt16LE(52, 40);
+    bytes.writeUInt16LE(32, 42);
+    bytes.writeUInt16LE(2, 44);
+    bytes.writeUInt16LE(40, 46);
+    bytes.writeUInt32LE(1, 52);
+    bytes.writeUInt32LE(bytes.length, 68);
+    bytes.writeUInt32LE(bytes.length, 72);
+    bytes.writeUInt32LE(2, 84);
+    bytes.writeUInt32LE(256, 88);
+    bytes.writeUInt32LE(256, 92);
+    bytes.writeUInt32LE((row.tags.length + 1) * 8, 100);
+    bytes.writeUInt32LE((row.tags.length + 1) * 8, 104);
+    for (const [index, [tag, value]] of row.tags.entries()) {
+      bytes.writeUInt32LE(tag, 256 + index * 8);
+      bytes.writeUInt32LE(value, 260 + index * 8);
+    }
+    if ("sectionType" in row) {
+      bytes.writeUInt32LE(640, 32);
+      bytes.writeUInt16LE(2, 48);
+      bytes.writeUInt32LE(row.sectionType, 684);
+      bytes.writeUInt32LE(512, 696);
+      bytes.writeUInt32LE(row.payload.length, 700);
+    }
+    row.payload.copy(bytes, 512);
+    const path = join(
+      await createTestTempDirectory("rea-mips-relocations-"),
+      "image.elf",
+    );
+    await writeFile(path, bytes);
+    const handle = await open(path, "r");
+    try {
+      const result = await readMipsElfMetadata(
+        handle,
+        { elfClass: 32, byteOrder: "little", type: 3, flags: 0x70001001 },
+        () => {},
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          sharedLoad:
+            "reason" in row
+              ? {
+                  status: "unavailable",
+                  reason: expect.stringContaining(row.reason),
+                }
+              : {
+                  status: "complete",
+                  relocationCount: row.count,
+                },
+        },
+      });
+    } finally {
+      await handle.close();
+    }
   },
 );

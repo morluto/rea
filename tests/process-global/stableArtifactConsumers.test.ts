@@ -79,7 +79,9 @@ import {
   resolvedAnalysisError,
 } from "../../src/domain/analysisErrorBase.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
+import { retainedEvidenceReferenceSchema } from "../../src/domain/evidenceReference.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ParseFailureError } from "../../src/domain/parseFailure.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -151,16 +153,21 @@ import { inspectWindowsShortcutInputSchema } from "../../src/domain/native/windo
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
-import { ggufFixture } from "../fixtures/model/model.js";
+import { ggufFixture, safetensorsFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
-import { createRustImage } from "../fixtures/rust/image.js";
+import {
+  createRustImage,
+  RUSTC_HASH,
+  rustDependencyPayload,
+} from "../fixtures/rust/image.js";
 import { createIl2cppMetadataFixture } from "../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { mcpTest } from "../support/mcp/mcpFixture.js";
+import { producerLimitControl } from "../../src/domain/producerResourceLimits.js";
 
 beforeEach(() => {
   fault.path = "";
@@ -204,6 +211,36 @@ it("preserves opaque NuGet decoder failures and the completed file identity", as
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
+    });
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
+    enumeration.mockRestore();
+    await provider.close();
+  }
+});
+
+it("reports a NuGet package changed after hashing when its ZIP decode fails", async () => {
+  const path = await selectedImage();
+  const bytes = await nugetNupkgFixture();
+  await writeFile(path, bytes);
+  fault.blockNew = false;
+  const enumerate = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      await writeFile(path, Buffer.alloc(bytes.length));
+      return yield* enumerate.call(this, options);
+    });
+  const provider = new NugetNupkgProvider();
+  try {
+    const result = await provider.inspect(
+      inspectNugetNupkgInputSchema.parse({ path }),
+    );
+    if (result.ok) throw new Error("Expected source change");
+    expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
+    expect(result.error).toMatchObject({
+      integrityCheck: "container-identity",
     });
     expect(fault.handles).toHaveLength(1);
     expect(fault.handles[0]?.fd).toBe(-1);
@@ -272,11 +309,10 @@ it.each(
 );
 
 it.each(
-  ["Rust service", "selected producer input", "source map"].flatMap(
-    (consumer) =>
-      ["close failure", "close cancellation", "physical failure"].map(
-        (outcome) => ({ consumer, outcome }),
-      ),
+  ["selected producer input", "source map"].flatMap((consumer) =>
+    ["close failure", "close cancellation", "physical failure"].map(
+      (outcome) => ({ consumer, outcome }),
+    ),
   ),
 )(
   "retains completed caller input for $consumer through $outcome",
@@ -293,7 +329,6 @@ it.each(
       fault.onClose = () => controller.abort(reason);
     if (outcome === "physical failure") fault.readFailure = { cause: physical };
     const { sourceMap: _sourceMap, ...script } = webSourceLocationFixture();
-    const rust = new RustBinaryService(new RustBinaryProvider());
     const web = new LocalWebSourceLocationArtifacts({
       load: () => Promise.resolve(ok(script)),
     });
@@ -305,34 +340,27 @@ it.each(
       { message: "busy", details: {} },
     );
     const close = () =>
-      consumer === "Rust service"
-        ? rust.close()
-        : consumer === "source map"
-          ? web.close()
-          : resources.close();
+      consumer === "source map" ? web.close() : resources.close();
     try {
       const result =
-        consumer === "Rust service"
-          ? await rust.inspect({ path }, { signal: controller.signal })
-          : consumer === "source map"
-            ? await web.load(
-                {
-                  ...webSourceLocationArgs,
-                  source_map: { ...webSourceLocationArgs.source_map, path },
-                },
-                { signal: controller.signal },
-              )
-            : await resources.run(async () =>
-                ok(
-                  await resources.readSelectedArtifact({
-                    path,
-                    maximumBytes: 1024,
-                    allowanceName: "fixture input",
-                    observedOutput: undefined,
-                    signal: controller.signal,
-                  }),
-                ),
-              );
+        consumer === "source map"
+          ? await web.load(
+              {
+                ...webSourceLocationArgs,
+                source_map: { ...webSourceLocationArgs.source_map, path },
+              },
+              { signal: controller.signal },
+            )
+          : await resources.run(async () =>
+              ok(
+                await resources.readSelectedArtifact({
+                  path,
+                  budget: producerLimitControl("input_bytes", 1024, 1024),
+                  observedOutput: undefined,
+                  signal: controller.signal,
+                }),
+              ),
+            );
       if (result.ok)
         throw new Error("Expected descriptor finalization failure");
       expect(result.error.cleanupIncomplete).toBe(true);
@@ -412,44 +440,6 @@ const expectIl2cppSource = (
   });
 };
 
-it.each(staticProviders)(
-  "preserves the exact late-close cancellation cause through %s inspection",
-  async (_name, makeProvider) => {
-    const path = await selectedImage();
-    const provider = makeProvider();
-    if (provider instanceof PeResourcesProvider)
-      await writeFile(path, peResourceFixture().bytes);
-    if (provider instanceof Il2cppMetadataProvider)
-      await writeFile(path, createIl2cppMetadataFixture().bytes);
-    const controller = new AbortController();
-    const reason = new Error("cancel during confirmed descriptor close");
-    fault.blockNew = false;
-    fault.onClose = () => controller.abort(reason);
-    try {
-      const result =
-        provider instanceof PeResourcesProvider
-          ? await provider.inspect(
-              inspectPeResourcesInputSchema.parse({ path }),
-              { signal: controller.signal },
-            )
-          : await provider.inspect({ path }, { signal: controller.signal });
-      if (result.ok) throw new Error("Expected late cancellation");
-      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-      expect(result.error.cause).toBe(reason);
-      if (provider instanceof Il2cppMetadataProvider)
-        expectIl2cppSource(
-          result.error,
-          path,
-          createIl2cppMetadataFixture().bytes,
-        );
-      expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-    } finally {
-      fault.blocked.clear();
-      await provider.close();
-    }
-  },
-);
-
 it.each([false, true])(
   "retains completed IL2CPP source facts through failed close (cancel: %s)",
   async (cancel) => {
@@ -490,71 +480,62 @@ it.each([false, true])(
   },
 );
 
-it.each(
-  staticProviders.flatMap(([name, makeProvider]) => [
-    [
-      name,
-      makeProvider,
-      new ArtifactReaderFailure("integrity", "source replacement", {
-        integrityCheck: "container-identity",
-      }),
-      AnalysisArtifactChangedError,
-    ] as const,
-    [
-      name,
-      makeProvider,
-      Object.assign(new Error("read denied"), { code: "EACCES" }),
-      AnalysisAccessDeniedError,
-    ] as const,
-    [
-      name,
-      makeProvider,
-      new ArtifactReaderFailure("limit", "read limit"),
-      AnalysisResourceConstraintError,
-    ] as const,
-  ]),
-)(
-  "preserves %s read failure after successful close observes cancellation",
-  async (_name, makeProvider, primary, expected) => {
-    const path = await selectedImage();
-    const provider = makeProvider();
-    fault.blockNew = false;
-    fault.readFailure = { cause: primary };
-    const controller = new AbortController();
-    fault.onClose = () => controller.abort(new Error("later cancellation"));
-    try {
-      const result =
-        provider instanceof PeResourcesProvider
-          ? await provider.inspect(
-              inspectPeResourcesInputSchema.parse({ path }),
-              { signal: controller.signal },
-            )
-          : await provider.inspect({ path }, { signal: controller.signal });
-      if (result.ok) throw new Error("Expected primary read failure");
-      expect(result.error).toBeInstanceOf(expected);
-      expect(result.error.cause).toBe(primary);
-      if (provider instanceof Il2cppMetadataProvider)
-        expect(result.error.partialObservation).toBeUndefined();
-      expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-    } finally {
-      await provider.close();
-    }
-  },
-);
+const identityFailure = () =>
+  new ArtifactReaderFailure("integrity", "source replacement", {
+    integrityCheck: "container-identity",
+  });
 
-it.each(staticProviders)(
-  "keeps the primary %s read failure when cancellation arrives during failed close",
-  async (_name, makeProvider) => {
+const descriptorOutcomes = [
+  ["completed read", false, undefined, AnalysisCancelledError],
+  ["identity failure", false, identityFailure, AnalysisArtifactChangedError],
+  [
+    "permission failure",
+    false,
+    () => Object.assign(new Error("read denied"), { code: "EACCES" }),
+    AnalysisAccessDeniedError,
+  ],
+  [
+    "budget failure",
+    false,
+    () => new ArtifactReaderFailure("limit", "read limit"),
+    AnalysisResourceConstraintError,
+  ],
+  ["identity failure", true, identityFailure, AnalysisArtifactChangedError],
+] as const;
+
+it.each(
+  staticProviders.flatMap(([name, makeProvider]) =>
+    descriptorOutcomes
+      .filter(([outcome]) => name !== "Rust" || outcome !== "completed read")
+      .map(([outcome, blocked, failure, expected]) => ({
+        name,
+        makeProvider,
+        outcome,
+        blocked,
+        failure,
+        expected,
+      })),
+  ),
+)(
+  "preserves the $name $outcome through close cancellation (blocked: $blocked)",
+  async ({ makeProvider, blocked, failure, expected }) => {
     const path = await selectedImage();
     const provider = makeProvider();
-    const primary = new ArtifactReaderFailure(
-      "integrity",
-      "controlled source replacement",
-      { integrityCheck: "container-identity" },
-    );
-    fault.readFailure = { cause: primary };
+    const primary = failure?.();
+    const bytes =
+      primary !== undefined
+        ? undefined
+        : provider instanceof PeResourcesProvider
+          ? peResourceFixture().bytes
+          : provider instanceof Il2cppMetadataProvider
+            ? createIl2cppMetadataFixture().bytes
+            : undefined;
+    if (bytes !== undefined) await writeFile(path, bytes);
     const controller = new AbortController();
-    fault.onClose = () => controller.abort(new Error("later cancellation"));
+    const reason = new Error("cancel during descriptor close");
+    fault.blockNew = blocked;
+    fault.onClose = () => controller.abort(reason);
+    if (primary !== undefined) fault.readFailure = { cause: primary };
     try {
       const result =
         provider instanceof PeResourcesProvider
@@ -564,20 +545,36 @@ it.each(staticProviders)(
             )
           : await provider.inspect({ path }, { signal: controller.signal });
       if (result.ok)
-        throw new Error("Expected primary failure and retained descriptor");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      const aggregate = result.error.cause;
-      if (!(aggregate instanceof AggregateError))
-        throw new Error("Missing primary/cleanup aggregate");
-      const [original] = aggregate.errors;
-      expect(original).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect((original as AnalysisArtifactChangedError).cause).toBe(primary);
-      if (provider instanceof Il2cppMetadataProvider)
-        expect(result.error.partialObservation).toBeUndefined();
-      fault.blocked.clear();
-      await provider.close();
-      expect(result.error.cleanupIncomplete).toBe(false);
+        throw new Error(
+          "Expected close cancellation or a primary read failure",
+        );
+      expect(controller.signal.reason).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(blocked);
+      let carried: unknown = result.error;
+      if (blocked) {
+        const aggregate = result.error.cause;
+        if (!(aggregate instanceof AggregateError))
+          throw new Error("Missing primary/cleanup aggregate");
+        [carried] = aggregate.errors;
+      }
+      expect(carried).toBeInstanceOf(expected);
+      expect((carried as Error).cause).toBe(primary ?? reason);
+
+      if (provider instanceof Il2cppMetadataProvider) {
+        if (bytes === undefined)
+          expect(result.error.partialObservation).toBeUndefined();
+        else expectIl2cppSource(result.error, path, bytes);
+      }
+      expect(fault.handles).toHaveLength(1);
+      if (blocked) {
+        expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
+        fault.blocked.clear();
+        await provider.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+      expect(fault.handles[0]?.fd).toBe(-1);
     } finally {
+      fault.onClose = undefined;
       fault.blocked.clear();
       await provider.close();
     }
@@ -615,10 +612,10 @@ afterEach(async () => {
   for (const handle of fault.handles) if (handle.fd >= 0) await handle.close();
 });
 
-const selectedImage = async () => {
+const selectedImage = async (bytes = createRustImage({ format: "elf" })) => {
   const root = await createTestTempDirectory("rea-rust-artifact-owner-");
   const path = join(root, "image.elf");
-  await writeFile(path, createRustImage({ format: "elf" }));
+  await writeFile(path, bytes);
   fault.path = path;
   return path;
 };
@@ -697,6 +694,92 @@ it("preserves a model permission failure when cancellation arrives during close"
   }
 });
 
+it("keeps the model parser cause through failed close and retry", async () => {
+  const path = await selectedImage();
+  const fixture = (depth: number) => {
+    const nested = "[".repeat(depth) + "0" + "]".repeat(depth);
+    return safetensorsFixture(
+      `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+      Buffer.alloc(4),
+    ).bytes;
+  };
+  const provider = new ModelArtifactProvider();
+  try {
+    fault.blockNew = false;
+    await writeFile(path, fixture(1));
+    const valid = await provider.inspect({ path, hash: "header" });
+    expect(valid).toMatchObject({
+      ok: true,
+      value: { tensors: [{ name: "weight" }] },
+    });
+
+    fault.blockNew = true;
+    await writeFile(path, fixture(33));
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Expected a model depth refusal");
+    const { error } = result;
+    const maximum = { maximum_json_depth: 32 };
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { reported_limits: maximum },
+    });
+    expect(error.cleanupPrimary?.cause).toBeInstanceOf(ParseFailureError);
+    expect(error.cleanupPrimary?.cause).toMatchObject({
+      failure: {
+        format: "model",
+        kind: "limit",
+        limit: { name: "json-nesting", maximum: 32 },
+      },
+    });
+    const retained = fault.handles.at(-1);
+    expect(retained?.fd).toBeGreaterThanOrEqual(0);
+    fault.blocked.clear();
+    await provider.close();
+    expect(retained?.fd).toBe(-1);
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: maximum },
+    });
+    expect(resolvedAnalysisError(error).cause).toBe(
+      error.cleanupPrimary?.cause,
+    );
+  } finally {
+    fault.blocked.clear();
+    await provider.close();
+  }
+});
+
+it.each(["model", "foreign-fixture"])(
+  "projects only a model-owned parser limit with its enforced maximum (%s)",
+  async (format) => {
+    const path = await selectedImage();
+    const injected = new ParseFailureError({
+      format,
+      kind: "limit",
+      detail: "fixture-owned parser limit",
+      limit: { name: "json-nesting", maximum: 17 },
+    });
+    fault.blockNew = false;
+    fault.laterReadFailure = { position: 0, cause: injected };
+    const provider = new ModelArtifactProvider();
+    try {
+      const result = await provider.inspect({ path, hash: "header" });
+      if (result.ok) throw new Error("Expected a read refusal");
+      expect(result.error.cause).toBe(injected);
+      const projected = projectAnalysisError(result.error);
+      if (format === "model")
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          details: { reported_limits: { maximum_json_depth: 17 } },
+          remediation: { action: expect.stringContaining("17 levels") },
+        });
+      else expect(projected.code).toBe("execution_failure");
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
 it("retains earlier GGUF rows and physical failure while retrying failed descriptor cleanup", async () => {
   const path = await selectedImage();
   const seed = ggufFixture();
@@ -768,7 +851,8 @@ it("retains earlier GGUF rows and physical failure while retrying failed descrip
 mcpTest(
   "retains Rust descriptor cleanup and recovers in the same MCP connection",
   async ({ mcp }) => {
-    const path = await selectedImage();
+    const bytes = createRustImage({ format: "elf" });
+    const path = await selectedImage(bytes);
     const service = new RustBinaryService(new RustBinaryProvider());
     const failures: AnalysisError[] = [];
     const inspect = service.inspect.bind(service);
@@ -792,10 +876,35 @@ mcpTest(
           arguments: { path },
         });
         expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response).error).toMatchObject({
+        const { error } = parseMcpToolError(response);
+        expect(error).toMatchObject({
           code: "cleanup_incomplete",
           details: { resources: [path] },
         });
+        if (attempt === 0) {
+          const reference = retainedEvidenceReferenceSchema.parse(
+            error.details?.partial_observation,
+          );
+          const view = await client.callTool({
+            name: "inspect_analysis_view",
+            arguments: {
+              source: reference,
+              view: { kind: "rust", collection: "packages", fields: ["name"] },
+            },
+          });
+          expect(view.isError, JSON.stringify(view.content)).not.toBe(true);
+          expect(
+            parseEvidence(view.structuredContent).normalized_result,
+          ).toMatchObject({
+            parent_evidence_id: reference.evidence_id,
+            page: {
+              rows: [
+                { index: 0, name: "itoa" },
+                { index: 1, name: "sample" },
+              ],
+            },
+          });
+        }
       }
       expect(fault.handles).toHaveLength(1);
       expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
@@ -913,37 +1022,125 @@ mcpTest(
   },
 );
 
-it("preserves the caller's cancellation cause when descriptor close also fails", async () => {
-  const path = await selectedImage();
-  const provider = new RustBinaryProvider();
-  const controller = new AbortController();
-  const reason = new Error("cancel during Rust descriptor close");
-  fault.onClose = () => controller.abort(reason);
-  try {
-    const result = await provider.inspect(
-      { path },
-      { signal: controller.signal },
-    );
-    if (result.ok)
-      throw new Error("Expected cancellation with retained cleanup");
-    expect(result.error.cleanupIncomplete).toBe(true);
-    const aggregate = result.error.cause;
-    if (!(aggregate instanceof AggregateError))
-      throw new Error("Missing primary/cleanup aggregate");
-    const [primary] = aggregate.errors;
-    expect(primary).toBeInstanceOf(AnalysisCancelledError);
-    expect((primary as AnalysisCancelledError).cause).toBe(reason);
-    fault.blockNew = false;
-    fault.blocked.clear();
-    await provider.close();
-    expect(result.error.cleanupIncomplete).toBe(false);
-  } finally {
-    fault.blockNew = false;
-    fault.blocked.clear();
-    await provider.close();
-    fault.onClose = undefined;
-  }
-});
+it.each([
+  "close denial",
+  "late cancellation",
+  "both",
+  "physical failure",
+  "output refusal",
+] as const)(
+  "preserves Rust acquisition through %s and releases the same descriptor",
+  async (outcome) => {
+    const bytes = createRustImage({ format: "elf" });
+    const path = await selectedImage(bytes);
+    const service = new RustBinaryService(new RustBinaryProvider());
+    const controller = new AbortController();
+    const reason = { request: "cancel during Rust close" };
+    const physical = Object.assign(new Error("Rust input stat denied"), {
+      code: "EACCES",
+    });
+    const pending = outcome !== "late cancellation";
+    fault.blockNew = pending;
+    if (outcome !== "close denial")
+      fault.onClose = () => controller.abort(reason);
+    if (outcome === "physical failure") fault.readFailure = { cause: physical };
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const parameters = {
+      path,
+      max_rustc_hashes: 10,
+      producer_limits: {
+        input_bytes: bytes.length + 64,
+        ...(outcome === "output refusal" ? { output_bytes: 16 } : {}),
+      },
+    };
+    try {
+      const result = await service.inspect(parameters, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected Rust finalization failure");
+      const { error } = result;
+      const primary = error.cleanupPrimary ?? error;
+      expect(error.cleanupIncomplete).toBe(pending);
+      if (outcome !== "close denial")
+        expect(controller.signal.reason).toBe(reason);
+      expect(fault.handles).toHaveLength(1);
+      const handle = fault.handles[0]!;
+      if (pending) expect(handle.fd).toBeGreaterThanOrEqual(0);
+      else expect(handle.fd).toBe(-1);
+      if (outcome === "physical failure") {
+        expect(primary).toBeInstanceOf(AnalysisAccessDeniedError);
+        expect(primary.cause).toBe(physical);
+        expect(error.partialObservation).toBeUndefined();
+      } else if (outcome === "output refusal") {
+        expect(primary).toBeInstanceOf(AnalysisResourceConstraintError);
+        expect(primary).toMatchObject({ resource: "transport" });
+        expect(error.partialObservation).toEqual({
+          kind: "file-snapshot-hash",
+          path,
+          sha256,
+          bytes: bytes.length,
+        });
+      } else {
+        const evidence = parseEvidence(error.partialObservation);
+        const dependencyStart = 1024;
+        const dependencyBytes = rustDependencyPayload().length;
+        expect(evidence).toMatchObject({
+          operation: "inspect_rust_binary",
+          subject: { identity: { format: "elf", sha256 }, local_path: path },
+          locations: [
+            { kind: "artifact-path", path },
+            {
+              kind: "file-offset-range",
+              start: dependencyStart,
+              end: dependencyStart + dependencyBytes,
+            },
+          ],
+          normalized_result: {
+            artifact: { path, sha256, bytes: bytes.length },
+            auditable_metadata: {
+              file_offset: dependencyStart,
+              section_bytes: dependencyBytes,
+              root_package_index: 1,
+            },
+            rustc_commit: {
+              evidence_kind: "inferred",
+              hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
+            },
+          },
+        });
+        expect(evidence.parameters).toEqual(parameters);
+        expect(primary.partialObservation).toBe(error.partialObservation);
+        if (outcome !== "close denial") {
+          expect(primary).toBeInstanceOf(AnalysisCancelledError);
+          expect(primary.cause).toBe(reason);
+        }
+        if (outcome === "both") {
+          expect(error.cause).toBeInstanceOf(AggregateError);
+          expect((error.cause as AggregateError).errors[0]).toBe(primary);
+        }
+      }
+      const observed = projectAnalysisError(error).details?.partial_observation;
+      expect(observed).toEqual(error.partialObservation);
+      if (pending) {
+        await expect(service.close()).rejects.toBeInstanceOf(AnalysisError);
+        expect(error.cleanupIncomplete).toBe(true);
+      }
+      fault.blocked.clear();
+      await service.close();
+      expect(error.cleanupIncomplete).toBe(false);
+      expect(handle.fd).toBe(-1);
+      expect(fault.handles).toEqual([handle]);
+      expect(
+        projectAnalysisError(resolvedAnalysisError(error)).details
+          ?.partial_observation,
+      ).toEqual(observed);
+    } finally {
+      fault.onClose = undefined;
+      fault.blocked.clear();
+      await service.close();
+    }
+  },
+);
 
 it("preserves upstream resource-bound facts through an unconfirmed descriptor close", async () => {
   const path = await selectedImage();
@@ -1090,7 +1287,11 @@ it.each([
       expect(marker.operationCause).toBe(raw);
       expect(projected.cleanupLease).toBe(failure.cleanupLease);
       expect(projected.cleanupLeases).toEqual([failure.cleanupLease]);
-      const error = translateArtifactFailure("inspect_artifact", projected);
+      const error = translateArtifactFailure(
+        "inspect_artifact",
+        "/selected/artifact",
+        projected,
+      );
       expect(error.cleanupResources).toEqual([path]);
       expect(error.cleanupIncomplete).toBe(true);
       expect(error.partialObservation).toBeUndefined();

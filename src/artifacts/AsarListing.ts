@@ -2,9 +2,14 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 
-import { asarDeclaredSizeSchema, asarNodeSchema } from "../domain/asarNode.js";
+import {
+  asarDeclaredSizeSchema,
+  asarNodeSchema,
+  RoundedAsarSize,
+} from "../domain/asarNode.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   type ArtifactEntry,
 } from "../resources/index.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
@@ -35,10 +40,13 @@ const malformedMetadata = (subject: string, error: z.ZodError) => {
       ),
     ),
   ].join(", ");
-  return new ArtifactReaderFailure(
-    "format",
+  return malformedArtifact(
+    "asar",
     `${subject} metadata is malformed (${fields})`,
-    { cause: error },
+    {
+      cause: error,
+      field: fields,
+    },
   );
 };
 
@@ -47,6 +55,11 @@ const readDeclaredSize = (
   value: unknown,
 ): { readonly size: number | null; readonly limitation?: string } => {
   if (value === undefined) return { size: null };
+  if (value instanceof RoundedAsarSize)
+    return {
+      size: null,
+      limitation: `ASAR entry declares numeric size ${value.excerpt}, which does not exactly represent a non-negative safe integer.`,
+    };
   const parsed = asarDeclaredSizeSchema.safeParse(value);
   if (parsed.success) return { size: parsed.data };
   // JSON.parse has already rounded a number beyond the safe-integer range or
@@ -116,7 +129,9 @@ export const readAsarListing = async (
     throw malformedMetadata("ASAR root", parsedRoot.error);
   const root = parsedRoot.data;
   if (root.files === undefined)
-    throw new ArtifactReaderFailure("format", "ASAR root has no files table");
+    throw malformedArtifact("asar", "ASAR root has no files table", {
+      field: "files",
+    });
   const entries: AsarListedEntry[] = [];
   const pending = [{ parent: "", children: ownChildren(root.files) }];
   let retainedBytes = 0;
@@ -178,8 +193,8 @@ export const readAsarListing = async (
       metadata.link === undefined &&
       metadata.size === undefined
     )
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "asar",
         `ASAR entry ${quoteSource(path)} has no directory, link or file metadata`,
       );
     const declaration = metadata.integrity;

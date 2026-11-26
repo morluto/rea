@@ -107,6 +107,12 @@ export const buildCallPathEvidence = (
         parameters: {
           start: selected.value.input.start.address,
           goal: selected.value.input.goal.address,
+          // Omission and an explicit count preference are different requests, so
+          // record one only when the caller selected it. The effective default is
+          // applied by buildCallPath, where the count is consumed.
+          ...(selected.value.input.max_paths === undefined
+            ? {}
+            : { max_paths: selected.value.input.max_paths }),
         },
         result,
         confidence: "derived",
@@ -223,11 +229,17 @@ export const correlateStaticAndRuntimeEvidence = (
   );
   if (!selected.ok) return selected;
   try {
-    const result = correlateStaticAndRuntime(selected.value.input);
     const sources = [
       ...selected.value.input.static_comparisons,
       ...selected.value.input.runtime_comparisons,
     ];
+    const supplied = new Map(
+      sources.map((source) => [source.evidence_id, source]),
+    );
+    const result = correlateStaticAndRuntime(selected.value.input, {
+      sourceEvidence: (id) =>
+        supplied.get(id) ?? reader.evidenceForAnalysis(id),
+    });
     const closure = resolveInvestigationEvidenceClosure(
       reader,
       result.evidence_links,

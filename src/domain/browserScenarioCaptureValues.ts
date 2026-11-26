@@ -6,7 +6,10 @@ import {
   browserNetworkBodySchema,
   browserNetworkHeadersSchema,
 } from "./browserNetworkEvidence.js";
-import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
+import {
+  browserResponseStatusSchema,
+  sanitizedBrowserUrlSchema,
+} from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 import { digestSchema } from "./../domain/digests.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -137,9 +140,6 @@ export const browserScenarioEventFamilySchema = z.enum([
   "popups",
   "downloads",
 ]);
-export type BrowserScenarioEventFamily = z.infer<
-  typeof browserScenarioEventFamilySchema
->;
 
 const eventBase = {
   sequence: z.int().min(1),
@@ -209,7 +209,7 @@ export const browserScenarioEventSchema = z
     z.strictObject({
       ...networkEventShape,
       kind: z.literal("response"),
-      status: z.int().min(100).max(999),
+      status: browserResponseStatusSchema,
       failure: z.null(),
     }),
     z.strictObject({
@@ -449,7 +449,7 @@ const browserScenarioStepShape = {
   artifacts: browserStepArtifactsSchema,
   completeness: browserScenarioCompletenessSchema,
 };
-export const browserScenarioStepSchema = z.union([
+export const browserScenarioStepSchema = z.discriminatedUnion("status", [
   z.strictObject({
     ...browserScenarioStepShape,
     status: z.literal("completed"),

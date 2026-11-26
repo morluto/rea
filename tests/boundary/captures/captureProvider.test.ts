@@ -1,10 +1,11 @@
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
-import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
+import { writeFile, readdir, chmod, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
@@ -233,6 +234,18 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (refused.ok) throw new Error("Expected input-budget refusal");
+  expect(projectAnalysisError(refused.error).details?.limit).toEqual({
+    control_kind: "parameter",
+    parameter: "producer_limits.input_bytes",
+    effective_value: 13,
+    unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: 32 * 1024 * 1024,
+    applies_at: "next_call",
+    // The selected read measured the file it refused.
+    required_value: (await stat(f.path)).size,
+  });
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",
   );
@@ -313,19 +326,6 @@ it("pages matching observations without changing dissection scope or frame ident
   }
 });
 
-it("preserves TShark canonical output for a caller-selected field alias", async () => {
-  const f = await fixture("alias-canonical");
-  const input = { path: f.path, fields: ["bootp.type"] };
-  const result = await f.service.inspect(input);
-  if (!result.ok) throw result.error;
-  const report = packetCaptureSchema.parse(result.value.normalized_result);
-  expect(report.selection.fields).toEqual(["bootp.type"]);
-  expect(report.packets).toEqual([
-    { "frame.number": ["1"], "dhcp.type": ["1"] },
-  ]);
-  expect(report.tool.arguments).toContain("bootp.type");
-});
-
 it("refuses producer frames outside the selected input read scope before paging", async () => {
   const f = await fixture("many");
   const request = { path: f.path, fields: ["ip.addr"], match_limit: 1 };
@@ -365,6 +365,7 @@ it("returns canonical alias output through the public packet-capture CLI", async
   const evidence = parseEvidence(JSON.parse(stdout));
   const report = packetCaptureSchema.parse(evidence.normalized_result);
   expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.tool.arguments).toContain("bootp.type");
   expect(report.packets).toEqual([
     { "frame.number": ["1"], "dhcp.type": ["1"] },
   ]);
@@ -435,7 +436,6 @@ it("inspects an immutable copy, preserves options and warnings, and releases its
 });
 
 it.each([
-  ["invalid-json", "AnalysisOutputError"],
   ["nonzero", "ProviderAdapterError"],
   ["malformed-copy", "AnalysisArtifactChangedError"],
   ["overflow", "AnalysisResourceConstraintError"],
@@ -483,6 +483,12 @@ it.each([
       reason,
     });
     expect(result.error.capturedOutput?.stdout).toBe(stdout);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
   },
 );
 

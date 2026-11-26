@@ -125,16 +125,20 @@ See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metad
 
 ## Rust dependency metadata
 
-Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
-files need `architecture`) when
-the question concerns the cargo-auditable crate list embedded in `.dep-v0`
-(Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
-execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
-Preserve artifact SHA-256, package order, dependency indices, and the section
-file range. A missing section is null metadata, not proof the binary has no
-dependencies. An omitted package kind stays null. A rustc commit hash is
-inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. Project the retained parent with `inspect_analysis_view`
+Use `inspect_rust_binary` for an explicit local ELF, PE, Mach-O (universal
+files need `architecture`), or WebAssembly core module when the question
+concerns the cargo-auditable crate list embedded in `.dep-v0` (Mach-O:
+`__DATA,.dep-v0`; WebAssembly: a custom section). No `open_binary`, Rust
+installation, or target execution is required. The CLI equivalent is
+`inspect-rust-binary PATH`. Preserve artifact SHA-256, package order,
+dependency indices, and the section file range. A missing section is null
+metadata, not proof the binary has no dependencies. An omitted package kind
+stays null. WebAssembly reports `bits: null` on a `32 | 64 | null` word size;
+null means the container declares no word size and must not be coerced to a
+number. ELF, PE and Mach-O stay 32 or 64. Components such as
+`wasm32-wasip2` output are unsupported. A rustc commit hash is inferred from a
+`/rustc/<40-hex>/` path in read-only data or a WebAssembly data section and
+does not by itself identify the compiler. Project the retained parent with `inspect_analysis_view`
 kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
 `scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
 and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
@@ -205,6 +209,17 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## PE x64 exception-directory function ranges
+
+Use `inspect_pe_unwind_ranges` for an explicit local x64 PE32+ image when the
+question is where functions start and end without a PDB, or whether a
+provider's procedure inventory agrees with the compiler's records. The CLI
+equivalent is `inspect-pe-unwind-ranges PATH`. Primary entries start functions;
+chained entries are fragments of the entry named by `primary_index`, not
+separate functions. Leaf functions have no entry, so a missing entry is not
+absence. Compare provider addresses minus `image_base` with the RVAs. See
+[PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
+
 ## Binary hardening
 
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
@@ -220,8 +235,8 @@ Authenticode and Mach-O code-signature rows report presence, not validity.
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
-question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
-fields. No `open_binary` or target execution is required. The CLI equivalent
+question concerns PT_NOTE/SHT_NOTE owners or supported note metadata. Treat
+FDO package and dlopen fields as producer declarations. No `open_binary` or target execution is required. The CLI equivalent
 is `inspect-elf-notes PATH`. Preserve artifact SHA-256, table file ranges,
 descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in
@@ -399,8 +414,8 @@ Roles are folder conventions, not restore-time asset selection. See
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
-schema and optional rows from one exact ordinary table. It requires Node.js
-24.x >=24.15 or 26+ with the native `DatabaseSync.limits` API. It also consumes the
+schema and optional rows from one exact ordinary table. It needs the native
+`DatabaseSync.limits` API, so it is unavailable when REA runs on Node.js 22.x. It also consumes the
 existing sibling `-wal`; retain both original digests when citing its result.
 Default output is a compact inventory; a selected table expands only its own
 schema and samples 20 rows. Select `columns` to avoid irrelevant or large cells,
@@ -449,6 +464,14 @@ Facets also include sections, imports, candidates, glue, WAT, headers, details
 and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
 The complete source remains retained after an oversized MCP reply. No target
 execution or network acquisition is implied, and WAT is decoded representation.
+
+For exact core-module import/export differences, use `compare_wasm_interfaces`
+with two complete inspection Evidence records (or current-session retained
+references) and explicit scope. Preserve unknown types/duplicate names; static
+interface equality is not runtime compatibility. CLI accepts complete inline
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Offline APK signatures
 
@@ -734,7 +757,8 @@ for one selected type. For questions about a selected type, select
 names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
-`field_accesses` or `user_strings`.
+`field_accesses`, `user_strings` or `unresolved_definitions`. The last collection
+pages checked TypeDef and MethodDef coordinates with failed name columns.
 Use exact `names` and `declaring_types` filters before paging supported
 collections. For a compact method lookup, request `fields: ["name",
 "declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,
@@ -797,14 +821,16 @@ REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
 destination. No separate permission grant is needed.
 
-For classic iNES cartridges, `open_binary` recognizes the byte signature without
-an executable architecture. `inspect_artifact` retains header facts and each
-PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
+For iNES and NES 2.0 cartridges, `open_binary` recognizes the byte signature
+without an executable architecture. `inspect_artifact` retains header facts and
+each PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
 `ines.reconstruction` verifies the actual ordered region bytes against the
-whole-file digest. Extraction includes the original header, optional trainer
-and uninterpreted trailing bytes. These file units are not mapper/CPU bank
-maps. NES 2.0, UNIF, dirty legacy headers and truncated payloads are explicitly
-refused. No emulator or 6502 analysis is performed. See the
+whole-file digest. Extraction includes the original header, optional trainer,
+NES 2.0 miscellaneous ROM bytes and uninterpreted trailing bytes. These file
+units are not mapper/CPU bank maps; NES 2.0 RAM, timing and console values are
+header declarations. UNIF, dirty legacy headers, malformed NES 2.0 declarations
+and truncated payloads are explicitly refused. No emulator or 6502 analysis is
+performed. See the
 [iNES guide](https://github.com/morluto/rea/blob/main/docs/ines-containers.md).
 
 Native DMG traversal automatically uses a read-only mount on supported macOS
@@ -832,7 +858,15 @@ headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
 `arm`, `arm64`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
 that address. Hopper and IDA refuse this interpretation; Ghidra uses
 `BinaryLoader` with a generic language: big-endian for `m68k`, little-endian
-otherwise. Big-endian ARM, Thumb-only, and Cortex-M variants are unsupported.
+otherwise. For a Cortex-M dump, add `architecture_variant` (`armv6-m`,
+`armv7-m`, `armv7e-m`, `armv8-m.base`, `armv8-m.main` or `armv8.1-m.main`)
+and `base_address`, which maps file offset 0 separately; each requires the
+other. Omit `entry_point` to take Reset from the vector table, adding
+`vector_table_address` when a header precedes it. An odd entry is refused.
+Results report canonical addresses (`0x08000000` as `0x8000000`) and treat an
+omitted `vector_table_address` as one at the base; when your exact spelling
+matters, save your request beside the Evidence, together with its
+`evidence_id`. Big-endian ARM is unsupported.
 `6502` selects NMOS 6502; the entry and complete file mapping must fit within
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040
@@ -888,14 +922,6 @@ partial or unsupported coverage means the inventory is incomplete, not that
 exports are absent. Use `inspect_macho` for Mach-O. See
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
 
-For exact core-module import/export differences, use `compare_wasm_interfaces`
-with two complete inspection Evidence records (or current-session retained
-references) and explicit scope. Preserve unknown types/duplicate names; static
-interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
-with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
-ID when the inspection returned a summary.
-
 ## Godot PCK
 
 For a standalone PCK, `open_binary` then `inspect_artifact` with
@@ -948,12 +974,39 @@ stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
 
+ISO 9660 disc images (`CD001` at sector 16, any filename, even `.hop`) use
+the same inspection and extraction workflows on every host, without mounting.
+Volume identifiers and dates are target-derived. One tree is walked: an
+eligible Joliet tree when present, else the primary tree (`name_source`).
+Files only in an unwalked tree are not listed, so coverage is `unknown`
+whenever the image has another tree. Unsafe names become `entry-<index>`
+with the stored identifier in `source_path`. Separated multi-extent and interleaved files are listed with
+unavailable hashes, so extract other files by `occurrence_ids`. Rock Ridge,
+UDF, and El Torito boot images are not decoded. See
+[ISO 9660 disc images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/iso9660-images.md).
+
+uClinux bFLT flat executables (`bFLT` magic, any filename) use the same
+inspection and extraction workflows. The header does not name a CPU, so the
+root architecture stays unknown. Header facts are big-endian declarations;
+relocations are listed, not applied. `text.bin` (header included), `data.bin`
+and `relocations.bin` are extractable. gzip and gzdata bodies are inflated
+under `artifact_limits.expanded_bytes`; revision 2 bodies are read as stored.
+Open `text.bin` as a raw binary with a chosen architecture. See
+[uClinux bFLT flat executables](https://github.com/morluto/rea/blob/main/docs/bflt-executables.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
 verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
 operations stay inventoried with unavailable content. See
 [Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
+
+Android sparse images (`system.img`, `vendor.img`, `super.img` with magic
+`0xED26FF3A`) expand to one `image.raw` child without `simg2img`. Header,
+chunk counts and stored checksums are root facts; checksums are not verified
+and DONT_CARE blocks are written as zeros. The expanded child is classified
+again. See
+[Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
 
 ## ESP images
 

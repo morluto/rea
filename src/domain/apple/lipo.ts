@@ -31,6 +31,13 @@ export type LipoFieldObservation =
     };
 
 export type LipoArchitecture = z.infer<typeof architectureSchema> & {
+  /** CPU pair lipo prints in place of a name for an unnamed architecture. */
+  readonly numericName?: {
+    readonly cpuType: number;
+    readonly cpuSubtypeBase: number;
+  };
+  /** ABI flags lipo names without establishing the version bits. */
+  readonly pointerAuthAbi?: "USERSPACE" | "KERNEL";
   readonly fields: Readonly<
     Record<"offset" | "size" | "align", LipoFieldObservation>
   >;
@@ -71,10 +78,17 @@ const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
   // lipo echoes a thin file's pathname verbatim, including embedded newlines.
   // Match its final architecture field before splitting records into lines.
   const thinArchitecture =
-    /(?:^|\r?\n)Non-fat file:[\s\S]* is architecture: ([^\s]+)\s*$/u.exec(
-      output,
+    /(?:^|\r?\n)Non-fat file:[\s\S]* is architecture: ([^\r\n]+)$/u.exec(
+      output.trimEnd(),
     )?.[1];
-  if (thinArchitecture !== undefined)
+  const thinNumericName =
+    thinArchitecture === undefined
+      ? undefined
+      : numericArchitectureName(thinArchitecture);
+  if (
+    thinArchitecture !== undefined &&
+    (thinNumericName !== undefined || /^\S+$/u.test(thinArchitecture))
+  )
     return {
       format: "thin",
       declaredArchitectureCount: null,
@@ -86,14 +100,17 @@ const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
             hidden: false,
             cpu_type: null,
             cpu_subtype: null,
-            cpu_type_code: null,
+            cpu_type_code: thinNumericName?.cpuType ?? null,
             cpu_subtype_code: null,
-            cpu_subtype_base: null,
+            cpu_subtype_base: thinNumericName?.cpuSubtypeBase ?? null,
             capabilities: null,
             file_offset: null,
             size: null,
             alignment: null,
           }),
+          ...(thinNumericName === undefined
+            ? {}
+            : { numericName: thinNumericName }),
           fields: {
             offset: { kind: "absent" },
             size: { kind: "absent" },
@@ -152,25 +169,35 @@ const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
           ];
         },
       );
+      const displayName = current.architecture
+        ? name.replace(/ \(hidden\)$/u, "")
+        : (name.split(" is architecture: ").at(-1) ?? name);
+      const numericName = numericArchitectureName(displayName);
+      const subtype = cpuSubtypeFacts(current.cpusubtype, current.capabilities);
+      const pointerAuthAbi = pointerAuthenticationAbi(current.capabilities);
+      if (pointerAuthAbi !== undefined && subtype.code === null) {
+        admitFieldBytes(160);
+        limitations.push(
+          "lipo identified the pointer-authentication ABI class but did not establish its version.",
+        );
+      }
       architectures.push({
         ...architectureSchema.parse({
-          name: name.includes(" is architecture: ")
-            ? (name.split(" is architecture: ").at(-1) ?? name)
-            : name.replace(/ \(hidden\)$/u, ""),
+          name: displayName,
           hidden: name.endsWith(" (hidden)"),
           cpu_type: current.cputype ?? null,
           cpu_subtype: current.cpusubtype ?? null,
-          cpu_type_code: cpuTypeCode(current.cputype),
-          cpu_subtype_code: cpuSubtypeCode(
-            current.cpusubtype,
-            current.capabilities,
-          ),
-          cpu_subtype_base: cpuSubtypeBase(current.cpusubtype),
+          cpu_type_code:
+            cpuTypeCode(current.cputype) ?? numericName?.cpuType ?? null,
+          cpu_subtype_code: subtype.code,
+          cpu_subtype_base: subtype.base ?? numericName?.cpuSubtypeBase ?? null,
           capabilities: current.capabilities ?? null,
           file_offset: value(fields.offset),
           size: value(fields.size),
           alignment: value(fields.align),
         }),
+        ...(numericName === undefined ? {} : { numericName }),
+        ...(pointerAuthAbi === undefined ? {} : { pointerAuthAbi }),
         fields,
         limitations,
       });
@@ -238,6 +265,30 @@ const parseLipoOutput = (output: string, operandPath?: string): LipoOutput => {
   };
 };
 
+/** Compare all CPU facts lipo actually declared with one structural slice. */
+export const lipoDescribesCpu = (
+  row: LipoArchitecture,
+  cpuType: number | null,
+  cpuSubtype: number | null,
+): boolean => {
+  const base = cpuSubtype === null ? null : machoCpuSubtypeBase(cpuSubtype);
+  return (
+    (cpuType === null ||
+      ((row.cpu_type_code === null || row.cpu_type_code === cpuType) &&
+        (row.numericName === undefined ||
+          row.numericName.cpuType === cpuType) &&
+        (row.pointerAuthAbi === undefined ||
+          cpuType === CPU_TYPES.CPU_TYPE_ARM64))) &&
+    (cpuSubtype === null ||
+      ((row.cpu_subtype_code === null || row.cpu_subtype_code === cpuSubtype) &&
+        (row.cpu_subtype_base === null || row.cpu_subtype_base === base) &&
+        (row.numericName === undefined ||
+          row.numericName.cpuSubtypeBase === base) &&
+        (row.pointerAuthAbi === undefined ||
+          cpuSubtype >>> 30 === (row.pointerAuthAbi === "KERNEL" ? 3 : 2))))
+  );
+};
+
 /** Classify expected lipo parse failures once for all command adapters. */
 export const parseLipoOutputResult = (
   output: string,
@@ -301,44 +352,65 @@ const ownCpuCode = (
 
 const cpuTypeCode = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const numeric = unsigned32(value);
-  return numeric ?? ownCpuCode(CPU_TYPES, value) ?? null;
+  const decimal = /^\((-?\d+)\)$/u.exec(value)?.[1];
+  return decimal === undefined
+    ? (unsigned32(value) ?? ownCpuCode(CPU_TYPES, value) ?? null)
+    : signedCpuType(decimal);
 };
 
-/** Normalize the subtype and its separately printed capability bits. */
-const cpuSubtypeCode = (
+/** A printed subtype base is distinct from the full subtype with its capability byte. */
+const cpuSubtypeFacts = (
   value: string | undefined,
   capabilities: string | undefined,
-): number | null => {
-  if (value === undefined) return null;
+): { readonly base: number | null; readonly code: number | null } => {
+  if (value === undefined) return { base: null, code: null };
   const numeric = unsigned32(value);
-  if (numeric !== null) return numeric;
-  const subtype = ownCpuCode(CPU_SUBTYPES, value);
-  if (subtype === undefined) return null;
-  if (value !== "CPU_SUBTYPE_ARM64E") {
-    // Recent lipo prints an empty capabilities line, even for LIB64 slices.
-    const bits = capabilityBits(capabilities);
-    return bits === null ? null : ((bits << 24) | subtype) >>> 0;
-  }
-  const version = /PTR_AUTH_VERSION\s+USERSPACE\s+(\d+)/u.exec(
-    capabilities ?? "",
-  )?.[1];
-  if (version === undefined) return null;
-  const parsedVersion = Number(version);
-  if (
-    !Number.isInteger(parsedVersion) ||
-    parsedVersion < 0 ||
-    parsedVersion > 15
-  )
-    return null;
-  return (0x80000000 | (parsedVersion << 24) | subtype) >>> 0;
+  if (numeric !== null)
+    return { base: machoCpuSubtypeBase(numeric), code: numeric };
+  const decimal = /^cpusubtype \((\d+)\)$/u.exec(value)?.[1];
+  const base =
+    decimal === undefined
+      ? (ownCpuCode(CPU_SUBTYPES, value) ?? null)
+      : printedSubtypeBase(decimal);
+  const bits = capabilityBits(capabilities);
+  return {
+    base,
+    code: base === null || bits === null ? null : ((bits << 24) | base) >>> 0,
+  };
 };
 
-/** The subtype bits a lipo record names, without its capability byte. */
-const cpuSubtypeBase = (value: string | undefined): number | null => {
-  if (value === undefined) return null;
-  const subtype = unsigned32(value) ?? ownCpuCode(CPU_SUBTYPES, value);
-  return subtype === undefined ? null : machoCpuSubtypeBase(subtype);
+const pointerAuthenticationAbi = (
+  capabilities: string | undefined,
+): LipoArchitecture["pointerAuthAbi"] => {
+  // cctools has emitted the same number for different version bits. Its
+  // KERNEL/USERSPACE choice still reads the two high ABI flags directly.
+  const abi = /^PTR_AUTH_VERSION\s+(USERSPACE|KERNEL)\s+\d+$/u.exec(
+    capabilities ?? "",
+  )?.[1];
+  return abi === "USERSPACE" || abi === "KERNEL" ? abi : undefined;
+};
+
+/** cctools uses signed decimal for CPU type and masks the subtype in both spellings. */
+const numericArchitectureName = (
+  value: string,
+): LipoArchitecture["numericName"] => {
+  const parts = /^\(cputype \((-?\d+)\) cpusubtype \((\d+)\)\)$/u.exec(value);
+  if (parts === null) return undefined;
+  const cpuType = signedCpuType(parts[1]!);
+  const cpuSubtypeBase = printedSubtypeBase(parts[2]!);
+  return cpuType === null || cpuSubtypeBase === null
+    ? undefined
+    : { cpuType, cpuSubtypeBase };
+};
+
+const signedCpuType = (decimal: string): number | null => {
+  const value = Number(decimal);
+  return value >= -0x80000000 && value <= 0x7fffffff ? value >>> 0 : null;
+};
+
+const printedSubtypeBase = (decimal: string): number | null => {
+  const value = Number(decimal);
+  return value <= 0x00ffffff ? value : null;
 };
 
 /** lipo names the LIB64 capability and prints other capability bits in hex. */

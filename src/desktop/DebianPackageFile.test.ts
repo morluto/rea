@@ -34,9 +34,11 @@ const inspect = async (
   const facts = await inspectPackageFile(
     path,
     installed,
-    async (command, argv) => {
+    async (command, argv, _signal, options) => {
       calls.push([command, ...argv]);
-      return reply;
+      return typeof reply === "object" && !options?.preserveStdoutBytes
+        ? { stdout: reply.stdout, exitCode: reply.exitCode }
+        : reply;
     },
     undefined,
   );
@@ -73,6 +75,32 @@ describe("inspectPackageFile", () => {
         depends: expect.arrayContaining(["libgl1 | libgl1-mesa-glx"]),
         pre_depends: ["dpkg (>= 1.15.6)"],
       },
+    });
+  });
+
+  it("withholds package-file evidence for undecodable control fields", async () => {
+    const stdoutBuffer = Buffer.concat([
+      Buffer.from(DPKG_DEB_OUTPUT.trimEnd()),
+      Buffer.from([0xff, 0x0a]),
+    ]);
+    const invalid = await inspect({
+      stdout: stdoutBuffer.toString("utf8"),
+      stdoutBuffer,
+      exitCode: 0,
+    });
+    expect(invalid.facts).toEqual({
+      package_file_reason: `dpkg-deb returned invalid UTF-8 in the control fields of ${invalid.path}`,
+    });
+
+    const valid = await inspect({
+      stdout: "",
+      stdoutBuffer: Buffer.from(DPKG_DEB_OUTPUT),
+      exitCode: 0,
+    });
+    expect(valid.facts.package_file).toMatchObject({
+      package: INSTALLED.name,
+      version: INSTALLED.version,
+      architecture: INSTALLED.architecture,
     });
   });
 

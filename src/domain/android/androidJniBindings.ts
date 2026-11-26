@@ -1,5 +1,7 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
+import { CoverageAccumulator } from "../coverageAccumulator.js";
 import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
@@ -307,13 +309,8 @@ export const projectAndroidJniBindings = (input: {
     );
     return retained <= ANDROID_JNI_REPORT_BYTES;
   };
-  const append = (map: Map<string, string[]>, key: string, value: string) => {
-    const old = map.get(key);
-    if (old === undefined) map.set(key, [value]);
-    else old.push(value);
-  };
   for (const method of declarations) {
-    append(
+    appendToMapList(
       byPair,
       JSON.stringify([method.method_name, method.descriptor]),
       method.declaration_id,
@@ -328,8 +325,8 @@ export const projectAndroidJniBindings = (input: {
     names.set(method.declaration_id, expected.ok ? expected.value : null);
     if (expected.ok) {
       if (!charge(expected.value)) return err({ kind: "capacity" });
-      append(byExport, expected.value.short, method.declaration_id);
-      append(byExport, expected.value.long, method.declaration_id);
+      appendToMapList(byExport, expected.value.short, method.declaration_id);
+      appendToMapList(byExport, expected.value.long, method.declaration_id);
     }
   }
   const libraries: AndroidJniReport["libraries"] = [];
@@ -343,9 +340,7 @@ export const projectAndroidJniBindings = (input: {
     candidates.push(candidate);
     for (const method of candidate.declaration_ids) {
       const key = JSON.stringify([method, candidate.library_id]);
-      const previous = matches.get(key);
-      if (previous === undefined) matches.set(key, [candidate]);
-      else previous.push(candidate);
+      appendToMapList(matches, key, candidate);
     }
     return true;
   };
@@ -472,43 +467,44 @@ export const projectAndroidJniBindings = (input: {
   if (!charge(selectedDeclarationIds)) return err({ kind: "capacity" });
   const librariesByAbi = new Map<string, AndroidJniReport["libraries"]>();
   for (const library of libraries) {
-    const previous = librariesByAbi.get(library.abi);
-    if (previous === undefined) librariesByAbi.set(library.abi, [library]);
-    else previous.push(library);
+    appendToMapList(librariesByAbi, library.abi, library);
   }
   const abis = [...new Set(input.selection.abis ?? librariesByAbi.keys())];
+  const abiMeta = new Map(
+    abis.map((abi) => {
+      const abiLibraries = librariesByAbi.get(abi) ?? [];
+      const consistent: AndroidJniReport["libraries"][number][] = [];
+      let incomplete = libraryInventory.status !== "complete";
+      for (const library of abiLibraries) {
+        if (library.abi_compatibility === "consistent")
+          consistent.push(library);
+        else incomplete = true;
+        if (library.failure !== null || library.coverage?.status !== "complete")
+          incomplete = true;
+      }
+      return [abi, { consistent, incomplete }] as const;
+    }),
+  );
   const bindings: AndroidJniReport["bindings"] = [];
   for (const method of selectedMethods)
     for (const abi of abis) {
-      const abiLibraries = librariesByAbi.get(abi) ?? [];
-      const selected = abiLibraries
-        .filter((library) => library.abi_compatibility === "consistent")
-        .flatMap(
-          (library) =>
-            matches.get(
-              JSON.stringify([method.declaration_id, library.library_id]),
-            ) ?? [],
-        );
-      const physical = new Set(
-        selected.map((candidate) =>
-          JSON.stringify([candidate.library_id, candidate.address]),
-        ),
+      const { consistent, incomplete } = abiMeta.get(abi)!;
+      const selected = consistent.flatMap(
+        (library) =>
+          matches.get(
+            JSON.stringify([method.declaration_id, library.library_id]),
+          ) ?? [],
       );
-      const ambiguous = selected.some(
-        (candidate) => candidate.class_attribution === "ambiguous-native-pair",
-      );
-      const incomplete =
-        libraryInventory.status !== "complete" ||
-        abiLibraries.some(
-          (library) =>
-            library.failure !== null ||
-            library.coverage?.status !== "complete" ||
-            library.abi_compatibility !== "consistent",
-        );
-      const unknown = selected.some(
-        (candidate) =>
-          candidate.class_attribution === "unknown-native-inventory",
-      );
+      const physical = new Set<string>();
+      let ambiguous = false;
+      let unknown = false;
+      for (const candidate of selected) {
+        physical.add(JSON.stringify([candidate.library_id, candidate.address]));
+        if (candidate.class_attribution === "ambiguous-native-pair")
+          ambiguous = true;
+        else if (candidate.class_attribution === "unknown-native-inventory")
+          unknown = true;
+      }
       const binding: AndroidJniReport["bindings"][number] = {
         declaration_id: method.declaration_id,
         abi,
@@ -522,7 +518,13 @@ export const projectAndroidJniBindings = (input: {
                 : incomplete
                   ? "unknown"
                   : "unmatched",
-        coverage: incomplete || unknown ? "partial" : "complete",
+        coverage: (() => {
+          const acc = new CoverageAccumulator().recordComplete();
+          if (incomplete)
+            acc.recordOmission("JNI binding inputs are incomplete");
+          if (unknown) acc.recordOmission("JNI binding resolution is unknown");
+          return acc.finalizeKnown();
+        })(),
         candidate_ids: selected.map((candidate) => candidate.candidate_id),
         unknowns: [
           ...(incomplete

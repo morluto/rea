@@ -288,19 +288,27 @@ test("lists all connectable targets on the selected endpoint across directories"
     if (!listed.ok) throw listed.error;
     const targets = listed.value.targets;
     expect(targets).toHaveLength(207);
-    expect(new Set(targets.map(({ target_id }) => target_id)).size).toBe(207);
-    expect(
-      targets.find(({ target_id }) => target_id === fake.targetId)?.location,
-    ).toMatchObject({ kind: "file", file_path: fixture.entry });
-    expect(
-      targets.find(({ target_id }) => target_id === fake.targetIds[1])
-        ?.location,
-    ).toMatchObject({ kind: "file", file_path: outside });
-    expect(
-      targets.find(
-        ({ target_id }) => target_id === "00000000-0000-4000-8000-000000000207",
-      )?.location,
-    ).toMatchObject({ kind: "file", file_path: fixture.entry });
+    expect(new Set(targets.map(({ target_id }) => target_id))).toEqual(
+      new Set(fake.targetIds),
+    );
+    // Node discovery turns backslashes into underscores on Windows.
+    for (const [targetId, path] of [
+      [fake.targetId, fixture.entry],
+      [fake.targetIds[1], outside],
+      ["00000000-0000-4000-8000-000000000207", fixture.entry],
+    ] as const) {
+      expect(
+        targets.find(({ target_id }) => target_id === targetId)?.location,
+      ).toMatchObject(
+        process.platform === "win32"
+          ? {
+              kind: "unresolved",
+              reported_url: nodeDiscoveryTargetUrl(path),
+              reason: "unverifiable-file-location",
+            }
+          : { kind: "file", file_path: path },
+      );
+    }
   } finally {
     await fake.close();
   }

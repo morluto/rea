@@ -344,6 +344,24 @@ describe("browser scenario MCP tool", () => {
         alignment: { status: "aligned", aligned_steps: 2 },
       },
     });
+    // The same capture named by its retained Evidence compares identically.
+    const capturedId = Reflect.get(
+      captured.structuredContent ?? {},
+      "evidence_id",
+    );
+    const reference = { kind: "retained-evidence", evidence_id: capturedId };
+    const referenced = await client.callTool({
+      name: "compare_web_captures",
+      arguments: { before_scenario: reference, after_scenario: reference },
+    });
+    expect(referenced.isError, JSON.stringify(referenced)).not.toBe(true);
+    expect(referenced.structuredContent).toMatchObject({
+      normalized_result: Reflect.get(
+        compared.structuredContent ?? {},
+        "normalized_result",
+      ),
+      evidence_links: [capturedId, capturedId],
+    });
 
     const otherOrigin = await client.callTool({
       name: "capture_browser_scenario",
@@ -353,6 +371,28 @@ describe("browser scenario MCP tool", () => {
     expect(provider.scenarios).toHaveLength(3);
   });
 });
+
+const openScenarioMcp = async (
+  provider: BrowserScenarioCapturePort,
+  name: string,
+) => {
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name, version: "1" },
+    serverOptions: {
+      browserScenarioCapture: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  });
+  return { client, session };
+};
 
 test("records a completed late-close cancellation as server Evidence", async () => {
   const provider: BrowserScenarioCapturePort = {
@@ -366,21 +406,10 @@ test("records a completed late-close cancellation as server Evidence", async () 
       );
     },
   };
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
-  }));
-  const { client } = await createApplicationMcpHarness({
-    session,
-    clientIdentity: { name: "scenario-late-close", version: "1" },
-    serverOptions: {
-      browserScenarioCapture: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
-  });
+  const { client, session } = await openScenarioMcp(
+    provider,
+    "scenario-late-close",
+  );
   const response = await client.callTool({
     name: "capture_browser_scenario",
     arguments: minimalScenario(),
@@ -411,23 +440,12 @@ test("records a completed late-close cancellation as server Evidence", async () 
   await expect(client.ping()).resolves.toEqual({});
 });
 
-test("delivers a retained summary and pages its exact steps and events", async () => {
+test("delivers a retained summary and pages its exact steps", async () => {
   const provider = new FakeBrowserScenarioProvider();
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(ok(null)),
-  }));
-  const { client } = await createApplicationMcpHarness({
-    session,
-    clientIdentity: { name: "scenario-summary", version: "1" },
-    serverOptions: {
-      browserScenarioCapture: provider,
-      availabilityPolicy: () => ({
-        processCaptureEnabled: false,
-        investigationInputRoots: 0,
-      }),
-    },
-  });
+  const { client, session } = await openScenarioMcp(
+    provider,
+    "scenario-summary",
+  );
   const tools = (await client.listTools()).tools;
   const advertised = tools.find(
     ({ name }) => name === "capture_browser_scenario",

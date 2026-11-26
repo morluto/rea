@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
@@ -62,8 +61,7 @@ it("reads and checks BOM-signed UTF-16 project files in either byte order", asyn
       bytes: Buffer.from('\ufeff{"zoom":1.5}', "utf16le"),
     },
   ];
-  await expectSameFileViews(files);
-  const views = await Promise.all(files.map(typescriptFileView));
+  const views = await expectSameFileViews(files);
   expect(views.map(({ format }) => format)).toEqual([
     "xml",
     "xml",
@@ -102,11 +100,9 @@ describe("gzip files in the exported module", () => {
   it("reads a compressed drawing as the view of the drawing inside, and grades it alike", async () => {
     const files = await posters();
     const [, plain] = await savedEnds("inkscape", "poster.svg");
-    const [, after] = files;
-    if (plain === undefined || after === undefined) throw new Error("fixture");
-
-    await expectSameFileViews(files);
-    expect(await typescriptFileView(after)).toEqual({
+    if (plain === undefined) throw new Error("fixture");
+    const [, after] = await expectSameFileViews(files);
+    expect(after).toEqual({
       ...(await typescriptFileView(plain)),
       compression: "gzip",
     });
@@ -149,12 +145,11 @@ describe("gzip files in the exported module", () => {
       { name: "bomb.xml", bytes: bomb },
       {
         name: "large.txt",
-        bytes: gzipSync(randomBytes(9 * MIB).toString("hex")),
+        bytes: gzipSync(Buffer.alloc(16 * MIB + 1), { level: 0 }),
       },
     ];
 
-    await expectSameFileViews(files);
-    const views = await Promise.all(files.map(typescriptFileView));
+    const views = await expectSameFileViews(files);
     expect(views.map(({ format, error }) => [format, error ?? null])).toEqual([
       ["xml", null],
       ["xml", null],

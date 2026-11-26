@@ -7,24 +7,27 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
-import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { inspectVerifierGhidraFromEnvironment } from "./lib/ghidra-installation-inspection.mjs";
 import {
   buildDosComFixture,
   buildRejectedDosComFixture,
 } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
 import {
   VerifierFixture,
@@ -34,6 +37,7 @@ import {
   createVerifierMcpOwner,
   VerifierStdioTransport,
 } from "./lib/verifier-mcp-owner.mjs";
+import { completeEvidenceClient } from "./lib/complete-evidence.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -46,13 +50,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "verify:ghidra:com prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
-const installation = await inspectVerifierGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
+const installation = await inspectVerifierGhidraFromEnvironment(process.env);
 if (installation.status !== "available")
   throw new Error(
     `verify:ghidra:com prerequisite unavailable: ${JSON.stringify(installation)}`,
@@ -96,13 +94,17 @@ const env = {
     : { JAVA_HOME: process.env.JAVA_HOME }),
 };
 
+// The CLI shares one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
   env: env,
   stderr: "pipe",
 });
-const client = new Client({ name: "rea-real-com-proof", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "rea-real-com-proof", version: "1" }),
+);
 let stderr = "";
 let connected = false;
 let verifierRun;
@@ -124,10 +126,10 @@ workspaceFixture.releaseAfter(async () => {
     "Owned Ghidra runtime survived close",
   );
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
+  let failure;
   try {
     await client.connect(transport);
     connected = true;
@@ -401,7 +403,10 @@ await withVerifierFixture(workspaceFixture, async () => {
     assert.equal(outside.comment.state, "unavailable");
     assert.match(outside.comment.remediation, /binary_session/u);
     assert.equal(
-      await call("procedure_address", { procedure: changes.name }),
+      await call("procedure_address", {
+        detail: "complete",
+        procedure: changes.name,
+      }),
       fixture.entry,
     );
     assert.equal(
@@ -524,13 +529,29 @@ await withVerifierFixture(workspaceFixture, async () => {
     };
   } catch (error) {
     if (stderr.trim()) process.stderr.write(stderr);
-    throw error;
+    failure = error;
+  } finally {
+    try {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+    } catch (cause) {
+      failure =
+        failure === undefined
+          ? cause
+          : new AggregateError(
+              [failure, cause],
+              "COM verification and command cleanup both failed",
+            );
+    }
+  }
+  if (failure !== undefined) {
+    workspaceFixture.retain(
+      `COM verification failed; retained workspace: ${workspace}`,
+    );
+    throw failure;
   }
 });
 assert.ok(report);
 verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,
@@ -544,10 +565,12 @@ async function verifyRejectedCom() {
   await writeFile(rejectedPath, rejectedFixture.bytes, { mode: 0o600 });
   const fallbackOwner = createVerifierMcpOwner();
   workspaceFixture.releaseAfter(() => fallbackOwner.close());
-  const rejectedClient = new Client({
-    name: "rea-real-com-fallback",
-    version: "1",
-  });
+  const rejectedClient = completeEvidenceClient(
+    new Client({
+      name: "rea-real-com-fallback",
+      version: "1",
+    }),
+  );
   const rejectedTransport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
@@ -573,7 +596,7 @@ async function verifyRejectedCom() {
     const session = requireMcpLifecycleResult(opened, "open_binary");
     assert.equal(session.format, "dos-com");
     const response = await rejectedClient.callTool(
-      { name: "inspect_native_load_image", arguments: {} },
+      { name: "inspect_native_load_image", arguments: { detail: "complete" } },
       { timeout: 240000 },
     );
     const evidence = parseEvidence(
@@ -628,7 +651,7 @@ async function call(name, args = {}) {
   return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
-  const { stdout } = await promisify(execFile)(
+  const { stdout } = await commands.exec(
     process.execPath,
     [
       entrypoint,

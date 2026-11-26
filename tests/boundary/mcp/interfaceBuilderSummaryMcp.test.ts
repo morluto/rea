@@ -126,7 +126,10 @@ mcpTest(
       kind: "retained-evidence",
       evidence_id: summary.parent_evidence_id,
     };
-    const readAll = async (view: Record<string, unknown>) => {
+    const readAll = async (view: {
+      collection: "edges" | "nodes";
+      document?: string;
+    }) => {
       const rows: unknown[] = [];
       let offset: number | null = 0;
       while (offset !== null) {
@@ -142,7 +145,15 @@ mcpTest(
           paged.structuredContent,
         ).normalized_result;
         rows.push(...page.items);
-        offset = page.coverage.next_offset;
+        expect(rows.length).toBeLessThanOrEqual(
+          summary.summary.available_counts[view.collection],
+        );
+        const nextOffset: number | null = page.coverage.next_offset;
+        if (nextOffset !== null) {
+          expect(page.items).toHaveLength(2);
+          expect(nextOffset).toBe(offset + 2);
+        }
+        offset = nextOffset;
       }
       return rows;
     };

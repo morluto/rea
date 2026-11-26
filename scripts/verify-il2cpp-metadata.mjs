@@ -14,6 +14,10 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
+import {
+  completeEvidenceCliArguments,
+  completeEvidenceClient,
+} from "./lib/complete-evidence.mjs";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
@@ -29,7 +33,9 @@ const operation = "inspect_il2cpp_metadata";
 const contract = toolContract(operation);
 const entrypoint = resolve("scripts/rea.mjs");
 const execute = promisify(execFile);
-const client = new Client({ name: "il2cpp-metadata-verifier", version: "1" });
+const client = completeEvidenceClient(
+  new Client({ name: "il2cpp-metadata-verifier", version: "1" }),
+);
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -60,7 +66,14 @@ await withVerifierCleanup(async () => {
     const started = performance.now();
     const { stdout } = await execute(
       process.execPath,
-      [entrypoint, "inspect-il2cpp-metadata", path, "--json"],
+      [
+        entrypoint,
+        ...(await completeEvidenceCliArguments([
+          "inspect-il2cpp-metadata",
+          path,
+          "--json",
+        ])),
+      ],
       { timeout: 120_000, maxBuffer: 128 * 1024 * 1024 },
     );
     const cliMs = Math.round(performance.now() - started);

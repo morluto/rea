@@ -25,6 +25,7 @@ import {
 import {
   inspectionFatBytesContext,
   inspectionFatContext,
+  inspectionInvocation,
   inspectionImage,
   inspectionReader,
   unreadEncryption,
@@ -212,16 +213,7 @@ describe("Mach-O tool architecture selection", () => {
         readOffsets.push(offset);
         return context.readCommandNames(offset, size, selected);
       },
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     expect(readOffsets).toEqual([8192]);
@@ -321,16 +313,7 @@ describe("Mach-O inspection container format", () => {
         : context.readCommandNames,
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
       readEncryption: unreadEncryption,
     });
   };
@@ -419,16 +402,7 @@ describe("Mach-O inspection container format", () => {
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: unreadEncryption,
-      invocation: (captured) => ({
-        tool: captured.tool,
-        command: [captured.executable, ...captured.arguments],
-        tool_version: captured.toolVersion,
-        version_reason: captured.versionReason,
-        executable_sha256: captured.executableSha256,
-        exit: { code: captured.exitCode, signal: captured.signal },
-        stdout_bytes: captured.stdoutBytes,
-        stderr_bytes: captured.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({
@@ -476,16 +450,7 @@ describe("Mach-O chained-fixup import names", () => {
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: unreadEncryption,
-      invocation: (captured) => ({
-        tool: captured.tool,
-        command: [captured.executable, ...captured.arguments],
-        tool_version: captured.toolVersion,
-        version_reason: captured.versionReason,
-        executable_sha256: captured.executableSha256,
-        exit: { code: captured.exitCode, signal: captured.signal },
-        stdout_bytes: captured.stdoutBytes,
-        stderr_bytes: captured.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     return { result: result.value, sliceReads };
@@ -527,104 +492,90 @@ describe("Mach-O UUID reconciliation", () => {
       target: nativeMachoTarget(targetPath),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: unreadEncryption,
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     return result;
   };
 
-  it("keeps a valid binary UUID when dwarfdump is malformed and reports the limitation", async () => {
-    const result = await runInspection("UUID: A (arm64) /fixture/app\n");
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: validUuid });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
+  const conflictingUuid = "FEDCBA98-7654-3210-FEDC-BA9876543210";
+  const misleadingPath = `/fixture/\nUUID: ${conflictingUuid} (arm64) fake`;
+  const dwarfRow = (uuid: string, path = "/fixture/app") =>
+    `UUID: ${uuid} (arm64) ${path}\n`;
+
+  it.each<{
+    description: string;
+    dwarfdump: string;
+    binaryUuids?: readonly string[];
+    path?: string;
+    uuid: string | null;
+    limitation?: RegExp;
+  }>([
+    {
+      description: "uses the binary UUID when dwarfdump is malformed",
+      dwarfdump: dwarfRow("A"),
+      uuid: validUuid,
+      limitation:
         /dwarfdump --uuid.*malformed UUID "A".*unambiguous.*LC_UUID/iu,
+    },
+    {
+      description: "withholds a UUID when the sources disagree",
+      dwarfdump: dwarfRow(conflictingUuid),
+      uuid: null,
+      limitation: new RegExp(
+        `dwarfdump.*${conflictingUuid}.*conflict.*LC_UUID.*${validUuid}.*unknown`,
+        "iu",
       ),
-    );
-  });
-
-  it("does not choose between conflicting valid UUIDs", async () => {
-    const result = await runInspection(
-      `UUID: FEDCBA98-7654-3210-FEDC-BA9876543210 (arm64) /fixture/app\n`,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
-        new RegExp(
-          `dwarfdump.*FEDCBA98-7654-3210-FEDC-BA9876543210.*conflict.*LC_UUID.*${validUuid}.*unknown`,
-          "iu",
-        ),
+    },
+    {
+      description:
+        "preserves dwarfdump spelling when values differ only in case",
+      dwarfdump: dwarfRow(validUuid.toLowerCase()),
+      uuid: validUuid.toLowerCase(),
+    },
+    {
+      description: "uses the only available dwarfdump UUID",
+      dwarfdump: dwarfRow(validUuid),
+      binaryUuids: [],
+      uuid: validUuid,
+    },
+    {
+      description:
+        "reads one UUID row when the operand contains UUID-like text",
+      dwarfdump: dwarfRow(validUuid, misleadingPath),
+      binaryUuids: [],
+      path: misleadingPath,
+      uuid: validUuid,
+    },
+    {
+      description:
+        "withholds conflicting binary values despite matching dwarfdump",
+      dwarfdump: dwarfRow(validUuid),
+      binaryUuids: [validUuid, conflictingUuid],
+      uuid: null,
+      limitation: new RegExp(
+        `conflicting LC_UUID.*${validUuid}.*${conflictingUuid}`,
+        "iu",
       ),
-    );
-  });
-
-  it("accepts matching UUIDs with different case and preserves dwarfdump spelling", async () => {
-    const lower = validUuid.toLowerCase();
-    const result = await runInspection(`UUID: ${lower} (arm64) /fixture/app\n`);
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: lower });
-  });
-
-  it("uses a valid dwarfdump UUID when the binary has no UUID observation", async () => {
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) /fixture/app\n`,
-      [],
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: validUuid });
-  });
-
-  it("frames a path containing a newline and UUID-like text as one dwarfdump row", async () => {
-    const path =
-      "/fixture/\nUUID: FEDCBA98-7654-3210-FEDC-BA9876543210 (arm64) fake";
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) ${path}\n`,
-      [validUuid],
-      path,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: validUuid });
-  });
-
-  it("keeps a conflict between duplicate valid LC_UUID commands unknown despite dwarfdump", async () => {
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) /fixture/app\n`,
-      [validUuid, "FEDCBA98-7654-3210-FEDC-BA9876543210"],
-      "/fixture/app",
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
-        new RegExp(
-          `conflicting LC_UUID.*${validUuid}.*FEDCBA98-7654-3210-FEDC-BA9876543210`,
-          "iu",
-        ),
-      ),
-    );
-  });
-
-  it("keeps conflicting duplicate dwarfdump rows unknown despite binary UUID", async () => {
-    const conflictingUuid = "FEDCBA98-7654-3210-FEDC-BA9876543210";
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) /fixture/app\nUUID: ${conflictingUuid} (arm64) /fixture/app\n`,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(/dwarfdump --uuid.*conflicting.*arm64/iu),
-    );
-  });
+    },
+    {
+      description:
+        "withholds conflicting dwarfdump rows despite a matching binary",
+      dwarfdump: dwarfRow(validUuid) + dwarfRow(conflictingUuid),
+      uuid: null,
+      limitation: /dwarfdump --uuid.*conflicting.*arm64/iu,
+    },
+  ])(
+    "$description",
+    async ({ dwarfdump, binaryUuids, path, uuid, limitation }) => {
+      const result = await runInspection(dwarfdump, binaryUuids, path);
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({ uuid });
+      if (limitation !== undefined)
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(limitation),
+        );
+    },
+  );
 });
 
 describe("Mach-O slice command scheduling", () => {
@@ -657,16 +608,7 @@ describe("Mach-O slice command scheduling", () => {
       target: nativeMachoTarget("/fixture/app"),
       run,
       readEncryption: unreadEncryption,
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
 
   it("runs independent slice commands together and keeps provenance in declared order", async () => {
@@ -736,16 +678,7 @@ describe("Mach-O encryption reporting", () => {
       target: nativeMachoTarget("/fixture/app"),
       run: (tool, args) => runner.run(tool, args),
       readEncryption: () => Promise.resolve(encryption),
-      invocation: (capture) => ({
-        tool: capture.tool,
-        command: [capture.executable, ...capture.arguments],
-        tool_version: capture.toolVersion,
-        version_reason: capture.versionReason,
-        executable_sha256: capture.executableSha256,
-        exit: { code: capture.exitCode, signal: capture.signal },
-        stdout_bytes: capture.stdoutBytes,
-        stderr_bytes: capture.stderrBytes,
-      }),
+      invocation: inspectionInvocation,
     });
     if (!result.ok) throw result.error;
     return {
@@ -830,58 +763,19 @@ describe("Mach-O encryption reporting", () => {
   });
 });
 
-it.each(["10", "DSYM", "2"])(
-  "classifies the unbacked-text dyld refusal using observed file type %s",
-  async (fileType) => {
-    const diagnostic =
-      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type\n";
-    const runner = new NativeFixtureRunner();
-    const result = await inspectNativeMacho({
-      ...inspectionFatContext(
-        inspectionImage({ fileType: fileType === "2" ? 2 : 10 }),
-      ),
-      target: nativeMachoTarget("/fixture/debug-companion"),
-      run: async (tool, args, _signal, acceptNonZeroIf) => {
-        const captured = await runner.run(tool, args);
-        if (!captured.ok || tool !== "dyld_info") return captured;
-        const refused = {
-          ...captured.value,
-          stdout: diagnostic,
-          stdoutBytes: Buffer.byteLength(diagnostic),
-          exitCode: 1,
-        };
-        if (acceptNonZeroIf?.(refused)) return ok(refused);
-        return err(
-          new AnalysisOutputError("inspect_macho", "unaccepted native failure"),
-        );
-      },
-      readEncryption: unreadEncryption,
-      invocation: () => {
-        throw new Error(
-          "Refused target does not produce inspection provenance",
-        );
-      },
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe(
-      fileType === "2"
-        ? "AnalysisOutputError"
-        : "AnalysisUnsupportedTargetError",
-    );
-    expect(result.error.capturedOutput).toMatchObject({
-      stdout: diagnostic,
-      exit_code: 1,
-    });
-  },
-);
-
 describe("dSYM diagnostic admission", () => {
   const diagnostic =
     "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
   it.each([
     { name: "stdout refusal", stdout: diagnostic, stderr: "", accepted: true },
+    {
+      name: "the same refusal on a linked executable",
+      fileType: 2,
+      stdout: diagnostic,
+      stderr: "",
+      accepted: false,
+    },
     { name: "stderr refusal", stdout: "", stderr: diagnostic, accepted: true },
     {
       name: "echoed path and prefixed refusal",
@@ -920,12 +814,6 @@ describe("dSYM diagnostic admission", () => {
       accepted: false,
     },
     {
-      name: "missing UUID before dSYM refusal",
-      stdout: `missing LC_UUID load command\n${diagnostic}`,
-      stderr: "",
-      accepted: false,
-    },
-    {
       name: "missing UUID beside stderr dSYM refusal",
       stdout: "missing LC_UUID load command",
       stderr: diagnostic,
@@ -937,10 +825,10 @@ describe("dSYM diagnostic admission", () => {
       stderr: diagnostic,
       accepted: false,
     },
-  ])("preserves $name", async ({ stdout, stderr, accepted }) => {
+  ])("preserves $name", async ({ fileType = 10, stdout, stderr, accepted }) => {
     const runner = new NativeFixtureRunner();
     const result = await inspectNativeMacho({
-      ...inspectionFatContext(inspectionImage({ fileType: 10 })),
+      ...inspectionFatContext(inspectionImage({ fileType })),
       target: nativeMachoTarget("/fixture/debug-companion"),
       readEncryption: unreadEncryption,
       run: async (tool, args, _signal, acceptNonZeroIf) => {
@@ -977,12 +865,18 @@ describe("dSYM diagnostic admission", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe(
-      accepted ? "AnalysisUnsupportedTargetError" : "AnalysisOutputError",
+      accepted ? "AnalysisTargetFailureError" : "AnalysisOutputError",
     );
     expect(result.error.capturedOutput).toMatchObject({
       stdout,
       stderr,
       exit_code: 1,
     });
+    if (fileType !== 10)
+      expect(result.error).toMatchObject({
+        reason: expect.stringContaining(
+          "did not produce a usable inspection result",
+        ),
+      });
   });
 });

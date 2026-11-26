@@ -11,7 +11,7 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
-import { nativeTarget } from "./options.js";
+import { nativeTarget } from "./nativeTargetOption.js";
 import type { CliInstance } from "./types.js";
 import {
   javaScriptApplicationCliProjection,
@@ -21,12 +21,12 @@ import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.j
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runDirectOnTarget } from "./contractCommandRunners.js";
 import {
-  registerContractCommand,
-  registerRoutedCommand,
-  runDirectOnTarget,
   commandRoute,
-} from "./contractCommand.js";
+  registerRoutedCommand,
+} from "./routedContractCommand.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
 const namedAddressGuidance = requiredSelectorGuidance(
@@ -51,6 +51,7 @@ export const registerCoreBinaryCommands = (
   registerDecompileCommand(cli, logger, run);
   registerDecompileDirectoryCommand(cli, logger, run);
   registerSearchCommand(cli, logger, run);
+  registerProcedureInventoryCommand(cli, logger, run);
   registerContractBinaryCommands(cli, logger, run);
 };
 
@@ -107,6 +108,7 @@ const registerContractBinaryCommands = (
     {
       description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
       sessionTarget: program,
+      evidenceDelivery: true,
       positionals: ["address"],
       selectorOptions: {
         address: {
@@ -260,7 +262,9 @@ const registerDecompileCommand = (
 };
 
 /** Select static JavaScript analysis only when no binary-analysis option applies. */
-const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
+export const isJavaScriptApplicationPath = async (
+  path: string,
+): Promise<boolean> => {
   try {
     const canonical = await realpath(path);
     if (canonical.toLowerCase().endsWith(".asar")) return true;
@@ -272,6 +276,27 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
     void cause;
     return false;
   }
+};
+
+/** The complete procedure inventory, which function matching consumes. */
+const registerProcedureInventoryCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  run: ReturnType<typeof runDirectOnTarget>,
+): void => {
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(OFFICIAL_TOOL_CONTRACTS, "list_procedures"),
+    {
+      description:
+        "List every analyzed procedure as list_procedures Evidence, the inventory match-native-functions accepts. search --kind procedures returns a filtered search_procedures result instead.",
+      sessionTarget: program,
+      evidenceDelivery: true,
+      omit: noDocument,
+    },
+    run,
+  );
 };
 
 const registerSearchCommand = (

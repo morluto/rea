@@ -10,13 +10,17 @@ import { readMergedReleasePullRequest } from "./release-pull-request.mjs";
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
 const patch = fileURLToPath(
-  new URL("../../patches/release-please+17.3.0.patch", import.meta.url),
+  new URL("../../patches/release-please+17.11.2.patch", import.meta.url),
 );
 
 export function describeReleaseProposalError(error) {
   if (!(error instanceof Error)) return String(error);
-  const description = error.message || error.name || "Unknown error";
   const status = error.status;
+  const description = /^\s*<(?:!doctype\s+html\b|html[\s>])/iu.test(
+    error.message,
+  )
+    ? "GitHub returned an HTML error response"
+    : error.message || error.name || "Unknown error";
   return Number.isInteger(status) && status >= 400 && status <= 599
     ? `${description} (HTTP ${status})`
     : description;
@@ -28,9 +32,9 @@ export async function applyReleasePleasePatch(
   const metadata = JSON.parse(
     await readFile(`${directory}/package.json`, "utf8"),
   );
-  if (metadata.version !== "17.3.0") {
+  if (metadata.version !== "17.11.2") {
     throw new Error(
-      "The release proposal patch requires release-please 17.3.0",
+      "The release proposal patch requires release-please 17.11.2",
     );
   }
   // The patch names files relative to the dependency, which may resolve

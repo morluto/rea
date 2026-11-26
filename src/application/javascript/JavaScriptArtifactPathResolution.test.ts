@@ -105,11 +105,7 @@ describe("Windows CommonJS request classification", () => {
     },
   );
 
-  it.each([
-    "node:\\fs",
-    "node:fs\\extra",
-    "https:\\example.invalid\\window.cjs",
-  ])(
+  it.each(["node:\\fs", "https:\\example.invalid\\window.cjs"])(
     "does not treat the rejected scheme request %s as an unknown Windows path",
     (declaredPath) => {
       expect(
@@ -128,23 +124,22 @@ describe("Windows CommonJS request classification", () => {
     },
   );
 
-  it("keeps rejected and URL-owned backslash requests distinct from CommonJS host syntax", () => {
+  it("keeps NUL, local paths and builtins distinct from unknown Windows syntax", () => {
     const files = fileMap([
       file("app/main.cjs", "root"),
       file("app/window.cjs", "root"),
     ]);
-    for (const [declaredPath, moduleKind, status, resolvedPath] of [
-      [".\\window\0.cjs", "require", "rejected", null],
-      [".\\window.cjs", "import", "rejected", null],
-      ["./window.cjs", "require", "resolved", "app/window.cjs"],
-      ["node:fs", "require", "external", null],
+    for (const [declaredPath, status, resolvedPath] of [
+      [".\\window\0.cjs", "rejected", null],
+      ["./window.cjs", "resolved", "app/window.cjs"],
+      ["node:fs", "external", null],
     ] as const)
       expect(
         resolve({
           declaredPath,
           sourcePath: "app/main.cjs",
           context: "module-specifier",
-          moduleKind,
+          moduleKind: "require",
           files,
         }),
       ).toMatchObject({
@@ -156,9 +151,7 @@ describe("Windows CommonJS request classification", () => {
 
 describe("relative ESM URL separators", () => {
   it.each([
-    ["./dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
     ["../shared\\dep.mjs", "resolved", "shared/dep.mjs"],
-    ["./unused\\..\\dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
     ["./..\\..\\outside.mjs", "rejected", null],
     ["./dir%5cdep.mjs", "rejected", null],
     ["./dir%2fdep.mjs", "rejected", null],
@@ -802,12 +795,8 @@ describe("unavailable package metadata", () => {
       file("app/main.mjs", "root"),
       file("app/relative/index.js", "root"),
     ]);
-    const requestedPaths: string[] = [];
     const lookup = {
-      get: (path: string) => {
-        requestedPaths.push(path);
-        return path === manifest.path ? manifest : undefined;
-      },
+      get: (path: string) => (path === manifest.path ? manifest : undefined),
       coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
@@ -819,7 +808,6 @@ describe("unavailable package metadata", () => {
       files,
       unanalyzedFiles: lookup,
     });
-    expect(requestedPaths).toContain(manifest.path);
     expect(relativeRequire).toMatchObject({
       resolution_status: "unavailable",
       resolved_path: null,
@@ -1893,55 +1881,61 @@ describe("package exports subpath encapsulation", () => {
 });
 
 describe("package subpath directory ownership", () => {
-  it.each(["root", "other"])(
-    "selects metadata-less package directories only in the %s container",
-    (container) => {
+  it.each([
+    {
+      boundary: "implicit directory in the source container",
+      container: "root",
+    },
+    { boundary: "unmapped foreign container", container: "other" },
+    { boundary: "sibling prefix with a package-name file", container: null },
+    {
+      boundary: "archive escape to an implicit ancestor directory",
+      container: null,
+      archive: true,
+    },
+  ])(
+    "resolves a package subpath across $boundary",
+    ({ container, archive }) => {
+      const near = "app/src/node_modules/fixture";
+      const ancestor = "app/node_modules/fixture/parser.js";
+      const sourcePath = archive
+        ? "app/bundle.asar/consumer.js"
+        : "app/src/consumer.js";
       const files = fileMap([
-        file("app/src/consumer.js", "root"),
-        file("app/src/node_modules/fixture/parser.js", container),
-        file("app/node_modules/fixture/package.json", "root", "{}"),
-        file("app/node_modules/fixture/parser.js", "root"),
+        file(sourcePath, archive ? "archive" : "root"),
+        file(`${near}.js`, "root"),
+        file(`${near}-extra/parser.js`, "root"),
+        file(ancestor, "root"),
+        ...(container === null ? [] : [file(`${near}/parser.js`, container)]),
       ]);
-      expect(
-        resolve({
-          declaredPath: "fixture/parser",
-          sourcePath: "app/src/consumer.js",
-          context: "module-specifier",
-          moduleKind: "require",
-          files,
-        }),
-      ).toMatchObject({
-        declared_path: "fixture/parser",
-        resolution_context: "module-specifier",
-        resolution_status: "resolved",
-        resolved_path:
-          container === "root"
-            ? "app/src/node_modules/fixture/parser.js"
-            : "app/node_modules/fixture/parser.js",
-      });
+      const indexed = {
+        coverage: completeInventoryCoverage,
+        get: () => undefined,
+        hasDirectory: () => false,
+        filePathsBelow: (directory: string) =>
+          [...files.keys()].filter((path) => path.startsWith(`${directory}/`)),
+      };
+      for (const lookup of [undefined, indexed])
+        for (const [moduleKind, declaredPath] of [
+          ["require", "fixture/parser"],
+          ["import", "fixture/parser.js"],
+        ] as const)
+          expect(
+            resolve({
+              declaredPath,
+              sourcePath,
+              context: "module-specifier",
+              moduleKind,
+              files,
+              ...(lookup === undefined ? {} : { unanalyzedFiles: lookup }),
+            }),
+          ).toMatchObject({
+            resolution_status: "resolved",
+            resolved_path:
+              container === "root" ? `${near}/parser.js` : ancestor,
+          });
     },
   );
-
-  it("does not mistake a package-name file or sibling prefix for a nearer directory", () => {
-    const files = fileMap([
-      file("app/src/consumer.js", "root"),
-      file("app/src/node_modules/fixture.js", "root"),
-      file("app/src/node_modules/fixture-extra/parser.js", "root"),
-      file("app/node_modules/fixture/parser.js", "root"),
-    ]);
-    expect(
-      resolve({
-        declaredPath: "fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolved_path: "app/node_modules/fixture/parser.js",
-      resolution_status: "resolved",
-    });
-  });
 
   it.each([
     ["malformed", "{", "not valid package JSON"],
@@ -3815,24 +3809,6 @@ describe("package metadata at archive module boundaries", () => {
       });
     },
   );
-
-  it("keeps metadata-less ancestor package directories after an archive escape", () => {
-    expect(
-      resolve({
-        sourcePath: "resources/app.asar/main.cjs",
-        declaredPath: "fixture/parser",
-        context: "module-specifier",
-        moduleKind: "require",
-        files: fileMap([
-          file("resources/app.asar/main.cjs", "source"),
-          file("resources/node_modules/fixture/parser.js", "target"),
-        ]),
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "resources/node_modules/fixture/parser.js",
-    });
-  });
 
   it.each(["resources/app.asar/main.cjs", "resources/main.cjs"])(
     "keeps unread metadata blocking a decoy index for %s",

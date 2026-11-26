@@ -66,8 +66,8 @@ export interface CdpFrameEvent {
   readonly url: CdpFrameUrlObservation;
   /** The reported reason of a requested navigation. */
   readonly reason: string | undefined;
-  /** The committed frame's reported transition type. */
-  readonly transitionType: string | undefined;
+  /** The navigation kind reported beside the committed frame. */
+  readonly navigationType: string | undefined;
 }
 
 const frameEvent = (kind: CdpFrameEventKind) =>
@@ -83,10 +83,8 @@ const frameEvent = (kind: CdpFrameEventKind) =>
       facts: cdpFrameEventPayloadFacts(kind, params),
       url: observeCdpFrameUrl(urlSource),
       reason: kind === "requested" ? cdpStringValue(record?.reason) : undefined,
-      transitionType:
-        kind === "navigated"
-          ? cdpStringValue(recordValue(record?.frame)?.transitionType)
-          : undefined,
+      navigationType:
+        kind === "navigated" ? cdpStringValue(record?.type) : undefined,
     };
   });
 
