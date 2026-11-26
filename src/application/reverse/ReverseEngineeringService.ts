@@ -328,7 +328,8 @@ export class ReverseEngineeringService {
       );
       bindArtifactFileCleanup(cause, failure);
     }
-    for (const [owner, retained] of this.#pendingCleanup) {
+    // Iterate a snapshot: a concurrent retry may delete or replace entries.
+    for (const owner of Array.from(this.#pendingCleanup.keys())) {
       let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
       try {
         stopped = await owner.stop();
@@ -338,29 +339,33 @@ export class ReverseEngineeringService {
           reason: errorMessage(cause),
         };
       }
+      // A concurrent retry may have confirmed this owner meanwhile. A verified
+      // stop is authoritative; an incomplete one never resurrects a confirmed
+      // owner from this retry's stale snapshot.
+      const current = this.#pendingCleanup.get(owner);
       if (stopped.status === "incomplete") {
+        if (current === undefined) continue;
         const observation = {
           reason: stopped.reason,
-          resources: retained.observation.resources,
+          resources: current.observation.resources,
         };
-        let retryFailure = retained.retryFailure;
-        if (retryFailure === undefined) {
-          retryFailure = retained.release.bind(
+        const retryFailure =
+          current.retryFailure ??
+          current.release.bind(
             new AnalysisOutputError(
               operation,
               "A previous provider process still requires cleanup.",
               { cleanup: observation },
             ),
           );
-        }
         this.#pendingCleanup.set(owner, {
           observation,
-          release: retained.release,
+          release: current.release,
           retryFailure,
         });
         if (failure === undefined) failure = retryFailure;
       } else {
-        retained.release.confirm();
+        current?.release.confirm();
         this.#pendingCleanup.delete(owner);
       }
     }

@@ -58,6 +58,7 @@ const initializeRuntime = async (
   context: McpRequestContext,
   config: AppConfig,
   startedAt: string,
+  signal: AbortSignal,
 ): Promise<void> => {
   let shutdown: (() => Promise<void>) | undefined;
   let closeSession: (() => Promise<void>) | undefined;
@@ -85,9 +86,12 @@ const initializeRuntime = async (
     import("./eagerRuntime.js"),
     import("../server/createServer.js"),
   ]);
+  // A close during module loading owns nothing yet; never start providers for it.
+  if (signal.aborted) return;
   const result = await runEager(
     {
       ...dependencies,
+      startupSignal: signal,
       // The outer SDK transport already owns and frames this stream. Eager
       // materialization owns providers only, never another copy of raw input.
       stdin: undefined,
@@ -129,6 +133,8 @@ const initializeRuntime = async (
     },
     config,
   );
+  // Startup cancelled by close already ran the eager shutdown; it is not a failure.
+  if (signal.aborted && shutdown !== undefined) return;
   if (result !== 0 || shutdown === undefined)
     throw new Error(SERVER_START_FAILED);
 };
@@ -223,13 +229,14 @@ export const runDeferred = async (
               new ToolResultDelivery(
                 config.mcpMaxResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
               ),
-              (target) =>
+              (target, signal) =>
                 initializeRuntime(
                   target,
                   dependencies,
                   context,
                   config,
                   startedAt,
+                  signal,
                 ).catch((cause) => {
                   dependencies.setExitCode(1);
                   throw cause;

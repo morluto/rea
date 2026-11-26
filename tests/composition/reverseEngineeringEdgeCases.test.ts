@@ -36,6 +36,7 @@ import {
 import type { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../support/testWait.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 registerSharedReverseEngineeringEdgeCaseTests();
@@ -839,6 +840,81 @@ it("releases a retained provider owner after cleanup succeeds", async () => {
     expect(cleanupOwner.stop).toHaveBeenCalledTimes(1);
     expect(runOwned).toHaveBeenCalledTimes(2);
   } finally {
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps a cleanup owner confirmed when a concurrent retry observed it incomplete", async () => {
+  const { directory, path } = await createArtifact();
+  let releaseVerifiedStop: () => void = () => undefined;
+  const verifiedStop = new Promise<{ status: "verified-cleanup" }>(
+    (resolve) => {
+      releaseVerifiedStop = () => resolve({ status: "verified-cleanup" });
+    },
+  );
+  type Stop = Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
+  let releaseStaleStop: () => void = () => undefined;
+  const staleStop = new Promise<Stop>((resolve) => {
+    releaseStaleStop = () =>
+      resolve({ status: "incomplete", reason: "stale concurrent stop" });
+  });
+  const incomplete = (reason: string): Promise<Stop> =>
+    Promise.resolve({ status: "incomplete", reason });
+  const queued: Array<() => Promise<Stop>> = [];
+  let stops = 0;
+  const cleanupOwner = {
+    stop: vi.fn(() => {
+      stops += 1;
+      return (queued.shift() ?? (() => incomplete("group remains")))();
+    }),
+  } as unknown as ProviderProcessSupervisor;
+  const runOwned = vi
+    .fn<typeof runOwnedCommand>()
+    .mockRejectedValueOnce(
+      new OwnedCommandFailure(
+        "process",
+        "objdump cleanup could not be verified",
+        providerSnapshot({ exitCode: null }),
+        "group remains",
+        undefined,
+        ["run-id", "pid:42"],
+        cleanupOwner,
+      ),
+    )
+    .mockResolvedValue(providerSnapshot());
+  const service = new ReverseEngineeringService({ runOwned });
+  try {
+    const first = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    expect(first).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    // The first retry verifies the stop while a second, concurrent retry's
+    // stop reports the group as still present.
+    const before = stops;
+    queued.push(
+      () => verifiedStop,
+      () => staleStop,
+    );
+    const confirming = service.retryCleanup();
+    await waitFor(() => expect(stops).toBe(before + 1));
+    const stale = service.retryCleanup();
+    await waitFor(() => expect(stops).toBe(before + 2));
+    releaseVerifiedStop();
+    expect(await confirming).toEqual({ ok: true, value: null });
+    // The concurrent stop reports only after the owner was confirmed.
+    releaseStaleStop();
+    await stale;
+    // The confirmed owner is gone: a later retry has nothing left to stop.
+    expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
+    expect(stops).toBe(before + 2);
+  } finally {
+    releaseVerifiedStop();
+    releaseStaleStop();
     await service.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }

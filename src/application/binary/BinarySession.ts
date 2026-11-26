@@ -843,8 +843,10 @@ export class BinarySession
       // A protocol reply does not prove that background writers have stopped.
       // Retire the old analysis and require an explicit fresh open rather than
       // silently binding a snapshot while an unrestricted command can still write.
+      // Without a bound engine there is no analysis to retire; a staged
+      // snapshot stays bound to its target digest and profile instead.
       const retireTarget = activeAtDispatch !== undefined;
-      this.invalidateSnapshot();
+      if (retireTarget) this.invalidateSnapshot();
       const value = await operation();
       this.#externalMutationCleanupFailure =
         !value.ok && value.error.cleanupIncomplete ? value.error : undefined;
