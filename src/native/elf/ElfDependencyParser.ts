@@ -766,7 +766,11 @@ const readHashCount = function* (
     if (next.value === undefined) {
       yield { kind: "yield" };
       next = steps.next(checkpoint);
-    } else next = steps.next(yield* read(next.value));
+    } else {
+      const offset =
+        typeof next.value === "object" ? next.value.offset : next.value;
+      next = steps.next(yield* read(offset));
+    }
   }
   const count = next.value;
   if (count.ok) return count.value;

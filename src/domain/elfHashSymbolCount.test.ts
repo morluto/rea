@@ -1,7 +1,9 @@
 import { expect, it } from "vitest";
 import {
   readElfGnuHashSymbolCount,
+  readElfGnuHashSymbolCountSteps,
   readElfHashSymbolCount,
+  readElfHashSymbolCountSteps,
   type ElfGnuHashCountWalk,
   type ElfHashWordReader,
 } from "./elfHashSymbolCount.js";
@@ -95,4 +97,35 @@ it("applies a caller budget before walking each table", () => {
 it("yields between bounded steps so a driver can stop a long walk", () => {
   const walk = readElfGnuHashSymbolCount(words(gnuTable([2], [1])), 8);
   expect(walk.next().done).toBe(false);
+});
+
+it("labels end-of-table bounds probes explicitly for streaming drivers", () => {
+  const gnuSteps = readElfGnuHashSymbolCountSteps(8);
+  const gnuReader = words(gnuTable([2, 3], [0, 0, 1]));
+  const gnuProbes: unknown[] = [];
+  let gnuNext = gnuSteps.next();
+  while (!gnuNext.done) {
+    const step = gnuNext.value;
+    if (step === undefined) gnuNext = gnuSteps.next(ok(0));
+    else if (typeof step === "object") {
+      gnuProbes.push(step);
+      gnuNext = gnuSteps.next(ok(0));
+    } else gnuNext = gnuSteps.next(gnuReader(step));
+  }
+  expect(gnuProbes).toEqual([{ kind: "bounds", offset: 28 }]);
+  expect(gnuNext.value).toEqual(ok(5));
+
+  const hashSteps = readElfHashSymbolCountSteps();
+  const hashReader = words([1, 3, 0, 0, 0, 0]);
+  const hashProbes: unknown[] = [];
+  let hashNext = hashSteps.next();
+  while (!hashNext.done) {
+    const step = hashNext.value;
+    if (typeof step === "object") {
+      hashProbes.push(step);
+      hashNext = hashSteps.next(ok(0));
+    } else hashNext = hashSteps.next(hashReader(step));
+  }
+  expect(hashProbes).toEqual([{ kind: "bounds", offset: 20 }]);
+  expect(hashNext.value).toEqual(ok(3));
 });

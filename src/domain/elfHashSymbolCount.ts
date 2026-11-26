@@ -39,23 +39,34 @@ const overBudget = (
     ...(lowerBound === true ? { lowerBound: true } : {}),
   });
 
-/** A byte offset requests one word. An empty step is a cancellation checkpoint. */
+/** A bounds-only probe that checks word reachability without requiring its value. */
+export interface ElfHashBoundsProbe {
+  readonly kind: "bounds";
+  readonly offset: number;
+}
+
+/** A byte offset requests one word, a bounds probe checks reachability only, and undefined is a cancellation checkpoint. */
+export type ElfHashCountStep = number | ElfHashBoundsProbe | undefined;
+
 export type ElfHashCountSteps<
   Count,
-  Step extends number | undefined = number | undefined,
+  Step extends ElfHashCountStep = ElfHashCountStep,
 > = Generator<Step, Result<Count, ElfHashCountFailure>, Result<number, string>>;
 
 /** DT_HASH's nchain is the dynamic symbol count; the whole table must be readable. */
 export function* readElfHashSymbolCountSteps(
   maximum = Number.POSITIVE_INFINITY,
-): ElfHashCountSteps<number, number> {
+): ElfHashCountSteps<number, number | ElfHashBoundsProbe> {
   const buckets = yield 0;
   if (!buckets.ok) return malformed(`DT_HASH header ${buckets.error}`);
   const count = yield 4;
   if (!count.ok) return malformed(`DT_HASH header ${count.error}`);
   if (count.value > maximum)
     return overBudget("DT_HASH symbol table", count.value);
-  const end = yield 8 + 4 * (buckets.value + count.value) - 4;
+  const end = yield {
+    kind: "bounds",
+    offset: 8 + 4 * (buckets.value + count.value) - 4,
+  };
   return end.ok ? ok(count.value) : malformed(`DT_HASH table ${end.error}`);
 }
 
@@ -65,7 +76,11 @@ export const readElfHashSymbolCount = (
 ): Result<number, ElfHashCountFailure> => {
   const steps = readElfHashSymbolCountSteps(maximum);
   let next = steps.next();
-  while (!next.done) next = steps.next(read(next.value));
+  while (!next.done) {
+    const offset =
+      typeof next.value === "object" ? next.value.offset : next.value;
+    next = steps.next(read(offset));
+  }
   return next.value;
 };
 
@@ -95,7 +110,7 @@ export function* readElfGnuHashSymbolCountSteps(
     return malformed("DT_GNU_HASH buckets are malformed");
   const bucketsAt = 16 + bloomWords * wordBytes;
   const prefixBytes = bucketsAt + buckets * 4;
-  const lastBucket = yield prefixBytes - 4;
+  const lastBucket = yield { kind: "bounds", offset: prefixBytes - 4 };
   if (!lastBucket.ok)
     return malformed(`DT_GNU_HASH buckets ${lastBucket.error}`);
   let last = 0;
@@ -131,7 +146,11 @@ export function* readElfGnuHashSymbolCount(
     if (next.value === undefined) {
       yield;
       next = steps.next(checkpoint);
-    } else next = steps.next(read(next.value));
+    } else {
+      const offset =
+        typeof next.value === "object" ? next.value.offset : next.value;
+      next = steps.next(read(offset));
+    }
   }
   return next.value;
 }
