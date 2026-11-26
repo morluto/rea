@@ -11,6 +11,7 @@ import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecr
 import {
   applyDeclaredBrowserStorageSeeds,
   declaredBrowserStorageSeedMark,
+  markDeclaredBrowserStorageCdpOwned,
   type DeclaredBrowserStorageSeed,
   type DeclaredBrowserStorageSeedOutcome,
   type DeclaredBrowserStorageSeedScript,
@@ -606,6 +607,57 @@ it("does not restore deleted seed values on reload of the same tab", () => {
   expect(reloaded.notifications).toEqual([]);
 });
 
+it("skips the context hook entirely on a CDP-owned selected page tab", () => {
+  const seeds: DeclaredBrowserStorageSeed[] = [
+    {
+      origin: "http://child.example",
+      local: [["probe", "seed-local"]],
+      session: [["probe", "seed-session"]],
+    },
+  ];
+  const binding = "__reaStorageSeedTest";
+  const seedToken = "cdp-owned-token";
+  const storage = { local: memoryStorage(), session: memoryStorage() };
+  const context = vm.createContext({
+    location: { origin: "http://child.example" },
+    name: "",
+    localStorage: storage.local,
+    sessionStorage: storage.session,
+    [binding]: () => undefined,
+  });
+  context.top = context;
+  vm.runInContext(
+    `(${markDeclaredBrowserStorageCdpOwned.toString()})(${JSON.stringify({
+      seedToken,
+    })})`,
+    context,
+  );
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      binding,
+      seedToken,
+      initializedLocalOrigins: [],
+      seeds,
+    })})`,
+    context,
+  );
+  expect(storage.local.items.size).toBe(0);
+  expect(storage.session.items.size).toBe(0);
+  // A later same-tab navigation still skips even if the page marker script
+  // has not run yet for that document: the durable window.name flag remains.
+  storage.session.items.set("probe", "page-updated");
+  vm.runInContext(
+    `(${applyDeclaredBrowserStorageSeeds.toString()})(${JSON.stringify({
+      binding,
+      seedToken,
+      initializedLocalOrigins: [],
+      seeds,
+    })})`,
+    context,
+  );
+  expect(storage.session.items.get("probe")).toBe("page-updated");
+});
+
 it("seeds a cloned popup session area and reports write failures", () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
@@ -684,7 +736,8 @@ it("installs synchronous popup seeds in launch mode and avoids shared connect co
   });
   const launchOwner = await createInitializedStorage(launchContext, launchPage);
   expect(bindings).toHaveLength(1);
-  expect(pageScripts).toHaveLength(0);
+  expect(pageScripts).toHaveLength(1);
+  expect(pageScripts[0]?.script).toBe(markDeclaredBrowserStorageCdpOwned);
   expect(contextScripts).toHaveLength(1);
   expect(contextScripts[0]?.script).toBe(applyDeclaredBrowserStorageSeeds);
   expect(contextScripts[0]?.payload.initializedLocalOrigins).toEqual([]);
