@@ -151,6 +151,11 @@ const sanitizedMalformedHeader = (
   previousSensitive: boolean,
   redaction: RedactionState,
 ): string => {
+  // A folded line continues the field above it, including a sensitive one:
+  // "Authorization: Bearer first" + " Location: second-secret" is one value,
+  // so the continuation is redacted before its own "Location:" is read.
+  if (/^[ \t]/u.test(text) && previousSensitive)
+    return "[redacted continuation]";
   const colon = text.indexOf(":");
   const name = colon > 0 ? text.slice(0, colon) : "";
   if (SENSITIVE_HTTP_HEADERS.has(name.trim().toLowerCase()))
@@ -164,8 +169,6 @@ const sanitizedMalformedHeader = (
     if (start >= 0)
       return `${name}:${value.slice(0, start)}${withoutUrlUserInfo(value.slice(start), redaction)}`;
   }
-  if (/^[ \t]/u.test(text) && previousSensitive)
-    return "[redacted continuation]";
   return text;
 };
 

@@ -866,6 +866,28 @@ describe("folded URL headers", () => {
       " Cookie: [redacted]",
     );
   });
+  it("redacts a continuation of a sensitive field before reading its own name", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [
+          ["WARC-Record-ID", "<urn:1>"],
+          ["Cookie", "first\r\n Location: warc-secret"],
+        ],
+        "HTTP/1.1 200 OK\r\nAuthorization: Bearer first\r\n Location: http-secret\r\n\r\n",
+      ),
+    );
+    // A folded line belongs to the field above it; "Location:" inside it is
+    // part of the credential, not a new URL field to sanitize as one.
+    expect(JSON.stringify(archive)).not.toMatch(/warc-secret|http-secret/u);
+    expect(archive.records[0]?.malformed_header_lines).toContain(
+      "[redacted continuation]",
+    );
+    expect(archive.records[0]?.http?.malformed_header_lines).toContain(
+      "[redacted continuation]",
+    );
+  });
+
   it("redacts credentials in a continuation of a URL header", () => {
     const archive = parsed(
       record(
