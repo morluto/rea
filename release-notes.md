@@ -261,6 +261,7 @@
 * **ci:** bind timing evidence to its workflow attempt ([#14080](https://github.com/morluto/rea/issues/14080)) ([bc19c8d](https://github.com/morluto/rea/commit/bc19c8d21fbe26be280db55faae92bac2c12c20e))
 * **ci:** bound browser runtime fixture source readiness ([#14364](https://github.com/morluto/rea/issues/14364)) ([a9e34a4](https://github.com/morluto/rea/commit/a9e34a4aaef89138d7b89da7f9d1965bafe16365))
 * **ci:** check the MCP SDK validator option in its constructor slot ([#13266](https://github.com/morluto/rea/issues/13266)) ([411e78e](https://github.com/morluto/rea/commit/411e78ea64355320c034f40ea0fda6c089255b28))
+* **ci:** clear stale static diagnostic context before recording ([#14713](https://github.com/morluto/rea/issues/14713)) ([2a4c8cc](https://github.com/morluto/rea/commit/2a4c8ccfba945b051d8aeddcf305cf9158e3c84b))
 * **ci:** close static-check cache gaps and prune stale settings ([#14017](https://github.com/morluto/rea/issues/14017)) ([5817ebb](https://github.com/morluto/rea/commit/5817ebb288612f5aa364398ec1d5e70006888203))
 * **ci:** fall back to Ubuntu Azure archive in recorded-crash container ([#14061](https://github.com/morluto/rea/issues/14061)) ([d02be92](https://github.com/morluto/rea/commit/d02be9207e3060c882273b526a5d7acb2522c781))
 * **ci:** include the cache retention helper dependency ([#14689](https://github.com/morluto/rea/issues/14689)) ([8d302d2](https://github.com/morluto/rea/commit/8d302d2dade726f720520fa1addaaabfda6212e5))
