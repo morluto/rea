@@ -1,11 +1,13 @@
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { androidClassPageViewResultSchema } from "../../../src/domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import { ok } from "../../../src/domain/result.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { listedEvidenceCaller } from "../../support/mcp/listedEvidenceCaller.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 
@@ -69,17 +71,7 @@ const connect = async (count: number) => {
     // These cases cover the budget's choice for an omitted detail.
     testDelivery: "budgeted",
   });
-  const definitions = (await client.listTools()).tools;
-  const call = async (name: string, args: Record<string, unknown>) => {
-    const definition = definitions.find((tool) => tool.name === name);
-    if (definition === undefined) throw new Error(`Missing tool ${name}`);
-    const result = await client.callTool(
-      { name, arguments: args },
-      { toolDefinition: withCanonicalOutputSchema(definition) },
-    );
-    expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-    return parseEvidence(result.structuredContent);
-  };
+  const call = listedEvidenceCaller(client, (await client.listTools()).tools);
   return { call, target: { path, class_name: "com.example.Player" } };
 };
 
@@ -152,6 +144,47 @@ it("summarizes a large class with counts and pages its members", async () => {
     ],
     coverage: { total: 20, next_offset: 1 },
   });
+
+  const methodPage = androidClassPageViewResultSchema.parse(
+    seek.normalized_result,
+  );
+  const fieldPage = androidClassPageViewResultSchema.parse(
+    statics.normalized_result,
+  );
+  const samples = [
+    { facet: "methods", items: methodPage.items },
+    { facet: "fields", items: fieldPage.items },
+    { facet: "inner-classes", items: ["com.example.Player.Companion"] },
+    {
+      facet: "mapping-symbols",
+      items: [
+        {
+          kind: "class",
+          name: "Player",
+          raw_name: "a",
+          resolution: { status: "unmapped" },
+        },
+      ],
+    },
+  ];
+  const validation = createMcpSchemaValidation();
+  onTestFinished(() => validation.clear());
+  const validators = ["inspect_android_class", "inspect_analysis_view"].map(
+    (name) => validation.getValidator(canonicalOutputSchema(name)),
+  );
+  for (const { facet } of samples) {
+    const view = { kind: "android-class", facet, offset: 0, limit: 64 };
+    const check = (items: unknown, expected: boolean) => {
+      const normalized_result = { ...methodPage, view, items };
+      expect(
+        androidClassPageViewResultSchema.safeParse(normalized_result).success,
+      ).toBe(expected);
+      for (const validate of validators)
+        expect(validate({ ...seek, normalized_result }).valid).toBe(expected);
+    };
+    check([], true);
+    for (const sample of samples) check(sample.items, sample.facet === facet);
+  }
 });
 
 it("returns a members page in the class call", async () => {
