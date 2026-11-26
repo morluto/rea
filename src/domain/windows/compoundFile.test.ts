@@ -416,6 +416,54 @@ it("rejects a directory chain that leaves the declared file", () => {
   );
 });
 
+it("caches the tail a later stream starts at, not the earlier chain's prefix", () => {
+  // One chain 2 -> 3 -> ... -> 19. The first stream declares more than it
+  // reaches and is unresolved; the second starts partway along the same chain
+  // at sector 10 and covers the rest exactly. Its share of the walk must be the
+  // tail 10-19 with that tail's real outcome, not the earlier chain's prefix
+  // reported as broken.
+  const fat = Array.from({ length: 20 }, (_, index) =>
+    index < 2 ? END : index === 19 ? END : index + 1,
+  );
+  const image = parse(
+    compoundFile({
+      entries: root(1, [
+        { name: "earlier", type: 2, start: 2, size: 24 * SECTOR, right: 2 },
+        { name: "later", type: 2, start: 10, size: 10 * SECTOR },
+      ]),
+      fat,
+      totalSectors: 20,
+    }),
+  );
+  expect(image.entries.find((entry) => entry.name === "earlier")).toMatchObject(
+    { byteOffset: null },
+  );
+  // The tail reached from sector 10 is consecutive, which the old prefix cache
+  // reported as broken; the earlier chain still owns those sectors, so the
+  // bytes stay shared rather than published twice.
+  expect(image.entries.find((entry) => entry.name === "later")).toMatchObject({
+    contiguous: true,
+    sharedOverlap: true,
+    byteOffset: null,
+  });
+});
+
+it("refuses streamed bytes beyond the admitted length and parses several chunks", () => {
+  const bytes = compoundFile({ entries: root(undefined, []) });
+  const decoder = createCompoundFileDecoder(bytes.length);
+  expect(decoder.ok).toBe(true);
+  if (!decoder.ok) return;
+  expect(decoder.value.write(bytes.subarray(0, 100)).ok).toBe(true);
+  expect(decoder.value.write(bytes.subarray(100)).ok).toBe(true);
+  const image = decoder.value.finish();
+  expect(image.ok).toBe(true);
+  const overrun = createCompoundFileDecoder(bytes.length);
+  if (!overrun.ok) return;
+  expect(overrun.value.write(bytes.subarray(0, 10)).ok).toBe(true);
+  const tooMany = overrun.value.write(new Uint8Array(bytes.length - 10 + 1));
+  expect(tooMany).toMatchObject({ ok: false });
+});
+
 it("refuses a file above the fixed ceiling and streams a parse below it", () => {
   expect(createCompoundFileDecoder(COMPOUND_FILE_MAX_BYTES + 1).ok).toBe(false);
   const decoder = createCompoundFileDecoder(COMPOUND_FILE_MAX_BYTES);

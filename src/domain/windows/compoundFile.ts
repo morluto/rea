@@ -204,7 +204,11 @@ const sectorOf = (sector: number, sectorBytes: number): number =>
   (sector + 1) * sectorBytes;
 
 interface ChainWalk {
-  readonly sectors: readonly number[];
+  /**
+   * The sectors reached from this start, as a view into one walk's array so a
+   * cached tail costs no copy.
+   */
+  readonly sectors: Uint32Array;
   readonly broken: boolean;
   /** True when the aggregate visit budget, not the table, ended the walk. */
   readonly budgetHit: boolean;
@@ -240,10 +244,9 @@ class ChainTable {
   walk(start: number): ChainWalk {
     const cached = this.#walks.get(start);
     if (cached !== undefined) return cached;
-    const sectors: number[] = [];
+    const visitedHere: number[] = [];
     const seen = new Set<number>();
     const sectorCount = this.fat.length;
-    const local = new Map<number, ChainWalk>();
     let sector = start;
     let broken = true;
     let budgetHit = false;
@@ -269,24 +272,29 @@ class ChainTable {
       }
       this.#visited += 1;
       seen.add(sector);
-      sectors.push(sector);
-      local.set(sector, {
-        sectors: Object.freeze([...sectors]),
-        broken: true,
-        budgetHit: false,
-      });
+      visitedHere.push(sector);
       sector = this.fat[sector] as number;
     }
+    const sectors = Uint32Array.from(visitedHere);
+    // Every sector on the walk shares the walk's outcome: if it reached the
+    // end marker, so does the suffix starting at any of them; if it broke,
+    // each suffix breaks at the same later sector. Caching that suffix as a
+    // view keeps one array per walk instead of a copy per visited sector.
     const result: ChainWalk = {
-      sectors: Object.freeze(sectors),
+      sectors,
       broken: broken || budgetHit,
       budgetHit,
     };
     this.#walks.set(start, result);
-    // Every sector on the walk has this same suffix, so a later entry that
-    // starts partway along it reuses the tail instead of re-walking it.
-    for (const [walked, prefix] of local)
-      if (!this.#walks.has(walked)) this.#walks.set(walked, prefix);
+    for (let position = 1; position < sectors.length; position += 1) {
+      const walked = sectors[position] as number;
+      if (!this.#walks.has(walked))
+        this.#walks.set(walked, {
+          sectors: sectors.subarray(position),
+          broken: result.broken,
+          budgetHit,
+        });
+    }
     return result;
   }
 }
@@ -308,17 +316,17 @@ const entryTypeOf = (raw: number): CompoundFileEntryType | null => {
 
 /** A directory name is UTF-16LE, terminated, and at most 31 characters. */
 const nameOf = (
-  entry: Uint8Array,
-  view: BinaryReader,
+  directory: BinaryReader,
+  base: number,
 ): { readonly name: string | null; readonly problem: string | null } => {
-  const nameLength = view.u16(ENTRY.nameLength);
+  const nameLength = directory.u16(base + ENTRY.nameLength);
   if (nameLength === 0) return { name: null, problem: null };
   if (nameLength > ENTRY_NAME_BYTES || nameLength % 2 !== 0)
     return {
       name: null,
       problem: `declares a ${String(nameLength)}-byte name, which is not an even length within ${String(ENTRY_NAME_BYTES)} bytes`,
     };
-  const bytes = entry.subarray(0, nameLength);
+  const bytes = directory.range(base, nameLength, "directory entry name");
   if (bytes[nameLength - 1] !== 0 || bytes[nameLength - 2] !== 0)
     return {
       name: null,
@@ -648,11 +656,10 @@ export const parseCompoundFile = (
   // sector would each read that sector as a different structure: the directory
   // walk would decode mini-FAT cells as entry names, or the reverse. Reject
   // the interpretation as a conflict rather than publish one of the two.
+  const directorySectors = new Set<number>(directoryChain.sectors);
   if (
     miniFatChain.sectors.length !== 0 &&
-    miniFatChain.sectors.some((sector) =>
-      directoryChain.sectors.includes(sector),
-    )
+    miniFatChain.sectors.some((sector) => directorySectors.has(sector))
   )
     limitations.push(
       "the mini FAT chain shares sectors with the directory chain; both claim the same bytes as different structures, so mini stream contents are not resolved",
@@ -722,7 +729,7 @@ export const parseCompoundFile = (
       ),
     );
   const raw = Array.from({ length: entryCount }, (_, index) =>
-    readEntry(directoryBytes, directory, index, majorVersion),
+    readEntry(directory, index, majorVersion),
   );
   // Count every entry-derived fact in one pass: a directory can hold up to
   // 1,048,576 entries, and independent `.filter().length` calls would each
@@ -775,6 +782,14 @@ export const parseCompoundFile = (
   const visited = new Set<number>();
   let cycleCount = 0;
   let depthLimited = 0;
+  // Deep nesting multiplies into every descendant path: 64 levels of
+  // maximum-length names describe about 2 KiB per leaf, so a million children
+  // would retain gigabytes of strings the metadata is not worth. The allowance
+  // is charged while a path is built, before it is retained, so the strings
+  // held never exceed it; an entry past the allowance keeps its own facts but
+  // no path, and so do its descendants, which have no prefix to extend.
+  let pathBytes = 0;
+  let pathBudgetHit = 0;
   const visit = (
     index: number,
     parent: number,
@@ -824,7 +839,19 @@ export const parseCompoundFile = (
             : next.prefix === ""
               ? component
               : `${next.prefix}/${component}`;
-      if (path !== null) paths.set(entryIndex, path);
+      // Charge the allowance before the string is retained: dropping it later
+      // would leave the already-built text in `paths` and so bound nothing.
+      // A path past the allowance is not stored, which also leaves its
+      // descendants without a prefix to extend.
+      let retained: string | null = null;
+      if (path !== null) {
+        if (pathBytes + path.length > MAX_PATH_BYTES) pathBudgetHit += 1;
+        else {
+          pathBytes += path.length;
+          retained = path;
+          paths.set(entryIndex, path);
+        }
+      }
       // An unallocated or undefined-type slot belongs to no tree. Its links are
       // stale fields of a free record: following them would name a live entry
       // under a fabricated hierarchy and drop it from the orphan count.
@@ -861,7 +888,7 @@ export const parseCompoundFile = (
         pending.push({
           index: entry.child,
           parent: entryIndex,
-          prefix: path,
+          prefix: retained,
           depth: next.depth + 1,
         });
       }
@@ -906,8 +933,6 @@ export const parseCompoundFile = (
   let brokenChains = 0;
   let overlappingChains = 0;
   let sharedChains = 0;
-  let pathBytes = 0;
-  let pathBudgetHit = 0;
   let chainBudgetHits = 0;
   // Two entries can name the same starting sector or merge chains, which would
   // publish the same bytes under two identities. The first entry in directory
@@ -916,19 +941,7 @@ export const parseCompoundFile = (
   const ownedSectors = new Map<number, number>();
   const entries: CompoundFileDirectoryEntry[] = raw.map((entry, index) => {
     const parent = parents.get(index) ?? null;
-    // Deep nesting multiplies into every descendant path: 64 levels of
-    // maximum-length names describe about 2 KiB per leaf, so a million
-    // children would retain gigabytes of strings the metadata is not worth.
-    // Past the byte allowance a path is dropped and counted, not retained.
-    const candidate = paths.get(index) ?? null;
-    let path: string | null = candidate;
-    if (candidate !== null) {
-      pathBytes += candidate.length;
-      if (pathBytes > MAX_PATH_BYTES) {
-        path = null;
-        pathBudgetHit += 1;
-      }
-    }
+    const path = paths.get(index) ?? null;
     const startingSector = isMarker(entry.startingSector)
       ? null
       : entry.startingSector;
@@ -1090,25 +1103,21 @@ interface RawEntry {
 }
 
 const readEntry = (
-  directoryBytes: Uint8Array,
   directory: BinaryReader,
   index: number,
   majorVersion: number,
 ): RawEntry => {
   const base = index * DIRECTORY_ENTRY_BYTES;
-  const entry = directoryBytes.subarray(base, base + DIRECTORY_ENTRY_BYTES);
-  const view = new BinaryReader(
-    Buffer.from(entry.buffer, entry.byteOffset, entry.byteLength),
-    true,
-    "compound-file",
-  );
-  const { name, problem } = nameOf(entry, view);
+  // Fields are read through the caller's reader with per-entry offsets rather
+  // than a new reader and buffer view per record: a directory can hold a
+  // million entries, and each extra reader is an allocation and a cleanup.
+  const { name, problem } = nameOf(directory, base);
   const rawType = directory.bytes[base + ENTRY.objectType]!;
   const type = entryTypeOf(rawType);
   // Version 3 entries only carry the low 32 bits of the stream size; the high
   // 32 bits are reserved and may be stale. Version 4 uses the whole 64-bit
   // field, so masking it there would turn 0x1_00000001 into a one-byte stream.
-  const rawSize = view.word(ENTRY.streamSize, 64);
+  const rawSize = directory.word(base + ENTRY.streamSize, 64);
   const declaredSize = majorVersion === 3 ? rawSize & 0xffff_ffffn : rawSize;
   const streamSizeUnrepresentable =
     declaredSize > BigInt(Number.MAX_SAFE_INTEGER);
@@ -1116,7 +1125,7 @@ const readEntry = (
     ? Number.MAX_SAFE_INTEGER
     : Number(declaredSize);
   const linkOf = (offset: number): number | null => {
-    const value = view.u32(offset);
+    const value = directory.u32(base + offset);
     return value === CFB_FREE_SECTOR ? null : value;
   };
   return {
@@ -1128,7 +1137,7 @@ const readEntry = (
     leftSibling: linkOf(ENTRY.leftSibling),
     rightSibling: linkOf(ENTRY.rightSibling),
     child: linkOf(ENTRY.child),
-    startingSector: view.u32(ENTRY.startingSector),
+    startingSector: directory.u32(base + ENTRY.startingSector),
     streamSize,
     streamSizeUnrepresentable,
   };
@@ -1136,28 +1145,34 @@ const readEntry = (
 
 /** Streaming form of the same parse: the whole admitted file is buffered once. */
 class StreamingCompoundFileDecoder implements RegionDecoder<CompoundFileImage> {
-  readonly #chunks: Uint8Array[] = [];
-  #length = 0;
+  /**
+   * One image buffer of the admitted length, filled as chunks arrive. Retaining
+   * the chunks and then copying them into a second equally sized image would
+   * need roughly twice the admitted file at the moment of `finish()`, which a
+   * container near the 512 MiB ceiling cannot afford.
+   */
+  #bytes: Uint8Array | undefined;
+  #written = 0;
 
   constructor(readonly fileBytes: number) {}
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
-    this.#chunks.push(chunk);
-    this.#length += chunk.length;
+    if (chunk.length > this.fileBytes - this.#written)
+      return err(failure("received more bytes than the admitted file length"));
+    this.#bytes ??= new Uint8Array(this.fileBytes);
+    (this.#bytes as Uint8Array).set(chunk, this.#written);
+    this.#written += chunk.length;
     return ok(undefined);
   }
 
   finish(): Result<CompoundFileImage, RegionDecodeFailure> {
-    // The chunks are copied into one image once; the chunk list is released
-    // before parsing so a file near the ceiling does not retain two copies.
-    const bytes = new Uint8Array(this.#length);
-    let written = 0;
-    for (const chunk of this.#chunks) {
-      bytes.set(chunk, written);
-      written += chunk.length;
-    }
-    this.#chunks.length = 0;
-    return parseCompoundFile(bytes);
+    // `parseCompoundFile` reads the image without copying it, so the buffer
+    // holds exactly one copy from the first write through the parse.
+    return parseCompoundFile(
+      this.#bytes === undefined
+        ? new Uint8Array(0)
+        : this.#bytes.subarray(0, this.#written),
+    );
   }
 }
 
