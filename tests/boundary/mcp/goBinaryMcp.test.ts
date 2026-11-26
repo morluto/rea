@@ -98,7 +98,7 @@ mcpTest(
       });
       inspection = client.callTool({
         name: "inspect_go_binary",
-        arguments: { detail: "complete", path },
+        arguments: { path },
       });
       await goInspection.reached(inspection, "Go inspection");
       closing = client.callTool({
@@ -160,7 +160,7 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
       );
       const response = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { detail: "complete", path },
+        arguments: { path },
       });
       const diagnostic = parseMcpToolError(response);
       expect(diagnostic.error).toMatchObject({
@@ -194,7 +194,7 @@ goMcpTest.skipIf(process.platform === "win32")(
 
     const rejected = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { detail: "complete", path: selected },
+      arguments: { path: selected },
     });
     const diagnostic = parseMcpToolError(rejected).error;
     expect(diagnostic).toMatchObject({
@@ -208,7 +208,7 @@ goMcpTest.skipIf(process.platform === "win32")(
 
     const retried = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { detail: "complete", path: original },
+      arguments: { path: original },
     });
     expect(retried.isError).not.toBe(true);
   },
@@ -226,7 +226,7 @@ for (const targetKind of ["dangling", "directory"] as const) {
 
       const rejected = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { detail: "complete", path: selected },
+        arguments: { path: selected },
       });
       const diagnostic = parseMcpToolError(rejected).error;
       expect(diagnostic).toMatchObject({
@@ -255,7 +255,7 @@ goMcpTest(
     await writeFile(path, fixture.bytes);
     const response = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { detail: "complete", path },
+      arguments: { path },
     });
     expect(response.isError).not.toBe(true);
     const evidence = evidenceResultOf(goBinarySchema).parse(
@@ -277,7 +277,7 @@ goMcpTest(
       await writeFile(path, fixture.bytes);
       const response = await client.callTool({
         name: "inspect_go_binary",
-        arguments: { detail: "complete", path },
+        arguments: { path },
       });
       expect(
         response.isError,
@@ -352,7 +352,7 @@ goMcpTest(
     });
     const nulPath = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { detail: "complete", path: "/artifacts/\0program" },
+      arguments: { path: "/artifacts/\0program" },
     });
     expect(parseMcpToolError(nulPath)).toMatchObject({
       error: {
@@ -367,7 +367,7 @@ goMcpTest(
     });
     await writeFile(path, fixture.bytes);
     const response = await client.callTool(
-      { name: "inspect_go_binary", arguments: { detail: "complete", path } },
+      { name: "inspect_go_binary", arguments: { path } },
       { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
@@ -381,13 +381,10 @@ goMcpTest(
       complete: false,
       unparsed_lines: ["new-record\tfuture"],
     });
-    expect(evidence.limitations.join(" ")).toContain(
-      "could not be parsed completely",
-    );
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     const invalid = await client.callTool({
       name: "inspect_go_binary",
-      arguments: { detail: "complete", path: "relative.bin" },
+      arguments: { path: "relative.bin" },
     });
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {

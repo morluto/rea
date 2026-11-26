@@ -1,3 +1,4 @@
+import { countValues } from "../valueCounts.js";
 import { boundedList } from "../boundedList.js";
 import { ellipsisExcerpt } from "../excerpt.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
@@ -97,16 +98,10 @@ const linesOf = (version: Version): readonly string[] =>
     ? version.view.lines.filter((line) => typeof line === "string")
     : [];
 
-const counts = (lines: readonly string[]) => {
-  const result = new Map<string, number>();
-  for (const line of lines) result.set(line, (result.get(line) ?? 0) + 1);
-  return result;
-};
-
 /** Lines found at both ends whose number of occurrences changed. */
 const lineCounts = (baseline: Version, final: Version) => {
-  const before = counts(linesOf(baseline));
-  return [...counts(linesOf(final))]
+  const before = countValues(linesOf(baseline));
+  return [...countValues(linesOf(final))]
     .filter(([line, n]) => (before.get(line) ?? n) !== n)
     .map(([line, n]) => ({ line, baseline: before.get(line) ?? 0, final: n }));
 };

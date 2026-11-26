@@ -1,6 +1,6 @@
 import { appendToMapList } from "./appendToMapList.js";
 import type { Node } from "@babel/types";
-import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
+import { stringValue } from "./javascript/javascriptAstValues.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import {
   javaScriptSourceLoaderCondition,
@@ -78,14 +78,10 @@ const addImportedReference = (
     expression.loc === undefined
   )
     return;
-  let specifier: string | null;
-  if (expression.type === "StringLiteral") {
-    specifier = expression.value;
-  } else {
-    const literal = readExactJavaScriptLiteral(expression);
-    specifier =
-      literal.found && typeof literal.value === "string" ? literal.value : null;
-  }
+  const specifier =
+    expression.type === "StringLiteral"
+      ? expression.value
+      : (stringValue(expression) ?? null);
   imports.push({
     kind,
     specifier,

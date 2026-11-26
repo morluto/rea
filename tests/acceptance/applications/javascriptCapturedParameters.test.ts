@@ -9,7 +9,6 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { verifyJavaScriptReturnShapes } from "../../fixtures/javascriptReturnShapes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { completeApplicationAnalysis } from "../../support/completeDetail.js";
 
 const source = `
 export function captured(x) { const saved=x; x=2; return {type:"ok",value:saved}; }
@@ -444,7 +443,7 @@ cliTest(
         `export function read(x) { ${body} }`,
       );
       const response = await cli.run({
-        arguments: completeApplicationAnalysis(directory),
+        arguments: ["analyze-javascript-application", directory, "--json"],
       });
       expect(response.exitCode, response.stderr).toBe(0);
       evidence.push(parseEvidence(response.json));

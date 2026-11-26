@@ -39,35 +39,28 @@ const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
   "old arm64e bind opcodes not supported",
 ]);
 
-/**
- * The settled diagnostic lines of a dyld_info run. Xcode 26 exits 1 after a
- * refusal; Xcode 16 prints the same sole line and exits 0. A recognized
- * refusal is never an import or export row, so either exit admits it.
- */
-const dyldFailureDiagnostics = (
-  capture: NativeCommandCapture,
-  outputs: readonly string[],
-): readonly string[] =>
-  capture.tool !== "dyld_info" ||
-  capture.exitCode === null ||
-  capture.signal !== null
-    ? []
-    : outputs.flatMap((output) =>
-        withoutEchoedPathHeader(output, capture.arguments.at(-1))
-          .split(/\r?\n/u)
-          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
-          .filter(Boolean),
-      );
-
-/** Admit the observed refusal only when it is the sole settled diagnostic. */
+/** Xcode 16 and 26 use different exit codes for the same sole refusal. */
 const dyldFailureDiagnostic = (
   capture: NativeCommandCapture,
 ): string | null => {
-  const diagnostics = dyldFailureDiagnostics(capture, [
-    capture.stdout,
-    capture.stderr,
-  ]);
-  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
+  if (
+    capture.tool !== "dyld_info" ||
+    capture.exitCode === null ||
+    capture.signal !== null
+  )
+    return null;
+
+  let diagnostic: string | null = null;
+  for (const output of [capture.stdout, capture.stderr]) {
+    const body = withoutEchoedPathHeader(output, nativeCommandOperand(capture));
+    for (const match of body.matchAll(/[^\n]+/gu)) {
+      const line = match[0].trim().replace(/^(?:dyld_info:\s*)/u, "");
+      if (!line) continue;
+      if (diagnostic !== null) return null;
+      diagnostic = line;
+    }
+  }
+  return diagnostic;
 };
 
 /** Keep missing-UUID admission limited to its observed stdout-only refusal. */

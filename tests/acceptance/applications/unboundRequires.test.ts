@@ -16,7 +16,6 @@ import {
   resolveJavaScriptApplicationMcpCall,
 } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
-import { COMPLETE_DETAIL } from "../../support/completeDetail.js";
 
 const execute = promisify(execFile);
 
@@ -900,13 +899,7 @@ cliTest(
     }
 
     const response = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
 
@@ -1168,13 +1161,7 @@ cliTest(
     await expectNativeModuleControls(root);
 
     const response = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        ...COMPLETE_DETAIL,
-        root,
-        "--format",
-        "json",
-      ],
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(response.exitCode, response.stderr).toBe(0);
@@ -1190,7 +1177,6 @@ cliTest(
 
     const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
     const mcp = await call("analyze_javascript_application", {
-      detail: "complete",
       input_path: root,
       format: "directory",
     });

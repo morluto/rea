@@ -10,7 +10,6 @@ import {
   access,
   chmod,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rm,

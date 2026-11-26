@@ -7,6 +7,7 @@ import {
 } from "./analysisResourceLimits.js";
 import {
   budgetedSummaryBytes,
+  failureEnvelopeBytes,
   currentAgentResultBudget,
   type AgentResultBudget,
 } from "./agentResultBudget.js";
@@ -95,6 +96,33 @@ it.each(
     expect(decide(recordOfBytes(bytes + 1, text), budget)).toBe(bytes + 1);
   },
 );
+
+it("gives nested Evidence only the budget its envelope leaves", () => {
+  const budget = { bytes: 8192, source: "runtime" } as const;
+  const envelopeBytes = 1000;
+  const decideNested = (evidence: JsonValue) =>
+    budgetedSummaryBytes({
+      detail: undefined,
+      evidence,
+      budget,
+      retained: true,
+      pageable: true,
+      envelopeBytes,
+    });
+  const fits = budget.bytes - envelopeBytes;
+  expect(decideNested(recordOfBytes(fits, "plain"))).toBeUndefined();
+  expect(decideNested(recordOfBytes(fits + 1, "plain"))).toBe(fits + 1);
+  // The envelope is measured without its partial observation.
+  const failure = {
+    code: "resource_constraint",
+    details: { partial_observation: recordOfBytes(fits + 1, "plain") },
+  };
+  expect(failureEnvelopeBytes(failure)).toBe(
+    Buffer.byteLength(
+      JSON.stringify({ ...failure, details: { partial_observation: null } }),
+    ),
+  );
+});
 
 it("summarizes only an omitted detail of retained, pageable, budgeted Evidence", () => {
   const budget = {

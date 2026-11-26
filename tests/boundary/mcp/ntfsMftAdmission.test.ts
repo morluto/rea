@@ -119,7 +119,7 @@ mcpTest(
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
     const inspected = await client.callTool({
       name: "inspect_artifact",
-      arguments: { detail: "complete" },
+      arguments: {},
     });
     expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
     expectMftInventory(inspected.structuredContent);

@@ -1,3 +1,4 @@
+import { systemCodeFromError } from "../kernel/reportedSystemCode.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launcherFailureOf } from "../process/launchFailure.js";
@@ -307,7 +308,7 @@ const observeGhidraJava = async (
           ? "ETIMEDOUT"
           : commandFailure?.reason === "output-limit"
             ? "ENOBUFS"
-            : systemCode(commandFailure?.processError ?? cause);
+            : systemCodeFromError(commandFailure?.processError ?? cause);
       const failed: GhidraJavaProbeFailure = {
         _tag: "GhidraJavaProbeFailure",
         code:
@@ -341,10 +342,6 @@ const observeGhidraJava = async (
   }
 };
 
-const systemCode = (cause: unknown): string | undefined =>
-  cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? cause.code
-    : undefined;
 const probeFailureError = (
   failure: GhidraJavaProbeFailure,
   cause: unknown,

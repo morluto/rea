@@ -172,6 +172,51 @@ export type AndroidOtaPartitionMetadata = z.infer<
   typeof androidOtaPartitionMetadataSchema
 >;
 
+const androidSparseChunkCountsSchema = z.strictObject({
+  raw: uint32,
+  fill: uint32,
+  dont_care: uint32,
+  crc32: uint32,
+});
+
+/**
+ * Android sparse image header and chunk-table facts. The stored image checksum
+ * and CRC32 chunk values are recorded, not verified. Fill patterns list the
+ * first 16 distinct values and CRC32 chunks the first 16 chunks.
+ */
+export const androidSparseImageMetadataSchema = z.strictObject({
+  kind: z.literal("android-sparse-image"),
+  magic: z.literal("0xed26ff3a"),
+  major_version: z.literal(1),
+  minor_version: z.number().int().min(0).max(0xffff),
+  file_header_size: z.number().int().min(28).max(0xffff),
+  chunk_header_size: z.number().int().min(12).max(0xffff),
+  block_size: uint32,
+  total_blocks: uint32,
+  total_chunks: uint32,
+  expanded_size: offset,
+  image_checksum: uint32,
+  checksums_verified: z.literal(false),
+  chunk_counts: androidSparseChunkCountsSchema,
+  /** Expanded output bytes each chunk type covers; CRC32 chunks cover none. */
+  covered_bytes: z.strictObject({
+    raw: offset,
+    fill: offset,
+    dont_care: offset,
+  }),
+  fill_patterns: z.array(z.string().regex(/^[0-9a-f]{8}$/u)).max(16),
+  crc32_chunks: z
+    .array(z.strictObject({ file_offset: offset, value: uint32 }))
+    .max(16),
+  undecoded_file_header_bytes: uint32,
+  undecoded_file_header_hex: z.string().regex(/^[0-9a-f]*$/u),
+  undecoded_chunk_header_bytes: uint32,
+  trailing_bytes: offset,
+});
+export type AndroidSparseImageMetadata = z.infer<
+  typeof androidSparseImageMetadataSchema
+>;
+
 /**
  * Android boot and vendor_boot header facts. Addresses, names, and the
  * command line are declarations from the image. The digest, v4 signature,

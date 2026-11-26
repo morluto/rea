@@ -119,10 +119,7 @@ goViewTest(
   "rejects authenticated inline and file parents with conflicting architecture",
   async ({ goViews: { client, root, call } }) => {
     const { path } = await writeGoModuleFixture(root);
-    const complete = await call("inspect_go_binary", {
-      detail: "complete",
-      path,
-    });
+    const complete = await call("inspect_go_binary", { path });
     const report = goBinarySchema.parse(complete.normalized_result);
     const conflicting = createEvidence(
       {
@@ -178,10 +175,7 @@ goViewTest(
         ] = 0xff;
       const path = join(root, encoding);
       await writeFile(path, fixture.bytes);
-      const admitted = await call("inspect_go_binary", {
-        detail: "complete",
-        path,
-      });
+      const admitted = await call("inspect_go_binary", { path });
       const report = goBinarySchema.parse(admitted.normalized_result);
       const info = report.build_info;
       if (info === null) throw new Error("Expected observed build info");
@@ -264,10 +258,7 @@ goViewTest(
   "retains exact Go rows and complete Evidence after source removal",
   async ({ goViews: { client, root, call } }) => {
     const { path, bytes } = await writeGoModuleFixture(root);
-    const complete = await call("inspect_go_binary", {
-      detail: "complete",
-      path,
-    });
+    const complete = await call("inspect_go_binary", { path });
     const summary = await call("inspect_go_binary", {
       path,
       detail: "summary",
