@@ -17,7 +17,6 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import {
   DEVICETREE_READ_BUDGETS,
   devicetreeReadBudgetLimit,
-  MAX_DEVICETREE_FILE_BYTES,
   type DevicetreeReadBudget,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
@@ -107,7 +106,6 @@ const devicetreeFailure = (
                 {
                   retryable: false,
                   limit: devicetreeReadBudgetLimit(parameter, maximum),
-                  remediationAction: failure.failure.detail,
                 },
               );
           }
@@ -128,10 +126,6 @@ const devicetreeFailure = (
                   "max_file_bytes",
                   input.max_file_bytes,
                 ),
-                remediationAction:
-                  input.max_file_bytes < MAX_DEVICETREE_FILE_BYTES
-                    ? "Raise max_file_bytes within its schema ceiling or select a smaller DTB."
-                    : "Select a smaller DTB; the fixed file-byte ceiling has been reached.",
               },
             );
           return undefined;

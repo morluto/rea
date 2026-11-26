@@ -433,10 +433,13 @@ it("refuses a block series above the output-row limit before scanning", async ()
         maximum: 65536,
         default_value: 4096,
         applies_at: "next_call",
+        required_value: 512,
       },
     },
     remediation: {
-      action: expect.stringMatching(/increase block_size/i),
+      action: expect.stringContaining(
+        "Pass a larger block_size on the next inspect_byte_entropy call (at least 512 bytes",
+      ),
     },
   });
   expect(reads).toBe(0);

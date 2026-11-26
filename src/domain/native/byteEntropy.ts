@@ -24,6 +24,13 @@ export const BYTE_ENTROPY_BLOCK_SIZE = {
 /** Blocks one inspection retains in its Evidence. */
 export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
 
+/** The smallest admitted power-of-two block size that keeps `length` within the block cap. */
+const smallestAdmittingBlockSize = (length: number): number => {
+  let size: number = BYTE_ENTROPY_BLOCK_SIZE.minimum;
+  while (Math.ceil(length / size) > MAX_BYTE_ENTROPY_BLOCKS) size *= 2;
+  return size;
+};
+
 /**
  * The control a too-large window should change: `block_size` while a larger
  * block admits the window, else `length`, whose largest admitted value at the
@@ -36,7 +43,14 @@ export const byteEntropyWindowLimit = (
   omittedLength: number,
 ): AnalysisParameterLimit =>
   Math.ceil(length / BYTE_ENTROPY_BLOCK_SIZE.maximum) <= MAX_BYTE_ENTROPY_BLOCKS
-    ? parameterBudgetLimit("block_size", BYTE_ENTROPY_BLOCK_SIZE, blockSize)
+    ? {
+        ...parameterBudgetLimit(
+          "block_size",
+          BYTE_ENTROPY_BLOCK_SIZE,
+          blockSize,
+        ),
+        required_value: smallestAdmittingBlockSize(length),
+      }
     : parameterBudgetLimit(
         "length",
         {

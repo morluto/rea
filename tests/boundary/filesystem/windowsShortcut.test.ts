@@ -221,7 +221,7 @@ it.each([false, true])(
         details: { resource: "capacity" },
         remediation: {
           action: expect.stringContaining(
-            `Effective max_string_bytes is ${String(maximum)} bytes`,
+            "Pass a larger max_string_bytes on the next inspect_windows_shortcut call",
           ),
         },
         retryable: false,
@@ -278,7 +278,6 @@ it("returns typed resource and cancellation failures", async () => {
       },
       reportedLimits: { boundary, maximum: 1 },
       limit: { parameter: argument, effective_value: 1, unit: "count" },
-      remediationAction: expect.stringContaining(`Effective ${argument} is 1`),
       retryable: false,
     });
   }

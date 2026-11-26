@@ -20,8 +20,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import {
-  MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES,
-  WINDOWS_SHORTCUT_BUDGETS,
   windowsShortcutBudgetLimit,
   type InspectWindowsShortcutInput,
   type WindowsShortcutBudget,
@@ -220,11 +218,6 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
   }
 }
 
-const fileSizeRemediation = (input: InspectWindowsShortcutInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES
-    ? `The shortcut exceeds the ${String(MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
 /** The schema field of each boundary the parser names. */
 const SELECTED_BUDGETS = {
   id_list_items: "max_id_list_items",
@@ -234,19 +227,6 @@ const SELECTED_BUDGETS = {
   WindowsShortcutSelectedBoundary,
   WindowsShortcutBudget
 >;
-
-const budgetRemediation = (
-  argument: WindowsShortcutBudget,
-  selected: number,
-): string => {
-  const { maximum, unit: budgetUnit } = WINDOWS_SHORTCUT_BUDGETS[argument];
-  const unit = budgetUnit === "bytes" ? "bytes" : "entries";
-  const recovery =
-    selected >= maximum
-      ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller shortcut.`
-      : `Raise ${argument} on the next call, up to ${String(maximum)} ${unit}, or select a smaller shortcut; no restart is required.`;
-  return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}`;
-};
 
 const windowsShortcutFailure = (
   cause: unknown,
@@ -268,7 +248,6 @@ const windowsShortcutFailure = (
             path: input.path,
             retryable: false,
             limit: windowsShortcutBudgetLimit(argument, maximum),
-            remediationAction: budgetRemediation(argument, maximum),
           });
         }
         return undefined;
@@ -286,7 +265,6 @@ const windowsShortcutFailure = (
               "max_file_bytes",
               input.max_file_bytes,
             ),
-            remediationAction: fileSizeRemediation(input),
           },
         ),
     }),

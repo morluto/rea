@@ -75,7 +75,7 @@ describe("kernel build config stable filesystem boundary", () => {
           },
           remediation: {
             action: expect.stringContaining(
-              `Raise ${boundary} above ${String(maximum)}`,
+              `Pass a larger ${boundary} on the next inspect_kernel_build_config call`,
             ),
           },
         });

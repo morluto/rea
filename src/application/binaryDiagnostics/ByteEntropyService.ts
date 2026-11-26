@@ -255,7 +255,6 @@ export class ByteEntropyService {
                   length,
                   size - input.offset,
                 ),
-                remediationAction: `Increase block_size or reduce the window length so it holds at most ${String(MAX_BYTE_ENTROPY_BLOCKS)} blocks; a window above ${String(MAX_BYTE_ENTROPY_BLOCKS)} blocks of the largest block_size needs several calls with offset and length.`,
               },
             );
           const end = input.offset + length;
