@@ -36,6 +36,7 @@ describe("fxClientPaths", () => {
   it.each([
     ["C:\\Users\\alice\\", "trailing backslash matching home"],
     ["C:/Users/alice/", "mixed slashes matching home"],
+    ["C:/Users//alice/", "doubled slashes matching home"],
     ["c:\\users\\alice", "case-insensitive matching home"],
     [
       "c:\\users\\alice\\",
@@ -93,6 +94,21 @@ describe("fxClientPaths", () => {
       value: {
         configPath: "/custom/fx/mcp.json",
         markerPath: "/custom/fx",
+      },
+    });
+  });
+
+  it("preserves literal trailing backslashes on POSIX", () => {
+    const location = fxLocation({
+      home: "/home/alice",
+      platform: "linux",
+      env: { FX_HOME: "/profiles/fx\\" },
+    });
+    expect(location).toEqual({
+      ok: true,
+      value: {
+        configPath: "/profiles/fx\\/mcp.json",
+        markerPath: "/profiles/fx\\",
       },
     });
   });
