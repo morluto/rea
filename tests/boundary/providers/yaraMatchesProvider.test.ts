@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { createYaraMatchesService } from "../../../src/composition/yara.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { yaraMatchesSchema } from "../../../src/domain/yara/yaraMatches.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import type { YaraLauncher } from "../../../src/yara/YaraMatchesProvider.js";
@@ -462,6 +463,36 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     expect(result.error).toMatchObject({
       _tag: "AnalysisArtifactChangedError",
       path: second,
+    });
+  });
+
+  it("retains the scanned file's partial_observation when a rule file fails its final check after the scan", async () => {
+    const { root, sample, rule, service } = await fixture("mutate-rule");
+    const second = join(root, "second.yar");
+    await writeFile(second, "rule Second { condition: true }\n");
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [rule, second],
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(false);
+    if (result.ok) return;
+    const expectedObservation = {
+      kind: "file-snapshot-hash",
+      path: sample,
+      sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+      bytes: SAMPLE.length,
+    };
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisArtifactChangedError",
+      path: second,
+      partialObservation: expectedObservation,
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "artifact_changed",
+      details: {
+        path: second,
+        partial_observation: expectedObservation,
+      },
     });
   });
 

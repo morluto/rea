@@ -568,13 +568,16 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           ),
       }),
     );
+    // `primary` already names the failing `read.path`; once the scanned file's
+    // identity is recorded, attribute the retained snapshot observation to
+    // `input.path` even if a rule file's final check or close fails afterward.
     return projectStableArtifactFailure(
       cause,
       primary,
-      read.path,
+      identity === undefined ? read.path : input.path,
       PROVIDER_ID,
       OPERATION,
-      read.path === input.path ? identity : undefined,
+      identity,
     );
   }
 }
