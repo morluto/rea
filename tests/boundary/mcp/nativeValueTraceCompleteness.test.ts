@@ -1,4 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { connectFixtureClient } from "../../support/mcp/mcpFixture.js";
 import { afterEach, expect, it } from "vitest";
 import {
   valueTraceDiamond,
@@ -22,7 +22,6 @@ import {
   closeEnhancedToolResources,
   resources,
 } from "./enhancedToolsHarness.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -44,16 +43,11 @@ const connectTraceSession = async (
     { kind: "session", session },
     { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
   );
-  const client = new Client(
+  return connectFixtureClient(
+    server,
     { name: "value-trace-test", version: "1.0.0" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
+    resources,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(client, server);
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
 };
 
 it.each(["compact"] as const)(

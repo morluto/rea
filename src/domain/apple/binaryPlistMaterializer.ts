@@ -32,7 +32,8 @@ const scalarArrayInput = (
     throw invariantViolation("binary plist decoder copy lost its trailer");
   const compatibleLayout = compatibleLayoutResult.value;
   const referenceWidth = compatibleLayout.referenceWidth;
-  const objectCount = Number(compatibleLayout.objectCount);
+  // This private table contains only reachable scalars and the synthetic array.
+  const objectCount = objects.length;
   const rootOffset = bytes.length;
   const rootLength = 10 + objects.length * referenceWidth;
   const tableOffset = rootOffset + rootLength;
@@ -42,17 +43,16 @@ const scalarArrayInput = (
   output[rootOffset + 1] = 0x13;
   output.writeBigUInt64BE(BigInt(objects.length), rootOffset + 2);
   for (const [index, object] of objects.entries()) {
-    let reference = BigInt(object);
+    output.writeBigUInt64BE(
+      compatibleLayout.objectOffset(object),
+      tableOffset + index * 8,
+    );
+    let reference = BigInt(index);
     const offset = rootOffset + 10 + index * referenceWidth;
     for (let byte = referenceWidth - 1; byte >= 0; byte -= 1) {
       output[offset + byte] = Number(reference & 0xffn);
       reference >>= 8n;
     }
-  }
-  let object = 0;
-  for (const offset of compatibleLayout.objectOffsets()) {
-    output.writeBigUInt64BE(offset, tableOffset + object * 8);
-    object += 1;
   }
   output.writeBigUInt64BE(BigInt(rootOffset), tableOffset + objectCount * 8);
   const nextTrailer = output.length - 32;
@@ -193,21 +193,43 @@ const storedPlistPayload = (
   return { type, payload: bytes.subarray(start, end) };
 };
 
+const WIDE_DECODERS = {
+  "utf-16le": {
+    strip: {
+      fatal: new TextDecoder("utf-16le", { fatal: true, ignoreBOM: false }),
+      lossy: new TextDecoder("utf-16le", { fatal: false, ignoreBOM: false }),
+    },
+    keep: {
+      fatal: new TextDecoder("utf-16le", { fatal: true, ignoreBOM: true }),
+      lossy: new TextDecoder("utf-16le", { fatal: false, ignoreBOM: true }),
+    },
+  },
+  "utf-16be": {
+    strip: {
+      fatal: new TextDecoder("utf-16be", { fatal: true, ignoreBOM: false }),
+      lossy: new TextDecoder("utf-16be", { fatal: false, ignoreBOM: false }),
+    },
+    keep: {
+      fatal: new TextDecoder("utf-16be", { fatal: true, ignoreBOM: true }),
+      lossy: new TextDecoder("utf-16be", { fatal: false, ignoreBOM: true }),
+    },
+  },
+} as const;
+
 /** Decode declared wide text while preserving readable portions on a malformed input. */
 const storedWideText = (
   payload: Buffer,
   encoding: "utf-16le" | "utf-16be",
   ignoreBOM: boolean,
 ): BinaryPlistText => {
+  const decoders = WIDE_DECODERS[encoding][ignoreBOM ? "keep" : "strip"];
   try {
-    const text = new TextDecoder(encoding, { fatal: true, ignoreBOM }).decode(
-      payload,
-    );
+    const text = decoders.fatal.decode(payload);
     return { text, complete: true };
   } catch (cause: unknown) {
     if (!(cause instanceof TypeError)) throw cause;
     return {
-      text: new TextDecoder(encoding, { ignoreBOM }).decode(payload),
+      text: decoders.lossy.decode(payload),
       complete: false,
     };
   }

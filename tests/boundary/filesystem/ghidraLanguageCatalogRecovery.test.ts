@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
@@ -7,7 +7,10 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
-import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
+import {
+  ghidraProfileInstallationHost,
+  simulatedInstallDirectory,
+} from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -31,7 +34,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
-      if (fault.enabled && String(args[0]).endsWith("/x86.ldefs")) {
+      if (fault.enabled && basename(String(args[0])) === "x86.ldefs") {
         fault.opens++;
         const close = handle.close.bind(handle);
         handle.close = async () => {
@@ -60,9 +63,12 @@ afterEach(() => {
 });
 
 const fixture = async () => {
-  const root = await createTestTempDirectory("rea-ghidra-catalog-close-");
+  const root = await simulatedInstallDirectory("rea-ghidra-catalog-close-");
   const languages = join(root, "Ghidra/Processors/x86/data/languages");
-  const path = join(root, "fixture.exe");
+  const path = join(
+    await createTestTempDirectory("rea-ghidra-catalog-target-"),
+    "fixture.exe",
+  );
   await mkdir(languages, { recursive: true });
   await writeFile(
     join(languages, "x86.ldefs"),

@@ -1,3 +1,4 @@
+import { appendToMapList } from "../../domain/appendToMapList.js";
 /** The two keys are different namespaces: literal equality is typed, learned equality is textual. */
 export interface IdentifierListIdentity {
   readonly literal: string | undefined;
@@ -217,9 +218,7 @@ const matchingGroups = (
     envByIndex.set(index, group);
     if (group.indices.length === 1)
       for (const key of identifierListKeys(identity)) {
-        const candidates = envByKey.get(key);
-        if (candidates === undefined) envByKey.set(key, [group]);
-        else candidates.push(group);
+        appendToMapList(envByKey, key, group);
       }
   }
   for (const live of liveGroups.values()) {

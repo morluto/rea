@@ -1,8 +1,13 @@
+import {
+  fileStatStamp,
+  sameFileStatStamp,
+  type FileStatStamp,
+} from "../filesystem/FileStatStamp.js";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import fs, { type BigIntStats } from "node:fs";
 
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { open, realpath, stat, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, normalize } from "node:path";
 import {
@@ -25,7 +30,7 @@ import { errorMessage } from "../kernel/errorMessage.js";
 /** Read a file digest with bounded memory rather than retaining binary bytes. */
 export const idaFileDigest = async (path: string): Promise<string> => {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  for await (const chunk of fs.createReadStream(path)) hash.update(chunk);
   return hash.digest("hex");
 };
 
@@ -46,6 +51,11 @@ export const resolveIdaWorkspaceParent = async (
   return realpath(root);
 };
 
+const COPY_BUFFER_BYTES = 64 * 1024;
+
+const isRegularInputFile = (observed: BigIntStats): boolean =>
+  observed.isFile() && !observed.isSymbolicLink();
+
 /**
  * Private input copy isolates upstream database and sidecar writes from the
  * original. An IDA database target is copied whole, so the worker unpacks and
@@ -54,6 +64,7 @@ export const resolveIdaWorkspaceParent = async (
 export class IdaWorkspace {
   readonly sessionId = `rea-${randomUUID()}`;
   #inputSha256: string | undefined;
+  #inputStat: FileStatStamp | undefined;
   readonly #files = new ArtifactResourceScope();
   private constructor(
     private readonly runtime: PrivateRuntimeRoot,
@@ -152,7 +163,7 @@ export class IdaWorkspace {
         : undefined;
     const sourceHash = createHash("sha256");
     const inputHash = createHash("sha256");
-    const chunk = Buffer.allocUnsafe(64 * 1024);
+    const chunk = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
     let position = 0;
     for (;;) {
       assertArtifactReadActive(signal);
@@ -194,7 +205,45 @@ export class IdaWorkspace {
       throw new AnalysisProtocolError(
         "IDA target changed between admission and the private input copy; reopen the target.",
       );
+    const observed = await input.stat({ bigint: true });
     this.#inputSha256 = inputHash.digest("hex");
+    this.#inputStat = fileStatStamp(observed);
+  }
+
+  /**
+   * Confirm the private input still matches the bytes copyInput admitted.
+   * Avoids re-streaming large binaries through SHA-256 on every IDA RPC when
+   * the private file's stat identity is unchanged; falls back to a full digest
+   * whenever metadata differs or is unavailable, refreshing the recorded stat
+   * identity when the file remains unchanged around a matching digest read.
+   */
+  async verifyInputUnchanged(): Promise<boolean> {
+    if (this.#inputSha256 === undefined) return false;
+    const before = await lstat(this.inputPath, { bigint: true }).catch(
+      () => undefined,
+    );
+    const expected = this.#inputStat;
+    if (
+      expected !== undefined &&
+      before !== undefined &&
+      isRegularInputFile(before) &&
+      sameFileStatStamp(expected, before)
+    )
+      return true;
+    if ((await idaFileDigest(this.inputPath)) !== this.#inputSha256)
+      return false;
+    if (before !== undefined && isRegularInputFile(before)) {
+      const after = await lstat(this.inputPath, { bigint: true }).catch(
+        () => undefined,
+      );
+      if (
+        after !== undefined &&
+        isRegularInputFile(after) &&
+        sameFileStatStamp(before, after)
+      )
+        this.#inputStat = fileStatStamp(after);
+    }
+    return true;
   }
 
   /** Delete only this object's privately allocated directory after worker cleanup. */

@@ -1,6 +1,6 @@
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
-  malformedInput,
   unsupportedInput,
   ParseFailureError,
   type LimitRef,
@@ -35,6 +35,7 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
+  readFailureError,
 } from "../resources/index.js";
 
 /** Admission and search bounds for one Electron executable. */
@@ -205,7 +206,7 @@ const identifyContainer = async (
 }> => {
   const head = await readAt(0, Math.min(size, 8));
   if (hasMachoMagic(head)) return identifyMacho(readAt, size, head, path);
-  if (isElf(head)) {
+  if (hasElfMagic(head)) {
     const header = await readAt(0, 64);
     const parsed = readElfFixedHeader(Buffer.from(header), size);
     return {
@@ -245,13 +246,12 @@ const identifyMacho = async (
 }> => {
   const facts = await readMachoImage(readAt, size);
   if (facts.status !== "parsed") {
-    const reason =
-      facts.status === "not-mach-o"
-        ? `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`
-        : facts.reason;
-    throw facts.status === "malformed"
-      ? malformedInput("macho", reason)
-      : unsupportedInput("macho", reason);
+    throw facts.status === "not-mach-o"
+      ? unsupportedInput(
+          "macho",
+          `Selected artifact ${path} does not contain a Mach-O, ELF, or PE container.`,
+        )
+      : readFailureError(facts.failure);
   }
   const fat = readFatHeaderPrefix(head);
   const format =
@@ -329,6 +329,27 @@ const scanSlices = async (
   return { sha256: hash.digest("hex"), slices };
 };
 
+const BOUNDARY_BRIDGE = Buffer.allocUnsafe(2 * (SENTINEL.length - 1));
+
+const recordSentinelHit = (
+  state: {
+    readonly slice: SliceRange;
+    readonly hits: number[];
+  },
+  sentinelOffset: number,
+): void => {
+  if (state.hits.includes(sentinelOffset)) return;
+  if (state.hits.length >= ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice)
+    throw new ElectronFuseResourceFailure(
+      {
+        name: "maximum_sentinels_per_slice",
+        maximum: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
+      },
+      `Slice ${state.slice.index} contains more than ${ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice} Electron fuse sentinels.`,
+    );
+  state.hits.push(sentinelOffset);
+};
+
 const absorbChunk = (
   states: readonly {
     readonly slice: SliceRange;
@@ -339,38 +360,49 @@ const absorbChunk = (
   position: number,
 ): void => {
   const chunkEnd = position + chunk.length;
+  const tail = SENTINEL.length - 1;
   for (const state of states) {
     const start = Math.max(position, state.slice.fileOffset);
     const end = Math.min(chunkEnd, state.slice.fileOffset + state.slice.size);
     if (start >= end) continue;
     const piece = chunk.subarray(start - position, end - position);
     const carryLength = state.carry.length;
-    const window =
-      carryLength === 0 ? piece : Buffer.concat([state.carry, piece]);
-    const windowFileStart = start - carryLength;
-    let from = 0;
-    while (from <= window.length - SENTINEL.length) {
-      const found = window.indexOf(SENTINEL, from);
-      if (found < 0) break;
-      const sentinelOffset = windowFileStart + found;
-      if (!state.hits.includes(sentinelOffset)) {
-        if (state.hits.length >= ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice)
-          throw new ElectronFuseResourceFailure(
-            {
-              name: "maximum_sentinels_per_slice",
-              maximum: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
-            },
-            `Slice ${state.slice.index} contains more than ${ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice} Electron fuse sentinels.`,
-          );
-        state.hits.push(sentinelOffset);
+    // Scan only the small carry+prefix bridge for boundary-straddling matches,
+    // then scan `piece` directly without copying the full chunk.
+    if (carryLength > 0) {
+      const bridgePieceLength = Math.min(piece.length, tail);
+      const bridgeLength = carryLength + bridgePieceLength;
+      if (bridgeLength >= SENTINEL.length) {
+        state.carry.copy(BOUNDARY_BRIDGE, 0, 0, carryLength);
+        piece.copy(BOUNDARY_BRIDGE, carryLength, 0, bridgePieceLength);
+        const bridge = BOUNDARY_BRIDGE.subarray(0, bridgeLength);
+        const bridgeFileStart = start - carryLength;
+        let from = 0;
+        while (from <= bridgeLength - SENTINEL.length) {
+          const found = bridge.indexOf(SENTINEL, from);
+          if (found < 0) break;
+          recordSentinelHit(state, bridgeFileStart + found);
+          from = found + 1;
+        }
       }
+    }
+    let from = 0;
+    while (from <= piece.length - SENTINEL.length) {
+      const found = piece.indexOf(SENTINEL, from);
+      if (found < 0) break;
+      recordSentinelHit(state, start + found);
       from = found + 1;
     }
-    const tail = SENTINEL.length - 1;
-    state.carry =
-      window.length <= tail
-        ? Buffer.from(window)
-        : Buffer.from(window.subarray(window.length - tail));
+    if (piece.length >= tail) {
+      state.carry = Buffer.from(piece.subarray(piece.length - tail));
+    } else {
+      const keepCarry = Math.min(carryLength, tail - piece.length);
+      const nextCarry = Buffer.allocUnsafe(keepCarry + piece.length);
+      if (keepCarry > 0)
+        state.carry.copy(nextCarry, 0, carryLength - keepCarry, carryLength);
+      piece.copy(nextCarry, keepCarry);
+      state.carry = nextCarry;
+    }
   }
 };
 
@@ -441,13 +473,6 @@ const readExact = async (
   if (buffer.length !== length) throw new RegularFileChangedError(path);
   return buffer;
 };
-
-const isElf = (head: Uint8Array): boolean =>
-  head.length >= 4 &&
-  head[0] === 0x7f &&
-  head[1] === 0x45 &&
-  head[2] === 0x4c &&
-  head[3] === 0x46;
 
 const identifyPe = async (
   readAt: ReadAt,

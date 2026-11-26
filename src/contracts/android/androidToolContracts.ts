@@ -7,15 +7,15 @@ import {
   androidJniInspectionInputSchema,
 } from "../../domain/android/androidAnalysis.js";
 import {
-  androidPackageSummaryViewResultSchema,
-  androidManifestViewResultSchema,
-  androidComponentsViewResultSchema,
-  androidComponentSummaryViewResultSchema,
   androidClassSummaryViewResultSchema,
-  androidMethodSummaryViewResultSchema,
-  androidJniSummaryViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  androidComponentsViewResultSchema,
   androidJniPageViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  androidJniSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";
@@ -69,7 +69,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Default complete returns full Evidence; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
+      "Inspect APK package/SDK/permission declarations, decoded manifest, static components and class/resource counts without executing it or verifying signatures. Requires caller-supplied JADX MCP JAR and JDK. Omitted detail returns full Evidence within the agent result budget, else the retained summary; detail summary retains it and omits manifest text/raw duplicates. With summary, view kind android selects facet components (exact filters, fields, paging), component-summary or manifest (UTF-16 text pages); complete detail rejects view. Use normalized_result.parent_evidence_id with inspect_analysis_view for later views. Component source_index identifies the original declaration, and declaration_coverage marks partial declarations.",
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
@@ -123,7 +123,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Search complete top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query inventories all rows. Repeated names remain repeated and appear in duplicate_names; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
+      "Search top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query matches every row. Use limit and offset to page through matches. Duplicate counts describe the returned rows; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
     kind: "android-provider",
     inputSchema: androidInputSchemas.search_android_classes,
     outputSchema: evidenceResultOf(androidResultSchemas.search_android_classes),
@@ -146,7 +146,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Inspect one exact Android class's methods, fields, inner classes, DEX prototypes and encoded static final values without generating source. Select an overload_index from these results for inspect_android_method; indices are artifact/engine-session scoped and prototypes are not complete raw method IDs. Optional mapping_path adds verified R8/ProGuard names separately; observed names remain primary. detail summary retains complete Evidence and returns normalized symbols without duplicate raw calls; complete remains the default.",
+      "Inspect one exact Android class's methods, fields, inner classes, DEX prototypes and encoded static final values without generating source. Select an overload_index from these results for inspect_android_method; indices are artifact/engine-session scoped and prototypes are not complete raw method IDs. Optional mapping_path adds verified R8/ProGuard names separately; observed names remain primary. detail summary retains complete Evidence and returns normalized symbols without duplicate raw calls; omitted detail is complete within the agent result budget, else the retained summary.",
     kind: "android-provider",
     inputSchema: androidSymbolInspectionInputSchemas.inspect_android_class,
     outputSchema: evidenceResultOf(
@@ -183,7 +183,7 @@ export const ANDROID_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      "Decompile one Android method, with explicit overload_index when names collide and smali fallback when needed. Reports DEX prototype, representation, fallback markers and source truncation; display signatures may be aliases. Optional mapping_path annotates R8/ProGuard names without replacing observed names. detail summary retains complete Evidence and returns the selected body without duplicate class metadata; complete remains the default. Use inspect_android_class to choose the overload.",
+      "Decompile one Android method, with explicit overload_index when names collide and smali fallback when needed. Reports DEX prototype, representation, fallback markers and source truncation; display signatures may be aliases. Optional mapping_path annotates R8/ProGuard names without replacing observed names. detail summary retains complete Evidence and returns the selected body without duplicate class metadata; omitted detail is complete within the agent result budget, else the retained summary. Use inspect_android_class to choose the overload.",
     kind: "android-provider",
     inputSchema: androidSymbolInspectionInputSchemas.inspect_android_method,
     outputSchema: evidenceResultOf(

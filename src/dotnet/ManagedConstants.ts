@@ -1,3 +1,4 @@
+import { appendToMapList } from "../domain/appendToMapList.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedConstant } from "../domain/managed/managedConstant.js";
 import {
@@ -78,9 +79,7 @@ const constantDeclarations = (
       padding: typeAndPadding >>> 8,
       blob_index: blobIndex,
     };
-    const previous = result.get(parent.token);
-    if (previous === undefined) result.set(parent.token, [declaration]);
-    else previous.push(declaration);
+    appendToMapList(result, parent.token, declaration);
   }
   return result;
 };

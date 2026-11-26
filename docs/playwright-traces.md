@@ -109,15 +109,20 @@ retained pages have been read.
 
 Each decoder admits one archive import at a time; concurrent imports receive a
 retryable capacity error. Retained queries do not require another import.
-Resource policies admit a 256-MiB archive, 32 MiB of decoded streams, a
-conservative 32-MiB retained-facts representation, 4-MiB metadata reads and
-4-MiB physical lines. JSON parsing additionally checks heap headroom, a
-131,072-node record allowance and a fixed 64-level trace nesting allowance.
-JSON parser refusals report the exhausted limit name and maximum in
-`details.reported_limits`.
-These are resource policies, not Playwright format limits. Paging or field
-selection does not increase parsing allowances; choose a smaller complete
-recorder chunk when admission fails.
+These are resource policies, not Playwright format limits, and each is a
+`trace_limits` field (CLI `--trace-limits` JSON) on the next call. Defaults:
+`archive_bytes` 256 MiB, `decoded_bytes` 32 MiB of decoded streams,
+`facts_bytes` a conservative 32 MiB retained-facts representation,
+`metadata_bytes` 4 MiB of ZIP metadata reads, `line_bytes` 4 MiB physical
+lines and `nesting_depth` 64 levels per record (at most 996, so a retained
+record still fits the Evidence JSON depth). JSON parsing additionally checks
+heap headroom and a record node allowance of `facts_bytes / 256` (131,072 by
+default), recovered by raising `facts_bytes`. A refusal reports the field,
+its effective value and range in `details.limit`, and parser refusals keep the
+exhausted limit name and maximum in `details.reported_limits`. Paging or field
+selection does not increase parsing allowances; raise the named field, or
+choose a smaller complete recorder chunk. The ZIP plaintext-work allowance is
+derived from the archive size.
 
 The owned fixtures in `tests/fixtures/playwright-trace/` preserve actual
 Playwright 1.64.1 v10 recorder text. Public CLI/MCP tests exercise advertised

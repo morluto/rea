@@ -17,6 +17,10 @@ import {
 } from "../../src/domain/desktop/appExportPython.js";
 import { PYTHON_TASK_EVALUATOR } from "../../src/domain/desktop/appTaskPython.js";
 import {
+  pythonDesktopViewPolicy,
+  type DesktopViewPolicy,
+} from "../../src/domain/desktop/desktopViewPolicy.js";
+import {
   compressionOf,
   openStateDocument,
 } from "../../src/domain/desktop/gzipDocument.js";
@@ -95,10 +99,14 @@ export const writeFiles = async (files: readonly SavedFile[]) => {
 };
 
 /** The exported module's data/get entry for each file: its format and view, or its error. */
-export const pythonFileViews = async (files: readonly SavedFile[]) =>
+export const pythonFileViews = async (
+  files: readonly SavedFile[],
+  policy?: DesktopViewPolicy,
+) =>
   printed<Record<string, JsonValue>>(
     exportedPython(
-      `for path in json.load(sys.stdin):
+      `${policy === undefined ? "" : pythonDesktopViewPolicy(policy)}
+for path in json.load(sys.stdin):
     print(json.dumps(_view(Path(path))))`,
       await writeFiles(files),
     ),
@@ -130,11 +138,11 @@ export const pythonXmlViews = (texts: readonly string[]) =>
   );
 
 /** REA's state view of a zip, text, JSON, key file, XML or binary file, plain or gzip-compressed, in the shape data/get serves it. */
-export const typescriptFileView = async ({
-  name,
-  bytes,
-}: SavedFile): Promise<TaskFileView> => {
-  const document = openStateDocument(name, bytes);
+export const typescriptFileView = async (
+  { name, bytes }: SavedFile,
+  policy?: DesktopViewPolicy,
+): Promise<TaskFileView> => {
+  const document = openStateDocument(name, bytes, policy);
   const file = { format: document.format, ...compressionOf(document) };
   if ("error" in document)
     return { ...file, view: null, error: document.error };
@@ -144,24 +152,30 @@ export const typescriptFileView = async ({
   if (format === "binary") return { ...file, view: null };
   const read =
     format === "zip"
-      ? await readZipView(document.bytes)
-      : textualView(format, document.bytes);
+      ? await readZipView(document.bytes, undefined, policy)
+      : textualView(format, document.bytes, policy);
   return read.ok
     ? { ...file, view: read.value }
     : { ...file, view: null, error: read.error };
 };
 
-/** Both readers give each file the same format and view, or the same error. */
-export const expectSameFileViews = async (files: readonly SavedFile[]) => {
-  const fromPython = await pythonFileViews(files);
+/** Check format, view and error parity. Return the host views for assertions. */
+export const expectSameFileViews = async (
+  files: readonly SavedFile[],
+  policy?: DesktopViewPolicy,
+) => {
+  const fromPython = await pythonFileViews(files, policy);
+  const views: TaskFileView[] = [];
   for (const [index, file] of files.entries()) {
-    const ours = await typescriptFileView(file);
+    const ours = await typescriptFileView(file, policy);
     const theirs = fromPython[index] ?? {};
     expect(theirs.format).toBe(ours.format);
     expect(theirs.compression).toBe(ours.compression);
     expect(theirs.view).toEqual(ours.view);
     expect(theirs.error).toBe(ours.error);
+    views.push(ours);
   }
+  return views;
 };
 
 /** Both evaluators give the same results and descriptions on each file read as the home path `home`; REA's. */

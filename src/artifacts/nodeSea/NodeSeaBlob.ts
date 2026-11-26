@@ -3,6 +3,8 @@ import { setImmediate } from "node:timers/promises";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
   artifactReaderLimitFailure,
 } from "../../resources/index.js";
 import {
@@ -10,7 +12,7 @@ import {
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
-import type { NodeSeaMainCodeFormat } from "../../domain/artifactFormatMetadata.js";
+import type { NodeSeaMainCodeFormat } from "../../domain/formatMetadata/packageAndGameMetadata.js";
 import { hostRangeErrorKind } from "../../domain/parseFailure.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -99,11 +101,10 @@ const formatFailure = (
   message: string,
   cause?: unknown,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    message,
-    cause === undefined ? undefined : { cause },
-  );
+  malformedArtifact("node-sea", message, cause === undefined ? {} : { cause });
+
+const truncatedFailure = (message: string): ArtifactReaderFailure =>
+  truncatedArtifact("node-sea", message);
 
 /**
  * Decode either SEA layout with an exec-argv extension byte.
@@ -126,10 +127,10 @@ export const decodeNodeSeaBlob = async (
       "memory",
     );
   const cursor = new BlobCursor(bytes, limits);
-  if (cursor.remaining < 4) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (cursor.remaining < 4) throw truncatedFailure(NODE_SEA_TRUNCATED);
   const magic = cursor.u32();
   if (magic !== NODE_SEA_MAGIC) throw formatFailure(NODE_SEA_BAD_MAGIC);
-  if (cursor.remaining < 5) throw formatFailure(NODE_SEA_TRUNCATED);
+  if (cursor.remaining < 5) throw truncatedFailure(NODE_SEA_TRUNCATED);
   const flags = cursor.u32();
   if ((flags & ~KNOWN_FLAGS) !== 0) throw formatFailure(NODE_SEA_UNKNOWN_FLAGS);
   const execArgvExtension = extensionName(cursor.u8());
@@ -385,7 +386,7 @@ class BlobCursor {
   #size(minimumTailBytes: number): number {
     const value = this.#readSizeField();
     if (value > BigInt(this.remaining - minimumTailBytes))
-      throw formatFailure(NODE_SEA_TRUNCATED);
+      throw truncatedFailure(NODE_SEA_TRUNCATED);
     return Number(value);
   }
 
@@ -399,7 +400,7 @@ class BlobCursor {
       value >
       BigInt(Math.floor((this.remaining - minimumTailBytes) / minimumRowBytes))
     )
-      throw formatFailure(NODE_SEA_TRUNCATED);
+      throw truncatedFailure(NODE_SEA_TRUNCATED);
     const count = Number(value);
     if (count > this.limits[field])
       throw artifactReaderLimitFailure(
@@ -412,7 +413,7 @@ class BlobCursor {
   }
 
   #takeOffset(length: number): number {
-    if (length > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
+    if (length > this.remaining) throw truncatedFailure(NODE_SEA_TRUNCATED);
     const start = this.#offset;
     this.#offset += length;
     return start;

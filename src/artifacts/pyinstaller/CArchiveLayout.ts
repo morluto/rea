@@ -8,7 +8,7 @@ import {
   pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
-import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 
 /** Magic at the start of a CArchive cookie. */
 const PYINSTALLER_COOKIE_MAGIC = Buffer.from("MEI\x0c\x0b\x0a\x0b\x0e");
@@ -108,6 +108,7 @@ export const observePyInstallerCookie = async (
     return ok({ state: "absent" });
   const tailSize = Math.min(fileSize, PYINSTALLER_COOKIE_SEARCH_BYTES);
   const read = await readPyInstallerBytes(handle, {
+    measuredEnd: fileSize,
     position: fileSize - tailSize,
     length: tailSize,
     label: "CArchive tail",
@@ -140,6 +141,7 @@ export const readCArchiveToc = async (
   handle: FileHandle,
   cookie: PyInstallerCookie,
   signal?: AbortSignal,
+  measuredEnd?: number,
 ): Promise<Result<readonly CArchiveEntry[], PyInstallerFailure>> => {
   if (cookie.tocLength > MAX_TOC_BYTES)
     return err(
@@ -150,6 +152,7 @@ export const readCArchiveToc = async (
     );
   const position = cookie.archiveStart + cookie.tocOffset;
   const read = await readPyInstallerBytes(handle, {
+    ...(measuredEnd === undefined ? {} : { measuredEnd }),
     position,
     length: cookie.tocLength,
     label: "CArchive table of contents",
@@ -172,7 +175,7 @@ export const parseCArchiveToc = (
   const malformedEntry = (message: string): Result<never, PyInstallerFailure> =>
     err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `CArchive table index ${String(entries.length)} at TOC offset ${String(offset)}: ${message}`,
       ),
     );
@@ -251,7 +254,7 @@ const parseCookie = (
   if (relative + cookieBytes > tail.length)
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive cookie extends past the end of the file",
       ),
     );
@@ -267,14 +270,17 @@ const parseCookie = (
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive cookie does not describe a table of contents inside the package",
       ),
     );
   const archiveStart = cookieOffset + cookieBytes - packageLength;
   if (archiveStart < 0 || archiveStart + packageLength > fileSize)
     return err(
-      pyInstallerFailure("format", "CArchive cookie range is outside the file"),
+      pyInstallerFailure(
+        "malformed",
+        "CArchive cookie range is outside the file",
+      ),
     );
   const library =
     layout === "2.1" ? libraryName(view.subarray(24, 88)) : ok(null);
@@ -299,17 +305,17 @@ const libraryName = (
   if (end >= 0 && bytes.subarray(end).some((byte) => byte !== 0))
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive Python library name is not NUL-padded",
       ),
     );
   if (text.length === 0) return ok(null);
   try {
-    return ok(strictUtf8Decoder("preserve").decode(text));
+    return ok(decodeStrictUtf8(text, "preserve"));
   } catch {
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         "CArchive Python library name is not valid UTF-8",
       ),
     );
@@ -320,15 +326,15 @@ const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   const end = bytes.indexOf(0);
   if (end < 0 || bytes.subarray(end + 1).some((byte) => byte !== 0))
     return err(
-      pyInstallerFailure("format", "CArchive entry name is not NUL-padded"),
+      pyInstallerFailure("malformed", "CArchive entry name is not NUL-padded"),
     );
   if (end === 0)
-    return err(pyInstallerFailure("format", "CArchive entry name is empty"));
+    return err(pyInstallerFailure("malformed", "CArchive entry name is empty"));
   try {
-    return ok(strictUtf8Decoder("preserve").decode(bytes.subarray(0, end)));
+    return ok(decodeStrictUtf8(bytes.subarray(0, end), "preserve"));
   } catch {
     return err(
-      pyInstallerFailure("format", "CArchive entry name is not valid UTF-8"),
+      pyInstallerFailure("malformed", "CArchive entry name is not valid UTF-8"),
     );
   }
 };
@@ -372,7 +378,7 @@ const validateCArchiveMembers = (
     if (entry.offset > tocOffset)
       return err(
         pyInstallerFailure(
-          "format",
+          "malformed",
           `CArchive member offset is outside the archive at table index ${String(entry.index)}`,
         ),
       );

@@ -31,8 +31,19 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
-import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
-import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
+import {
+  ArtifactAnalysisResources,
+  type ProducerCommandLimits,
+} from "./ArtifactAnalysisResources.js";
+import {
+  BOUNDED_PRODUCER_LIMITS,
+  producerLimitControl,
+} from "../domain/producerResourceLimits.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import {
+  type LinuxResourceLimits,
+  readLinuxResourceLimits,
+} from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
 import type {
   AnalysisError,
@@ -79,8 +90,7 @@ it.runIf(process.platform !== "win32")(
         ok(
           await resources.readSelectedArtifact({
             path: selected,
-            maximumBytes: 1024,
-            allowanceName: "fixture input allowance",
+            budget: producerLimitControl("input_bytes", 1024, 2048),
             observedOutput: undefined,
           }),
         ),
@@ -150,7 +160,8 @@ it("projects the specific reason and member evidence for retained cleanup", asyn
   const producer = Object.assign(new EventEmitter(), {
     stdout: new PassThrough(),
     stderr: new PassThrough(),
-    exitCode: null,
+    // The leader exited. Its remaining members still need verification.
+    exitCode: 0,
     signalCode: null,
     kill: () => true,
   });
@@ -490,6 +501,34 @@ it("keeps a runtime root until its descriptor cleanup owner is released", async 
   await resources.close();
 });
 
+const classifyFixtureCommand = (
+  resources: ArtifactAnalysisResources,
+  failure: OwnedCommandFailure,
+  selected: ProducerCommandLimits["selected"],
+  effectiveLimits?: LinuxResourceLimits,
+) =>
+  classifyProviderFailure(failure, {
+    providerId: resources.providerId,
+    operation: resources.operation,
+    command: () =>
+      resources.commandContext(
+        {
+          selected,
+          defaults: BOUNDED_PRODUCER_LIMITS,
+          output: producerLimitControl(
+            "output_bytes",
+            selected.output_bytes,
+            BOUNDED_PRODUCER_LIMITS.output_bytes,
+          ),
+        },
+        effectiveLimits,
+        resources.operation,
+      ),
+    unclassified: (cause) => {
+      throw cause;
+    },
+  });
+
 it.each([
   null,
   "opaque reason",
@@ -497,7 +536,7 @@ it.each([
     reason: "caller cleanup",
   }),
 ])(
-  "preserves caller cancellation at resource admission: %s",
+  "preserves opaque cancellation through admission and command classification: %s",
   async (reason) => {
     const resources = createArtifactAnalysisResources(
       "fixture",
@@ -509,55 +548,30 @@ it.each([
     let calls = 0;
     try {
       const result = await resources.run(async () => {
-        calls++;
+        calls += 1;
         return ok("unexpected");
       }, AbortSignal.abort(reason));
       if (result.ok) throw new Error("Expected cancelled admission");
-      expect(result.error.cause).toBe(reason);
-      expect(result.error.cleanupResources).toEqual([]);
       expect(calls).toBe(0);
-      if (reason instanceof ProviderCleanupError)
-        expect(reason.cleanupIncomplete).toBe(true);
-    } finally {
-      await resources.close();
-    }
-  },
-);
-
-it.each([
-  null,
-  "opaque reason",
-  new ProviderCleanupError("foreign", ["foreign-resource"], {
-    reason: "caller cleanup",
-  }),
-])(
-  "projects the command owner's exact cancellation independently of physical causes: %s",
-  async (reason) => {
-    const resources = createArtifactAnalysisResources(
-      "fixture",
-      "inspect_signal_decoders",
-      readStableArtifact,
-      readLinuxResourceLimits,
-      { message: "busy", details: {} },
-    );
-    const physical = new Error("physical collection interruption");
-    const failure = new OwnedCommandFailure(
-      "cancelled",
-      "cancelled command",
-      null,
-      null,
-      { cause: physical, cancellation: { reason } },
-    );
-    try {
-      const error = resources.commandFailure(
-        failure,
-        { command_timeout_ms: 100, output_bytes: 1024 },
-        undefined,
+      const failure = new OwnedCommandFailure(
+        "cancelled",
+        "cancelled command",
+        null,
+        null,
+        {
+          cause: new Error("physical collection interruption"),
+          cancellation: { reason },
+        },
       );
-      expect(error).toMatchObject({ _tag: "AnalysisCancelledError" });
-      expect(error.cause).toBe(reason);
-      expect(error.cleanupResources).toEqual([]);
-      expect(failure.cause).toBe(physical);
+      const command = classifyFixtureCommand(resources, failure, {
+        command_timeout_ms: 100,
+        output_bytes: 1024,
+      });
+      for (const error of [result.error, command]) {
+        expect(error).toMatchObject({ _tag: "AnalysisCancelledError" });
+        expect(error.cause).toBe(reason);
+        expect(error.cleanupResources).toEqual([]);
+      }
       if (reason instanceof ProviderCleanupError)
         expect(reason.cleanupIncomplete).toBe(true);
     } finally {
@@ -627,171 +641,118 @@ it.each([false, true])(
   },
 );
 
-it("names the fixed producer command deadline and says it has no override", async () => {
-  const resources = createArtifactAnalysisResources(
-    "fixture",
-    "inspect_packet_fields",
-    readStableArtifact,
-    readLinuxResourceLimits,
-    { message: "busy", details: {} },
-  );
-  const failure = new OwnedCommandFailure("timeout", "command timed out", null);
-  try {
-    const error = resources.commandFailure(
-      failure,
-      { command_timeout_ms: 30_000, output_bytes: 1024 },
-      undefined,
+it.each([
+  [30_000, "Increase producer_limits.command_timeout_ms above 30000"],
+  [MAX_NODE_TIMER_DELAY_MS, "no higher deadline is supported"],
+] as const)(
+  "reports the per-call producer deadline at %i ms",
+  async (deadline, recovery) => {
+    const resources = createArtifactAnalysisResources(
+      "fixture",
+      "inspect_packet_fields",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
     );
-    const projected = projectAnalysisError(error);
-    expect(projected.message).toContain("30000 ms");
-    expect(projected.remediation.action).toContain(
-      "this release has no runtime override",
-    );
-    expect(projected.remediation.action).not.toContain(
-      "REA_SWIFTC_COMPILE_TIMEOUT_MS",
-    );
-  } finally {
-    await resources.close();
-  }
-});
-
-it("says REA retains the tighter inherited limit when a producer signal fires", async () => {
-  const resources = createArtifactAnalysisResources(
-    "fixture",
-    "inspect_packet_fields",
-    readStableArtifact,
-    readLinuxResourceLimits,
-    { message: "busy", details: {} },
-  );
-  const empty = { text: "", bytes: 0, observedBytes: 0 };
-  const failure = new OwnedCommandFailure("process", "producer signal", {
-    stdout: empty,
-    stderr: empty,
-    exitCode: null,
-    signal: "SIGXCPU",
-  });
-  try {
-    const error = resources.commandFailure(
-      failure,
-      { command_timeout_ms: 30_000, output_bytes: 4_194_304 },
-      {
-        address_space_bytes: 1_073_741_824,
-        file_bytes: 67_108_864,
-        cpu_seconds: 30,
-      },
-    );
-    const projected = projectAnalysisError(error);
-    expect(projected.remediation.action).toContain(
-      "REA retains the tighter inherited limit",
-    );
-    expect(projected.remediation.action).toContain("1073741824 bytes");
-    expect(projected.remediation.action).toContain("67108864 bytes");
-    expect(projected.remediation.action).toContain("30 CPU seconds");
-    expect(projected.remediation.action).toContain(
-      "This release has no runtime override",
-    );
-    expect(projected.remediation.action).toContain(
-      "an unchanged retry may succeed or may fail the same way",
-    );
-    expect(projected.remediation.action).not.toMatch(
-      /unchanged request.*fails/iu,
-    );
-    expect(projected.retryable).toBe(true);
-    expect(projected.details).toMatchObject({
-      reported_limits: { cpu_seconds: 30 },
-    });
-  } finally {
-    await resources.close();
-  }
-});
-
-it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not reported", async () => {
-  const resources = createArtifactAnalysisResources(
-    "fixture",
-    "inspect_packet_fields",
-    readStableArtifact,
-    readLinuxResourceLimits,
-    { message: "busy", details: {} },
-  );
-  const empty = { text: "", bytes: 0, observedBytes: 0 };
-  const failure = new OwnedCommandFailure("process", "producer signal", {
-    stdout: empty,
-    stderr: empty,
-    exitCode: null,
-    signal: "SIGXFSZ",
-  });
-  try {
-    const projected = projectAnalysisError(
-      resources.commandFailure(
-        failure,
-        { command_timeout_ms: 30_000, output_bytes: 4_194_304 },
-        undefined,
-      ),
-    );
-    expect(projected.remediation.action).toContain(
-      "an unchanged retry may succeed or may fail the same way",
-    );
-    expect(projected.remediation.action).not.toMatch(
-      /unchanged request.*fails/iu,
-    );
-    expect(projected.retryable).toBe(true);
-    expect(projected.details).toMatchObject({
-      resource: "file-size",
-      reported_limits: null,
-    });
-  } finally {
-    await resources.close();
-  }
-});
-
-it("treats a fixed command-output cap as a non-retryable capture allowance", async () => {
-  const resources = createArtifactAnalysisResources(
-    "fixture",
-    "inspect_packet_fields",
-    readStableArtifact,
-    readLinuxResourceLimits,
-    { message: "busy", details: {} },
-  );
-  const failure = new OwnedCommandFailure(
-    "output-limit",
-    "command output exceeded the retained limit",
-    null,
-  );
-  try {
-    const error = resources.commandFailure(
-      failure,
-      { command_timeout_ms: 100, output_bytes: 1024 },
-      undefined,
-    );
-    expect(error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "memory",
-      reportedLimits: { output_bytes: 1024 },
-      retryable: false,
-      fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
-    });
-    const projected = projectAnalysisError(error);
-    expect(projected).toMatchObject({
-      retryable: false,
-      details: {
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "capture",
-          limit: 1024,
-          unit: "bytes",
+    try {
+      const timeout = classifyFixtureCommand(
+        resources,
+        new OwnedCommandFailure("timeout", "command timed out"),
+        { command_timeout_ms: deadline, output_bytes: 1024 },
+      );
+      expect(projectAnalysisError(timeout)).toMatchObject({
+        code: "provider_timeout",
+        message: expect.stringContaining(`${String(deadline)} ms`),
+        remediation: { action: expect.stringContaining(recovery) },
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "producer_limits.command_timeout_ms",
+            effective_value: deadline,
+            default_value: BOUNDED_PRODUCER_LIMITS.command_timeout_ms,
+            applies_at: "next_call",
+          },
         },
-      },
+      });
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
+it.each([
+  {
+    signal: "SIGXCPU",
+    resource: "cpu",
+    effective: {
+      address_space_bytes: 1_073_741_824,
+      file_bytes: 67_108_864,
+      cpu_seconds: 30,
+    },
+  },
+  {
+    signal: "SIGXFSZ",
+    resource: "file-size",
+    effective: undefined,
+  },
+] as const)(
+  "keeps retry uncertainty and inherited limit facts for $signal",
+  async ({ signal, resource, effective }) => {
+    const resources = createArtifactAnalysisResources(
+      "fixture",
+      "inspect_packet_fields",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
+    );
+    const empty = { text: "", bytes: 0, observedBytes: 0 };
+    const failure = new OwnedCommandFailure("process", "producer signal", {
+      stdout: empty,
+      stderr: empty,
+      exitCode: null,
+      signal,
     });
-    expect(projected.remediation.action).not.toMatch(
-      /Review the reported worker memory limits/u,
-    );
-    expect(projected.remediation.action).not.toMatch(
-      /available host memory\. Retry/u,
-    );
-  } finally {
-    await resources.close();
-  }
-});
+    try {
+      const projected = projectAnalysisError(
+        classifyFixtureCommand(
+          resources,
+          failure,
+          { command_timeout_ms: 30_000, output_bytes: 4_194_304 },
+          effective,
+        ),
+      );
+      expect(projected).toMatchObject({
+        retryable: true,
+        details: { resource, reported_limits: effective ?? null },
+      });
+      const action = projected.remediation.action;
+      if (effective === undefined) {
+        expect(action).toMatch(/inherited limit.*not reported/iu);
+      } else {
+        expect(action).toContain(
+          `${String(effective.address_space_bytes)} bytes of address space`,
+        );
+        expect(action).toContain(
+          `${String(effective.file_bytes)} bytes per file`,
+        );
+        expect(action).toContain(
+          `${String(effective.cpu_seconds)} CPU seconds`,
+        );
+      }
+      expect(action).toContain("tighter inherited limit");
+      expect(action).toContain(
+        `producer_limits.${signal === "SIGXFSZ" ? "file_bytes" : "cpu_seconds"}`,
+      );
+      expect(action).toContain(
+        "cannot raise a tighter inherited soft or hard limit",
+      );
+      expect(action).toMatch(/unchanged retry.*may succeed.*may fail/iu);
+      expect(action).not.toMatch(/unchanged request.*fails/iu);
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it("retains a physical command failure when the owner also observed late cancellation", async () => {
   const resources = createArtifactAnalysisResources(
@@ -810,11 +771,10 @@ it("retains a physical command failure when the owner also observed late cancell
     { cancellation: { reason } },
   );
   try {
-    const error = resources.commandFailure(
-      failure,
-      { command_timeout_ms: 100, output_bytes: 1024 },
-      undefined,
-    );
+    const error = classifyFixtureCommand(resources, failure, {
+      command_timeout_ms: 100,
+      output_bytes: 1024,
+    });
     expect(error).toBeInstanceOf(UnclassifiedProviderFailure);
     expect(error).toMatchObject({
       providerId: "fixture",
@@ -1033,53 +993,6 @@ it("keeps cleanup with no reported capability unresolved instead of clearing it 
   // No OS resource was supplied. An unresolved observation never grants cleanup authority.
 });
 
-it("joins mixed runtime cleanup and resolves each error only through its exact lease", async () => {
-  const resources = createArtifactAnalysisResources(
-    "fixture",
-    "inspect_signal_decoders",
-    readStableArtifact,
-    readLinuxResourceLimits,
-    { message: "busy", details: {} },
-  );
-  let denied = true;
-  let healthyCloses = 0;
-  const bad = {
-    path: "bad-root",
-    close: async () => {
-      if (denied) throw new Error("bad root denied");
-    },
-  };
-  const good = {
-    path: "good-root",
-    close: async () => {
-      healthyCloses++;
-    },
-  };
-  resources.retain(bad);
-  resources.retain(good);
-  try {
-    const failure: unknown = await resources
-      .release()
-      .catch((cause: unknown) => cause);
-    expect(failure).toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: ["bad-root"],
-    });
-    expect(healthyCloses).toBe(1);
-    expect(resources.pendingPaths).toEqual(["bad-root"]);
-    denied = false;
-    await resources.close();
-    expect(failure).toMatchObject({
-      cleanupIncomplete: false,
-      cleanupResources: [],
-    });
-    expect(healthyCloses).toBe(1);
-  } finally {
-    denied = false;
-    await resources.close();
-  }
-});
-
 it("retains producer output when a completed read is cancelled during failed close", async () => {
   const root = await createTestTempDirectory("rea-completed-read-cancel-");
   const path = join(root, "descriptor");
@@ -1180,6 +1093,7 @@ it("keeps aggregate cleanup live through partial recovery without reclosing heal
       cleanupResources: ["first", "second"],
     });
     expect(closes.get("healthy")).toBe(1);
+    expect(resources.pendingPaths).toEqual(["first", "second"]);
     denied.delete("first");
     const retry: unknown = await resources
       .release()

@@ -16,7 +16,10 @@ import * as runTokenObservations from "../process/ProcessRunTokenObservations.js
 import { isProcessOwnershipInspectionCancellation } from "../process/ProcessInspectionCancellation.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { runDesktopSession } from "./DesktopApplicationSession.js";
-import type { DesktopSessionPlan } from "../ports/DesktopApplicationSession.js";
+import type {
+  DesktopSessionPlan,
+  SessionRequest,
+} from "../ports/DesktopApplicationSession.js";
 import { X11WindowObserver } from "./X11WindowObserver.js";
 
 vi.mock("../process/TokenOwnedTermination.js", async (importOriginal) => {
@@ -137,6 +140,67 @@ const inertSessionPorts = () => {
     releases: () => releases,
   };
 };
+
+it.skipIf(process.platform === "win32")(
+  "assigns distinct names to unnamed requests at an occupied timestamp",
+  async () => {
+    const root = await createTestTempDirectory("desktop-session-names-");
+    const inert = inertSessionPorts();
+    vi.spyOn(
+      sessionObservations.SessionObservations.prototype,
+      "now",
+    ).mockReturnValue(500);
+    vi.spyOn(sessionObservations, "sampleProcesses").mockResolvedValue(
+      undefined,
+    );
+    vi.mocked(terminateTokenOwnedProcesses).mockImplementationOnce(
+      async (owner, grace) => {
+        await inert.finish();
+        const actual = await vi.importActual<
+          typeof import("../process/TokenOwnedTermination.js")
+        >("../process/TokenOwnedTermination.js");
+        return actual.terminateTokenOwnedProcesses(owner, grace, inert.host);
+      },
+    );
+    const requests: SessionRequest[] = [
+      { kind: "checkpoint", name: "checkpoint-500" },
+      { kind: "checkpoint", name: "checkpoint-500-2" },
+      { kind: "checkpoint", name: undefined },
+      { kind: "checkpoint", name: undefined },
+      { kind: "checkpoint", name: "checkpoint-500-3" },
+      { kind: "stop" },
+    ];
+    const names: string[] = [];
+    const refusals: string[] = [];
+    try {
+      const outcome = await runDesktopSession({
+        ...shellPlan(root, "exit 0"),
+        argv: inert.argv,
+        pollIntervalMs: 0,
+        nextRequest: () => requests.shift() ?? { kind: "stop" },
+        checkpoint: async (name) => {
+          names.push(name);
+        },
+        report: async (_message, event) => {
+          if (event?.kind === "checkpoint_refused") refusals.push(event.name);
+        },
+      });
+      expect(outcome.session.end_reason).toBe("stop_requested");
+      expect(names).toEqual([
+        "checkpoint-500",
+        "checkpoint-500-2",
+        "checkpoint-500-3",
+        "checkpoint-500-4",
+        "stop",
+        "exit",
+      ]);
+      expect(refusals).toEqual(["checkpoint-500-3"]);
+    } finally {
+      await inert.finish();
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 describe.skipIf(process.platform !== "linux")("runDesktopSession", () => {
   it("releases the application once when the exit checkpoint fails after release", async () => {

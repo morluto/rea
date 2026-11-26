@@ -1,6 +1,7 @@
-import canonicalize from "canonicalize";
-
-import { digestCanonicalValue } from "../canonicalDigest.js";
+import {
+  digestCanonicalValue,
+  serializeCanonicalValue,
+} from "../canonicalDigest.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 import type { ManagedMemberComparisonResult } from "./managedMemberComparison.js";
 import type {
@@ -37,17 +38,9 @@ const limitation = (
 ): Limitation =>
   side === undefined ? { code, message } : { code, side, message };
 
-type OneSided<Item> =
-  | { readonly left: Item; readonly right?: never }
-  | { readonly left?: never; readonly right: Item };
-
 interface ComparisonItemContext {
   readonly leftEvidenceId: string;
   readonly rightEvidenceId: string;
-  readonly leftComplete: boolean;
-  readonly rightComplete: boolean;
-  readonly leftMethodsComplete: boolean;
-  readonly rightMethodsComplete: boolean;
   readonly scope: ManagedComparisonScope;
   readonly sameArtifact: boolean;
   readonly leftAssembly: ManagedMemberInspection["assembly"];
@@ -57,13 +50,6 @@ interface ComparisonItemContext {
   readonly leftFieldAccessesByCaller: FieldAccessesByCaller;
   readonly rightFieldAccessesByCaller: FieldAccessesByCaller;
 }
-
-/** Whether an inventory observed every member of this member's declaring type. */
-const inventoryCovers = (
-  complete: boolean,
-  observes: (member: Method | Field) => boolean,
-  member: Method | Field,
-): boolean => complete && observes(member);
 
 /**
  * Declared type and name of each unpaired member, per side, whose signature
@@ -136,24 +122,30 @@ const methodDimensions = (
       exceptionTargetUnknown: false,
     };
   const sameCallShape =
-    callShape(left.body.anchors) === callShape(right.body.anchors);
+    referenceShape(left.body.anchors, "method") ===
+    referenceShape(right.body.anchors, "method");
   const callTargets = sameCallShape
-    ? compareCallTargets(
+    ? compareReferenceTargets(
         left,
         right,
+        "method",
         leftCallEdgesByCaller.get(left.token) ?? [],
         rightCallEdgesByCaller.get(right.token) ?? [],
+        (edge) => edge.target_token,
         sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameFieldShape =
-    fieldShape(left.body.anchors) === fieldShape(right.body.anchors);
+    referenceShape(left.body.anchors, "field") ===
+    referenceShape(right.body.anchors, "field");
   const fieldTargets = sameFieldShape
-    ? compareFieldTargets(
+    ? compareReferenceTargets(
         left,
         right,
+        "field",
         leftFieldAccessesByCaller.get(left.token) ?? [],
         rightFieldAccessesByCaller.get(right.token) ?? [],
+        (edge) => edge.field_token,
         sameArtifact,
       )
     : { changed: false, unknown: false };
@@ -187,8 +179,8 @@ const methodDimensions = (
   )
     dimensions.push("cil");
   if (
-    canonicalize(left.body.opcode_counts) !==
-    canonicalize(right.body.opcode_counts)
+    serializeCanonicalValue(left.body.opcode_counts) !==
+    serializeCanonicalValue(right.body.opcode_counts)
   )
     dimensions.push("opcode-shape");
   if (!sameFieldShape) dimensions.push("field-shape");
@@ -288,39 +280,56 @@ const sameAssemblyIdentity = (
   left.public_key.sha256 === right.public_key.sha256 &&
   left.public_key.token === right.public_key.token;
 
-interface ReferenceTarget {
-  readonly rowResolved: boolean;
-  readonly offset: number | null;
-  readonly opcode: string;
-  readonly token: string;
-  readonly identity: string | null;
-}
+type ReferenceEdge =
+  | ManagedMemberInspection["field_accesses"][number]
+  | ManagedMemberInspection["call_edges"][number];
+
+const referenceAnchors = (
+  anchors: Method["body"]["anchors"],
+  kind: "method" | "field",
+) =>
+  anchors.filter(
+    (anchor) =>
+      isManagedMemberReferenceInstruction(anchor) &&
+      anchor.operand_kind === kind,
+  );
+
+const referenceShape = (
+  anchors: Method["body"]["anchors"],
+  kind: "method" | "field",
+) =>
+  JSON.stringify(
+    referenceAnchors(anchors, kind).map(({ opcode, operand_kind }) => [
+      opcode,
+      operand_kind,
+    ]),
+  );
 
 /** Join each edge to its instruction site, then compare aligned instructions. */
-const compareReferenceTargets = (
+const compareReferenceTargets = <Edge extends ReferenceEdge>(
   left: Method,
   right: Method,
   kind: "field" | "method",
-  leftTargets: readonly ReferenceTarget[],
-  rightTargets: readonly ReferenceTarget[],
+  leftTargets: readonly Edge[],
+  rightTargets: readonly Edge[],
+  tokenOf: (edge: Edge) => string,
   sameArtifact: boolean,
 ): { readonly changed: boolean; readonly unknown: boolean } => {
-  const align = (method: Method, targets: readonly ReferenceTarget[]) => {
-    const anchors = method.body.anchors.filter(
-      (anchor) =>
-        isManagedMemberReferenceInstruction(anchor) &&
-        anchor.operand_kind === kind,
-    );
-    const byOffset = new Map<number | null, ReferenceTarget | null>();
+  const align = (method: Method, targets: readonly Edge[]) => {
+    const anchors = referenceAnchors(method.body.anchors, kind);
+    const byOffset = new Map<number | null, Edge | null>();
     for (const target of targets)
-      byOffset.set(target.offset, byOffset.has(target.offset) ? null : target);
+      byOffset.set(
+        target.il_offset,
+        byOffset.has(target.il_offset) ? null : target,
+      );
     let unknown = targets.length !== anchors.length;
     const aligned = anchors.map((anchor) => {
       const target = byOffset.get(anchor.il_offset);
       if (
         target == null ||
         target.opcode !== anchor.opcode ||
-        target.token !== anchor.operand
+        tokenOf(target) !== anchor.operand
       ) {
         unknown = true;
         return null;
@@ -344,106 +353,34 @@ const compareReferenceTargets = (
       unknown = true;
       continue;
     }
-    if (leftTarget.identity != null && rightTarget.identity != null) {
-      if (leftTarget.identity !== rightTarget.identity) changed = true;
+    if (
+      leftTarget.target_identity_sha256 != null &&
+      rightTarget.target_identity_sha256 != null
+    ) {
+      if (
+        leftTarget.target_identity_sha256 !== rightTarget.target_identity_sha256
+      )
+        changed = true;
       continue;
     }
     // Same-artifact token equality requires both producers to establish the
     // referenced row. Missing/historical facts or malformed operands stay unknown.
     if (
       sameArtifact &&
-      leftTarget.rowResolved === true &&
+      leftTarget.target_row_resolved === true &&
       left.token === right.token &&
-      rightTarget.rowResolved === true &&
+      rightTarget.target_row_resolved === true &&
       left.signature.parse_status === "decoded" &&
       right.signature.parse_status === "decoded" &&
-      leftTarget.identity == null &&
-      rightTarget.identity == null &&
-      leftTarget.token === rightTarget.token
+      leftTarget.target_identity_sha256 == null &&
+      rightTarget.target_identity_sha256 == null &&
+      tokenOf(leftTarget) === tokenOf(rightTarget)
     )
       continue;
     unknown = true;
   }
   return { changed, unknown };
 };
-
-const compareFieldTargets = (
-  left: Method,
-  right: Method,
-  leftAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
-  rightAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
-  sameArtifact: boolean,
-) =>
-  compareReferenceTargets(
-    left,
-    right,
-    "field",
-    leftAccesses.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.field_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    rightAccesses.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.field_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    sameArtifact,
-  );
-
-const compareCallTargets = (
-  left: Method,
-  right: Method,
-  leftEdges: readonly ManagedMemberInspection["call_edges"][number][],
-  rightEdges: readonly ManagedMemberInspection["call_edges"][number][],
-  sameArtifact: boolean,
-) =>
-  compareReferenceTargets(
-    left,
-    right,
-    "method",
-    leftEdges.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.target_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    rightEdges.map((edge) => ({
-      offset: edge.il_offset,
-      opcode: edge.opcode,
-      token: edge.target_token,
-      rowResolved: edge.target_row_resolved,
-      identity: edge.target_identity_sha256,
-    })),
-    sameArtifact,
-  );
-
-const callShape = (anchors: Method["body"]["anchors"]): string =>
-  JSON.stringify(
-    anchors
-      .filter(
-        (instruction) =>
-          isManagedMemberReferenceInstruction(instruction) &&
-          instruction.operand_kind === "method",
-      )
-      .map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-  );
-
-const fieldShape = (anchors: Method["body"]["anchors"]): string =>
-  JSON.stringify(
-    anchors
-      .filter(
-        (instruction) =>
-          isManagedMemberReferenceInstruction(instruction) &&
-          instruction.operand_kind === "field",
-      )
-      .map(({ opcode, operand_kind }) => [opcode, operand_kind]),
-  );
 
 const methodIdentity = (item: Method): NonNullable<MethodItem["left"]> => ({
   token: item.token,
@@ -468,57 +405,49 @@ const unmatchedComparison = (): UnmatchedComparison => ({
   candidate_right_tokens: [],
 });
 
-const methodOnlyItem = (
-  member: OneSided<Method>,
-  identity: string,
-  identityUnavailable: boolean,
+const oneSidedItem = <
+  Member extends Method | Field,
+  Identity,
+  Columns extends object,
+>(
+  { item, identity, identityUnavailable }: Unpaired<Member>,
+  side: "left" | "right",
+  inventory: "method" | "field",
+  identify: (member: Member) => Identity,
+  columns: Columns,
   context: ComparisonItemContext,
   undecoded: UndecodedOneSidedNames,
-): MethodItem => {
-  if (member.left !== undefined) {
-    const limitations = absenceLimitations(member.left, identity, {
-      oppositeComplete: inventoryCovers(
-        context.rightMethodsComplete,
-        context.scope.inRight,
-        member.left,
-      ),
-      unpaired: undecoded,
-      ownIdentityUnavailable: identityUnavailable,
-      ownNameUnavailable: context.scope.left.emptyMemberNames.has(member.left),
-      opposite: "right",
-      inventory: "method",
-    });
-    return {
-      item_id: `mmc_method_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
-      status: limitations.length === 0 ? "removed" : "unknown",
-      left: methodIdentity(member.left),
-      right: null,
-      match: unmatchedComparison(),
-      dimensions: ["availability"],
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations,
-    };
-  }
-
-  const limitations = absenceLimitations(member.right, identity, {
-    oppositeComplete: inventoryCovers(
-      context.leftMethodsComplete,
-      context.scope.inLeft,
-      member.right,
-    ),
+) => {
+  const opposite = side === "left" ? "right" : "left";
+  const observes =
+    opposite === "left" ? context.scope.inLeft : context.scope.inRight;
+  const limitations = absenceLimitations(item, identity, {
+    oppositeComplete:
+      context.scope[opposite].inventoryComplete[inventory] && observes(item),
     unpaired: undecoded,
     ownIdentityUnavailable: identityUnavailable,
-    ownNameUnavailable: context.scope.right.emptyMemberNames.has(member.right),
-    opposite: "left",
-    inventory: "method",
+    ownNameUnavailable: context.scope[side].emptyMemberNames.has(item),
+    opposite,
+    inventory,
   });
+  const itemId = `mmc_${inventory}_${digestCanonicalValue({ token: item.token, side }, "Managed comparison")}`;
+  const sides =
+    side === "left"
+      ? ({
+          status: limitations.length === 0 ? "removed" : "unknown",
+          left: identify(item),
+          right: null,
+        } as const)
+      : ({
+          status: limitations.length === 0 ? "added" : "unknown",
+          left: null,
+          right: identify(item),
+        } as const);
   return {
-    item_id: `mmc_method_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
-    status: limitations.length === 0 ? "added" : "unknown",
-    left: null,
-    right: methodIdentity(member.right),
+    item_id: itemId,
+    ...sides,
     match: unmatchedComparison(),
-    dimensions: ["availability"],
+    ...columns,
     evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
     limitations,
   };
@@ -653,8 +582,8 @@ const pairedSignatureLimitations = (
  * Declared names of unpaired members whose signature was not decoded: one-sided
  * members and candidates of ambiguous groups, which also remain unpaired.
  */
-interface Unpaired {
-  readonly item: Method | Field;
+interface Unpaired<Member extends Method | Field = Method | Field> {
+  readonly item: Member;
   readonly identity: string;
   readonly identityUnavailable: boolean;
 }
@@ -705,60 +634,6 @@ const undecodedOneSidedNames = (members: {
       left: names(sides.left, unresolved),
       right: names(sides.right, unresolved),
     },
-  };
-};
-
-const fieldOnlyItem = (
-  member: OneSided<Field>,
-  identity: string,
-  identityUnavailable: boolean,
-  context: ComparisonItemContext,
-  undecoded: UndecodedOneSidedNames,
-): FieldItem => {
-  if (member.left !== undefined) {
-    const limitations = absenceLimitations(member.left, identity, {
-      oppositeComplete: inventoryCovers(
-        context.rightComplete,
-        context.scope.inRight,
-        member.left,
-      ),
-      unpaired: undecoded,
-      ownIdentityUnavailable: identityUnavailable,
-      ownNameUnavailable: context.scope.left.emptyMemberNames.has(member.left),
-      opposite: "right",
-      inventory: "field",
-    });
-    return {
-      item_id: `mmc_field_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
-      status: limitations.length === 0 ? "removed" : "unknown",
-      left: fieldIdentity(member.left),
-      right: null,
-      match: unmatchedComparison(),
-      evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations,
-    };
-  }
-
-  const limitations = absenceLimitations(member.right, identity, {
-    oppositeComplete: inventoryCovers(
-      context.leftComplete,
-      context.scope.inLeft,
-      member.right,
-    ),
-    unpaired: undecoded,
-    ownIdentityUnavailable: identityUnavailable,
-    ownNameUnavailable: context.scope.right.emptyMemberNames.has(member.right),
-    opposite: "left",
-    inventory: "field",
-  });
-  return {
-    item_id: `mmc_field_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
-    status: limitations.length === 0 ? "added" : "unknown",
-    left: null,
-    right: fieldIdentity(member.right),
-    match: unmatchedComparison(),
-    evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-    limitations,
   };
 };
 
@@ -981,26 +856,21 @@ export const buildMethodItems = (
     });
   }
   const undecoded = undecodedOneSidedNames(matches);
-  for (const item of matches.leftOnly)
-    items.push(
-      methodOnlyItem(
-        { left: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
-  for (const item of matches.rightOnly)
-    items.push(
-      methodOnlyItem(
-        { right: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
+  for (const side of ["left", "right"] as const) {
+    const members = side === "left" ? matches.leftOnly : matches.rightOnly;
+    for (const member of members)
+      items.push(
+        oneSidedItem(
+          member,
+          side,
+          "method",
+          methodIdentity,
+          { dimensions: ["availability"] satisfies MethodItem["dimensions"] },
+          context,
+          undecoded,
+        ),
+      );
+  }
   return items;
 };
 
@@ -1074,25 +944,20 @@ export const buildFieldItems = (
       ],
     });
   const undecoded = undecodedOneSidedNames(matches);
-  for (const item of matches.leftOnly)
-    items.push(
-      fieldOnlyItem(
-        { left: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
-  for (const item of matches.rightOnly)
-    items.push(
-      fieldOnlyItem(
-        { right: item.item },
-        item.identity,
-        item.identityUnavailable,
-        context,
-        undecoded,
-      ),
-    );
+  for (const side of ["left", "right"] as const) {
+    const members = side === "left" ? matches.leftOnly : matches.rightOnly;
+    for (const member of members)
+      items.push(
+        oneSidedItem(
+          member,
+          side,
+          "field",
+          fieldIdentity,
+          {},
+          context,
+          undecoded,
+        ),
+      );
+  }
   return items;
 };

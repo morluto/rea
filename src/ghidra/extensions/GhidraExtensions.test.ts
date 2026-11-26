@@ -109,13 +109,13 @@ describe("optional Ghidra extension refusals", () => {
     if (!architecture.ok)
       expect(projectAnalysisError(architecture.error)).toMatchObject({
         code: "unsupported_target",
-        remediation: {
-          action: expect.stringContaining("omit REA_GHIDRA_NATIVEAOT_JAR"),
-        },
         details: {
           operation: "resolve_analysis_profile",
           path: target.path,
-          reason: expect.stringContaining("x86-64 ELF or native PE"),
+          failure_kind: "unsupported",
+          reason: expect.stringMatching(
+            /x86-64 ELF or native PE.*omit REA_GHIDRA_NATIVEAOT_JAR/su,
+          ),
         },
       });
   });
@@ -344,8 +344,8 @@ describe("Ghidra extension profile and producer validation", () => {
     if (!resolved.ok)
       expect(projectAnalysisError(resolved.error)).toMatchObject({
         code: "unsupported_target",
-        remediation: {
-          action: expect.stringContaining("inspect_managed_artifact"),
+        details: {
+          reason: expect.stringContaining("inspect_managed_artifact"),
         },
       });
   });

@@ -230,9 +230,9 @@ const inspectWebPageInputFacts = {
   include_storage_fingerprints: z.boolean().default(false),
 } as const;
 
-const inspectWebPageWithoutSourceSchema = z.strictObject({
+export const inspectWebPageShapeSchema = z.strictObject({
   ...inspectWebPageInputFacts,
-  include_script_sources: z.literal(false).optional().default(false),
+  include_script_sources: z.boolean().default(false),
 });
 
 const inspectWebPageWithSourceShapeSchema = z.strictObject({
@@ -240,11 +240,9 @@ const inspectWebPageWithSourceShapeSchema = z.strictObject({
   include_script_sources: z.literal(true).default(true),
 });
 
-type InspectWebPageShape =
-  | z.output<typeof inspectWebPageWithoutSourceSchema>
-  | z.output<typeof inspectWebPageWithSourceShapeSchema>;
+type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
-const refineInspectWebPageInput = (
+export const refineInspectWebPageInput = (
   input: InspectWebPageShape,
   context: z.RefinementCtx,
 ): void => {
@@ -261,16 +259,8 @@ export const inspectWebPageWithSourceInputSchema =
   inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
-export const inspectWebPageInputSchema = z.discriminatedUnion(
-  "include_script_sources",
-  [
-    inspectWebPageWithoutSourceSchema.superRefine(refineInspectWebPageInput),
-    inspectWebPageWithSourceShapeSchema
-      .extend({
-        include_script_sources: z.literal(true),
-      })
-      .superRefine(refineInspectWebPageInput),
-  ],
+export const inspectWebPageInputSchema = inspectWebPageShapeSchema.superRefine(
+  refineInspectWebPageInput,
 );
 
 export type ListBrowserTargetsInput = z.infer<

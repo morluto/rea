@@ -3,12 +3,14 @@ import type { Readable } from "node:stream";
 import { assertArtifactReadActive } from "../../../resources/index.js";
 import { AnalysisResourceConstraintError } from "../../../domain/analysisErrorCore.js";
 import {
-  PLAYWRIGHT_TRACE_LIMITS,
   PLAYWRIGHT_TRACE_OPERATION,
+  playwrightTraceLimitRecovery,
+  type PlaywrightTraceLimits,
 } from "../../../domain/playwrightTrace/playwrightTrace.js";
 
 export interface TraceLineBudget {
   decodedBytes: number;
+  readonly limits: PlaywrightTraceLimits;
 }
 /** Buffer one physical line; do not decode a partial UTF-8 sequence or split records by characters. */
 export async function* traceLines(
@@ -21,16 +23,13 @@ export async function* traceLines(
   let line = 0;
   const append = (part: Buffer) => {
     pendingBytes += part.length;
-    if (pendingBytes > PLAYWRIGHT_TRACE_LIMITS.lineBytes)
+    if (pendingBytes > budget.limits.line_bytes)
       throw new AnalysisResourceConstraintError(
         PLAYWRIGHT_TRACE_OPERATION,
         "memory",
-        "A trace line exceeds the 4 MiB parser representation allowance.",
-        { max_line_bytes: PLAYWRIGHT_TRACE_LIMITS.lineBytes },
-        {
-          remediationAction:
-            "Select a smaller recorder chunk; changing reply pagination does not change parsing allowances.",
-        },
+        `A trace line exceeds the ${String(budget.limits.line_bytes)}-byte parser representation allowance.`,
+        { max_line_bytes: budget.limits.line_bytes },
+        playwrightTraceLimitRecovery("line_bytes", budget.limits),
       );
     fragments.push(part);
   };
@@ -39,16 +38,13 @@ export async function* traceLines(
     if (!Buffer.isBuffer(chunk))
       throw new TypeError("ZIP trace stream returned non-byte data");
     budget.decodedBytes += chunk.length;
-    if (budget.decodedBytes > PLAYWRIGHT_TRACE_LIMITS.decodedBytes)
+    if (budget.decodedBytes > budget.limits.decoded_bytes)
       throw new AnalysisResourceConstraintError(
         PLAYWRIGHT_TRACE_OPERATION,
         "memory",
-        "Decoded trace streams exceed the 32 MiB analysis allowance.",
-        { max_decoded_bytes: PLAYWRIGHT_TRACE_LIMITS.decodedBytes },
-        {
-          remediationAction:
-            "Select a smaller complete recorder chunk; binary resource payloads are not decoded by this tool.",
-        },
+        `Decoded trace streams exceed the ${String(budget.limits.decoded_bytes)}-byte analysis allowance.`,
+        { max_decoded_bytes: budget.limits.decoded_bytes },
+        playwrightTraceLimitRecovery("decoded_bytes", budget.limits),
       );
     let start = 0;
     for (;;) {

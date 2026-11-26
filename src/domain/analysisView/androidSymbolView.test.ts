@@ -9,7 +9,7 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-} from "./analysisViewResult.js";
+} from "./summarySchemas/androidSummarySchemas.js";
 import type { AdmittedView } from "./analysisViewShape.js";
 import { projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary } from "./androidSymbolView.js";
 

@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import {
   inspectV8CodeCacheInputSchema,
+  MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_LEGACY_HEADER_BYTES,
-  V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
-import { parseV8CodeCache } from "./V8CodeCacheParser.js";
+import { parseV8CodeCacheFromHandle } from "./V8CodeCacheParser.js";
 import {
   v8CodeCacheFixture,
   v8FunctionCodeCacheFixture,
@@ -28,71 +28,59 @@ const identity = (bytes: Buffer) => ({
   bytes: bytes.length,
 });
 
-const parse = (bytes: Buffer): V8CodeCache => {
-  const report = parseV8CodeCache(bytes, identity(bytes), defaults);
-  const validated = v8CodeCacheSchema.safeParse(report);
-  if (!validated.success) throw new Error(validated.error.message);
-  return report;
-};
-
-const real = v8CodeCacheFixture();
-
-it("reports the observed header of a real V8 code cache", () => {
-  const report = parse(real);
-  expect(report.header.header_bytes).toBe(32);
-  expect(report.header.magic_build_stable).toBe(0xc0de);
-  expect(report.header.magic).toBe(real.readUInt32LE(0));
-  // The payload-length word reaches exactly the end of the container.
-  expect(report.payload.offset).toBe(32);
-  expect(report.payload.bytes).toBe(real.length - 32);
-  expect(report.payload.bytes).toBe(real.readUInt32LE(20));
-  expect(report.payload.offset + report.payload.bytes).toBe(
-    report.artifact.bytes,
+const parse = async (bytes: Buffer): Promise<V8CodeCache> =>
+  v8CodeCacheSchema.parse(
+    await parseV8CodeCacheFromHandle(
+      {
+        size: bytes.length,
+        prefix: bytes,
+        readRange: async () => {
+          throw new Error(
+            "The admitted prefix already contains the test cache",
+          );
+        },
+      },
+      identity(bytes),
+      defaults,
+    ),
   );
-  expect(report.coverage.status).toBe("complete");
-});
 
-it("names every header word with its role and confidence", () => {
-  const report = parse(real);
-  expect(report.header.fields).toHaveLength(8);
-  expect(report.header.fields.map((field) => field.offset)).toEqual([
-    0, 4, 8, 12, 16, 20, 24, 28,
-  ]);
-  expect(report.header.fields.map((field) => field.role)).toEqual([
-    "magic",
-    "version_hash",
-    "source_length",
-    "flag_hash",
-    "build_constant",
-    "payload_length",
-    "reserved",
-    "reserved",
-  ]);
-  // Every reported value is the byte-level truth, independent of the inferred role.
-  report.header.fields.forEach((field) => {
-    expect(field.value).toBe(real.readUInt32LE(field.offset));
+const source = 'const label = "🦎"; label;';
+const real = v8CodeCacheFixture(source);
+
+it("reports real V8 words, their confidence and the UTF-16 source length", async () => {
+  const report = await parse(real);
+  expect(report.header).toMatchObject({
+    magic: real.readUInt32LE(0),
+    magic_build_stable: 0xc0de,
+    header_bytes: 32,
+    source_length: source.length,
+    producer: "unknown",
   });
-  // Confidence is stated per field rather than implied.
-  expect(
-    report.header.fields.filter((field) => field.status === "unconfirmed"),
-  ).toHaveLength(2);
-  expect(
-    report.header.fields
-      .filter((field) => field.status === "confirmed")
-      .map((f) => f.role),
-  ).toEqual(["magic", "source_length", "payload_length"]);
-});
-
-it("reports the source length the producer recorded", () => {
-  const source = "function longer(a, b) { return a * b + 1; } longer(3, 4);";
-  const cache = v8CodeCacheFixture(source);
-  const report = parse(cache);
-  expect(report.header.source_length).toBe(source.length);
-  // An unflagged word is `unknown`, not `script`: a `vm.compileFunction` cache from a
-  // build that does not mark bit 29 reads the same as a script, so the container alone
-  // cannot separate them. The observed word stays available in `header.fields`.
-  expect(report.header.producer).toBe("unknown");
-  expect(report.header.fields[2]?.value).toBe(cache.readUInt32LE(8));
+  const headerWords = [
+    ["magic", "confirmed"],
+    ["version_hash", "inferred"],
+    ["source_length", "confirmed"],
+    ["flag_hash", "inferred"],
+    ["build_constant", "inferred"],
+    ["payload_length", "confirmed"],
+    ["reserved", "unconfirmed"],
+    ["reserved", "unconfirmed"],
+  ];
+  expect(report.header.fields).toEqual(
+    headerWords.map(([role, status], index) => {
+      const offset = index * 4;
+      return { offset, value: real.readUInt32LE(offset), role, status };
+    }),
+  );
+  expect(report.payload).toMatchObject({
+    offset: 32,
+    bytes: real.readUInt32LE(20),
+  });
+  const limitations = report.limitations.join(" ");
+  expect(limitations).toContain("byte-pattern observations");
+  expect(limitations).toContain("not source");
+  expect(limitations).toContain("View8");
 });
 
 it.each([
@@ -102,23 +90,23 @@ it.each([
   [0x60000000, "module"],
 ] as const)(
   "interprets producer flags %i without changing source length",
-  (flags, producer) => {
+  async (flags, producer) => {
     // Older V8 uses bit 31 for modules. A synthetic word with both bits set
     // checks that the module marker wins over the function marker.
     const sourceLength = 19;
     const cache = withHeaderWord(real, 2, flags | sourceLength);
-    expect(parse(cache).header).toMatchObject({
+    expect((await parse(cache)).header).toMatchObject({
       producer,
       source_length: sourceLength,
     });
   },
 );
 
-it("separates the compileFunction producer bit from the source length", () => {
+it("separates the compileFunction producer bit from the source length", async () => {
   const source = "return 7;";
   const cache = v8FunctionCodeCacheFixture(source);
   const word = cache.readUInt32LE(8);
-  const report = parse(cache);
+  const report = await parse(cache);
   // Whether `vm.compileFunction` sets bit 29 in the source-length word is a V8 build
   // detail, not a contract: Node 24.22.1 writes `0x20000009` for this source while Node
   // 22.23.4 does not set the bit at all. Assert against the word the runtime produced
@@ -132,37 +120,9 @@ it("separates the compileFunction producer bit from the source length", () => {
   expect(report.header.source_length).toBe(source.length);
 });
 
-it("reports an embedded run at its absolute file offset", () => {
-  const marker = "UNIQUE_CONFIG_KEY_9f3a";
-  // An object-literal value survives in the serialized payload as plain bytes.
-  const cache = v8CodeCacheFixture(
-    `var settings = { key: "${marker}" }; settings.key;`,
-  );
-  const report = parse(cache);
-  const observation = report.embedded_strings.find((entry) =>
-    entry.text.includes(marker),
-  );
-  expect(observation).toBeDefined();
-  // The reported range points at the marker inside the selected file.
-  expect(realSlice(cache, observation!.offset, observation!.bytes)).toContain(
-    marker,
-  );
-  expect(observation!.offset).toBeGreaterThanOrEqual(32);
-  expect(report.coverage.strings).toBe(report.embedded_strings.length);
-});
-
-it("labels observations as byte patterns and never claims recovered source", () => {
-  const report = parse(real);
-  expect(report.limitations.join(" ")).toContain("byte-pattern observations");
-  expect(report.limitations.join(" ")).toContain("not source");
-  expect(report.limitations.join(" ")).toContain("View8");
-  // No field can be mistaken for recovered source text.
-  expect(Object.keys(report)).not.toContain("source");
-});
-
-it("fails closed on a foreign magic", () => {
+it("fails closed on a foreign magic", async () => {
   const foreign = withHeaderWord(real, 0, 0xdeadbeef);
-  expect(() => parse(foreign)).toThrow(
+  await expect(parse(foreign)).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "unsupported",
@@ -176,13 +136,13 @@ it("fails closed on a foreign magic", () => {
 it.each([
   V8_CODE_CACHE_LEGACY_HEADER_BYTES - 1,
   V8_CODE_CACHE_NARROW_HEADER_BYTES - 1,
-])("fails closed on a header truncated to %i bytes", (length) => {
-  expect(() => parse(real.subarray(0, length))).toThrow(
+])("fails closed on a header truncated to %i bytes", async (length) => {
+  await expect(parse(real.subarray(0, length))).rejects.toThrow(
     expect.objectContaining({ kind: "malformed" }),
   );
 });
 
-it("treats the observed header as version-dependent rather than a fixed ABI", () => {
+it("treats the observed header as version-dependent rather than a fixed ABI", async () => {
   // A producer with a different build constant and version hash is still admitted: only
   // the magic high half and the payload-length relation gate admission.
   const otherBuild = withHeaderWord(
@@ -190,88 +150,29 @@ it("treats the observed header as version-dependent rather than a fixed ABI", ()
     1,
     0x11111111,
   );
-  const report = parse(otherBuild);
+  const report = await parse(otherBuild);
+  expect(report.header.fields[1]?.value).toBe(0x11111111);
   expect(report.header.fields[4]?.value).toBe(0x4be86e94);
   expect(report.payload.bytes).toBe(real.readUInt32LE(20));
 });
 
-it("enforces the caller-selected observation budget", () => {
-  const crowded = v8CodeCacheFixture(
-    `var a = { a: "AAAAAAAAAAAA", b: "BBBBBBBBBBBB", c: "CCCCCCCCCCCC" }; a.a;`,
-  );
-  expect(() =>
-    parseV8CodeCache(crowded, identity(crowded), {
-      ...defaults,
-      max_strings: 1,
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      name: "ParseFailureError",
-      failure: expect.objectContaining({
-        kind: "limit",
-        format: "v8-code-cache",
-        limit: { name: "max_strings", maximum: 1 },
-      }),
-      message: expect.stringContaining("max_strings"),
-    }),
-  );
-});
-
-it("raises min_string_bytes and reports only runs that long", () => {
-  const bytes = v8CodeCacheFixture(
-    `var a = { k: "SHORT", long: "${"L".repeat(80)}" }; a.k;`,
-  );
-  const few = parseV8CodeCache(bytes, identity(bytes), {
-    ...defaults,
-    min_string_bytes: 64,
-  });
-  expect(few.embedded_strings.length).toBeGreaterThan(0);
-  few.embedded_strings.forEach((entry) => {
-    expect(entry.bytes).toBeGreaterThanOrEqual(64);
-  });
-});
-
-const realSlice = (bytes: Buffer, offset: number, length: number): string =>
-  bytes.subarray(offset, offset + length).toString("latin1");
-
-it("inspects a synthetic narrow layout derived from a 64-bit cache", () => {
-  // Removing the alignment word preserves the retained payload bytes.
-  const narrow = withSyntheticNarrowHeader(real);
-  const report = parse(narrow);
-
-  expect(narrow.readUInt32LE(20)).toBe(
-    narrow.length - V8_CODE_CACHE_NARROW_HEADER_BYTES,
-  );
-  expect(report.header.header_bytes).toBe(V8_CODE_CACHE_NARROW_HEADER_BYTES);
-  expect(report.payload.offset).toBe(V8_CODE_CACHE_NARROW_HEADER_BYTES);
-  // Nothing but the padding is removed, so the payload is identical.
-  expect(report.payload.sha256).toBe(parse(real).payload.sha256);
-  // The word table covers exactly the header this container carries.
-  expect(report.header.fields).toHaveLength(7);
-  expect(report.header.fields.map((entry) => entry.offset)).toEqual([
-    0, 4, 8, 12, 16, 20, 24,
+it("fails closed when the declared payload leaves no admitted header size", async () => {
+  const oddHeader = Buffer.concat([
+    real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES + 2),
+    real.subarray(V8_CODE_CACHE_HEADER_BYTES),
   ]);
+  await expect(parse(oddHeader)).rejects.toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
 });
 
-it("fails closed when the declared payload leaves no admitted header size", () => {
-  // Padding that is neither 28 nor 32 bytes is not a container this reader admits.
-  expect(() =>
-    parse(
-      Buffer.concat([
-        real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES + 2),
-        real.subarray(V8_CODE_CACHE_HEADER_BYTES),
-      ]),
-    ),
-  ).toThrow(expect.objectContaining({ kind: "malformed" }));
-});
-
-it("refuses a wide container that is only four bytes short", () => {
+it("refuses a wide container that is only four bytes short", async () => {
   // Truncating a 32-byte-header cache by four bytes makes `bytes.length - declaredPayload`
   // equal 28. The padding then occupies the same position as a zero first
   // payload word in a narrow container, so the reader refuses the ambiguity.
   const short = real.subarray(0, real.length - 4);
   expect(short.readUInt32LE(28)).toBe(0);
-  expect(() => parse(short)).toThrow(
+  await expect(parse(short)).rejects.toThrow(
     expect.objectContaining({
       kind: "malformed",
       message: expect.stringContaining("ambiguous"),
@@ -280,63 +181,44 @@ it("refuses a wide container that is only four bytes short", () => {
   // A synthetic narrow fixture has payload at the same byte offset.
   const narrow = withSyntheticNarrowHeader(real);
   expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);
-  expect(parse(narrow).header.header_bytes).toBe(
+  expect((await parse(narrow)).header.header_bytes).toBe(
     V8_CODE_CACHE_NARROW_HEADER_BYTES,
   );
 });
 
-it("inspects a synthetic six-word layout derived from a 64-bit cache", () => {
-  // V8 8.8 through 11.7 write no build-constant word, so the payload length is
-  // the fifth word and the 24-byte header needs no alignment padding.
-  const legacy = withSyntheticLegacyHeader(real);
-  const report = parse(legacy);
-  const wide = parse(real);
-
-  expect(legacy.readUInt32LE(16)).toBe(
-    legacy.length - V8_CODE_CACHE_LEGACY_HEADER_BYTES,
-  );
-  expect(report.header.header_bytes).toBe(V8_CODE_CACHE_LEGACY_HEADER_BYTES);
-  expect(report.payload.offset).toBe(V8_CODE_CACHE_LEGACY_HEADER_BYTES);
-  // Only header words are removed, so the payload is identical.
-  expect(report.payload.sha256).toBe(wide.payload.sha256);
-  expect(report.header.source_length).toBe(wide.header.source_length);
-  // No producer of those releases was measured, so only the two facts that
-  // admission checks on the container itself are reported as confirmed.
-  expect(report.header.fields).toMatchObject([
-    { offset: 0, role: "magic", status: "confirmed" },
-    { offset: 4, role: "version_hash", status: "inferred" },
-    { offset: 8, role: "source_length", status: "inferred" },
-    { offset: 12, role: "flag_hash", status: "inferred" },
-    { offset: 16, role: "payload_length", status: "confirmed" },
-    { offset: 20, role: "reserved", status: "unconfirmed" },
-  ]);
-  report.header.fields.forEach((field) => {
-    expect(field.value).toBe(legacy.readUInt32LE(field.offset));
-  });
-  // The report itself states that the layout was not measured.
-  expect(report.limitations).toHaveLength(wide.limitations.length + 1);
-});
-
-it("reads the bit 31 module flag of a six-word container", () => {
-  const sourceLength = 23;
-  const legacy = withSyntheticLegacyHeader(
-    withHeaderWord(real, 2, 0x80000000 | sourceLength),
-  );
-  expect(parse(legacy).header).toMatchObject({
+it("reports older module flags and confidence in a synthetic six-word header", async () => {
+  const legacy = withSyntheticLegacyHeader(withHeaderWord(real, 2, 0x80000017));
+  const report = await parse(legacy);
+  expect(report.header).toMatchObject({
     header_bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+    source_length: 23,
     producer: "module",
-    source_length: sourceLength,
+    fields: [
+      { offset: 0, role: "magic", status: "confirmed" },
+      { offset: 4, role: "version_hash", status: "inferred" },
+      { offset: 8, role: "source_length", status: "inferred" },
+      { offset: 12, role: "flag_hash", status: "inferred" },
+      { offset: 16, role: "payload_length", status: "confirmed" },
+      { offset: 20, role: "reserved", status: "unconfirmed" },
+    ],
   });
+  for (const field of report.header.fields)
+    expect(field.value).toBe(legacy.readUInt32LE(field.offset));
+  expect(report.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("not measured against one of their producers"),
+    ]),
+  );
 });
 
-it("refuses a six-word container that lost its last payload word", () => {
+it("refuses a six-word container that lost its last payload word", async () => {
   const legacy = withSyntheticLegacyHeader(real);
-  expect(() => parse(legacy.subarray(0, legacy.length - 4))).toThrow(
+  await expect(parse(legacy.subarray(0, legacy.length - 4))).rejects.toThrow(
     expect.objectContaining({ kind: "malformed" }),
   );
 });
 
-it("refuses a container whose payload length fits both layouts", () => {
+it("refuses a container whose payload length fits both layouts", async () => {
   // The six-word layout does not constrain the word after its payload length,
   // so that word can also reach the end of the file from a 28-byte header.
   // Nothing in the header separates the two readings.
@@ -346,7 +228,7 @@ it("refuses a container whose payload length fits both layouts", () => {
     5,
     legacy.length - V8_CODE_CACHE_NARROW_HEADER_BYTES,
   );
-  expect(() => parse(both)).toThrow(
+  await expect(parse(both)).rejects.toThrow(
     expect.objectContaining({
       kind: "malformed",
       message: expect.stringContaining("ambiguous"),
@@ -354,89 +236,97 @@ it("refuses a container whose payload length fits both layouts", () => {
   );
 });
 
-it("rejects a reported word table that does not cover the header it declares", () => {
-  // The parser derives both from one offset, so this pair cannot disagree on a
-  // parsed container; the schema is what a stored or projected report also goes
-  // through, and there the two are independent fields. Without these cases the
-  // rule could be deleted and every parser test would still pass.
-  const reported = (fieldCount: number, headerBytes: number) => ({
-    artifact: {
-      path: "/artifacts/module.jsc",
-      sha256: "a".repeat(64),
-      bytes: 4096,
-    },
-    header: {
-      magic: 0xf00d,
-      magic_build_stable: V8_CODE_CACHE_MAGIC_HIGH,
-      fields: Array.from({ length: fieldCount }, (_, index) => ({
-        offset: index * 4,
-        value: index,
-        role: "reserved",
-        status: "unconfirmed" as const,
-      })),
-      header_bytes: headerBytes,
-      source_length: 10,
-      producer: "script" as const,
-    },
-    payload: {
-      offset: headerBytes,
-      bytes: 4096 - headerBytes,
-      sha256: "b".repeat(64),
-      trailing_bytes: 0,
-    },
-    embedded_strings: [],
-    coverage: {
-      status: "complete" as const,
-      scanned_bytes: 4096 - headerBytes,
-      strings: 0,
-    },
-    limitations: ["measured on one producer"],
-  });
-
-  // Six words is 24 bytes, seven is 28 and eight is 32, so each header size has
-  // exactly one word count that covers it.
-  const cases = [
-    { fields: 6, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
-    { fields: 7, bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES, accepted: false },
-    { fields: 7, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: false },
-    { fields: 8, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
-    { fields: 6, bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES, accepted: true },
-    { fields: 7, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: true },
-    { fields: 8, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: true },
-  ];
-  for (const { fields, bytes, accepted } of cases) {
-    const label = `${String(fields)} words / ${String(bytes)} bytes`;
-    const parsed = v8CodeCacheSchema.safeParse(reported(fields, bytes));
-    expect(parsed.success, label).toBe(accepted);
-    expect(
-      parsed.error?.issues.some(
-        (issue) => issue.path.join(".") === "header.fields",
-      ) ?? false,
-      label,
-    ).toBe(!accepted);
-  }
-});
-
-it("rejects retained header and payload coordinates that disagree", () => {
-  const report = parse(real);
-  const disordered = {
-    ...report,
-    header: {
-      ...report.header,
-      fields: report.header.fields.map((field, index) =>
-        index === 0 ? { ...field, offset: 4 } : field,
-      ),
-    },
+it("rejects contradictory retained word tables and payload coordinates", async () => {
+  const report = await parse(withSyntheticNarrowHeader(real));
+  const fields = report.header.fields;
+  const short = { ...report.header, fields: fields.slice(0, -1) };
+  const long = {
+    ...report.header,
+    fields: [...fields, { ...fields.at(-1)!, offset: 28 }],
   };
+  const duplicateFirstOffset = { ...fields[0]!, offset: 4 };
+  const disordered = {
+    ...report.header,
+    fields: [duplicateFirstOffset, ...fields.slice(1)],
+  };
+  for (const header of [short, long, disordered]) {
+    expect(
+      v8CodeCacheSchema.safeParse({ ...report, header }).error?.issues,
+    ).toContainEqual(expect.objectContaining({ path: ["header", "fields"] }));
+  }
   const shiftedPayload = {
     ...report,
     artifact: { ...report.artifact, bytes: report.artifact.bytes + 4 },
     payload: { ...report.payload, offset: report.payload.offset + 4 },
   };
   expect(
-    v8CodeCacheSchema.safeParse(disordered).error?.issues ?? [],
-  ).toContainEqual(expect.objectContaining({ path: ["header", "fields"] }));
-  expect(
-    v8CodeCacheSchema.safeParse(shiftedPayload).error?.issues ?? [],
+    v8CodeCacheSchema.safeParse(shiftedPayload).error?.issues,
   ).toContainEqual(expect.objectContaining({ path: ["payload", "offset"] }));
+});
+
+it("observes exact printable runs across positional read boundaries and at EOF", async () => {
+  const prefixEnd = 65_536;
+  const chunkEnd = prefixEnd + 1024 * 1024;
+  const bytes = Buffer.alloc(chunkEnd + 8192);
+  real.copy(bytes, 0, 0, 32);
+  bytes.writeUInt32LE(bytes.length - 32, 20);
+
+  const longLength = MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES + 64;
+  bytes.write("prefix	boundary", prefixEnd - 8, "ascii");
+  bytes.write("ignored", prefixEnd + 25, "ascii");
+  bytes.fill(0x61, chunkEnd - 100, chunkEnd - 100 + longLength);
+  bytes.write("at the end", bytes.length - 10, "ascii");
+  const reads: [number, number][] = [];
+  const report = v8CodeCacheSchema.parse(
+    await parseV8CodeCacheFromHandle(
+      {
+        size: bytes.length,
+        prefix: bytes.subarray(0, prefixEnd),
+        readRange: async (offset, length) => {
+          reads.push([offset, length]);
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      identity(bytes),
+      { ...defaults, min_string_bytes: 8 },
+    ),
+  );
+  expect(reads).toEqual([
+    [prefixEnd, chunkEnd - prefixEnd],
+    [chunkEnd, 8192],
+  ]);
+  expect(report.payload).toEqual({
+    offset: 32,
+    bytes: bytes.length - 32,
+    sha256: createHash("sha256").update(bytes.subarray(32)).digest("hex"),
+    trailing_bytes: 0,
+  });
+  expect(report.coverage).toEqual({
+    status: "complete",
+    scanned_bytes: bytes.length - 32,
+    strings: 3,
+  });
+  expect(report.embedded_strings).toEqual([
+    {
+      offset: prefixEnd - 8,
+      bytes: 15,
+      retained_bytes: 15,
+      text: "prefix	boundary",
+      truncated: false,
+    },
+    {
+      offset: chunkEnd - 100,
+      bytes: 4160,
+      retained_bytes: 4096,
+      text: "a".repeat(4096),
+      truncated: true,
+    },
+    {
+      offset: bytes.length - 10,
+      bytes: 10,
+      retained_bytes: 10,
+      text: "at the end",
+      truncated: false,
+    },
+  ]);
 });

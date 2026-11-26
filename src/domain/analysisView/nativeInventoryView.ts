@@ -14,14 +14,14 @@ import {
   searchProceduresFact,
   searchStringsFact,
 } from "../native/nativeOperationFacts.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   assertOwnedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -86,15 +86,8 @@ export const projectNativeInventoryView = (
     !isNativeInventoryOperation(parent.operation) ||
     (view.kind !== "summary" && view.kind !== "native-inventory")
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native inventory Evidence supports summary and native-inventory views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native inventory Evidence supports summary and native-inventory views.",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>

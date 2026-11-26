@@ -31,12 +31,21 @@ it.each([
   ["null", "{} = {}"],
   ["undefined", "{} = null"],
   ["void 0", "[] = undefined"],
+  ["aliasedNull", "{} = {}"],
+  ["true ? null : {}", "{}"],
+  ["undefined", "{} = (false ? {} : null)"],
+  ["undefined", "{} = aliasedNull"],
+  ["null", "{}", '["bad"]'],
+  ["captured", "{}", "bad", "captured = {};"],
 ] as const)(
   "leaves bindings after %s matched against %s unproven",
-  (value, pattern) => {
+  (value, pattern, key = "bad", afterCapture?: string) => {
     const inspect = projection(`
+    const aliasedNull = null;
+    let captured = null;
     const model = { bad: ${value}, mode: "one" };
-    const { mode: before, bad: ${pattern}, mode: selected } = model;
+    ${afterCapture ?? ""}
+    const { mode: before, ${key}: ${pattern}, mode: selected } = model;
   `);
     expect(inspect("before")).toMatchObject({
       resolution: "resolved",
@@ -53,10 +62,15 @@ it.each([
 it.each([
   ["const model = { bad: 0, mode: 'one' };", "{}"],
   ["const model = { bad: {}, mode: 'one' };", "{}"],
+  ["const model = { bad: true ? {} : null, mode: 'one' };", "{}"],
   ["const model = { bad: [], mode: 'one' };", "[]"],
   ["const model = { bad: undefined, mode: 'one' };", "{} = {}"],
   ["const model = { bad: 0, mode: 'one' };", "{} = null"],
   ["const undefined = 0; const model = { bad: undefined, mode: 'one' };", "{}"],
+  [
+    "let captured = {}; const model = { bad: captured, mode: 'one' }; captured = null;",
+    "{}",
+  ],
 ] as const)(
   "preserves the reachable sibling for %s against %s",
   (setup, pattern) => {

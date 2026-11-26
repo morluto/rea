@@ -5,8 +5,9 @@ it("shares suffix work when distinct names truncate to the same suffixed prefix"
   const registry = toolNameRegistry();
   const has = vi.spyOn(registry.used, "has");
   const names: string[] = [];
+  const stem = "a".repeat(53);
   for (let index = 0; index < 256; index += 1) {
-    const literal = "a".repeat(53) + index.toString(36).padStart(3, "0");
+    const literal = stem + index.toString(36).padStart(3, "0");
     for (const suffix of ["", ".json"])
       names.push(
         toolName(
@@ -19,6 +20,11 @@ it("shares suffix work when distinct names truncate to the same suffixed prefix"
   }
   expect(new Set(names).size).toBe(512);
   expect(names.every((name) => name.length <= 60)).toBe(true);
+  const collisions = names.filter((_, index) => index % 2 === 1);
+  expect(collisions.slice(97, 99)).toEqual([
+    `get_${stem}_99`,
+    `get_${stem.slice(1)}_100`,
+  ]);
   // Counts the owner operation directly, independent of host timing or GC.
   expect(has.mock.calls.length).toBeLessThanOrEqual(names.length * 2);
 });

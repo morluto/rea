@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { parseElfNotes } from "./ElfNoteParser.js";
+import { parseElfNotesFromHandle } from "./ElfNoteParser.js";
 import {
   coreAuxvNote,
   coreFileNote,
@@ -11,17 +11,19 @@ import {
   elfNoteFixture,
   gnuBuildIdNote,
 } from "./ElfNotes.fixture.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const input = inspectElfNotesInputSchema.parse({ path: "/fixture.core" });
 const parse = (bytes: Buffer) =>
-  parseElfNotes(
-    bytes,
+  parseElfNotesFromHandle(
+    bufferByteSource(bytes, 4096),
     {
       path: input.path,
       bytes: bytes.length,
       sha256: createHash("sha256").update(bytes).digest("hex"),
     },
     input,
+    async () => {},
   );
 
 const fixture = () =>
@@ -44,12 +46,12 @@ it.each([
   { name: "unrecognized Linux ABI version", osabi: 3, version: 1 },
 ])(
   "keeps $name CORE payloads uninterpreted in both tables",
-  ({ osabi, version }) => {
+  async ({ osabi, version }) => {
     const bytes = fixture();
-    const control = parse(bytes);
+    const control = await parse(bytes);
     bytes[7] = osabi;
     bytes[8] = version;
-    const report = parse(bytes);
+    const report = await parse(bytes);
     const core = report.entries.filter(({ owner }) => owner === "CORE");
     expect(core).toHaveLength(8);
     for (const entry of core) {
@@ -72,10 +74,10 @@ it.each([
 
 it.each([0, 3])(
   "retains Linux CORE decoding for OSABI %i, ABI version zero",
-  (osabi) => {
+  async (osabi) => {
     const bytes = fixture();
     bytes[7] = osabi;
-    const report = parse(bytes);
+    const report = await parse(bytes);
     const core = report.entries.filter(({ owner }) => owner === "CORE");
     expect(core).toHaveLength(8);
     expect(core.every(({ core: value }) => value !== null)).toBe(true);
@@ -88,10 +90,10 @@ it.each([0, 3])(
   },
 );
 
-it("does not attach a CORE refusal to a foreign profile containing only GNU notes", () => {
+it("does not attach a CORE refusal to a foreign profile containing only GNU notes", async () => {
   const bytes = elfNoteFixture({ notes: gnuBuildIdNote("0123456789abcdef") });
-  const control = parse(bytes);
+  const control = await parse(bytes);
   bytes[7] = 6;
-  expect(parse(bytes).entries).toEqual(control.entries);
-  expect(parse(bytes).limitations).toEqual(control.limitations);
+  expect((await parse(bytes)).entries).toEqual(control.entries);
+  expect((await parse(bytes)).limitations).toEqual(control.limitations);
 });

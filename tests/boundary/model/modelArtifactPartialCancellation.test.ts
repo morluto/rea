@@ -1,5 +1,4 @@
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
@@ -88,6 +87,7 @@ it.each([undefined, 64])(
       if (result.ok) throw new Error("Expected parser cancellation");
       expect(arrayBytesObserved).toBeGreaterThan(0);
       expect(arrayBytesObserved).toBeLessThan(count);
+      expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.cause).toBe(reason);
       const evidence = parseEvidence(result.error.partialObservation);
       expect(evidence.subject.identity.kind).toBe("unknown");
@@ -124,6 +124,12 @@ it.each([undefined, 64])(
       expect(parseEvidence(projected.details.partial_observation)).toEqual(
         evidence,
       );
+      const next = ggufFixture();
+      await writeFile(path, next.bytes);
+      expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+        ok: true,
+        value: { tensors: [{ index: 0 }, { index: 1 }] },
+      });
     } finally {
       readSpy.mockRestore();
       await provider.close();
