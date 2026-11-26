@@ -287,19 +287,18 @@ In launch mode, declared non-cookie seeds are also installed with a single
 synchronous browser-context init script for top-level documents. Playwright
 runs that script after a document is created and before the document's own
 scripts, including a popup opened later in the scenario-owned context, without
-waiting for an asynchronous round trip before writing storage. Documents
-without `window.opener` (the selected page and its later same-tab navigations)
-skip that hook so CDP continues to own that tab; popups keep `window.opener`
-and receive the hook. Skip decisions and writes share one ordered path, and
+waiting for an asynchronous round trip before writing storage. That includes
+`target="_blank"` popups whose `window.opener` is null under Chromium's default
+noopener behavior. Skip decisions and writes share one ordered path, and
 application `window.name` values are left untouched. Third-party iframes are
 skipped by that init script and continue to be seeded by the CDP path keyed on
 `Storage.getStorageKey`, so a partitioned iframe at origin B does not block a
 later first-party popup at origin B. Once-per-area state stays outside
 application-owned window names: Node tracks first-party local origins and
 refreshes the context init payload before CDP resume when a first-party local
-area is initialized, and each seeded popup records per-tab once flags in a
-filtered `sessionStorage` key so a reload after the application deletes seeded
-keys does not restore them. Captured storage inventories omit any legacy
+area is initialized, and each seeded top-level tab records per-tab once flags
+in a filtered `sessionStorage` key so a reload after the application deletes
+seeded keys does not restore them. Captured storage inventories omit any legacy
 bookkeeping key. A storage write failure inside the init script, or a failure
 while refreshing the context seed hook, marks popup seed coverage unknown. In
 connect mode, REA does not install a context-wide init script on the caller's

@@ -36,7 +36,6 @@ type SeedNotification = (
 
 type SeedGlobalHost = {
   top?: unknown;
-  opener?: unknown;
   location?: { origin?: string };
   localStorage?: StorageArea;
   sessionStorage?: StorageArea;
@@ -45,12 +44,12 @@ type SeedGlobalHost = {
 
 /**
  * Playwright serializes this function into top-level documents in a scenario-
- * owned browser context. The selected page (no `window.opener`) is skipped so
- * CDP owns that tab across same-tab navigations without touching `window.name`.
- * Popups keep skip decisions and writes in this one ordered hook; per-tab once
- * flags live in filtered `sessionStorage` so a reload after the application
- * deletes seeded keys cannot restore them, and application window names stay
- * intact. Cross-tab local once flags also arrive from Node via
+ * owned browser context. Skip decisions and writes stay in this one ordered
+ * hook, including `target="_blank"` popups whose `window.opener` is null under
+ * Chromium's default noopener behavior. Per-tab once flags live in filtered
+ * `sessionStorage` so a reload after the application deletes seeded keys
+ * cannot restore them, and application `window.name` values stay intact.
+ * Cross-tab local once flags also arrive from Node via
  * `initializedLocalOrigins`.
  *
  * Helpers stay inside this function body so Playwright/`Function#toString`
@@ -63,14 +62,6 @@ export const applyDeclaredBrowserStorageSeeds = (
 
   try {
     if (host.top !== host) return;
-  } catch {
-    return;
-  }
-
-  // Selected page and its later same-tab navigations have no opener; CDP owns
-  // that tab. Popups opened from the page keep opener and receive this hook.
-  try {
-    if (host.opener == null) return;
   } catch {
     return;
   }

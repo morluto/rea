@@ -477,7 +477,6 @@ const applySeeds = (
       session: ReturnType<typeof memoryStorage>;
     };
     readonly isIframe?: boolean;
-    readonly isSelectedPage?: boolean;
     readonly seedToken?: string;
     readonly initializedLocalOrigins?: readonly string[];
   } = {},
@@ -503,7 +502,6 @@ const applySeeds = (
   }[] = [];
   const context = vm.createContext({
     location: { origin },
-    opener: options.isSelectedPage === true ? null : {},
     localStorage: storage.local,
     sessionStorage: storage.session,
     [binding]: (
@@ -610,7 +608,7 @@ it("does not restore deleted seed values on reload of the same popup tab", () =>
   expect(reloaded.notifications).toEqual([]);
 });
 
-it("skips the context hook on the selected page (no window.opener)", () => {
+it("seeds top-level documents without relying on window.opener", () => {
   const seeds: DeclaredBrowserStorageSeed[] = [
     {
       origin: "http://child.example",
@@ -618,12 +616,13 @@ it("skips the context hook on the selected page (no window.opener)", () => {
       session: [["probe", "seed-session"]],
     },
   ];
-  const selected = applySeeds("http://child.example", seeds, {
-    isSelectedPage: true,
-  });
-  expect(selected.local.size).toBe(0);
-  expect(selected.session.size).toBe(0);
-  expect(selected.notifications).toEqual([]);
+  // Chromium's default for target=_blank is noopener (opener stays null).
+  const blank = applySeeds("http://child.example", seeds);
+  expect(blank.local.get("probe")).toBe("seed-local");
+  expect(blank.session.get("probe")).toBe("seed-session");
+  expect(blank.notifications).toEqual([
+    { origin: "http://child.example", local: "wrote", session: "wrote" },
+  ]);
 });
 
 it("seeds a cloned popup session area and reports write failures", () => {
