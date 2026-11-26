@@ -10,6 +10,7 @@ import {
   isXmlElement,
   iterateXmlChildElements,
   opensLikeXml,
+  parseTrueFalseText,
   parseXmlDocumentWithinNodeLimit,
   xmlChildElements,
   xmlChildrenNamed,
@@ -111,14 +112,6 @@ const childText = (element: Element, local: string): string | null => {
 /** Keep Gradle JSON spelling for Evidence and exact comparisons. */
 const gradleText = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
-
-const boolOf = (value: string | null): boolean | null => {
-  if (value === null) return null;
-  const folded = value.toLowerCase();
-  if (folded === "true") return true;
-  if (folded === "false") return false;
-  return null;
-};
 
 const emptyGradleVersion = {
   requires: null,
@@ -262,7 +255,7 @@ const parseMavenDependency = <
     gradle_version: null,
     scope,
     type,
-    optional: boolOf(optional_spelling),
+    optional: parseTrueFalseText(optional_spelling),
     optional_spelling,
     classifier,
     exclusions,
