@@ -3,6 +3,7 @@ import { projectNativeProcedureReferencesView } from "./nativeProcedureReference
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectWebPageView } from "./webPageView.js";
 import { projectWebExecutionView } from "./webExecutionView.js";
+import { projectApktoolResourcesView } from "./apktoolResourcesView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -249,6 +250,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("analyze_web_bundle", projectWebBundleView),
   retain("inspect_web_page", projectWebPageView),
   retain("observe_web_execution", projectWebExecutionView),
+  retain("decode_android_resources", projectApktoolResourcesView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
