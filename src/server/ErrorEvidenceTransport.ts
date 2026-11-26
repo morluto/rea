@@ -8,6 +8,7 @@ import {
   isJSONRPCResultResponse,
   type CallToolResult,
   type JSONRPCMessage,
+  type LoggingMessageNotification,
   type MessageExtraInfo,
   type RequestId,
   type Transport,
@@ -51,8 +52,11 @@ import {
   runMcpToolRequest,
 } from "./McpToolRequest.js";
 import { isRecord } from "../kernel/isRecord.js";
+import type { UpdateNotices } from "./UpdateNotices.js";
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
+// The SDK's logging helper filters levels but does not expose transport routing.
+const currentUpdateNoticeRequest = new AsyncLocalStorage<RequestId>();
 
 /** Signal for the completion request currently being dispatched by the SDK. */
 export const currentMcpRequestSignal = (): AbortSignal | undefined =>
@@ -237,6 +241,11 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     private readonly outputPresentation: AdvertisedToolPresentation["output"],
     private readonly maximumInputElements: number,
     private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
+    private readonly updateNotices: UpdateNotices | undefined,
+    private readonly sendNotice: (
+      params: LoggingMessageNotification["params"],
+    ) => Promise<void>,
+    private readonly closeUpdateNotices: () => Promise<void>,
   ) {
     super(transport);
   }
@@ -276,6 +285,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.pendingTools.set(message.id, message.params["name"]);
       validation = new McpToolRequest(message.id, message.params["name"]);
       this.pendingValidation.set(message.id, validation);
+      this.updateNotices?.refresh();
     }
     if (isJSONRPCRequest(message) && message.method === "tools/list")
       this.pendingToolLists.add(message.id);
@@ -322,6 +332,7 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
       this.closing || transportClosedByOwner(this.transport)
         ? OwnerCancellation.ownerClosed
         : new CallerAbort("client-disconnected");
+    void this.closeUpdateNotices();
     this.pendingTools.clear();
     for (const validation of this.pendingValidation.values())
       validation.cancel(disconnected);
@@ -336,7 +347,10 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
   override async close(): Promise<void> {
     this.closing = true;
     try {
-      await this.transport.close();
+      await Promise.all([
+        Promise.resolve().then(() => this.transport.close()),
+        this.closeUpdateNotices(),
+      ]);
     } finally {
       this.pendingTools.clear();
       for (const validation of this.pendingValidation.values())
@@ -353,6 +367,13 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
     message: JSONRPCMessage,
     options?: TransportSendOptions,
   ): Promise<void> {
+    const noticeRequest = currentUpdateNoticeRequest.getStore();
+    if (
+      noticeRequest !== undefined &&
+      isJSONRPCNotification(message) &&
+      message.method === "notifications/message"
+    )
+      options = { ...options, relatedRequestId: noticeRequest };
     const id =
       "id" in message &&
       (typeof message.id === "string" || typeof message.id === "number")
@@ -412,7 +433,11 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
             options,
             request,
           );
-      } else await publish();
+      } else {
+        if (tool !== undefined && id !== undefined)
+          this.sendUpdateNotice(message, id);
+        await publish();
+      }
     } finally {
       request?.finishPublication();
       if (!isJSONRPCRequest(message) && id !== undefined) {
@@ -458,6 +483,49 @@ export class ErrorEvidenceTransport extends ForwardingTransport {
           }
         : result;
     await this.transport.send({ ...message, result: marked }, options);
+  }
+
+  private sendUpdateNotice(
+    message: JSONRPCMessage,
+    requestId: RequestId,
+  ): void {
+    // A failed call keeps the notice for the next successful result.
+    if (
+      !isJSONRPCResultResponse(message) ||
+      !isCallToolResult(message.result) ||
+      message.result.isError === true
+    )
+      return;
+    const notice = this.updateNotices?.peek();
+    if (notice === undefined) return;
+    // Server-authored advice must not inherit analysis-target provenance.
+    const params: LoggingMessageNotification["params"] = {
+      level: "notice",
+      logger: "rea.update",
+      data: notice.text,
+    };
+    const notification: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params,
+    };
+    if (
+      !measureMcpResultWithinBudget(
+        notification,
+        this.delivery.resultBudgetBytes,
+      ).ok
+    )
+      return;
+    this.updateNotices?.acknowledge(notice.version);
+    // The SDK owns log filtering and notification routing for this session.
+    // An advisory send failure must never replace or hold up an analysis reply.
+    try {
+      void currentUpdateNoticeRequest
+        .run(requestId, () => this.sendNotice(params))
+        .catch(() => undefined);
+    } catch {
+      // Even a synchronous advisory transport failure leaves the result intact.
+    }
   }
 
   private recoverError(

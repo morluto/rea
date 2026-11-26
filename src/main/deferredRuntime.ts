@@ -1,3 +1,4 @@
+import { configuredUpdateNoticeFactory } from "../server/UpdateNotices.js";
 import { readFileSync } from "node:fs";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
@@ -250,6 +251,9 @@ export const runDeferred = async (
             );
             if (config.mcpToolCatalogProfile === "hot-cold")
               server.enableProgressiveCatalog();
+            server.updateNoticeFactory = configuredUpdateNoticeFactory(
+              dependencies.env,
+            );
             return server;
           });
           server.registerTransportCloseHook(requestClose);
