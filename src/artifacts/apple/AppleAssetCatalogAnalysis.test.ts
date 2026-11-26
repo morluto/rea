@@ -19,6 +19,7 @@ import {
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
 import {
   DEFAULT_ASSETUTIL_OUTPUT_BYTES,
   MAX_ASSETUTIL_OUTPUT_BYTES,
@@ -1170,6 +1171,53 @@ describe("assetutil producer_limits.output_bytes", () => {
       );
       await expect(inspect(output.length * 2)).resolves.toMatchObject({
         total_records: 2,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the 64 MiB assetutil default when producer.output_bytes is unset and clamps an explicit value",
+    async () => {
+      const bundle = await createTestTempDirectory("rea-assetutil-setting-");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      await writeFile(join(resources, "Assets.car"), "catalog");
+      const large = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(${String(5 * 1024 * 1024)}) }]));`,
+      );
+      const admitted = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: noInterfaceBuilder,
+        assetUtilLauncher: large,
+        platform: "darwin",
+      });
+      expect(admitted.total_records).toBe(1);
+
+      const small = standInAssetUtil(
+        `process.stdout.write(JSON.stringify([{ Name: "x".repeat(256) }]));`,
+      );
+      const refused = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "producer.output_bytes": 64 } },
+        () =>
+          analyzeAppleAssetCatalogs({
+            environment: {},
+            bundlePath: bundle,
+            targetSha256: "a".repeat(64),
+            analyzeInterfaceBuilder: noInterfaceBuilder,
+            assetUtilLauncher: small,
+            platform: "darwin",
+          }),
+      ).catch((cause: unknown) => cause);
+      if (!(refused instanceof AnalysisError))
+        throw new Error("Expected the session output refusal");
+      expect(projectAnalysisError(refused).details?.limit).toMatchObject({
+        setting: "producer.output_bytes",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 64,
+        source: "runtime",
+        maximum: MAX_ASSETUTIL_OUTPUT_BYTES,
       });
     },
   );
