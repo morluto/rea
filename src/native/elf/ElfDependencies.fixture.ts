@@ -255,6 +255,9 @@ const verdefRecord = (
 };
 
 /** 64-bit s390x and Alpha store each DT_HASH entry in eight bytes. */
+const sysvHashEntryBytes = ({ bits, machine }: FixtureConfig): 4 | 8 =>
+  bits === 64 && (machine === 22 || machine === 0x9026) ? 8 : 4;
+
 const sysvHash = (
   symbolCount: number,
   little: boolean,
@@ -577,13 +580,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
     versym,
     hash: config.omitHash
       ? Buffer.alloc(0)
-      : sysvHash(
-          symbols.length,
-          little,
-          bits === 64 && (config.machine === 22 || config.machine === 0x9026)
-            ? 8
-            : 4,
-        ),
+      : sysvHash(symbols.length, little, sysvHashEntryBytes(config)),
     gnuHashBytes: config.gnuHash
       ? gnuHashTable(
           symbols.length,
@@ -913,7 +910,7 @@ const writeDependencySections = (
           tables.hash.length,
           3,
           0,
-          4,
+          sysvHashEntryBytes(config),
         ],
     [
       ".dynsym",
