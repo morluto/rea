@@ -1087,3 +1087,104 @@ it("omits required_value when a bigint size exceeds MAX_SAFE_INTEGER and keeps b
   expect(otherOp.code).toBe("execution_failure");
   expect(otherOp.details).not.toHaveProperty("limit");
 });
+
+it("refuses multi-slice fuse expansion before allocating objects and honors max_decoded_bytes", async () => {
+  const root = await createTestTempDirectory("rea-electron-decoded-budget-");
+  const maxFuseWire = Buffer.concat([
+    FUSE_SENTINEL,
+    fuseWire(
+      2,
+      Array.from({ length: 255 }, () => ELECTRON_FUSE_STATE_BYTES.enabled),
+    ),
+  ]);
+  // 128 slices * 16 sentinels * 255 fuses would expand to 522,240 fuse objects
+  // (~67 MiB estimated), far above the 8 MiB default max_decoded_bytes, while
+  // staying well within max_sentinels_per_slice: 1024.
+  const sliceBody = Buffer.concat(
+    Array.from({ length: 16 }, () => maxFuseWire),
+  );
+  const singleSlice = thinMacho(0x0100000c, sliceBody);
+  const sliceCount = 128;
+  const tableEnd = 8 + sliceCount * 20;
+  const table = Buffer.alloc(tableEnd);
+  table.writeUInt32BE(0xcafebabe, 0);
+  table.writeUInt32BE(sliceCount, 4);
+  for (let i = 0; i < sliceCount; i += 1) {
+    const base = 8 + i * 20;
+    table.writeUInt32BE(0x0100000c, base);
+    table.writeUInt32BE(0, base + 4);
+    table.writeUInt32BE(tableEnd + i * singleSlice.length, base + 8);
+    table.writeUInt32BE(singleSlice.length, base + 12);
+    table.writeUInt32BE(0, base + 16);
+  }
+  const fatPath = join(root, "fat-128-slices");
+  await writeFile(
+    fatPath,
+    Buffer.concat([
+      table,
+      ...Array.from({ length: sliceCount }, () => singleSlice),
+    ]),
+  );
+
+  const fatRefused = await provider.inspect({
+    path: fatPath,
+    max_sentinels_per_slice: 1024,
+  });
+  expect(fatRefused.ok).toBe(false);
+  if (!fatRefused.ok) {
+    expect(fatRefused.error._tag).toBe("AnalysisResourceConstraintError");
+    const projected = projectAnalysisError(fatRefused.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: {
+          maximum_decoded_bytes: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+        },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_decoded_bytes",
+          effective_value: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+          minimum: 1024,
+          maximum: 16 * 1024 * 1024,
+          default_value: ELECTRON_FUSE_LIMITS.maximumDecodedBytes,
+          unit: "bytes",
+          applies_at: "next_call",
+        },
+      },
+    });
+    expect(projected.details?.limit).not.toHaveProperty("required_value");
+  }
+
+  // Tight per-call max_decoded_bytes refuses a small image and succeeds once raised.
+  const smallPath = join(root, "small-thin");
+  await writeFile(smallPath, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
+  const tightRefused = await provider.inspect({
+    path: smallPath,
+    max_decoded_bytes: 1024,
+  });
+  expect(tightRefused.ok).toBe(false);
+  if (!tightRefused.ok) {
+    expect(projectAnalysisError(tightRefused.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: {
+          parameter: "max_decoded_bytes",
+          effective_value: 1024,
+        },
+      },
+    });
+  }
+  const raised = await provider.inspect({
+    path: smallPath,
+    max_decoded_bytes: 4096,
+  });
+  expect(raised.ok).toBe(true);
+  if (raised.ok) {
+    expect(raised.value.limitations).toContainEqual(
+      expect.stringContaining("4096 bytes"),
+    );
+  }
+});

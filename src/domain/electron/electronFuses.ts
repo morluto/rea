@@ -16,6 +16,13 @@ export const DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES = 1024 * 1024 * 1024;
 export const MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES = 4 * 1024 * 1024 * 1024;
 export const DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 32;
 export const MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 1024;
+export const DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES = 8 * 1024 * 1024;
+export const MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES = 16 * 1024 * 1024;
+
+/** Conservative per-record decoded representation costs accounted before allocation. */
+export const ELECTRON_FUSE_SLICE_ESTIMATED_BYTES = 128;
+export const ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES = 128;
+export const ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES = 128;
 
 /** The per-call budgets of `inspect_electron_fuses`. */
 export const ELECTRON_FUSE_BUDGETS = {
@@ -31,8 +38,30 @@ export const ELECTRON_FUSE_BUDGETS = {
     default_value: DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
     unit: "count",
   },
+  /** Estimated bytes of decoded slices, sentinels, and fuse entries across all slices. */
+  max_decoded_bytes: {
+    minimum: 1024,
+    maximum: MAX_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+    default_value: DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
+    unit: "bytes",
+  },
 } as const satisfies Record<string, ParameterBudget>;
 export type ElectronFuseBudget = keyof typeof ELECTRON_FUSE_BUDGETS;
+
+/** Estimated decoded representation bytes across all slices for one fuse report. */
+export const estimateElectronFuseDecodedBytes = (
+  slices: readonly {
+    readonly sentinels: readonly { readonly fuses: readonly unknown[] }[];
+  }[],
+): number => {
+  let bytes = slices.length * ELECTRON_FUSE_SLICE_ESTIMATED_BYTES;
+  for (const slice of slices) {
+    bytes += slice.sentinels.length * ELECTRON_FUSE_SENTINEL_ESTIMATED_BYTES;
+    for (const sentinel of slice.sentinels)
+      bytes += sentinel.fuses.length * ELECTRON_FUSE_ENTRY_ESTIMATED_BYTES;
+  }
+  return bytes;
+};
 
 /** The per-call budget that stopped an Electron fuse inspection. */
 export const electronFuseBudgetLimit =
@@ -206,6 +235,11 @@ export const inspectElectronFusesInputSchema = z.strictObject({
     ELECTRON_FUSE_BUDGETS.max_sentinels_per_slice,
   ).describe(
     "Maximum Electron fuse sentinels retained per slice (default 32, maximum 1024); exceeding the budget fails without partial success",
+  ),
+  max_decoded_bytes: parameterBudgetSchema(
+    ELECTRON_FUSE_BUDGETS.max_decoded_bytes,
+  ).describe(
+    "Estimated bytes of decoded slices, sentinels, and fuse entries across all slices, accounted before allocating fuse objects (default 8 MiB, maximum 16 MiB); exceeding the budget fails without partial success",
   ),
 });
 

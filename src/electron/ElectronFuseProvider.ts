@@ -64,6 +64,9 @@ export class ElectronFuseProvider implements ElectronFusePort {
       ...(input.max_sentinels_per_slice === undefined
         ? {}
         : { maxSentinelsPerSlice: input.max_sentinels_per_slice }),
+      ...(input.max_decoded_bytes === undefined
+        ? {}
+        : { maxDecodedBytes: input.max_decoded_bytes }),
     };
     try {
       assertArtifactReadActive(options?.signal);
@@ -118,6 +121,7 @@ const reportFor = (
   readLimits: {
     readonly maxFileBytes?: number;
     readonly maxSentinelsPerSlice?: number;
+    readonly maxDecodedBytes?: number;
   },
 ): ElectronFuseReport => {
   const findings = describeElectronFuseFindings(image.slices, image.format);

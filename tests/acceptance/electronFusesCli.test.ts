@@ -463,6 +463,31 @@ cliTest(
       },
     });
 
+    const decodedRefused = await cli.run({
+      arguments: [
+        "inspect-electron-fuses",
+        path,
+        "--max-decoded-bytes",
+        "1024",
+        "--json",
+      ],
+    });
+    expect(decodedRefused.exitCode).toBe(1);
+    expect(decodedRefused.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_decoded_bytes",
+          cli_flag: "--max-decoded-bytes",
+          effective_value: 1024,
+          default_value: 8388608,
+          maximum: 16777216,
+        },
+      },
+    });
+
     const admitted = await cli.run({
       arguments: [
         "inspect-electron-fuses",
@@ -471,6 +496,8 @@ cliTest(
         String(image.bytes.length),
         "--max-sentinels-per-slice",
         "2",
+        "--max-decoded-bytes",
+        "4096",
         "--json",
       ],
     });
@@ -480,6 +507,7 @@ cliTest(
         path,
         max_file_bytes: image.bytes.length,
         max_sentinels_per_slice: 2,
+        max_decoded_bytes: 4096,
       },
       normalized_result: {
         slices: [{ sentinel_count: 2 }],

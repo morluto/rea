@@ -111,7 +111,8 @@ their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
 `inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
 (`max_entries`), `inspect_erlang_beam`, and `inspect_electron_fuses`
 (`max_file_bytes`, default 1 GiB, at most 4 GiB; `max_sentinels_per_slice`,
-default 32, at most 1,024) report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+default 32, at most 1,024; `max_decoded_bytes`, default 8 MiB, at most 16 MiB,
+accounted across slices before allocating fuse objects) report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
 import and lambda rows combined; default 65,536, at most 1,048,576).
 
 ### Native table structure budget

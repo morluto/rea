@@ -2,9 +2,11 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElectronFusePort } from "../../ports/electron/ElectronFusePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES,
   DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES,
   DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
   electronFuseReportSchema,
+  estimateElectronFuseDecodedBytes,
   inspectElectronFusesInputSchema,
   type InspectElectronFusesRequest,
 } from "../../domain/electron/electronFuses.js";
@@ -52,7 +54,10 @@ export class ElectronFuseService {
               slice.sentinel_count <=
               (parameters.max_sentinels_per_slice ??
                 DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE),
-          ),
+          ) &&
+          estimateElectronFuseDecodedBytes(report.slices) <=
+            (parameters.max_decoded_bytes ??
+              DEFAULT_INSPECT_ELECTRON_FUSES_DECODED_BYTES),
         buildEvidence: (report, identity, parameters) =>
           createElectronFuseEvidence(parameters, report, identity),
       },

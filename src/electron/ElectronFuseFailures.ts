@@ -93,28 +93,33 @@ export const electronFuseFailure = (
         },
       );
     const fileSize = name === "maximum_input_bytes";
-    const parameter = fileSize ? "max_file_bytes" : "max_sentinels_per_slice";
+    const decodedBytes = name === "maximum_decoded_bytes";
+    const parameter = fileSize
+      ? "max_file_bytes"
+      : decodedBytes
+        ? "max_decoded_bytes"
+        : "max_sentinels_per_slice";
+    const resource = fileSize
+      ? "file-size"
+      : decodedBytes
+        ? "memory"
+        : "capacity";
     const requiredValue =
       typeof required === "bigint"
         ? required <= BigInt(Number.MAX_SAFE_INTEGER)
           ? Number(required)
           : undefined
         : required;
-    return parseLimitConstraint(
-      operation,
-      fileSize ? "file-size" : "capacity",
-      cause,
-      {
-        legacyMaximumKey: name,
-        retryable: false,
-        limit: {
-          ...electronFuseBudgetLimit(parameter, maximum),
-          ...(requiredValue === undefined
-            ? {}
-            : { required_value: requiredValue }),
-        },
+    return parseLimitConstraint(operation, resource, cause, {
+      legacyMaximumKey: name,
+      retryable: false,
+      limit: {
+        ...electronFuseBudgetLimit(parameter, maximum),
+        ...(requiredValue === undefined
+          ? {}
+          : { required_value: requiredValue }),
       },
-    );
+    });
   }
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;

@@ -269,12 +269,35 @@ fuseMcpTest(
       },
     });
 
+    const decodedRefused = parseMcpToolError(
+      await client.callTool({
+        name: "inspect_electron_fuses",
+        arguments: { path, max_decoded_bytes: 1024 },
+      }),
+    );
+    expect(decodedRefused.error).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_decoded_bytes",
+          effective_value: 1024,
+          default_value: 8388608,
+          maximum: 16777216,
+        },
+      },
+    });
+    expect(decodedRefused.error.details?.limit).not.toHaveProperty("cli_flag");
+
     const admitted = await client.callTool({
       name: "inspect_electron_fuses",
       arguments: {
         path,
         max_file_bytes: image.bytes.length,
         max_sentinels_per_slice: 2,
+        max_decoded_bytes: 4096,
       },
     });
     expect(admitted.isError, JSON.stringify(admitted.content)).not.toBe(true);
@@ -285,6 +308,7 @@ fuseMcpTest(
       path,
       max_file_bytes: image.bytes.length,
       max_sentinels_per_slice: 2,
+      max_decoded_bytes: 4096,
     });
     expect(evidence.normalized_result.slices[0]?.sentinel_count).toBe(2);
   },

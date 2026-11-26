@@ -107,6 +107,7 @@ it("preserves caller-selected budgets and keeps omitted defaults out of Evidence
     path: report.artifact.selected_path,
     max_file_bytes: 1024,
     max_sentinels_per_slice: 8,
+    max_decoded_bytes: 4096,
   });
   expect(explicit.ok).toBe(true);
   if (explicit.ok) {
@@ -114,6 +115,7 @@ it("preserves caller-selected budgets and keeps omitted defaults out of Evidence
       path: report.artifact.selected_path,
       max_file_bytes: 1024,
       max_sentinels_per_slice: 8,
+      max_decoded_bytes: 4096,
     });
   }
 });
@@ -187,6 +189,45 @@ it("rejects provider reports that exceed caller-selected file or sentinel budget
     expect(oversizedDefaultFile.error).toBeInstanceOf(AnalysisOutputError);
     expect(oversizedDefaultFile.error.message).toContain("budget");
   }
+
+  const manyFuses: ElectronFuseReport = {
+    ...report,
+    artifact: { ...report.artifact, bytes: 128 },
+    slices: [
+      {
+        index: 0,
+        file_offset: 0,
+        size: 128,
+        architecture: null,
+        sentinel_count: 1,
+        sentinels: [
+          {
+            sentinel_offset: 0,
+            wire_version: 2,
+            declared_length: 8,
+            fuses: Array.from({ length: 8 }, (_, index) => ({
+              index,
+              name: null,
+              state: "enabled" as const,
+              raw_byte: 0x31,
+            })),
+            complete: true,
+          },
+        ],
+      },
+    ],
+  };
+  const decodedResult = await new ElectronFuseService({
+    identity,
+    close: async () => {},
+    inspect: async () => ok(manyFuses),
+  }).inspect({
+    path: report.artifact.selected_path,
+    max_decoded_bytes: 1024,
+  });
+  expect(decodedResult.ok).toBe(false);
+  if (!decodedResult.ok)
+    expect(decodedResult.error).toBeInstanceOf(AnalysisOutputError);
 
   const thirtyThreeSentinels = Array.from({ length: 33 }, (_, i) => ({
     sentinel_offset: i * 40,
