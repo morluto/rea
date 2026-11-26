@@ -295,9 +295,9 @@ Consulte [CONTRIBUTING.md](../../CONTRIBUTING.md) para configurar o ambiente de 
 Consulte [DISCLAIMER.md](../../DISCLAIMER.md) para orientações sobre o uso responsável.
 
 > [!WARNING]
-> **Aviso de banimento de conta e uso exclusivo com autorização:** Provedores de IA e plataformas (como Anthropic, OpenAI, Cursor, entre outros) utilizam filtros automatizados de segurança e monitoramento de abusos. Instruir agentes de IA a descompilar software proprietário, extrair propriedade intelectual protegida ou contornar proteções de DRM e anti-cheat viola as políticas de uso aceitável de IA e pode resultar em suspensão imediata e banimento permanente de contas e chaves de API.
+> **Aviso de banimento de conta e uso exclusivo com autorização:** Provedores de IA e plataformas (como Anthropic, OpenAI, Cursor, entre outros) publicam suas próprias políticas de uso e podem aplicar filtros automatizados de segurança. Instruir agentes a extrair propriedade intelectual protegida sem direitos, contornar DRM ou anti-cheat, ou burlar salvaguardas do provedor pode violar essas políticas, conforme o provedor e a autorização que você possui. A aplicação—incluindo suspensão de conta ou revogação de API—é um risco possível e dependente do provedor. Veja DISCLAIMER.md para links das políticas e detalhes.
 >
-> Use o REA estritamente em software de sua propriedade, em domínio público ou em alvos para os quais você tenha autorização explícita. A engenharia reversa de software proprietário sem autorização não concede direitos sobre o código gerado e pode violar leis de direitos autorais e termos de serviço.
+> Use o REA estritamente em software de sua propriedade, em domínio público ou em alvos para os quais você tenha autorização explícita. A engenharia reversa sem autorização não concede direitos sobre o código ou assets gerados. Copiar código ou assets protegidos pode infringir direitos autorais; corresponder a um algoritmo ou reimplementar comportamento não é infração automática, e qualquer violação de EULA depende do contrato aplicável.
 
 O REA destina-se à pesquisa, à educação, à interoperabilidade, à preservação de software e à análise de software que você possui ou está autorizado a examinar, dentro da lei.
 

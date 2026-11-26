@@ -342,9 +342,9 @@ Consultă [CONTRIBUTING.md](../../CONTRIBUTING.md) pentru pregătirea mediului d
 Consultă [DISCLAIMER.md](../../DISCLAIMER.md) pentru îndrumări privind utilizarea responsabilă.
 
 > [!WARNING]
-> **Account Ban Notice & Authorized Use Only:** AI providers and platforms (such as Anthropic, OpenAI, Cursor, and other model hosts) employ automated safety filters and abuse monitoring. Prompting AI agents to decompile proprietary software, extract protected intellectual property, or bypass DRM and anti-cheat protections violates AI acceptable use policies and can result in immediate and permanent account suspension or API access revocation.
+> **Account Ban Notice & Authorized Use Only:** AI providers and platforms (such as Anthropic, OpenAI, Cursor, and other model hosts) publish their own usage policies and may apply automated safety filters. Prompting agents to extract protected intellectual property without rights, bypass DRM or anti-cheat protections, or circumvent vendor safeguards can violate those policies, depending on the provider and the authorization you hold. Enforcement—including account suspension or API revocation—is a possible, provider-dependent risk. See DISCLAIMER.md for policy links and details.
 >
-> REA must only be used on software you own, public-domain code, or targets for which you possess explicit authorization. Reverse engineering proprietary software without authorization does not grant rights to generated code and may violate copyright laws and terms of service.
+> REA must only be used on software you own, public-domain code, or targets for which you possess explicit authorization. Reverse engineering without authorization does not grant rights to generated code or assets. Copying protected code or assets may infringe copyright; matching an algorithm or reimplementing behavior is not automatic infringement, and any EULA breach depends on the applicable agreement.
 
 Poziția proiectului față de utilizarea ilegală sau neautorizată se aplică tuturor
 versiunilor REA, canalelor de distribuție și platformelor; fiecare copie își

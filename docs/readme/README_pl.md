@@ -295,9 +295,9 @@ Zobacz [CONTRIBUTING.md](../../CONTRIBUTING.md), aby poznać konfigurację środ
 Wskazówki dotyczące odpowiedzialnego korzystania znajdziesz w [DISCLAIMER.md](../../DISCLAIMER.md).
 
 > [!WARNING]
-> **Ostrzeżenie o blokadzie konta i wyłącznie autoryzowanym użyciu:** Dostawcy modeli sztucznej inteligencji i platformy (tacy jak Anthropic, OpenAI, Cursor itp.) stosują zautomatyzowane filtry bezpieczeństwa oraz wykrywanie naruszeń. Zlecanie agentom AI dekompilacji prawnie zastrzeżonego oprogramowania, ekstrakcji chronionej własności intelektualnej lub omijania zabezpieczeń DRM i mechanizmów anti-cheat narusza zasady dopuszczalnego użytkowania AI i może skutkować natychmiastową i trwałą blokadą kont oraz kluczy API.
+> **Ostrzeżenie o blokadzie konta i wyłącznie autoryzowanym użyciu:** Dostawcy modeli AI i platformy (tacy jak Anthropic, OpenAI, Cursor itp.) publikują własne zasady użytkowania i mogą stosować zautomatyzowane filtry bezpieczeństwa. Polecenie agentom ekstrakcji chronionej własności intelektualnej bez uprawnień, omijania DRM lub anti-cheat albo obchodzenia zabezpieczeń dostawcy może naruszać te zasady — w zależności od dostawcy i posiadanego upoważnienia. Egzekwowanie — w tym blokada konta lub unieważnienie API — to możliwe, zależne od dostawcy ryzyko. Zobacz DISCLAIMER.md po linki do polityk i szczegóły.
 >
-> Narzędzia REA należy używać wyłącznie w odniesieniu do oprogramowania będącego Twoją własnością, domeny publicznej lub obiektów, do badania których posiadasz wyraźne upoważnienie. Inżynieria wsteczna oprogramowania własnościowego bez zezwolenia nie nadaje praw do wygenerowanego kodu i może naruszać prawa autorskie oraz warunki świadczenia usług.
+> Narzędzia REA należy używać wyłącznie w odniesieniu do oprogramowania będącego Twoją własnością, domeny publicznej lub obiektów, do badania których posiadasz wyraźne upoważnienie. Inżynieria wsteczna bez zezwolenia nie nadaje praw do wygenerowanego kodu ani zasobów. Kopiowanie chronionego kodu lub zasobów może naruszać prawa autorskie; samo dopasowanie algorytmu lub ponowna implementacja zachowania nie jest automatycznym naruszeniem, a ewentualne naruszenie EULA zależy od właściwej umowy.
 
 REA służy zgodnym z prawem badaniom, edukacji, zapewnianiu interoperacyjności, zachowaniu oprogramowania oraz analizie oprogramowania, które posiadasz lub masz prawo badać.
 
