@@ -454,8 +454,8 @@ export const zipListingCoverage = (
         ...prefixed,
       ],
     };
-  const limitations = [
-    ...prefixed,
+  // Coverage follows the byte account alone; a normalized name is not a gap.
+  const gaps = [
     ...(account.unaccountedRanges === 0
       ? []
       : [
@@ -473,8 +473,8 @@ export const zipListingCoverage = (
         ]),
   ];
   return {
-    status: limitations.length === 0 ? "complete" : "unknown",
-    limitations,
+    status: gaps.length === 0 ? "complete" : "unknown",
+    limitations: [...gaps, ...prefixed],
   };
 };
 
