@@ -16,9 +16,11 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
-import { MAX_RELEASE_EXPOSURE_FILE_BYTES } from "../../domain/releaseExposure.js";
+import {
+  RELEASE_EXPOSURE_FILE_BYTES,
+  releaseExposureFileBytesLimit,
+} from "../../domain/releaseExposure.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
@@ -26,16 +28,14 @@ import { errorMessage } from "../../kernel/errorMessage.js";
 export const RELEASE_EXPOSURE_AUDIT_OPERATION = "audit_release_exposure";
 const PROVIDER_ID = RELEASE_EXPOSURE_PROVIDER.id;
 
-export const fileSizeRecovery = (maxFileBytes: number) =>
-  maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
-        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
-        unit: "bytes",
-      })
-    : {
-        retryable: false as const,
-        remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
-      };
+const fileSizeRecovery = (maxFileBytes: number) => ({
+  retryable: false as const,
+  limit: releaseExposureFileBytesLimit(maxFileBytes),
+  remediationAction:
+    maxFileBytes < RELEASE_EXPOSURE_FILE_BYTES.maximum
+      ? `Raise max_file_bytes above ${String(maxFileBytes)} bytes (up to ${String(RELEASE_EXPOSURE_FILE_BYTES.maximum)}) on the next call for the same artifact, or select a smaller artifact. Reads are held in memory.`
+      : `max_file_bytes is at its maximum of ${String(maxFileBytes)} bytes; select a smaller artifact.`,
+});
 
 /**
  * The header admission is its own bound, not the selected-file ceiling, so

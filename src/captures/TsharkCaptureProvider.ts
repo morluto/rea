@@ -4,7 +4,6 @@ import {
   readerIntegrityFailure,
   readStableArtifact,
 } from "../resources/index.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   recordingProducerFailureDialect,
@@ -12,16 +11,17 @@ import {
 } from "../providers/recordingProducerFailure.js";
 import {
   BOUNDED_PRODUCER_LIMITS as LIMITS,
+  producerLimitControl,
   resolveProducerLimits,
 } from "../domain/producerResourceLimits.js";
 import { TSHARK_PROVIDER_IDENTITY } from "./TsharkProviderIdentity.js";
 import {
   type InspectPacketFieldsInput,
+  PACKET_FIELD_PRODUCER_LIMITS,
   packetFieldsCatalogSchema,
 } from "../domain/captures/packetFields.js";
 import {
   parseFieldDiscovery,
-  FIELD_GLOSSARY_FORMAT,
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
@@ -141,11 +141,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const operation = "path" in input ? OPERATION : "inspect_packet_fields";
-    // TShark 4.6.9 emits a 22.3 MB glossary; keep capture output capped at 4 MiB.
-    const limits = resolveProducerLimits(
-      "path" in input ? LIMITS : { ...LIMITS, output_bytes: 32 * 1024 * 1024 },
-      input.producer_limits,
-    );
+    const defaults = "path" in input ? LIMITS : PACKET_FIELD_PRODUCER_LIMITS;
+    const limits = resolveProducerLimits(defaults, input.producer_limits);
     let phase: RecordingProducerPhase = "configuration";
     let capturedOutput: AnalysisCapturedOutput | undefined;
     let resourcePath = "path" in input ? input.path : "TShark field glossary";
@@ -343,9 +340,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         if (!expansion.ok) throw expansion.error;
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
-          maximumBytes: limits.input_bytes,
-          allowanceName: "the packet-capture input allowance",
-          budgetParameter: "producer_limits.input_bytes",
+          budget: producerLimitControl(
+            "input_bytes",
+            limits.input_bytes,
+            LIMITS.input_bytes,
+          ),
           observedOutput: capturedOutput,
           signal: options?.signal,
         });
@@ -464,18 +463,9 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         phase,
         path: resourcePath,
         workspacePath: root?.path ?? null,
-        limits,
+        limits: { selected: limits, defaults },
         effectiveLimits,
         observedOutput: capturedOutput,
-        catalog: {
-          format: FIELD_GLOSSARY_FORMAT,
-          allowance: (maximum) =>
-            fixedAllowanceOptions(
-              "The packet-field discovery record allowance",
-              "capture",
-              { limit: maximum, unit: "bytes" },
-            ),
-        },
         configurationHelp:
           "On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).",
         readerIntegrity: (failure) =>

@@ -106,6 +106,11 @@ export type AnalysisControlLimit = {
       readonly control_kind: "parameter";
       readonly parameter: string;
       readonly applies_at: "next_call";
+      /**
+       * The smallest value that admits the refused request, when the
+       * producer measured it before refusing.
+       */
+      readonly required_value?: number;
     }
   | {
       readonly control_kind: "environment";

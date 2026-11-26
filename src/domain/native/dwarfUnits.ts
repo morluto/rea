@@ -14,6 +14,7 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_DWARF_UNITS_FILE_BYTES = 536870912;
@@ -236,6 +237,7 @@ export const inspectDwarfUnitsInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF, Mach-O, or PE image",
   ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()

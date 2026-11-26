@@ -429,6 +429,8 @@ await withVerifierFixture(root, async () => {
       matching: matched.length,
       returned: page.length,
       has_more: offset + page.length < matched.length,
+      // Verified selections fit one page; the page budget is covered by boundary tests.
+      record_budget_reached: false,
     });
     const flags = Object.entries(input).flatMap(([key, value]) =>
       value === null ? ["--all"] : [`--${key}`, String(value)],

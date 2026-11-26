@@ -27,12 +27,15 @@ import { err, ok } from "../../domain/result.js";
 import {
   binaryResourceCeiling,
   BinaryResourceFailure,
+  isNativeStructureFailure,
 } from "../../domain/binaryContainer.js";
+import { nativeStructureConstraint } from "../nativeStructureConstraint.js";
 import { requireSelectedNativeImageFromReader } from "../../domain/apple/machoSliceSelection.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {
   DwarfSectionAllowanceFailure,
   locateDwarfSectionsFromHandle,
+  PE_SECTION_NAME_LIMIT,
   type DebugInfoAvailability,
   type LocatedDwarfImage,
 } from "./DwarfSections.js";
@@ -99,6 +102,7 @@ export class DwarfUnitsProvider {
               async () => {
                 await yieldArtifactRead(options?.signal);
               },
+              input.max_structure_bytes,
             );
             return dwarfUnitsSchema.parse(
               buildReport(
@@ -282,16 +286,24 @@ const dwarfUnitsFailure = (
               },
             ),
           );
+        if (isNativeStructureFailure(failure))
+          return nativeStructureConstraint(OPERATION, failure);
         if (failure instanceof BinaryResourceFailure)
           return parseLimitConstraint(
             OPERATION,
             "memory",
             failure,
-            fixedAllowanceOptions(
-              "The native structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(failure),
-            ),
+            failure.failure.limit.name === PE_SECTION_NAME_LIMIT
+              ? fixedAllowanceOptions(
+                  "The PE section-name decoding allowance",
+                  "parser",
+                  binaryResourceCeiling(failure),
+                )
+              : fixedAllowanceOptions(
+                  "The retained DWARF section bound",
+                  "parser",
+                  binaryResourceCeiling(failure),
+                ),
           );
         return undefined;
       },
