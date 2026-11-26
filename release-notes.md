@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **flutter:** Flutter size, inventory and candidate refusals report details.limit instead of a fixed_ceiling refusal, and the inspect_dart_aot abi selector admits labels up to 65,521 characters.
 * **artifacts:** artifactReaderLimitsSchema now requires deno, wxapkg and tar groups, so saved Evidence whose effective_limits predates them fails validation and must be re-inspected. A release-exposure refusal at max_file_bytes reports details.limit instead of a fixed_ceiling refusal.
 * **limits:** discovery output_window gains record_budget_reached, a page can return fewer than limit records, and discovery no longer refuses at the record or line budget.
 * **cli:** An over-budget CLI result without --evidence_output is now saved to REA's private retained-Evidence cache and reported as {summary, evidence_bundle, delivery} with delivery.retained cache-file, instead of writing nothing. Pass --no-retain, or set REA_CLI_RETAINED_EVIDENCE_BYTES=0, to write nothing as before.
@@ -87,6 +88,7 @@
 * **errors:** add the TargetFailure model, its projection table and conformance registry ([#14247](https://github.com/morluto/rea/issues/14247)) ([40e9a3f](https://github.com/morluto/rea/commit/40e9a3f1a1769f3fbb24ca226aa853f42d78c42e))
 * **evidence:** find direct referrers by linked Evidence ID ([#11709](https://github.com/morluto/rea/issues/11709)) ([b57671c](https://github.com/morluto/rea/commit/b57671cb42ed16687d0b0ea8ff43d3643e045aef))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
+* **flutter:** give Flutter APK admission per-call apk_limits ([#14623](https://github.com/morluto/rea/issues/14623)) ([49e2eca](https://github.com/morluto/rea/commit/49e2eca4f971bc154badfae47ac80c7edcf97018))
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
 * **ghidra:** admit RISC-V ilp32f ELF with a derived calling convention ([#8401](https://github.com/morluto/rea/issues/8401)) ([d8aadcc](https://github.com/morluto/rea/commit/d8aadcc69bc65412e1e1545e25f23256f6ab5d8b))
 * **ghidra:** open M-profile raw images at a separate load base ([#7951](https://github.com/morluto/rea/issues/7951)) ([0b51ca0](https://github.com/morluto/rea/commit/0b51ca03de173fcf22059b5512647bc1461022df))
