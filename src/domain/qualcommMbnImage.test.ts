@@ -10,6 +10,7 @@ import {
   hasQualcommMbnHeader,
   inspectQualcommMbnImage,
   qualcommMbnInventoryCoverage,
+  qualcommMbnStoredRegions,
 } from "./qualcommMbnImage.js";
 
 const LEGACY = mbnLegacyImage({
@@ -209,6 +210,50 @@ describe("ELF MBN hash segments", () => {
     expect(qualcommMbnInventoryCoverage(inspection, truncated.length)).toBe(
       "unknown",
     );
+  });
+
+  it("keeps a readable hash-segment header when its hash table runs past EOF", () => {
+    const bytes = mbnElfWithHashSegment({ loads: 1 });
+    // Hash segment starts at 160: 40-byte header (160..200) and 96-byte hash table (200..296).
+    for (const length of [200, 240]) {
+      const truncated = bytes.subarray(0, length);
+      const inspection = inspectQualcommMbnImage(truncated);
+      expect(inspection).toMatchObject({
+        kind: "elf",
+        hashSegment: { programHeaderIndex: 1, offset: 160 },
+        facet: {
+          header: {
+            version: 3,
+            headerBytes: 40,
+            codeSize: 96,
+            signatureSize: 256,
+            certificateChainSize: 96,
+          },
+          ranges: {
+            header: { offset: 160, length: 40 },
+            code: { offset: 200, length: 96 },
+            signature: { offset: 296, length: 256 },
+            certificateChain: { offset: 552, length: 96 },
+          },
+          hashSize: 32,
+          hashCount: 3,
+        },
+      });
+      if (inspection.kind !== "elf" || inspection.facet === null)
+        throw new Error("expected decoded ELF facet");
+      expect(inspection.limitations).toContain(
+        `hash table range 200+96 exceeds the ${String(length)}-byte file`,
+      );
+      expect(
+        inspection.limitations.some((message) =>
+          message.includes("not an MBN header"),
+        ),
+      ).toBe(false);
+      expect(
+        qualcommMbnStoredRegions(inspection.facet.ranges, "elf", length),
+      ).toEqual([{ name: "header", range: { offset: 160, length: 40 } }]);
+      expect(qualcommMbnInventoryCoverage(inspection, length)).toBe("unknown");
+    }
   });
 
   it("reports a hash segment that is not an MBN header", () => {

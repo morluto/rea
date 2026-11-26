@@ -17,10 +17,14 @@ import { CoverageAccumulator } from "./coverageAccumulator.js";
  * `p_flags` bits 24-26 equal 2 (Linux `QCOM_MDT_TYPE_HASH`) carries the
  * same header, and the code range inside that segment is the hash table.
  *
- * A header is claimed only when its code region lies wholly inside the file:
- * the image size may run past the end of a truncated dump, and the missing
- * signature, certificate or metadata ranges are then limitations, but a
- * header-sized pattern with no code bytes behind it is not an image.
+ * A legacy header has no magic, so it is claimed only when its code region
+ * lies wholly inside the file: the image size may run past the end of a
+ * truncated dump, and the missing signature, certificate or metadata ranges
+ * are then limitations, but a header-sized pattern with no code bytes behind
+ * it is not an image. An already located ELF hash segment does not need that
+ * recognition gate, so a readable header is decoded even when its hash table
+ * runs past the file end; the truncated table is reported as a limitation and
+ * omitted from stored regions.
  *
  * `e_phnum` 65535 is the ELF extended numbering sentinel. This parser does
  * not read section 0, so that count stays unknown rather than a scan of
@@ -393,6 +397,7 @@ const rangeLimitations = (
   raw: RawHeader,
   ranges: QualcommMbnRanges,
   fileSize: number,
+  codeRole: "code" | "hash table",
 ): string[] => {
   const limitations: string[] = [];
   if (raw.reservedNonZero)
@@ -404,6 +409,7 @@ const rangeLimitations = (
       rangeLimitation("image", ranges.header.offset, raw.imageSize, fileSize),
     );
   const named: readonly (readonly [string, QualcommMbnByteRange | null])[] = [
+    [codeRole, ranges.code],
     ["signature", ranges.signature],
     ["certificate chain", ranges.certificateChain],
     ["metadata 0", ranges.metadata0],
@@ -418,15 +424,8 @@ const rangeLimitations = (
   return limitations;
 };
 
-const headerIsPlausible = (
-  raw: RawHeader,
-  base: number,
-  fileSize: number,
-): boolean => {
+const headerIsPlausible = (raw: RawHeader, base: number): boolean => {
   if (raw.codeSize === 0 || raw.imageSize === 0) return false;
-  const codeEnd = sumSafe([base, raw.headerBytes, raw.codeSize]);
-  if (!Number.isSafeInteger(fileSize) || codeEnd === null || codeEnd > fileSize)
-    return false;
   const payload = sumUint32([
     raw.codeSize,
     raw.signatureSize,
@@ -442,23 +441,30 @@ const headerIsPlausible = (
   return sizeMatches && pointersPlausible(raw, base);
 };
 
-const parseMbnHeader = (
+const decodeMbnHeader = (
   bytes: Buffer,
   base: number,
   fileSize: number,
+  codeRole: "code" | "hash table",
 ): ParsedHeader => {
+  if (!Number.isSafeInteger(fileSize) || fileSize < 0)
+    return { kind: "rejected" };
   const raw = readRawHeader(bytes);
   if (raw !== null && "truncatedVersion" in raw)
     return { kind: "truncated-version", version: raw.truncatedVersion };
-  if (raw === null || !headerIsPlausible(raw, base, fileSize))
+  if (raw === null || !headerIsPlausible(raw, base))
     return { kind: "rejected" };
   const ranges = fileRanges(raw, base);
-  if (ranges === null) return { kind: "rejected" };
+  if (
+    ranges === null ||
+    exceedsFile(ranges.header.offset, ranges.header.length, fileSize)
+  )
+    return { kind: "rejected" };
   return {
     kind: "header",
     header: publicHeader(raw),
     ranges,
-    limitations: rangeLimitations(raw, ranges, fileSize),
+    limitations: rangeLimitations(raw, ranges, fileSize, codeRole),
   };
 };
 
@@ -466,8 +472,11 @@ const inspectLegacy = (
   bytes: Buffer,
   fileSize: number,
 ): QualcommMbnInspection => {
-  const parsed = parseMbnHeader(bytes, 0, fileSize);
-  if (parsed.kind !== "header")
+  const parsed = decodeMbnHeader(bytes, 0, fileSize, "code");
+  if (
+    parsed.kind !== "header" ||
+    exceedsFile(parsed.ranges.code.offset, parsed.ranges.code.length, fileSize)
+  )
     return unrecognized("bytes are not a Qualcomm MBN header");
   return {
     kind: "legacy",
@@ -845,10 +854,11 @@ export const inspectQualcommMbnElf = (input: {
       elfFindings([], extras.furtherHashSegments),
     );
   const located = locatedHash(first);
-  const parsed = parseMbnHeader(
+  const parsed = decodeMbnHeader(
     input.hashHeader,
     input.hashOffset,
     input.fileSize,
+    "hash table",
   );
   if (parsed.kind === "truncated-version")
     return elfInspection(

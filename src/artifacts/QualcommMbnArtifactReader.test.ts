@@ -142,6 +142,56 @@ it("reports an ELF MBN's hash segment header and hash count", async () => {
   }
 });
 
+it("keeps header.bin and decoded header metadata when an ELF hash table runs past EOF", async () => {
+  const image = mbnElfWithHashSegment({ loads: 1 });
+  const truncated = image.subarray(0, 240);
+  const path = await writeMbn("truncated-table.mdt", truncated);
+  const reader = new QualcommMbnArtifactReader(path);
+  try {
+    const { entries, coverage } = await readAll(reader);
+    expect(entries.map((entry) => entry.path)).toEqual(["header.bin"]);
+    expect(
+      (await buffer(await reader.open(entries[0]!))).equals(
+        truncated.subarray(160, 200),
+      ),
+    ).toBe(true);
+    expect(coverage).toEqual([
+      {
+        status: "unknown",
+        limitations: [
+          "image range 160+448 exceeds the 240-byte file",
+          "hash table range 200+96 exceeds the 240-byte file",
+          "signature range 296+256 exceeds the 240-byte file",
+          "certificate chain range 552+96 exceeds the 240-byte file",
+        ],
+      },
+    ]);
+    expect(reader.formatMetadata()).toMatchObject({
+      kind: "qualcomm-mbn",
+      layout: "elf",
+      header: {
+        version: 3,
+        header_bytes: 40,
+        code_size: 96,
+        signature_size: 256,
+        certificate_chain_size: 96,
+        ranges: {
+          header: { offset: 160, length: 40 },
+          code: { offset: 200, length: 96 },
+        },
+      },
+      elf: {
+        hash_segment_program_header: 1,
+        hash_segment_offset: 160,
+        hash_size: 32,
+        hash_count: 3,
+      },
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("inventories an ELF with a hash segment as MBN by content", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeMbn("modem.elf", mbnElfWithHashSegment({ loads: 2 })),
