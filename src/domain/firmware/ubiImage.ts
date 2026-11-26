@@ -76,7 +76,7 @@ export const UBI_IMAGE_LIMITATIONS = {
   unverifiedCopy:
     "A volume whose logical eraseblock is left with only wear-leveling copies that failed their data CRC is inventoried but not reassembled.",
   lostLebs:
-    "A volume with no mapped logical eraseblock in an image with corrupt physical eraseblocks is inventoried but not reassembled, since the corrupt eraseblocks may have held its data.",
+    "A volume whose end cannot be established in an image with corrupt physical eraseblocks (no mapped logical eraseblocks, or a dynamic volume with fewer mapped eraseblocks than reserved_pebs) is inventoried but not reassembled, since the corrupt eraseblocks may have held its data.",
   updateMarker:
     "The volume table marks an interrupted update for this volume; its reassembled bytes may be incomplete.",
 } as const;
@@ -323,37 +323,45 @@ const ubiOffsetInMappedLebData = (
   return inPeb + UBI_HEADER_BYTES <= dataEnd;
 };
 
-/** A passed-over PEB-size candidate retained so later candidates check its grid. */
-interface UbiPassedOverCandidate {
-  readonly offset: number;
-  readonly dividing: boolean;
-}
-
 /**
  * File offsets on a passed-over candidate's grid that lie outside both
  * `geometry`'s eraseblock grid and every mapped non-layout LEB's data area.
- * `knownHeader` is true at `candidate.offset`, which the search already
+ * `knownHeader` is true at `candidateOffset`, which the search already
  * validated as an EC header; later multiples need an EC header check.
  */
 function* ubiPassedOverBoundaryProbes(
-  candidate: UbiPassedOverCandidate,
+  candidateOffset: number,
   geometry: UbiGeometry,
   pebs: readonly UbiPeb[],
   fileSize: number,
 ): Generator<{ readonly offset: number; readonly knownHeader: boolean }, void> {
-  const limit = candidate.dividing
-    ? fileSize
-    : Math.min(fileSize, (UBI_SPACING_CHECK_PEBS + 1) * candidate.offset);
   for (
-    let offset = candidate.offset;
-    offset + UBI_HEADER_BYTES <= limit;
-    offset += candidate.offset
+    let offset = candidateOffset;
+    offset + UBI_HEADER_BYTES <= fileSize;
+    offset += candidateOffset
   ) {
     if (offset % geometry.pebSize === 0) continue;
     if (ubiOffsetInMappedLebData(offset, geometry, pebs)) continue;
-    yield { offset, knownHeader: offset === candidate.offset };
+    yield { offset, knownHeader: offset === candidateOffset };
   }
 }
+
+/**
+ * Smaller eraseblock sizes on the 512-byte grid that divide `pebSize` and
+ * still leave a LEB after `dataOffset`, ordered largest first.
+ */
+const ubiSmallerDivisors = (pebSize: number, dataOffset: number): number[] => {
+  const units = pebSize / UBI_PEB_ALIGNMENT;
+  const sizes: number[] = [];
+  for (let d = 1; d * d <= units; d += 1) {
+    if (units % d !== 0) continue;
+    const high = d === 1 ? 0 : (units / d) * UBI_PEB_ALIGNMENT;
+    if (high > dataOffset) sizes.push(high);
+    const low = d * UBI_PEB_ALIGNMENT;
+    if (low !== high && low < pebSize && low > dataOffset) sizes.push(low);
+  }
+  return sizes.sort((left, right) => right - left);
+};
 
 /**
  * Offsets inside one `pebSize` eraseblock where an eraseblock of a smaller
@@ -367,12 +375,7 @@ const ubiCandidateGridOffsets = (
   admit: (smallerPebSize: number) => boolean = () => true,
 ): ReadonlySet<number> => {
   const offsets = new Set<number>();
-  for (
-    let size = UBI_PEB_ALIGNMENT;
-    size < pebSize;
-    size += UBI_PEB_ALIGNMENT
-  ) {
-    if (pebSize % size !== 0 || size <= dataOffset) continue;
+  for (const size of ubiSmallerDivisors(pebSize, dataOffset)) {
     if (!admit(size)) continue;
     for (let offset = size; offset < pebSize; offset += size)
       offsets.add(offset);
@@ -500,49 +503,36 @@ const ubiGeometry = (
 };
 
 /**
- * Smaller eraseblock sizes on the 512-byte grid that divide the measured size
- * and leave a LEB: the measured size divided by each prime factor. A finer
- * size fits only if these coarser ones do, so they are the ones to probe.
+ * All smaller eraseblock sizes on the 512-byte grid that divide the measured
+ * size and still leave a LEB. Volume-table `data_pad === leb_size % alignment`
+ * is not monotonic across divisors, so every eligible divisor must be checked.
  */
-const ubiSmallerPebSizes = (geometry: UbiGeometry): number[] => {
-  const sizes: number[] = [];
-  let rest = geometry.pebSize / UBI_PEB_ALIGNMENT;
-  for (let factor = 2; factor * factor <= rest; factor += 1) {
-    if (rest % factor !== 0) continue;
-    sizes.push(geometry.pebSize / factor);
-    while (rest % factor === 0) rest /= factor;
-  }
-  if (rest > 1) sizes.push(geometry.pebSize / rest);
-  return sizes.filter((size) => size > geometry.dataOffset);
-};
+const ubiSmallerPebSizes = (geometry: UbiGeometry): number[] =>
+  ubiSmallerDivisors(geometry.pebSize, geometry.dataOffset);
 
 /**
- * Whether the first `headerReadBytes` at a would-be eraseblock start hold an
- * erased EC and VID header, so an erased eraseblock could begin there.
+ * Whether the first `headerReadBytes` at a would-be smaller-grid eraseblock
+ * start keep the smaller geometry plausible: either both EC and VID headers
+ * are erased, or a recognizable damaged UBI header (`UBI#` magic or a
+ * CRC-valid VID header) sits there and would classify as a corrupt PEB under
+ * the smaller geometry rather than proving written LEB payload.
  */
-const ubiPebHeadersErased = (
+const ubiSmallerGridPositionPlausible = (
   bytes: Uint8Array,
   geometry: UbiGeometry,
-): boolean =>
-  bytes.length >= geometry.headerReadBytes &&
-  isErased(bytes.subarray(0, UBI_HEADER_BYTES)) &&
-  isErased(
-    bytes.subarray(
-      geometry.vidHeaderOffset,
-      geometry.vidHeaderOffset + UBI_HEADER_BYTES,
-    ),
+): boolean => {
+  if (bytes.length < geometry.headerReadBytes) return false;
+  const ecBytes = bytes.subarray(0, UBI_HEADER_BYTES);
+  const vidBytes = bytes.subarray(
+    geometry.vidHeaderOffset,
+    geometry.vidHeaderOffset + UBI_HEADER_BYTES,
   );
-
-/**
- * Offsets inside one measured eraseblock where an eraseblock of a smaller
- * candidate size would begin: multiples of every size on the 512-byte grid
- * that divides the measured size, still leaves a LEB, and passes `admit`.
- */
-const ubiSmallerGridOffsets = (
-  geometry: UbiGeometry,
-  admit: (smallerPebSize: number) => boolean = () => true,
-): ReadonlySet<number> =>
-  ubiCandidateGridOffsets(geometry.pebSize, geometry.dataOffset, admit);
+  return (
+    (isErased(ecBytes) && isErased(vidBytes)) ||
+    hasMagic(ecBytes, 0, UBI_EC_MAGIC) ||
+    readVidHeader(vidBytes).state === "valid"
+  );
+};
 
 /**
  * The first offset in `chunk` (read at `chunkOffset`) holding a valid
@@ -566,31 +556,21 @@ const findUbiSmallerGridHeader = (
   );
 
 /**
- * Whether the image still reads as eraseblocks of `smallerPebSize`: every
- * mapped LEB's declared data and padding fit the smaller LEB, as Linux UBI
- * requires of a VID header (padding shorter than the LEB, as `classifyUbiPeb`
- * and a volume table alignment no larger than the LEB also demand, and data
- * within what the padding leaves), and a volume table copy (`tableCopies`,
- * read at the layout volume's LEB 0 and LEB 1) stays valid, its data_pad
- * matching the smaller LEB size. A size that fails either is ruled out
- * whatever its header positions hold.
+ * Whether the image still reads as eraseblocks of `smallerPebSize`: a volume
+ * table copy (`tableCopies`, read at the layout volume's LEB 0 and LEB 1)
+ * stays valid under `smallerPebSize`, and no declared static volume LEB has a
+ * CRC-verified payload spanning past `smallerPebSize`. An unverified or orphan
+ * VID that does not fit `smallerPebSize` would classify as a corrupt PEB under
+ * `smallerPebSize`, so it does not rule the smaller size out.
  */
-export const ubiSmallerPebSizeHoldsLebs = (
+const ubiSmallerPebSizePlausible = async (
+  ctx: UbiParseContext,
   geometry: UbiGeometry,
   pebs: readonly UbiPeb[],
   smallerPebSize: number,
   tableCopies: readonly [Uint8Array | null, Uint8Array | null],
-): boolean => {
+): Promise<Result<boolean, ParseFailureError<"limit">>> => {
   const lebSize = smallerPebSize - geometry.dataOffset;
-  if (
-    !pebs.every(
-      (peb) =>
-        peb.state !== "mapped" ||
-        (peb.vid.dataPad < lebSize &&
-          peb.vid.dataSize <= lebSize - peb.vid.dataPad),
-    )
-  )
-    return false;
   const smaller: UbiGeometry = {
     ...geometry,
     pebSize: smallerPebSize,
@@ -603,42 +583,52 @@ export const ubiSmallerPebSizeHoldsLebs = (
   };
   const tableBytes = ubiVolumeTableBytes(smaller);
   const [left, right] = tableCopies;
-  return parseUbiVolumeTable(
+  const smallerTable = parseUbiVolumeTable(
     [
       left?.subarray(0, tableBytes) ?? null,
       right?.subarray(0, tableBytes) ?? null,
     ],
     smaller,
-  ).ok;
+  );
+  if (!smallerTable.ok) return ok(false);
+  const staticRecords = new Map<number, UbiVolumeRecord>();
+  for (const record of smallerTable.value.records)
+    if (record.type === "static") staticRecords.set(record.id, record);
+  for (const [index, peb] of pebs.entries()) {
+    if (
+      peb.state !== "mapped" ||
+      peb.vid.volType !== VOLUME_TYPE_STATIC ||
+      peb.vid.volId === UBI_LAYOUT_VOLUME_ID
+    )
+      continue;
+    const record = staticRecords.get(peb.vid.volId);
+    if (
+      record === undefined ||
+      peb.vid.lnum >= record.reservedPebs ||
+      peb.vid.dataPad !== record.dataPad ||
+      peb.vid.dataSize <= lebSize - peb.vid.dataPad
+    )
+      continue;
+    const offset = index * geometry.pebSize + geometry.dataOffset;
+    if (offset + peb.vid.dataSize > ctx.fileSize) continue;
+    const matches = await verifyUbiPayload(ctx, offset, peb.vid);
+    if (!matches.ok) return matches;
+    if (matches.value) return ok(false);
+  }
+  return ok(true);
 };
 
 /**
- * Smaller-grid offsets that `ubiSmallerPebSizeHoldsLebs` admits. A header
- * anywhere else lies in LEB data no smaller eraseblock could begin at, such
- * as a nested UBI image inside a volume, so it does not contradict the
- * measured size.
- */
-const ubiSmallerGridFit = (
-  geometry: UbiGeometry,
-  pebs: readonly UbiPeb[],
-  tableCopies: readonly [Uint8Array | null, Uint8Array | null],
-): { readonly plausible: ReadonlySet<number> } => ({
-  plausible: ubiSmallerGridOffsets(geometry, (size) =>
-    ubiSmallerPebSizeHoldsLebs(geometry, pebs, size, tableCopies),
-  ),
-});
-
-/**
  * The refusal when every header position of `smallerPebSize` off the measured
- * grid is erased: the image is equally a run of `smallerPebSize` eraseblocks
- * with erased ones between, and the bytes cannot say which.
+ * grid is erased or holds a recognizable damaged UBI header: the image is
+ * equally a run of `smallerPebSize` eraseblocks, and the bytes cannot say which.
  */
 const ubiAmbiguousPebSize = (
   geometry: UbiGeometry,
   smallerPebSize: number,
 ): UbiImageParseError =>
   malformed(
-    `UBI image also fits a ${String(smallerPebSize)}-byte eraseblock size, because every header position on that grid between the ${String(geometry.pebSize)}-byte eraseblocks is erased, so the eraseblock size is ambiguous`,
+    `UBI image also fits a ${String(smallerPebSize)}-byte eraseblock size, because every header position on that grid between the ${String(geometry.pebSize)}-byte eraseblocks is erased or holds a damaged UBI header, so the eraseblock size is ambiguous`,
   );
 
 export interface UbiVidHeader {
@@ -1190,9 +1180,14 @@ const assembleVolume = (
     .filter(([lnum]) => lnum < record.reservedPebs)
     .sort(([left], [right]) => left - right);
   let ignored = lebs.size - inRange.length;
-  // No surviving header cannot establish emptiness when a corrupt PEB may
-  // have held the volume's only LEBs.
-  const lost = inRange.length === 0 && corruptPebsPresent;
+  // When corrupt PEBs are present, a volume with no surviving mappings cannot
+  // prove emptiness, and a dynamic volume with fewer mapped LEBs than
+  // reserved_pebs cannot prove where it ends.
+  const lost =
+    corruptPebsPresent &&
+    (record.type === "dynamic"
+      ? inRange.length < record.reservedPebs
+      : inRange.length === 0);
   const usedEbsValues = new Set(inRange.map(([, leb]) => leb.vid.usedEbs));
   const usedEbs =
     record.type === "static"
@@ -1599,12 +1594,12 @@ const findPassedOverBoundary = async (
   ctx: UbiParseContext,
   geometry: UbiGeometry,
   pebs: readonly UbiPeb[],
-  passedOver: readonly UbiPassedOverCandidate[],
+  passedOver: readonly number[],
 ): Promise<number | null> => {
   let probes = 0;
-  for (const candidate of passedOver) {
+  for (const candidateOffset of passedOver) {
     for (const probe of ubiPassedOverBoundaryProbes(
-      candidate,
+      candidateOffset,
       geometry,
       pebs,
       ctx.fileSize,
@@ -1624,36 +1619,52 @@ const findSmallerGridError = async (
   measured: UbiGeometry,
   pebs: readonly UbiPeb[],
   tableCopies: readonly [Uint8Array | null, Uint8Array | null],
-): Promise<UbiImageParseError | null> => {
-  // A smaller size the LEBs or volume table rule out cannot begin an
-  // eraseblock, so a header on only its grid is payload.
-  const fit = ubiSmallerGridFit(measured, pebs, tableCopies);
+): Promise<Result<UbiImageParseError | null, ParseFailureError<"limit">>> => {
+  // A smaller size the volume table or a CRC-verified static LEB rules out
+  // cannot begin an eraseblock, so a header on only its grid is payload.
+  const plausibleSizes: number[] = [];
+  for (const smaller of ubiSmallerPebSizes(measured)) {
+    const holds = await ubiSmallerPebSizePlausible(
+      ctx,
+      measured,
+      pebs,
+      smaller,
+      tableCopies,
+    );
+    if (!holds.ok) return holds;
+    if (holds.value) plausibleSizes.push(smaller);
+  }
+  if (plausibleSizes.length === 0) return ok(null);
+  const plausibleOffsets = new Set<number>();
+  for (const size of plausibleSizes)
+    for (let offset = size; offset < measured.pebSize; offset += size)
+      plausibleOffsets.add(offset);
   // A valid header where an eraseblock of a smaller size would begin shows
   // the measured size skipped eraseblocks, wherever it lies in the image.
-  if (fit.plausible.size > 0)
-    for (
-      let offset = 0, chunks = 0;
-      offset < ctx.fileSize;
-      offset += SCAN_CHUNK_BYTES, chunks += 1
-    ) {
-      await ctx.checkpoint?.(chunks % 16 === 0);
-      const header = findUbiSmallerGridHeader(
-        await ctx.read(
-          offset,
-          Math.min(SCAN_CHUNK_BYTES + UBI_HEADER_BYTES, ctx.fileSize - offset),
-        ),
+  for (
+    let offset = 0, chunks = 0;
+    offset < ctx.fileSize;
+    offset += SCAN_CHUNK_BYTES, chunks += 1
+  ) {
+    await ctx.checkpoint?.(chunks % 16 === 0);
+    const header = findUbiSmallerGridHeader(
+      await ctx.read(
         offset,
-        ctx.first,
-        measured,
-        fit.plausible,
-      );
-      if (header !== null) return ubiSpacingConflict(measured.pebSize, header);
-    }
-  // Erased eraseblocks between headers fit a smaller size equally well; a
-  // written byte at any of its off-grid header positions rules it out, as
-  // does a LEB too large for it or a volume table invalid under it.
-  for (const smaller of ubiSmallerPebSizes(measured)) {
-    let fits = ubiSmallerPebSizeHoldsLebs(measured, pebs, smaller, tableCopies);
+        Math.min(SCAN_CHUNK_BYTES + UBI_HEADER_BYTES, ctx.fileSize - offset),
+      ),
+      offset,
+      ctx.first,
+      measured,
+      plausibleOffsets,
+    );
+    if (header !== null)
+      return ok(ubiSpacingConflict(measured.pebSize, header));
+  }
+  // Erased eraseblocks or damaged UBI headers between measured PEBs fit a
+  // smaller size equally well; a non-header written byte at any off-grid
+  // header position rules that smaller size out.
+  for (const smaller of plausibleSizes) {
+    let fits = true;
     let probes = 0;
     for (
       let offset = smaller;
@@ -1662,14 +1673,14 @@ const findSmallerGridError = async (
     ) {
       if (offset % measured.pebSize === 0) continue;
       await ctx.checkpoint?.(probes % 256 === 0);
-      fits = ubiPebHeadersErased(
+      fits = ubiSmallerGridPositionPlausible(
         await ctx.read(offset, measured.headerReadBytes),
         measured,
       );
     }
-    if (fits) return ubiAmbiguousPebSize(measured, smaller);
+    if (fits) return ok(ubiAmbiguousPebSize(measured, smaller));
   }
-  return null;
+  return ok(null);
 };
 
 const readVerifiedUbiTableCopies = async (
@@ -1717,7 +1728,7 @@ const readVerifiedUbiTableCopies = async (
 const evaluateUbiPebCandidate = async (
   ctx: UbiParseContext,
   candidate: number,
-  passedOver: readonly UbiPassedOverCandidate[],
+  passedOver: readonly number[],
 ): Promise<UbiPebCandidateVerdict> => {
   const measured = ubiGeometry(ctx.first, candidate, ctx.fileSize, null);
   if (!measured.ok) return { state: "retry", error: measured.error };
@@ -1749,12 +1760,14 @@ const evaluateUbiPebCandidate = async (
   const copies = await readVerifiedUbiTableCopies(ctx, geometry, pebs);
   if (!copies.ok) return { state: "limit", error: copies.error };
   const { verifiedCopies, tableCopies } = copies.value;
-  const smallerGridError = await findSmallerGridError(
+  const smallerGrid = await findSmallerGridError(
     ctx,
     measured.value,
     pebs,
     tableCopies,
   );
+  if (!smallerGrid.ok) return { state: "limit", error: smallerGrid.error };
+  const smallerGridError = smallerGrid.value;
   const passedOverHeaderOffset =
     smallerGridError === null &&
     pebError === null &&
@@ -1846,7 +1859,7 @@ export const parseUbiImage = async (
   let fallback: UbiImage | null = null;
   let anyNext: number | null = null;
   let firstFailure: PendingCandidateFailure | null = null;
-  const passedOver: UbiPassedOverCandidate[] = [];
+  const passedOver: number[] = [];
   let lastCandidate = 0;
   for (
     let offset = ubiPebSearchStart(first.value);
@@ -1884,7 +1897,7 @@ export const parseUbiImage = async (
               );
         fallback ??= verdict.fallback ?? null;
         firstFailure ??= { kind: "error", error: verdict.error };
-        passedOver.push({ offset: candidate, dividing: true });
+        passedOver.push(candidate);
         continue;
       }
       const candidateVid = candidate + first.value.vidHeaderOffset;
@@ -1898,7 +1911,7 @@ export const parseUbiImage = async (
         )
       ) {
         firstFailure ??= { kind: "non-dividing", candidate };
-        passedOver.push({ offset: candidate, dividing: false });
+        passedOver.push(candidate);
       }
     }
   }

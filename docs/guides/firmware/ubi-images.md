@@ -33,17 +33,18 @@ file size must be a whole number of PEBs, and every later EC header must
 declare the same layout. Either inconsistency refuses the image. A valid EC
 header off the PEB grid within the next four PEBs means eraseblocks before
 the second header were skipped, so the size is ambiguous and the image is
-refused. The image is also refused when a smaller size (the PEB size divided
-by one of its prime factors, still above `data_offset`) fits: every EC and VID
-header position on that smaller grid between measured PEBs is erased and every
-mapped LEB's `data_size` plus `data_pad` fits the smaller LEB, so the bytes
-equally describe smaller PEBs with erased ones between. A valid EC header
-anywhere in the image where a PEB of any such smaller size would begin shows
-that PEBs were skipped and also refuses it. Both header checks set aside a
-position that only smaller sizes would begin at whose LEB cannot hold a mapped
-LEB's `data_size` plus `data_pad`, or under which no volume table copy stays
-valid: no smaller PEB starts there, so the header is LEB data, such as a nested
-UBI image inside a static volume. The LEB size is the PEB size minus `data_offset`.
+refused. The image is also refused when any smaller size on the 512-byte grid dividing
+the measured PEB size (still above `data_offset`) fits: a volume table copy
+stays valid under it, no declared static volume LEB has a CRC-verified payload
+spanning past it, and every off-grid header position on that smaller grid is
+erased or holds a damaged UBI header, so the bytes equally describe smaller
+PEBs. A valid EC header anywhere in the image where a PEB of any such smaller
+size would begin shows that PEBs were skipped and also refuses it. Both header
+checks set aside a position that only smaller sizes would begin at under which
+no volume table copy stays valid or a CRC-verified static LEB crosses the
+smaller boundary: no smaller PEB starts there, so the header is LEB data, such
+as a nested UBI image inside a static volume. The LEB size is the PEB size
+minus `data_offset`.
 
 Root `format_metadata` (kind `ubi-image`) records `peb_size`, `leb_size`,
 `vid_header_offset`, `data_offset`, `image_seq`, the PEB count and how many
@@ -102,9 +103,11 @@ zero bytes. A static volume whose LEBs disagree on `used_ebs`, declare a
 `used_ebs` of 0 while mapped, declare more
 data than a LEB holds, or hold less than a full usable LEB before the last
 one, is refused the same way, as is a volume whose VID headers declare a
-volume type or `data_pad` other than its volume table record. A volume with no
-mapped LEB is empty only when no PEB is corrupt; otherwise a corrupt PEB may
-have held its data, so it is refused the same way with `used_ebs: null`. LEBs of volumes without
+volume type or `data_pad` other than its volume table record. A volume with no mapped LEB is empty only when no PEB is corrupt, and a
+dynamic volume with fewer mapped LEBs than `reserved_pebs` can establish its
+end only when no PEB is corrupt; otherwise a corrupt PEB may have held its
+data, so it is refused the same way (with `used_ebs: null` for unmapped static
+volumes). LEBs of volumes without
 a volume table record, and LEB numbers outside their volume, are counted in
 `ignored_leb_count`. A full extract fails when any volume is refused.
 

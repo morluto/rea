@@ -140,8 +140,8 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
 });
 
 it("reads an eraseblock size whose volume table padding rules out a smaller one", async () => {
-  // Under 64 KiB eraseblocks alignment 6144 would pad nothing, so this
-  // table's data_pad of 4096 fits only the 128 KiB size.
+  // With alignment 10240 and data_pad 4096, 128 KiB (LEB 126976) matches
+  // while every smaller divisor (64/32/16/8 KiB) requires different padding.
   const geometry = {
     pebSize: 128 * 1024,
     vidHeaderOffset: 2048,
@@ -158,7 +158,7 @@ it("reads an eraseblock size whose volume table padding rules out a smaller one"
                 name: "rootfs",
                 type: "dynamic",
                 reservedPebs: 1,
-                alignment: 6144,
+                alignment: 10_240,
                 dataPad: 4096,
               },
             ],

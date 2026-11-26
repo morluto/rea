@@ -6,7 +6,6 @@ import {
   classifyUbiPeb,
   parseUbiImage,
   recognizeUbiImage,
-  ubiSmallerPebSizeHoldsLebs,
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
   UBI_MAX_PEB_BYTES,
@@ -211,7 +210,8 @@ it("skips PEBs with a bad EC or VID header CRC and names the limitation", async 
   expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.corruptPebs);
   expect(parsed.volumes[0]).toMatchObject({
     mappedLebCount: 1,
-    dataBytes: 1920,
+    extractRefusal: "lost_lebs",
+    dataBytes: null,
   });
 });
 
@@ -741,7 +741,7 @@ it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as
       id: 0,
       name: "rootfs",
       type: "dynamic",
-      reservedPebs: 4,
+      reservedPebs: 1,
       alignment: 1000,
       dataPad: 920,
     },
@@ -1050,7 +1050,7 @@ it("accepts an eraseblock size whose volume table padding rules out the smaller 
       name: "rootfs",
       type: "dynamic",
       reservedPebs: 1,
-      alignment: 6144,
+      alignment: 10_240,
       dataPad: 4096,
     },
   ];
@@ -1072,7 +1072,7 @@ it("accepts an eraseblock size whose volume table padding rules out the smaller 
   expect(parsed.geometry).toMatchObject({ pebSize: 131072, pebCount: 3 });
   expect(parsed.volumes[0]).toMatchObject({
     name: "rootfs",
-    alignment: 6144,
+    alignment: 10_240,
     dataPad: 4096,
   });
 
@@ -1329,78 +1329,361 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", asy
   );
   expect(parsed.geometry).toMatchObject({ pebSize: 65536, pebCount: 3 });
   expect(parsed.volumes[0]).toMatchObject({ dataBytes: data.length });
-  const table = ubiVolumeTable(records, ubiVolumeTableSlots(wide));
-  const tables = [table, table] as const;
-  expect(
-    ubiSmallerPebSizeHoldsLebs(
-      parsed.geometry,
+});
+
+it("probes finer PEB divisors even when a coarser divisor fails volume-table padding", async () => {
+  // With 128 KiB PEBs and data_offset 4096 (LEB 126976), alignment 12288 gives
+  // data_pad 4096. For 64 KiB (LEB 61440), 61440 % 12288 === 0 != 4096, so
+  // 64 KiB is invalid, but 32 KiB (LEB 28672) has 28672 % 12288 === 4096 and
+  // keeps the volume table valid.
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const records: UbiFixtureVolumeRecord[] = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic",
+      reservedPebs: 1,
+      alignment: 12_288,
+      dataPad: 4096,
+    },
+  ];
+  const erasedOffGrid = Buffer.alloc(
+    wide.pebSize - wide.dataOffset - 4096,
+    0x52,
+  );
+  // Erase the header positions at 32 KiB, 64 KiB, and 96 KiB inside the PEB.
+  for (const pos of [32 * 1024, 64 * 1024, 96 * 1024]) {
+    erasedOffGrid.fill(
+      0xff,
+      pos - wide.dataOffset,
+      pos - wide.dataOffset + 256,
+    );
+  }
+  const ambiguous = ubiImage(
+    [
+      ...ubiLayoutPebs(records, wide),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: erasedOffGrid,
+        sqnum: 2n,
+        dataPad: 4096,
+      },
+    ],
+    wide,
+  );
+  expect(await parse(ambiguous)).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining("32768-byte eraseblock size"),
+    },
+  });
+
+  // Control: writing non-header data at one 32 KiB off-grid position rules out
+  // 32 KiB and accepts 128 KiB.
+  const written = Buffer.from(erasedOffGrid);
+  written.fill(
+    0x52,
+    32 * 1024 - wide.dataOffset,
+    32 * 1024 - wide.dataOffset + 256,
+  );
+  const unambiguous = ubiImage(
+    [
+      ...ubiLayoutPebs(records, wide),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: written,
+        sqnum: 2n,
+        dataPad: 4096,
+      },
+    ],
+    wide,
+  );
+  expect(await parse(unambiguous)).toMatchObject({
+    ok: true,
+    value: { geometry: { pebSize: 128 * 1024, pebCount: 3 } },
+  });
+});
+
+it("does not let an orphan VID with oversized data_size hide a real smaller-grid EC header", async () => {
+  // Damaged 32 KiB image: [layout0, erased, layout1, erased, rootfs0, erased, orphan, free].
+  // Discovery measures 64 KiB. The orphan VID declares data_size=40000 (fits 64 KiB,
+  // would be corrupt under 32 KiB), which must not hide the valid free EC header at 7 * 32 KiB.
+  const narrow = { pebSize: 32 * 1024, dataOffset: 128 };
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 2 },
+  ];
+  const [layout0, layout1] = ubiLayoutPebs(records, narrow);
+  const bytes = ubiImage(
+    [
+      layout0!,
+      { kind: "erased" },
+      layout1!,
+      { kind: "erased" },
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.alloc(narrow.pebSize - narrow.dataOffset, 0x41),
+        sqnum: 2n,
+      },
+      { kind: "erased" },
+      {
+        kind: "leb",
+        volId: 99,
+        lnum: 0,
+        data: Buffer.alloc(narrow.pebSize - narrow.dataOffset, 0x42),
+        dataSize: 40_000,
+        sqnum: 3n,
+      },
+      { kind: "free" },
+    ],
+    narrow,
+  );
+  expect(await parse(bytes)).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      failure: { offset: 7 * narrow.pebSize },
+      message: expect.stringContaining("65536-byte eraseblock size"),
+    },
+  });
+});
+
+it("preserves smaller-PEB ambiguity when an off-grid EC header is corrupt", async () => {
+  // 128 KiB image [layout0, rootfs LEB0 (bad EC CRC, valid VID), layout1, erased].
+  // Initial scan skips the corrupt EC header and measures 256 KiB; smaller-grid
+  // probing must recognize the damaged UBI header at 128 KiB as ambiguous.
+  const narrow = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },
+  ];
+  const [layout0, layout1] = ubiLayoutPebs(records, narrow);
+  const bytes = ubiImage(
+    [
+      layout0!,
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.alloc(narrow.pebSize - narrow.dataOffset, 0x52),
+        sqnum: 2n,
+        ecCrc: 0,
+      },
+      layout1!,
+      { kind: "erased" },
+    ],
+    narrow,
+  );
+  expect(await parse(bytes)).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining("131072-byte eraseblock size"),
+    },
+  });
+});
+
+it("refuses a dynamic volume with a corrupt trailing PEB instead of truncating it", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 2 },
+    { id: 1, name: "full", type: "dynamic", reservedPebs: 1 },
+  ];
+  for (const corruption of [{ ecCrc: 0 }, { vidCrc: 0 }] as const) {
+    const bytes = ubiImage(
       [
+        ...ubiLayoutPebs(records, wide),
         {
-          state: "mapped",
-          eraseCounter: 1n,
-          imageSeq: 0,
-          vid: {
-            volType: 2,
-            copyFlag: 0,
-            compat: 0,
-            volId: 0,
-            lnum: 0,
-            dataSize: data.length,
-            usedEbs: 1,
-            dataPad: 0,
-            dataCrc: 0,
-            sqnum: 2n,
-          },
+          kind: "leb",
+          volId: 0,
+          lnum: 0,
+          data: Buffer.alloc(lebBytes, 0x30),
+          sqnum: 2n,
+        },
+        {
+          kind: "leb",
+          volId: 0,
+          lnum: 1,
+          data: Buffer.alloc(lebBytes, 0x31),
+          sqnum: 3n,
+          ...corruption,
+        },
+        {
+          kind: "leb",
+          volId: 1,
+          lnum: 0,
+          data: Buffer.alloc(lebBytes, 0x32),
+          sqnum: 4n,
         },
       ],
-      32 * 1024,
-      tables,
-    ),
-  ).toBe(false);
-  const padded = {
-    state: "mapped" as const,
-    eraseCounter: 1n,
-    imageSeq: 0,
-    vid: {
-      volType: 2,
-      copyFlag: 0,
-      compat: 0,
+      wide,
+    );
+    const parsed = await image(bytes);
+    expect(parsed.corruptPebCount).toBe(1);
+    expect(parsed.volumes[0]).toMatchObject({
+      name: "rootfs",
+      mappedLebCount: 1,
+      extractRefusal: "lost_lebs",
+      dataBytes: null,
+      ranges: [],
+    });
+    // Control: a dynamic volume whose mapped LEBs already fill reservedPebs is
+    // still extractable even when another PEB is corrupt.
+    expect(parsed.volumes[1]).toMatchObject({
+      name: "full",
+      mappedLebCount: 1,
+      extractRefusal: null,
+      dataBytes: lebBytes,
+    });
+  }
+});
+
+it("probes the full grid of a passed-over non-dividing candidate beyond the prefix window", async () => {
+  // 11 x 128 KiB image truncated by 64 KiB (1344 KiB = 7 x 192 KiB).
+  // Dynamic volume with alignment=65536, data_pad=61440 fits both 128 KiB and 192 KiB.
+  // Genuine EC header at 896 KiB (7 * 128 KiB, past (4 + 1) * 128 KiB = 640 KiB)
+  // falls inside a layout PEB under the 192 KiB retry and must refuse the retry.
+  const real = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const trial = { pebSize: 192 * 1024, dataOffset: 4096 };
+  const realLeb = real.pebSize - real.dataOffset - 61_440;
+  const records: UbiFixtureVolumeRecord[] = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic",
+      reservedPebs: 9,
+      alignment: 65_536,
+      dataPad: 61_440,
+    },
+  ];
+  const [layout0, layout1] = ubiLayoutPebs(records, real);
+  // Build payload headers at 192 KiB multiples inside the early dynamic LEBs
+  // so 192 KiB looks like a dividing candidate with layout PEBs at PEB 4 (768 KiB)
+  // and PEB 5 (960 KiB).
+  const fakeHeader = ubiImage(
+    [
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.alloc(realLeb, 0x52),
+        sqnum: 20n,
+        dataPad: 61_440,
+      },
+    ],
+    trial,
+  ).subarray(0, real.dataOffset);
+  const lebWithFake = (lnum: number, sqnum: bigint): UbiFixturePeb => {
+    const data = Buffer.alloc(realLeb, 0x40 + lnum);
+    fakeHeader.copy(data, 64 * 1024 - real.dataOffset);
+    return {
+      kind: "leb",
+      volId: 0,
+      lnum,
+      data,
+      sqnum,
+      dataPad: 61_440,
+    };
+  };
+  const pebs: UbiFixturePeb[] = [
+    {
+      kind: "leb",
       volId: 0,
       lnum: 0,
-      dataSize: 32 * 1024 - 128 - 10,
-      usedEbs: 1,
-      dataPad: 20,
-      dataCrc: 0,
+      data: Buffer.alloc(realLeb, 0x30),
       sqnum: 2n,
+      dataPad: 61_440,
     },
-  };
-  expect(
-    ubiSmallerPebSizeHoldsLebs(parsed.geometry, [padded], 32 * 1024, tables),
-  ).toBe(false);
-  expect(
-    ubiSmallerPebSizeHoldsLebs(
-      parsed.geometry,
-      [{ ...padded, vid: { ...padded.vid, dataPad: 10 } }],
-      32 * 1024,
-      tables,
-    ),
-  ).toBe(true);
-  // Padding that fills the whole smaller LEB is invalid there even when a
-  // dynamic LEB declares no data, so it rules the smaller size out.
-  const wholeLebPad = 32 * 1024 - parsed.geometry.dataOffset;
-  expect(
-    ubiSmallerPebSizeHoldsLebs(
-      parsed.geometry,
-      [
-        {
-          ...padded,
-          vid: { ...padded.vid, volType: 1, dataSize: 0, dataPad: wholeLebPad },
-        },
-      ],
-      32 * 1024,
-      tables,
-    ),
-  ).toBe(false);
+    lebWithFake(1, 3n), // offset 128 KiB -> fake header at 192 KiB
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 2,
+      data: Buffer.alloc(realLeb, 0x32),
+      sqnum: 4n,
+      dataPad: 61_440,
+    },
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 3,
+      data: Buffer.alloc(realLeb, 0x33),
+      sqnum: 5n,
+      dataPad: 61_440,
+    },
+    lebWithFake(4, 6n), // offset 512 KiB -> fake header at 576 KiB
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 5,
+      data: Buffer.alloc(realLeb, 0x35),
+      sqnum: 7n,
+      dataPad: 61_440,
+    },
+    layout0!, // offset 768 KiB (4 * 192 KiB)
+    { kind: "free" }, // offset 896 KiB (7 * 128 KiB, inside 192 KiB layout0!)
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 6,
+      data: Buffer.alloc(realLeb, 0x36),
+      sqnum: 8n,
+      dataPad: 61_440,
+    },
+    layout1!, // offset 1152 KiB (6 * 192 KiB)
+    { kind: "free" }, // offset 1280 KiB (truncated to 64 KiB)
+  ];
+  const full = ubiImage(pebs, real);
+  const truncated = full.subarray(0, 11 * real.pebSize - 64 * 1024);
+  expect(truncated.length).toBe(7 * trial.pebSize);
+  expect(await parse(truncated)).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+});
+
+it("retries past a trial-grid layout conflict when a later static LEB proves the larger PEB size", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const innerHeader = ubiImage([{ kind: "free" }], {
+    pebSize: 64 * 1024,
+    dataOffset: 128,
+  }).subarray(0, 64);
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },
+    { id: 1, name: "kernel", type: "static", reservedPebs: 1 },
+  ];
+  const rootfsData = Buffer.alloc(lebBytes, 0x52);
+  innerHeader.copy(rootfsData, 64 * 1024 - wide.dataOffset);
+  const kernelData = Buffer.alloc(lebBytes, 0x4b);
+  const bytes = ubiImage(
+    [
+      { kind: "leb", volId: 0, lnum: 0, data: rootfsData, sqnum: 2n },
+      ...ubiLayoutPebs(records, wide),
+      {
+        kind: "leb",
+        volId: 1,
+        lnum: 0,
+        data: kernelData,
+        sqnum: 3n,
+        volType: "static",
+        usedEbs: 1,
+      },
+    ],
+    wide,
+  );
+  const parsed = await image(bytes);
+  expect(parsed.geometry).toMatchObject({ pebSize: wide.pebSize, pebCount: 4 });
+  expect(parsed.volumes).toMatchObject([
+    { name: "rootfs", dataBytes: lebBytes, extractRefusal: null },
+    { name: "kernel", dataBytes: lebBytes, extractRefusal: null },
+  ]);
 });
 
 describe("erase-counter headers inside static LEB payload", () => {
