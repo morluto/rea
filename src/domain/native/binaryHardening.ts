@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import {
   BINARY_ARCHITECTURES,
@@ -6,6 +7,7 @@ import {
 } from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_BINARY_HARDENING_FILE_BYTES = 536870912;
@@ -25,13 +27,16 @@ export const inspectBinaryHardeningInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF, PE, or Mach-O image",
   ),
+  max_structure_bytes: maxStructureBytesSchema,
   max_file_bytes: z
     .number()
     .int()
     .min(64)
     .max(MAX_INSPECT_BINARY_HARDENING_FILE_BYTES)
     .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+    .describe(
+      "Maximum bytes this reader reads from the artifact: headers, directories and the ranges they reference (default 64 MiB). The file may be larger; its one hashing pass is not counted",
+    ),
 });
 export type InspectBinaryHardeningInput = z.infer<
   typeof inspectBinaryHardeningInputSchema
@@ -154,6 +159,8 @@ const imageSchema = z.strictObject({
   byte_order: z.enum(["little", "big"]).nullable(),
   machine: uint.nullable(),
   slice: sliceSchema.nullable(),
+  /** PE images only. */
+  image_base: peImageBaseSchema,
   rows: z.array(rowSchema),
 });
 export type BinaryHardeningImage = z.infer<typeof imageSchema>;

@@ -1,9 +1,7 @@
-const ascii = (value: string): Buffer => {
-  const bytes = Buffer.from(value, "ascii");
-  return bytes.length < 15
-    ? Buffer.concat([Buffer.from([0x50 | bytes.length]), bytes])
-    : Buffer.concat([Buffer.from([0x5f, 0x10, bytes.length]), bytes]);
-};
+import {
+  binaryPlistAscii,
+  binaryPlistFromObjects,
+} from "./binaryPlistObjectTable.js";
 
 /** NSKeyedArchiver with a caller-sized UID for `$top.root`. */
 export const keyedArchiveUidBytes = (
@@ -16,31 +14,17 @@ export const keyedArchiveUidBytes = (
     uid[byte + 1] = Number(uidValue & 0xffn);
     uidValue >>= 8n;
   }
-  const objects = [
+  return binaryPlistFromObjects([
     Buffer.from([0xd3, 1, 3, 4, 2, 8, 5]),
-    ascii("$archiver"),
-    ascii("NSKeyedArchiver"),
-    ascii("$objects"),
-    ascii("$top"),
+    binaryPlistAscii("$archiver"),
+    binaryPlistAscii("NSKeyedArchiver"),
+    binaryPlistAscii("$objects"),
+    binaryPlistAscii("$top"),
     Buffer.from([0xd1, 6, 7]),
-    ascii("root"),
+    binaryPlistAscii("root"),
     uid,
     Buffer.from([0xa2, 9, 10]),
-    ascii("$null"),
-    ascii("payload"),
-  ];
-  const offsets: number[] = [];
-  let position = Buffer.byteLength("bplist00", "ascii");
-  for (const object of objects) {
-    offsets.push(position);
-    position += object.length;
-  }
-  const header = Buffer.from("bplist00", "ascii");
-  const trailer = Buffer.alloc(32);
-  trailer[6] = 1;
-  trailer[7] = 1;
-  trailer.writeBigUInt64BE(BigInt(objects.length), 8);
-  trailer.writeBigUInt64BE(0n, 16);
-  trailer.writeBigUInt64BE(BigInt(position), 24);
-  return Buffer.concat([header, ...objects, Buffer.from(offsets), trailer]);
+    binaryPlistAscii("$null"),
+    binaryPlistAscii("payload"),
+  ]);
 };

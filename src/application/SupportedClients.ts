@@ -13,9 +13,7 @@ import {
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
-  clientPathDependence,
   type ClientRootFailure,
-  mcporterXdgConfigHome,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
@@ -29,7 +27,7 @@ import {
 } from "./MsixPackageStorage.js";
 import { kiloProjectLocation } from "./McpRegistrationKiloLocations.js";
 import type {
-  McpRegistrationLocation,
+  McpRegistrationLocationResult,
   McpRegistrationLocationContext,
 } from "./McpRegistrationLocations.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -234,7 +232,7 @@ type McpAddExposure = {
       /** A project location only an asynchronous probe can decide. */
       readonly projectLocation: (
         context: McpRegistrationLocationContext,
-      ) => Promise<McpRegistrationLocation>;
+      ) => Promise<McpRegistrationLocationResult>;
       readonly projectPaths?: undefined;
     }
 );

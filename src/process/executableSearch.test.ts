@@ -13,11 +13,15 @@ describe("posixPathCandidates", () => {
         workingDirectory: "/work",
       }),
     ]).toEqual([
-      { path: "/usr/bin/tool", relativeEntry: false },
-      { path: "/work/tool", relativeEntry: true },
-      { path: "/work/bin/tool", relativeEntry: true },
+      { path: "/usr/bin/tool", relativeEntry: false, entry: "/usr/bin" },
+      { path: "/work/tool", relativeEntry: true, entry: "" },
+      { path: "/work/bin/tool", relativeEntry: true, entry: "bin" },
       // `..` stays for the filesystem to resolve after a symbolic link.
-      { path: "/opt/x/../y/tool", relativeEntry: false },
+      {
+        path: "/opt/x/../y/tool",
+        relativeEntry: false,
+        entry: "/opt/./x/../y/",
+      },
     ]);
   });
 
@@ -26,7 +30,9 @@ describe("posixPathCandidates", () => {
       ...posixPathCandidates("tool", ":bin:/usr/bin", {
         relativeEntries: "skip",
       }),
-    ]).toEqual([{ path: "/usr/bin/tool", relativeEntry: false }]);
+    ]).toEqual([
+      { path: "/usr/bin/tool", relativeEntry: false, entry: "/usr/bin" },
+    ]);
     // An empty PATH is one empty entry: the working directory.
     expect([
       ...posixPathCandidates("tool", "", { relativeEntries: "skip" }),
@@ -36,7 +42,7 @@ describe("posixPathCandidates", () => {
         relativeEntries: "resolve",
         workingDirectory: "/work",
       }),
-    ]).toEqual([{ path: "/work/tool", relativeEntry: true }]);
+    ]).toEqual([{ path: "/work/tool", relativeEntry: true, entry: "" }]);
   });
 
   it("resolves no entry after the one the caller stops at", () => {
@@ -50,7 +56,11 @@ describe("posixPathCandidates", () => {
       const [first] = posixPathCandidates("java", "/jdk/bin:.", {
         relativeEntries: "resolve",
       });
-      expect(first).toEqual({ path: "/jdk/bin/java", relativeEntry: false });
+      expect(first).toEqual({
+        path: "/jdk/bin/java",
+        relativeEntry: false,
+        entry: "/jdk/bin",
+      });
       expect(cwd).not.toHaveBeenCalled();
     } finally {
       cwd.mockRestore();
@@ -66,7 +76,25 @@ describe("posixPathCandidates", () => {
         ...posixPathCandidates("java", ".::/jdk/bin", {
           relativeEntries: "resolve",
         }),
-      ]).toEqual([{ path: "/jdk/bin/java", relativeEntry: false }]);
+      ]).toEqual([
+        { path: "/jdk/bin/java", relativeEntry: false, entry: "/jdk/bin" },
+      ]);
+      // A caller that probes against the process's own directory gets the
+      // relative entries as written, marked with why they are unresolved.
+      expect([
+        ...posixPathCandidates("java", "..:/jdk/bin", {
+          relativeEntries: "resolve",
+          unreadableWorkingDirectory: "as-written",
+        }),
+      ]).toEqual([
+        {
+          path: "../java",
+          relativeEntry: true,
+          entry: "..",
+          unresolved: { cause: expect.any(Error) },
+        },
+        { path: "/jdk/bin/java", relativeEntry: false, entry: "/jdk/bin" },
+      ]);
       const windows = windowsPathCandidates("java", {
         PATH: "bin;C:\\jdk\\bin",
         PATHEXT: ".EXE",
@@ -86,11 +114,30 @@ describe("posixPathCandidates", () => {
         relativeEntries: "skip",
       }),
     ]).toEqual([
-      { path: "/a/ghidra", relativeEntry: false },
-      { path: "/a/ghidraRun", relativeEntry: false },
-      { path: "/b/ghidra", relativeEntry: false },
-      { path: "/b/ghidraRun", relativeEntry: false },
+      { path: "/a/ghidra", relativeEntry: false, entry: "/a" },
+      { path: "/a/ghidraRun", relativeEntry: false, entry: "/a" },
+      { path: "/b/ghidra", relativeEntry: false, entry: "/b" },
+      { path: "/b/ghidraRun", relativeEntry: false, entry: "/b" },
     ]);
+  });
+
+  it("reads a working-directory reader only when a relative entry is reached", () => {
+    const workingDirectory = vi.fn(() => "/work");
+    const [first] = posixPathCandidates("tool", "/usr/bin:bin", {
+      relativeEntries: "resolve",
+      workingDirectory,
+    });
+    expect(first?.path).toBe("/usr/bin/tool");
+    expect(workingDirectory).not.toHaveBeenCalled();
+    expect(
+      [
+        ...posixPathCandidates("tool", "/usr/bin:bin", {
+          relativeEntries: "resolve",
+          workingDirectory,
+        }),
+      ].map(({ path }) => path),
+    ).toEqual(["/usr/bin/tool", "/work/bin/tool"]);
+    expect(workingDirectory).toHaveBeenCalledOnce();
   });
 });
 
@@ -140,6 +187,31 @@ describe("windowsPathCandidates", () => {
       paths("apktool", environment, { cwd: "C:\\", allowBatch: true }),
     ).toEqual(["C:\\tools\\apktool.BAT", "C:\\tools\\apktool.EXE"]);
     expect(paths("npm.cmd", environment, { cwd: "C:\\" })).toEqual([]);
+  });
+
+  it("appends PATHEXT when a command's dot is part of its name, as Windows does", () => {
+    const environment = { PATH: "C:\\Python", PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+    expect(paths("python3.12", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\Python\\python3.12.COM",
+      "C:\\Python\\python3.12.EXE",
+    ]);
+    expect(paths("python3.12.exe", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\Python\\python3.12.exe",
+    ]);
+    // An image extension stays explicit even when PATHEXT omits it.
+    expect(
+      paths("tool.com", { PATH: "C:\\bin", PATHEXT: ".EXE" }, { cwd: "C:\\" }),
+    ).toEqual(["C:\\bin\\tool.com"]);
+    // Appending PATHEXT validates it, as for a command without a dot.
+    expect(
+      windowsPathCandidates("pip3.12", {
+        PATH: "C:\\bin",
+        PATHEXT: ".EXE;C:\\bad",
+      }),
+    ).toEqual({
+      ok: false,
+      error: { kind: "invalid_extension", extension: "C:\\bad" },
+    });
   });
 
   it("uses the selected working drive for a root-relative command", () => {

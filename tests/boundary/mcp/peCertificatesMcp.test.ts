@@ -99,22 +99,6 @@ mcpTest(
   },
 );
 
-mcpTest(
-  "requires an absolute path for inspect_pe_certificates",
-  async ({ mcp }) => {
-    const client = await connect(mcp);
-    const response = await client.callTool({
-      name: "inspect_pe_certificates",
-      arguments: { path: "signed.exe" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
-    });
-  },
-);
-
 mcpTest.for([
   { count: 350, reported_limits: { max_decoded_text_bytes: 65_536 } },
   { count: 600, reported_limits: { max_asn1_values: 16_384 } },

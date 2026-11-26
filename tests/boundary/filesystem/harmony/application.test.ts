@@ -20,7 +20,7 @@ import {
   writeApplicationZip,
 } from "../../../support/applicationSessionFixture.js";
 
-import { projectHarmonyApplicationEvidence } from "../../../../src/application/harmony/HarmonyApplicationService.js";
+import { projectHarmonyApplicationEvidence } from "../../../../src/application/InventoryProjectionEvidence.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import {
   harmonyApplicationProjectionResultSchema,

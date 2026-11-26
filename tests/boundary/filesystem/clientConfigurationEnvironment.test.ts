@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -92,9 +93,8 @@ it.each([
       status: "configured",
       backupPath: `${configPath}.rea.backup`,
     });
-    const current = parseClientConfiguration(
-      await readFile(configPath, "utf8"),
-      "kimi",
+    const current = expectResultValue(
+      parseClientConfiguration(await readFile(configPath, "utf8"), "kimi"),
     );
     expect(current.servers.rea).toMatchObject({ toolTimeoutMs: deadline });
     expect(current.servers.rea).toHaveProperty("env", env);
@@ -235,7 +235,7 @@ it.skipIf(process.platform !== "win32").each([
     if (duplicate) expect(text).toContain("# retain winning rationale");
     expect(text).toContain("!!js caller.custom");
     const env = clientRegistrationEnvironmentDetails(
-      parseClientConfiguration(text, "dsh"),
+      expectResultValue(parseClientConfiguration(text, "dsh")),
       undefined,
       HOST_PLATFORM.platform,
     );
@@ -282,9 +282,8 @@ it("preserves a lowercase explicit Kimi schema profile instead of inserting a co
   expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
     { status: "configured" },
   );
-  const parsed = parseClientConfiguration(
-    await readFile(configPath, "utf8"),
-    "kimi",
+  const parsed = expectResultValue(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "kimi"),
   );
   expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
     rea_mcp_input_schema_profile: "compact",
@@ -326,7 +325,7 @@ it
     expect(text).toContain("REA_ANALYSIS_PROVIDER: ghidra");
     expect(text).toContain("!!js caller.custom");
     const details = clientRegistrationEnvironmentDetails(
-      parseClientConfiguration(text, "dsh"),
+      expectResultValue(parseClientConfiguration(text, "dsh")),
       undefined,
       HOST_PLATFORM.platform,
     );
@@ -352,11 +351,13 @@ it.skipIf(process.platform !== "win32").each([
 ])(
   "keeps Windows override precedence consistent with the launched environment: $expected",
   ({ existing, overrides, expected }) => {
-    const parsed = parseClientConfiguration(
-      JSON.stringify({
-        mcpServers: { rea: { command: "rea", args: ["mcp"], env: existing } },
-      }),
-      "json",
+    const parsed = expectResultValue(
+      parseClientConfiguration(
+        JSON.stringify({
+          mcpServers: { rea: { command: "rea", args: ["mcp"], env: existing } },
+        }),
+        "json",
+      ),
     );
     const result = clientRegistrationEnvironmentDetails(
       parsed,
@@ -464,7 +465,9 @@ it.each([
     );
     if (!serialized.ok) throw new Error("fixture serialization failed");
     const original = serialized.value;
-    const originalParsed = parseClientConfiguration(original, format);
+    const originalParsed = expectResultValue(
+      parseClientConfiguration(original, format),
+    );
     await writeFile(configPath, original);
     const providers = { GHIDRA_INSTALL_DIR: join(root, "new-ghidra") };
     const command = ["rea", "mcp"];
@@ -475,7 +478,9 @@ it.each([
       await configureClientConfiguration(client, providers, command),
     ).toMatchObject({ status: "configured" });
     const configured = await readFile(configPath, "utf8");
-    const parsed = parseClientConfiguration(configured, format);
+    const parsed = expectResultValue(
+      parseClientConfiguration(configured, format),
+    );
     expect(Object.hasOwn(parsed.document, "__proto__")).toBe(true);
     expect(parsed.document["__proto__"]).toEqual({
       caller: "retain root value",
@@ -522,7 +527,7 @@ it.each(["linux", "win32"] as const)(
           CUSTOM: !!js caller.custom
 `;
     const details = clientRegistrationEnvironmentDetails(
-      parseClientConfiguration(source, "dsh"),
+      expectResultValue(parseClientConfiguration(source, "dsh")),
       undefined,
       platform,
       {},
@@ -539,15 +544,17 @@ it.each(["linux", "win32"] as const)(
 );
 
 it("retains an unresolved JEB endpoint expression until a selected literal replaces it", async () => {
-  const parsed = parseClientConfiguration(
-    `- insert:
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      `- insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
       config:
         env:
           REA_JEB_MCP_URL: !!js caller.endpoint
 `,
-    "dsh",
+      "dsh",
+    ),
   );
   const unresolved = await clientRegistrationEnvironmentDetailsWithBudget(
     parsed,
@@ -588,8 +595,9 @@ it.each(
 )(
   "keeps expression-backed $setting unknown on $platform when deriving timeout guidance",
   async ({ setting, platform }) => {
-    const parsed = parseClientConfiguration(
-      `- insert:
+    const parsed = expectResultValue(
+      parseClientConfiguration(
+        `- insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
       config:
@@ -597,7 +605,8 @@ it.each(
           ${platform === "win32" ? setting.toLowerCase() : setting}: !!js caller.setting
           CALLER_SETTING: retained
 `,
-      "dsh",
+        "dsh",
+      ),
     );
     const values = clientRegistrationEnvironment(
       parsed,
@@ -654,8 +663,9 @@ it.each(
 );
 
 it("retains an unknown companion while deriving unrelated literal timeout facts", () => {
-  const parsed = parseClientConfiguration(
-    `- insert:
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      `- insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
       config:
@@ -664,7 +674,8 @@ it("retains an unknown companion while deriving unrelated literal timeout facts"
           REA_GHIDRA_COMPILER_SPEC_ID: borlandcpp
           REA_GHIDRA_STARTUP_TIMEOUT_MS: "17000"
 `,
-    "dsh",
+      "dsh",
+    ),
   );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
@@ -679,8 +690,9 @@ it("retains an unknown companion while deriving unrelated literal timeout facts"
 });
 
 it("does not resolve a provider budget from an expression omitted from literal values", async () => {
-  const parsed = parseClientConfiguration(
-    `- insert:
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      `- insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
       config:
@@ -688,7 +700,8 @@ it("does not resolve a provider budget from an expression omitted from literal v
           REA_ANALYSIS_PROVIDER: ida
           REA_IDA_MCP_CONFIG: !!js caller.idaConfig
 `,
-    "dsh",
+      "dsh",
+    ),
   );
   const observations: string[] = [];
   const resolveBudget = async (
@@ -801,9 +814,8 @@ it("retains legacy OpenCode environment when migrating into a native server tabl
   expect(
     await configureClientConfiguration(client, {}, ["rea", "mcp"]),
   ).toMatchObject({ status: "configured" });
-  const parsed = parseClientConfiguration(
-    await readFile(configPath, "utf8"),
-    "opencode",
+  const parsed = expectResultValue(
+    parseClientConfiguration(await readFile(configPath, "utf8"), "opencode"),
   );
   expect(parsed.legacyServers).toEqual({});
   expect(parsed.servers.rea).toEqual(
@@ -945,9 +957,8 @@ it.each([
 ] as const)(
   "identifies the malformed registration setting for %s",
   (_name, env, setting) => {
-    const parsed = parseClientConfiguration(
-      registrationWithEnvironment(env),
-      "json",
+    const parsed = expectResultValue(
+      parseClientConfiguration(registrationWithEnvironment(env), "json"),
     );
     expect(
       clientRegistrationEnvironmentDetails(
@@ -1050,17 +1061,19 @@ it("refuses an unidentified launch command before creating a client configuratio
 });
 
 it("treats a variable-expanding client's recorded expression as unresolved", () => {
-  const parsed = parseClientConfiguration(
-    JSON.stringify({
-      mcpServers: {
-        rea: {
-          command: "rea",
-          args: ["mcp"],
-          env: { PATH: "${PATH}:/opt/jdk/bin", JAVA_HOME: "/opt/jdk" },
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "rea",
+            args: ["mcp"],
+            env: { PATH: "${PATH}:/opt/jdk/bin", JAVA_HOME: "/opt/jdk" },
+          },
         },
-      },
-    }),
-    "json",
+      }),
+      "json",
+    ),
   );
   const qwen = clientRegistrationEnvironmentDetails(
     parsed,
@@ -1091,17 +1104,19 @@ it("treats a variable-expanding client's recorded expression as unresolved", () 
 });
 
 it("keeps a typed Qwen setting unresolved without discarding its recorded expression", () => {
-  const parsed = parseClientConfiguration(
-    JSON.stringify({
-      mcpServers: {
-        rea: {
-          command: "rea",
-          args: ["mcp"],
-          env: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${JOBS}" },
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "rea",
+            args: ["mcp"],
+            env: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${JOBS}" },
+          },
         },
-      },
-    }),
-    "json",
+      }),
+      "json",
+    ),
   );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
@@ -1120,17 +1135,19 @@ it("keeps a typed Qwen setting unresolved without discarding its recorded expres
 });
 
 it("keeps a differently cased Qwen expression unresolved on Windows", () => {
-  const parsed = parseClientConfiguration(
-    JSON.stringify({
-      mcpServers: {
-        rea: {
-          command: "rea",
-          args: ["mcp"],
-          env: { rea_ghidra_startup_timeout_ms: "${JOBS}" },
+  const parsed = expectResultValue(
+    parseClientConfiguration(
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "rea",
+            args: ["mcp"],
+            env: { rea_ghidra_startup_timeout_ms: "${JOBS}" },
+          },
         },
-      },
-    }),
-    "json",
+      }),
+      "json",
+    ),
   );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
@@ -1157,21 +1174,23 @@ it.each([
 ] as const)(
   "reads only the profile-selected %s environment with nested value %j",
   (name, value) => {
-    const parsed = parseClientConfiguration(
-      JSON.stringify({
-        mcpServers: {
-          rea: {
-            command: "outer",
-            env: { SELECTED: "outer" },
-            transport: {
-              type: "stdio",
-              command: "nested",
-              env: { SELECTED: value },
+    const parsed = expectResultValue(
+      parseClientConfiguration(
+        JSON.stringify({
+          mcpServers: {
+            rea: {
+              command: "outer",
+              env: { SELECTED: "outer" },
+              transport: {
+                type: "stdio",
+                command: "nested",
+                env: { SELECTED: value },
+              },
             },
           },
-        },
-      }),
-      "json",
+        }),
+        "json",
+      ),
     );
     const details = clientRegistrationEnvironmentDetails(
       parsed,

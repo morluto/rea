@@ -1,16 +1,15 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { BeamPort } from "../../ports/erlang/BeamPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectErlangBeamInputSchema,
   erlangBeamSchema,
   type ErlangBeam,
 } from "../../domain/erlang/beam.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { observedFileEvidence } from "../observedFileEvidence.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_erlang_beam";
 
@@ -22,62 +21,39 @@ export class BeamService {
     return this.provider.close();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectErlangBeamInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = erlangBeamSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(
-        report.data,
-        input.value.max_chunks,
-        input.value.max_atoms,
-        input.value.max_file_bytes,
-      )
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectErlangBeamInputSchema,
+        outputSchema: erlangBeamSchema,
+        provider: this.provider,
+        retainCompletedReport: true,
+        invalidOutputMessage:
           "BEAM provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "file",
-          sha256: value.artifact.sha256,
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: [
-            { kind: "artifact-path" as const, path: value.artifact.path },
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(
+            report,
+            parameters.max_chunks,
+            parameters.max_atoms,
+            parameters.max_file_bytes,
+          ),
+        buildEvidence: (value, identity, parameters) =>
+          observedFileEvidence(value, identity, OPERATION, parameters, [
             {
-              kind: "file-offset-range" as const,
+              kind: "file-offset-range",
               start: value.form.location.offset,
               end: value.form.location.offset + value.form.location.bytes,
             },
-          ],
-        },
-      ),
-      options?.signal,
+          ]),
+      },
+      rawInput,
+      options,
     );
   }
 }

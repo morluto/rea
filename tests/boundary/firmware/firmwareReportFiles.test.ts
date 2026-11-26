@@ -233,9 +233,13 @@ it("counts directories against the editable staging-entry limit", async () => {
     retryable: false,
     details: { resource: "capacity", reported_limits: { max_output_files: 1 } },
   });
-  expect(projected.remediation.action).toContain("max_output_files=1");
+  expect(projected.details?.limit).toMatchObject({
+    parameter: "max_output_files",
+    effective_value: 1,
+    maximum: MAX_FIRMWARE_STAGING_ENTRIES,
+  });
   expect(projected.remediation.action).toContain(
-    `Increase max_output_files up to ${MAX_FIRMWARE_STAGING_ENTRIES}`,
+    `Pass a larger max_output_files on the next extract_firmware call (range 1..${String(MAX_FIRMWARE_STAGING_ENTRIES)})`,
   );
 });
 

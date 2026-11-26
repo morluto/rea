@@ -1293,13 +1293,42 @@ export const createSystemProcessOwnershipHost = (
           return undefined;
         }
       };
+      const LINUX_PROC_INSPECTION_CONCURRENCY = 48;
+
+      const allSettledBounded = async <T, U>(
+        items: readonly T[],
+        concurrency: number,
+        fn: (item: T, index: number) => Promise<U>,
+      ): Promise<PromiseSettledResult<U>[]> => {
+        const results = new Array<PromiseSettledResult<U>>(items.length);
+        if (items.length === 0) return results;
+        let next = 0;
+        const worker = async (): Promise<void> => {
+          while (next < items.length) {
+            const index = next++;
+            try {
+              const value = await fn(items[index]!, index);
+              results[index] = { status: "fulfilled", value };
+            } catch (reason: unknown) {
+              results[index] = { status: "rejected", reason };
+            }
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, items.length) }, worker),
+        );
+        return results;
+      };
+
       const physicalReadFailures: {
         pid: number;
         requestIndex: number;
         cause: unknown;
       }[] = [];
-      const results = await Promise.allSettled(
-        processes.map(async ({ pid }, requestIndex) => {
+      const results = await allSettledBounded(
+        processes,
+        LINUX_PROC_INSPECTION_CONCURRENCY,
+        async ({ pid }, requestIndex) => {
           if (!Number.isSafeInteger(pid) || pid <= 0)
             return [
               pid,
@@ -1508,7 +1537,7 @@ export const createSystemProcessOwnershipHost = (
               { state: "unavailable", reason: errorMessage(cause) } as const,
             ] as const;
           }
-        }),
+        },
       );
       const observations = new Map<number, ProcessIdentityObservation>();
       const failures: { pid: number; requestIndex: number; cause: unknown }[] =

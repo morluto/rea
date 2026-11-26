@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256 as sha } from "../../tests/support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -29,8 +29,6 @@ const attestedDol = (result: Result<NativeLoadImage, string>): DolImage => {
   return result.value;
 };
 
-const sha = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
 /** The digest snapshot the Ghidra client streams for these exact bytes. */
@@ -63,7 +61,7 @@ const dolTarget = async (bytes: Buffer): Promise<DolTarget> => {
   await writeFile(join(directory, "game.dol"), bytes);
   const parsed = await parseBinaryTarget("game.dol", {
     cwd: directory,
-    formatHint: "gamecube-dol",
+    loadSelection: { format: "gamecube-dol" },
   });
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.format !== "gamecube-dol")

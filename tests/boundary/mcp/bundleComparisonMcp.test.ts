@@ -12,10 +12,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { compareEvidenceBundlesCommand } from "../../../src/application/EvidenceBundleCommands.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import {
-  bundleComparisonInputSchema,
-  bundleComparisonResultSchema,
-} from "../../../src/domain/bundleComparison.js";
+import { bundleComparisonInputSchema } from "../../../src/domain/bundleComparison.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   createEvidenceBundle,
@@ -25,14 +22,14 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-const sourceEvidence = (label: string) =>
+const sourceEvidence = (label: string, resultKey = "label") =>
   createEvidence(
     unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",
       parameters: { label },
-      result: { label },
+      result: { [resultKey]: label },
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -131,7 +128,11 @@ describe("bundle comparison MCP integration", () => {
     const root = await createTestTempDirectory("rea-bundle-mcp-");
     const leftPath = join(root, "left.json");
     const rightPath = join(root, "right.json");
-    const leftRecord = sourceEvidence("left");
+    const leftRecord = sourceEvidence("left\ud800", "\udc00");
+    // This ID was produced with the pre-upgrade Evidence encoding.
+    expect(leftRecord.evidence_id).toBe(
+      "ev_55aa3cd58e7b32f08302046ee039c28349f9d51835af2be9e5eb2ad94ae8a1f5",
+    );
     const rightRecord = sourceEvidence("right");
     await Promise.all([
       writeFile(

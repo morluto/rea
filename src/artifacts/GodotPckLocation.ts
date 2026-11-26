@@ -73,14 +73,14 @@ export const locateGodotPck = async (
   const magic =
     prefix !== undefined && prefix.length >= 4
       ? Buffer.from(prefix.buffer, prefix.byteOffset, 4)
-      : await readArtifactFileBytes(handle, 0, 4, size, signal);
+      : await readArtifactFileBytes("godot-pck", handle, 0, 4, size, signal);
   if (hasGodotPckHeader(magic)) return { start: 0, end: size, embedded: false };
   if (size < 12) return undefined;
   const observation = await observeEmbeddedGodotPck(
     size,
     4,
     (offset, bytes, end) =>
-      readArtifactFileBytes(handle, offset, bytes, end, signal),
+      readArtifactFileBytes("godot-pck", handle, offset, bytes, end, signal),
   );
   if (observation.state !== "located") return undefined;
   return {

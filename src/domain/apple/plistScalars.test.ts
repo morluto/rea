@@ -333,7 +333,14 @@ describe("binary plist UID widths", () => {
 
     const inexact = binaryPlistWithUid(8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
     expect(() => estimateBinaryPlistExpansion(inexact, 1024)).toThrow(
-      "binary plist UID value 9007199254740992",
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "unsupported",
+          format: "binary-plist",
+          field: "uid",
+          undecodedContent: true,
+        }),
+      }),
     );
     const nonzeroHighByte = binaryPlistWithUid(9, 0x1_0000_0000_0000_0000n);
     expect(() => estimateBinaryPlistExpansion(nonzeroHighByte, 1024)).toThrow(

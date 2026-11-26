@@ -18,6 +18,7 @@ import {
 import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const contents = "throw new Error('must not execute');\n";
@@ -52,13 +53,8 @@ cliTest.for(carriers)(
       )?.evidence.normalized_result,
     );
     expect(graph.manifest.root_format).toBe("deno-standalone");
-    expect(inspection.next_probes).toEqual([
-      {
-        operation: "extract_artifact",
-        authority: "artifact-bytes",
-        rationale: expect.any(String),
-      },
-    ]);
+    // The carrier's own readers follow the package reader.
+    expectCarrierProbes(inspection.next_probes, carrier, ["extract_artifact"]);
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,
@@ -111,7 +107,7 @@ cliTest(
     });
     expect(capped.exitCode).toBe(1);
     expect(capped.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       details: {
         reason: "limit",
         boundary: "capacity",
@@ -119,22 +115,24 @@ cliTest(
       },
     });
 
-    // The language directory declares one more row than the admitted interval holds.
-    const [resourceRoot, , languages] = fixture.directoryOffsets;
-    if (resourceRoot === undefined || languages === undefined)
+    // Resource trees are read at their RVA whatever the directory Size
+    // declares, so damage the framing itself: the type directory's entry
+    // names a language directory outside the file-backed resource bytes. Its
+    // header cannot be read, which the reader reports before it counts rows
+    // against the entry allowance.
+    const [, typeDirectory] = fixture.directoryOffsets;
+    if (typeDirectory === undefined)
       throw new Error("Missing resource fixture directories");
-    fixture.bytes.writeUInt32LE(
-      languages - resourceRoot + 16 + 65_535 * 8 - 1,
-      fixture.directoryAt + 4,
-    );
+    fixture.bytes.writeUInt32LE(0x80000000 + 0x7fff_0000, typeDirectory + 20);
     await writeFile(path, fixture.bytes);
     const malformed = await cli.run({
       arguments: ["inspect-artifact", path, "--json"],
     });
     expect(malformed.exitCode).toBe(1);
     expect(malformed.json).toMatchObject({
-      code: "invalid_request",
-      details: { reason: "malformed" },
+      code: "unsupported_target",
+      category: "unsupported_target",
+      details: { path, failure_kind: "malformed" },
     });
   },
 );

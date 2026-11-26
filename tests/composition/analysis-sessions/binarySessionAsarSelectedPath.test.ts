@@ -70,7 +70,7 @@ it.skipIf(process.platform === "win32")(
         expect(retargeted.error).toMatchObject({
           _tag: "ArtifactOperationError",
           reason: "integrity",
-          integrityCheck: "container-identity",
+          integrityCheck: "admitted-identity",
         });
     } finally {
       await session.close();

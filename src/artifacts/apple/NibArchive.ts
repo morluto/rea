@@ -13,6 +13,24 @@ import {
 } from "./InterfaceBuilderDecodeBudget.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { isRecord } from "../../kernel/isRecord.js";
+import { trimTrailing } from "../../kernel/trimEdges.js";
+
+export const trimTrailingNul = (value: string): string =>
+  trimTrailing(value, (character) => character === "\0");
+
+/** Read the numeric object table reference stored in a decoded NIB value. */
+export const nibObjectReference = (
+  value: JsonValue | undefined,
+): number | null => {
+  const reference = isRecord(value) ? value.$nib_object_ref : undefined;
+  return typeof reference === "number" ? reference : null;
+};
+
+/** Read the encoded bytes without decoding or charging the projection budget. */
+export const nibDataBase64 = (value: JsonValue | undefined): string | null => {
+  const encoded = isRecord(value) ? value.$nib_data_base64 : undefined;
+  return typeof encoded === "string" ? encoded : null;
+};
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 const MINIMUM_OBJECT_ROW_BYTES = 3; // Class index, value start, field count.
@@ -54,9 +72,7 @@ export const nibCollectionMembers = (
 ): readonly JsonValue[] | undefined => {
   if (
     object === undefined ||
-    !/^(?:NS|NSMutable)(?:Array|Set)$/u.test(
-      object.class_name.replace(/\0+$/u, ""),
-    )
+    !/^(?:NS|NSMutable)(?:Array|Set)$/u.test(trimTrailingNul(object.class_name))
   )
     return undefined;
   const keys = ["UINibEncoderEmptyKey", "NS.objects"];
@@ -160,11 +176,8 @@ export const decodeNibArchive = (
     budget,
   );
   for (const { value } of values.values()) {
-    if (
-      isRecord(value) &&
-      typeof value.$nib_object_ref === "number" &&
-      value.$nib_object_ref >= objectCount
-    )
+    const reference = nibObjectReference(value);
+    if (reference !== null && reference >= objectCount)
       throw malformedInput(
         "nib-archive",
         "NIBArchive object reference is outside the object table",
@@ -386,12 +399,9 @@ const parseClasses = (
       32 + length * 2,
       "NIBArchive class names exceed the aggregate Interface Builder decode budget",
     );
-    const name = decodeUtf8(
-      bytes,
-      cursor.offset,
-      next,
-      `class ${index}`,
-    ).replace(/\0+$/u, "");
+    const name = trimTrailingNul(
+      decodeUtf8(bytes, cursor.offset, next, `class ${index}`),
+    );
     cursor.offset = next;
     output.push(name);
   }

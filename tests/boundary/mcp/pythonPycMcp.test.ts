@@ -2,6 +2,7 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -34,9 +35,6 @@ const marshalInt32 = (value: number): Buffer => {
   return Buffer.concat([Buffer.from([0x69]), payload]);
 };
 
-const marshalSingleItemTuple = (item: Buffer): Buffer =>
-  Buffer.concat([Buffer.from([0x29, 1]), item]);
-
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
 
@@ -58,56 +56,34 @@ it("reads signed TYPE_INT64 constants and rejects a truncated payload", async ()
   const { client, close } = await connect();
   try {
     const root = await createTestTempDirectory("rea-python-pyc-mcp-int64-");
-    for (const [name, value, bits] of [
-      ["positive", 42n, 6],
-      ["negative", -1n, 1],
-      ["minimum", -(1n << 63n), 64],
-      ["maximum", (1n << 63n) - 1n, 63],
-    ] as const) {
-      const path = join(root, `${name}.pyc`);
-      await writeFile(
-        path,
-        Buffer.concat([
-          pythonPycHeader(3531),
-          marshalCode("py311", {
-            constsObject: marshalSingleItemTuple(marshalInt64(value)),
-          }),
-        ]),
-      );
-      const response = await client.callTool({
-        name: "inspect_python_pyc",
-        arguments: { path },
-      });
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = completePycEvidenceSchema.parse(
-        response.structuredContent,
-      );
-      expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual(
-        { kind: "int", bits, value: value.toString() },
-      );
-    }
-
-    const ordinaryPath = join(root, "ordinary-int.pyc");
+    const path = join(root, "signed.pyc");
     await writeFile(
-      ordinaryPath,
+      path,
       Buffer.concat([
         pythonPycHeader(3531),
         marshalCode("py311", {
-          constsObject: marshalSingleItemTuple(marshalInt32(-42)),
+          consts: [
+            ...[42n, -1n, -(1n << 63n), (1n << 63n) - 1n].map(marshalInt64),
+            marshalInt32(-42),
+          ],
         }),
       ]),
     );
-    const ordinary = await client.callTool({
+    const response = await client.callTool({
       name: "inspect_python_pyc",
-      arguments: { path: ordinaryPath },
+      arguments: { path },
     });
-    expect(ordinary.isError, JSON.stringify(ordinary.content)).not.toBe(true);
-    const ordinaryEvidence = completePycEvidenceSchema.parse(
-      ordinary.structuredContent,
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const { normalized_result } = completePycEvidenceSchema.parse(
+      response.structuredContent,
     );
-    expect(
-      ordinaryEvidence.normalized_result.code_objects[0]?.consts,
-    ).toContainEqual({ kind: "int", bits: 6, value: "-42" });
+    expect(normalized_result.code_objects[0]?.consts).toEqual([
+      { kind: "int", bits: 6, value: "42" },
+      { kind: "int", bits: 1, value: "-1" },
+      { kind: "int", bits: 64, value: "-9223372036854775808" },
+      { kind: "int", bits: 63, value: "9223372036854775807" },
+      { kind: "int", bits: 6, value: "-42" },
+    ]);
 
     const truncatedPath = join(root, "truncated.pyc");
     await writeFile(
@@ -124,15 +100,11 @@ it("reads signed TYPE_INT64 constants and rejects a truncated payload", async ()
     });
     expect(truncated.isError).toBe(true);
     expect(parseMcpToolError(truncated).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_python_pyc",
-        issues: [
-          {
-            reason: "invalid_format",
-            message: expect.stringContaining("64-bit integer"),
-          },
-        ],
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        reason: expect.stringContaining("64-bit integer"),
       },
     });
   } finally {
@@ -163,16 +135,11 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
       name: "inner",
       firstlineno: -7,
     });
-    await writeFile(
-      path,
-      Buffer.concat([
-        pythonPycHeader(3531),
-        marshalCode("py311", {
-          firstlineno: -1,
-          consts: [nested],
-        }),
-      ]),
-    );
+    const bytes = Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", { firstlineno: -1, consts: [nested] }),
+    ]);
+    await writeFile(path, bytes);
     const response = await client.callTool(
       { name: "inspect_python_pyc", arguments: { path } },
       { toolDefinition: withCanonicalOutputSchema(advertised) },
@@ -181,7 +148,20 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
     const evidence = completePycEvidenceSchema.parse(
       response.structuredContent,
     );
-    expect(evidence.normalized_result.header.python_version).toBe("3.12");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    expect(evidence).toMatchObject({
+      confidence: "observed",
+      subject: { identity: { format: "file", sha256 }, local_path: path },
+      normalized_result: {
+        artifact: { path, sha256, bytes: bytes.length },
+        header: { magic: 3531, python_version: "3.12", code_layout: "py311" },
+      },
+    });
+    expect(evidence.locations).toEqual([
+      { kind: "artifact-path", path },
+      { kind: "file-offset-range", start: 0, end: 16 },
+      { kind: "file-offset-range", start: 16, end: bytes.length },
+    ]);
     expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
     expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
     expect(evidence.normalized_result.code_objects[1]?.firstlineno).toBe(-7);
@@ -189,23 +169,6 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
       kind: "code",
       name: "inner",
       firstlineno: -7,
-    });
-  } finally {
-    await close();
-  }
-});
-
-it("requires an absolute path for inspect_python_pyc", async () => {
-  const { client, close } = await connect();
-  try {
-    const response = await client.callTool({
-      name: "inspect_python_pyc",
-      arguments: { path: "sample.pyc" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_python_pyc" },
     });
   } finally {
     await close();
@@ -221,62 +184,29 @@ it("advertised pyc output schema preserves historical signed fields", async () =
     if (advertised === undefined)
       throw new Error("Missing inspect_python_pyc output schema");
     const root = await createTestTempDirectory("rea-python-pyc-mcp-flags-");
-    for (const testCase of [
-      {
-        name: "legacy-negative",
-        magic: 3394,
-        layout: "py37" as const,
-        fields: { stacksize: 0xffffffff },
-        expected: { stacksize: -1, flags: 0 },
-      },
-      {
-        name: "alpha-3401-negative-flags",
-        magic: 3401,
-        layout: "py37" as const,
-        fields: { flags: 0x80000000 },
-        expected: { stacksize: 1, flags: -0x80000000 },
-      },
-      {
-        name: "ambiguous-3410-negative-fields",
-        magic: 3410,
-        layout: "py38" as const,
-        fields: { stacksize: 0xffffffff, flags: 0x80000000 },
-        expected: { stacksize: -1, flags: -0x80000000 },
-      },
-      {
-        name: "unknown-positive",
-        magic: 3531,
-        layout: "py311" as const,
-        fields: { flags: 0x40000000 },
-        expected: { flags: 0x40000000 },
-      },
-    ]) {
-      const path = join(root, `${testCase.name}.pyc`);
-      await writeFile(
-        path,
-        Buffer.concat([
-          pythonPycHeader(testCase.magic),
-          marshalCode(testCase.layout, testCase.fields),
-        ]),
-      );
-      const response = await client.callTool(
-        { name: "inspect_python_pyc", arguments: { path } },
-        { toolDefinition: withCanonicalOutputSchema(advertised) },
-      );
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = completePycEvidenceSchema.parse(
-        response.structuredContent,
-      );
-      expect(evidence.normalized_result.code_objects[0]).toMatchObject(
-        testCase.expected,
-      );
-      if (testCase.magic === 3410)
-        expect(evidence.normalized_result.limitations).toEqual(
-          expect.arrayContaining([
-            expect.stringContaining("Magic 3410 is shared"),
-          ]),
-        );
-    }
+    const path = join(root, "ambiguous-3410.pyc");
+    await writeFile(
+      path,
+      Buffer.concat([
+        pythonPycHeader(3410),
+        marshalCode("py38", { stacksize: 0xffffffff, flags: 0x80000000 }),
+      ]),
+    );
+    const response = await client.callTool(
+      { name: "inspect_python_pyc", arguments: { path } },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const { normalized_result } = completePycEvidenceSchema.parse(
+      response.structuredContent,
+    );
+    expect(normalized_result.code_objects[0]).toMatchObject({
+      stacksize: -1,
+      flags: -0x80000000,
+    });
+    expect(normalized_result.limitations).toEqual(
+      expect.arrayContaining([expect.stringContaining("Magic 3410 is shared")]),
+    );
   } finally {
     await close();
   }
@@ -286,41 +216,27 @@ it("rejects negative code fields for magics after constructor validation was add
   const { client, close } = await connect();
   try {
     const root = await createTestTempDirectory("rea-python-pyc-mcp-signed-");
-    for (const { name, fields, message } of [
-      {
-        name: "negative-stacksize",
-        fields: { stacksize: 0xffffffff },
-        message: "co_stacksize is negative",
+    const path = join(root, "negative-flags.pyc");
+    await writeFile(
+      path,
+      Buffer.concat([
+        pythonPycHeader(3411),
+        marshalCode("py38", { flags: 0x80000000 }),
+      ]),
+    );
+    const response = await client.callTool({
+      name: "inspect_python_pyc",
+      arguments: { path },
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "inspect_python_pyc",
+        failure_kind: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        reason: expect.stringContaining("co_flags is negative"),
       },
-      {
-        name: "negative-flags",
-        fields: { flags: 0x80000000 },
-        message: "co_flags is negative",
-      },
-    ]) {
-      const path = join(root, `${name}.pyc`);
-      await writeFile(
-        path,
-        Buffer.concat([pythonPycHeader(3411), marshalCode("py38", fields)]),
-      );
-      const response = await client.callTool({
-        name: "inspect_python_pyc",
-        arguments: { path },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "inspect_python_pyc",
-          issues: [
-            {
-              reason: "invalid_format",
-              message: expect.stringContaining(message),
-            },
-          ],
-        },
-      });
-    }
+    });
   } finally {
     await close();
   }

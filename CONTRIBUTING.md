@@ -69,14 +69,13 @@ and suspected causes explicit.
 Incomplete reports and intermittent failures are welcome. If a narrative answer
 or supporting evidence is unavailable, write `NOT_ENOUGH_INFO` and explain the
 gap. Clearly label source-only findings and proposed checks; do not claim runtime
-reproduction or results you did not observe. A root-cause analysis or fix is not
+reproduction, measurements, or results you did not observe. A root-cause analysis or fix is not
 required to report a problem. Documentation reports should identify the relevant
 passage or missing guidance and explain the correction or confusion.
 
 Feature and design proposals can start with a problem and desired outcome.
 Examples, prior art, and measurements help when available; ideas without them
 are welcome. Maintainers can investigate reports and help resolve open questions.
-Human ownership and readiness declarations apply to PRs as described below.
 
 ## Pull request ownership and readiness
 
@@ -108,7 +107,7 @@ outcome, approach, and useful evidence; link long logs or put them in optional
 details. Address actionable automated review findings and explain disagreements.
 Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
-approval or permission to merge.
+approval, permission to merge, or a review date.
 
 Pull request titles must match the Conventional Commits check in
 [`.github/workflows/pr-title.yml`](.github/workflows/pr-title.yml):
@@ -117,11 +116,8 @@ Pull request titles must match the Conventional Commits check in
 /^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u
 ```
 
-The type is `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`,
-`chore`, or `revert`. An optional scope, in parentheses, uses only lowercase
-`[a-z0-9._/-]`. An optional `!` may precede the colon. The title then has `: `
-and a non-empty outcome, for example `feat: add historical source import`.
-The type `style` fails, and an uppercase scope fails.
+For example, `feat: add historical source import` passes; the type `style` and
+an uppercase scope fail.
 
 Draft status is optional. Draft PRs may request early feedback with open questions
 and incomplete checks. Agents preserve the current draft status unless asked to
@@ -130,8 +126,7 @@ to become a draft.
 
 Leave the readiness declaration unchecked until the human owner has completed
 it. The declaration records initial readiness; later pushes do not invalidate
-it or require another human sign-off. Keep the PR description and affected
-validation current as work changes. AI agents must leave human declarations to
+it or require another human sign-off. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
 Maintainers review the **Author readiness** declaration in the PR body. PRs
@@ -147,11 +142,10 @@ overlap is known. Prefer one clear pointer over repeated status updates.
 If an overlapping change merges while a PR awaits review, link that commit on
 the open PR and state what remains useful. Rebase or otherwise align with the
 current base when the remaining work is still wanted, narrow the PR to the
-uncovered portion, or close it when the change is fully superseded. Keep the
-description and validation current after that update. Maintainers may also note
-the expected disposition (rebase, narrow, or close) when they land or recognize
-an overlapping fix. Readiness still does not grant merge permission or a review
-date.
+uncovered portion, or close it when the change is fully superseded, then update
+the description and validation. Maintainers may also note the expected
+disposition (rebase, narrow, or close) when they land or recognize an
+overlapping fix.
 
 Maintainers may return a PR to the author or close it when the problem is
 unsupported, validation is missing, or the owner cannot explain the change.
@@ -289,8 +283,8 @@ Commits that only move files or rewrite import paths are listed in
 attributes lines to the change that wrote them. Move files with `git mv` and
 keep such a commit free of other edits.
 
-Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
-protocols in adapters and shared CLI/MCP workflows in the application layer.
+Repository invariants, including layering, live in
+[AGENTS.md](AGENTS.md#architecture-and-cleanup).
 
 ### Windows source checkouts
 
@@ -328,19 +322,15 @@ then rerun the command.
 
 ## Documentation website
 
-Use the [documentation directory](docs/README.md) and
-[authoring guide](docs/development/documentation.md) for document ownership.
-
+The [documentation directory](docs/README.md) and
+[authoring guide](docs/development/documentation.md) own document placement,
+navigation, public links and
+[documentation checks](docs/development/documentation.md#generated-ownership-and-checks).
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
 for live editing and `npm run docs:preview` to serve an existing build at
-`/rea/`. Follow the [documentation checks](docs/development/documentation.md#generated-ownership-and-checks)
-to build and verify the rendered routes and anchors.
-
-The [authoring guide](docs/development/documentation.md#links-and-public-routes)
-explains where to edit navigation and how to preserve public links. The
-`Documentation` CI job runs the documentation and rendered-route checks.
-The manual VitePress workflow in `.github/workflows/pages.yml` builds these
-guides for verification.
+`/rea/`. The `Documentation` CI job runs the documentation and rendered-route
+checks; the manual VitePress workflow in `.github/workflows/pages.yml` builds
+these guides for verification.
 
 The product website in `website/public/` has a separate
 [publishing workflow](website/README.md#synchronized-production-publishing) for
@@ -386,7 +376,8 @@ Before requesting review, run relevant tests and `npm run check`; add
 `npm run docs:check` when contracts or generated metadata change. Record the
 checks and unavailable coverage. CI owns the full deterministic suite and
 coverage. `npm run check:pr` is an optional broad local suite for large changes or
-CI diagnosis. Packaging/setup/distribution changes additionally require
+CI diagnosis; it reuses build and static-check outputs while running the test
+suite fresh, including the fast Python producer checks. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.
 
@@ -394,9 +385,8 @@ For CI/test correctness, drift, or performance investigations, use the
 [`rea-ci-tests-audit` contributor skill](.agents/skills/rea-ci-tests-audit/SKILL.md).
 It guides reproduction and comparable measurements before changing checks.
 
-`check:pr` reuses build and static-check outputs while executing the test suite
-fresh, including the fast Python producer checks. `docs:check` also runs the
-onboarding example consistency suite for README-only changes.
+`docs:check` also runs the onboarding example consistency suite for README-only
+changes.
 
 Pre-commit formats and lints staged files; pre-push runs `check:fast`.
 
@@ -408,7 +398,7 @@ dependencies. The ignored outputs are `docs/public/product-catalog.json`,
 `docs/verification/managed-conformance-*.json`, and `skills/`. Edit authored
 skill instructions in `.agents/skills/reverse-engineer-anything/`, where Skills
 can discover the public bundle directly from a clean checkout. `verify:package`
-installs that bundle with Skills 1.7.2 using default repository-root discovery
+installs that bundle with Skills 1.9.0 using default repository-root discovery
 and checks every installed file, alongside the packaged setup checks.
 CI validates generated outputs and retains them as artifacts; do not commit
 them. Reviewed source metadata, including
@@ -464,19 +454,6 @@ Generated fixtures and manifests remain ignored.
 
 ## Maintainer release checklist
 
-Use the [release guide](docs/development/releasing.md). Main pushes automatically refresh a
-Release Please PR with the next version and changelog. Review its migration
-notes, wait for the current CI checks to pass, and merge it into main to publish.
-
-The Release workflow validates and tags that merge; both publishers build its
-exact SHA. Ordinary main pushes cannot publish packages. An optional manual
-`release/VERSION` checkpoint retains explicit preparation and publication.
-
-For grouped release notes with verified contributor thanks, use the repository's
-`rea-changelog-update` skill in `.agents/skills/rea-changelog-update/`. Its inventory,
-credit checks, and finalization process are described in the release guide.
-
-Keep new implementation commits on main for the next release. The workflow
-owns packaged-artifact verification, npm publication, the published CLI/MCP
-canary, and MCP Registry publication. Sync manual checkpoint metadata back to
-main after publication; see the guide for recovery and verification.
+The [release guide](docs/development/releasing.md) owns the Release Please PR,
+publication, the optional manual `release/VERSION` checkpoint, recovery and
+[contributor-aware release notes](docs/development/releasing.md#contributor-aware-release-notes).

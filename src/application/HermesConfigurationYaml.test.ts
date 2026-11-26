@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -604,7 +605,7 @@ describe("Hermes configuration YAML", () => {
 it("retains exact integer settings through a parsed Hermes launcher refresh", () => {
   const source =
     "mcp_servers:\n  rea:\n    command: old\n    identifier: 9007199254740993 # caller identifier\n    negative: -9007199254740993\n    safe: 9007199254740991\n    mode: 0600\n";
-  const parsed = parseClientConfiguration(source, "hermes");
+  const parsed = expectResultValue(parseClientConfiguration(source, "hermes"));
   const previous = parsed.servers.rea as Record<string, unknown>;
   const result = serializeClientConfiguration(
     withClientServers(
@@ -801,7 +802,9 @@ describe("Hermes registration refresh through inherited merges", () => {
       "/home/rea-test",
       HOST_PLATFORM.platform,
     ).find(({ name }) => name === "hermes")!;
-    const parsed = parseClientConfiguration(source, "hermes");
+    const parsed = expectResultValue(
+      parseClientConfiguration(source, "hermes"),
+    );
     const registration = refreshClientRegistration(
       client,
       "hermes",

@@ -25,6 +25,28 @@ import { writeRepositoryOxlintConfiguration } from "../../fixtures/oxlintConfigu
 const repository = process.cwd();
 const oxlint = join(repository, "node_modules/oxlint/bin/oxlint");
 
+function readTrackedTests() {
+  const files = execFileSync("git", ["ls-files", "-z", "--", "*.test.ts"], {
+    cwd: repository,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter(Boolean);
+  const groupCounts = new Map<string, number>();
+  const firstByProject = new Map<string, string>();
+  for (const file of files) {
+    const { group, name } = projectForTest(file);
+    groupCounts.set(group, (groupCounts.get(group) ?? 0) + 1);
+    if (!firstByProject.has(name)) firstByProject.set(name, file);
+  }
+  return { total: files.length, groupCounts, firstByProject };
+}
+
+let inventory: ReturnType<typeof readTrackedTests> | undefined;
+function trackedTests() {
+  return (inventory ??= readTrackedTests());
+}
+
 const runOxlint = async (
   processes: TestProcesses,
   cwd: string,
@@ -53,25 +75,12 @@ const runOxlint = async (
 
 describe("canonical test-project ownership", () => {
   it("assigns every tracked test file exactly once to source or built", () => {
-    const files = execFileSync("git", ["ls-files", "*.test.ts"], {
-      cwd: repository,
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    const grouped = new Map<string, string[]>();
-    for (const file of files) {
-      const project = projectForTest(file);
-      grouped.set(project.group, [...(grouped.get(project.group) ?? []), file]);
-    }
-
-    expect(grouped.get("source")).not.toBeUndefined();
-    expect(grouped.get("built")).not.toBeUndefined();
-    expect(
-      (grouped.get("source")?.length ?? 0) +
-        (grouped.get("built")?.length ?? 0),
-    ).toBe(files.length);
+    const { total, groupCounts } = trackedTests();
+    const source = groupCounts.get("source") ?? 0;
+    const built = groupCounts.get("built") ?? 0;
+    expect(source).toBeGreaterThan(0);
+    expect(built).toBeGreaterThan(0);
+    expect(source + built).toBe(total);
     expect(
       SOURCE_TEST_PROJECTS.reduce(
         (count, project) => count + project.include.length,
@@ -250,18 +259,10 @@ describe("test module isolation", () => {
     async ({ processes }) => {
       const root = await createTestTempDirectory("rea-vitest-mock-probe-");
       const config = await writeRepositoryOxlintConfiguration(root);
-      const files = execFileSync("git", ["ls-files", "*.test.ts"], {
-        cwd: repository,
-        encoding: "utf8",
-      })
-        .trim()
-        .split("\n")
-        .filter(Boolean);
+      const { firstByProject } = trackedTests();
       const probes = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
         (project) => {
-          const path = files.find(
-            (file) => projectForTest(file).name === project.name,
-          );
+          const path = firstByProject.get(project.name);
           if (path === undefined)
             throw new Error(`No tracked test in ${project.name}`);
           return { path, isolated: project.isolate !== false };

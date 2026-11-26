@@ -3,13 +3,14 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics.js";
+import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics/kernelBuildConfig.js";
 import {
   bzImageGzipFixture,
   kernelBuildConfigFixture,
   plainIkcfgStringFixture,
 } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("kernel build config stable filesystem boundary", () => {
   it("reports non-file selections as caller input errors", async () => {
@@ -20,20 +21,11 @@ describe("kernel build config stable filesystem boundary", () => {
     await symlink(path, alias);
     const service = createKernelBuildConfigService();
     try {
-      for (const [candidate, reason] of [
-        [root, "invalid_format"],
-        [alias, "invalid_format"],
-        [join(root, "missing"), "invalid_value"],
-        [join(path, "child"), "invalid_value"],
-      ] as const) {
-        const result = await service.inspect({ path: candidate });
-        if (result.ok) throw new Error("Expected file acquisition failure");
-        expect(result.error).toMatchObject({
-          _tag: "AnalysisInputError",
-          operation: "inspect_kernel_build_config",
-          issues: [{ path: ["path"], reason, message: expect.any(String) }],
-        });
-      }
+      await expectFileSelectionErrors(service, "inspect_kernel_build_config", {
+        root,
+        alias,
+        path,
+      });
     } finally {
       await service.close();
     }
@@ -47,7 +39,15 @@ describe("kernel build config stable filesystem boundary", () => {
     try {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
-      expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(tooSmall.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          default_value: 67108864,
+        },
+      });
       const bootImage = join(root, "bzImage");
       await writeFile(bootImage, bzImageGzipFixture());
       for (const [target, boundary, maximum] of [
@@ -66,10 +66,16 @@ describe("kernel build config stable filesystem boundary", () => {
           details: {
             resource: "capacity",
             reported_limits: { boundary, maximum, [boundary]: maximum },
+            limit: {
+              control_kind: "parameter",
+              parameter: boundary,
+              effective_value: maximum,
+              applies_at: "next_call",
+            },
           },
           remediation: {
             action: expect.stringContaining(
-              `Raise ${boundary} above ${String(maximum)}`,
+              `Pass a larger ${boundary} on the next inspect_kernel_build_config call`,
             ),
           },
         });

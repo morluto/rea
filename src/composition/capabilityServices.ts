@@ -1,4 +1,9 @@
-import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
+import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
+import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
+import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
+import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
@@ -73,27 +78,26 @@ import {
 } from "./debuggerSessions.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
-import {
-  createPeLoadConfigService,
-  createBinaryHardeningService,
-  createPeCertificatesService,
-  createPeImportsService,
-  createNativeExportsService,
-  createPeResourcesService,
-  createWindowsShortcutService,
-  createRecordedCrashService,
-  createBinaryLayoutService,
-  createDevicetreeService,
-  createElfNotesService,
-  createDwarfUnitsService,
-  createElfDebugLinkService,
-  createNativeInitializersService,
-  createElfUnwindRangesService,
-  createAppleIpsService,
-  createKernelModuleService,
-  createElfDependenciesService,
-  createKernelBuildConfigService,
-} from "./binaryDiagnostics.js";
+import { createPeLoadConfigService } from "./binaryDiagnostics/peLoadConfig.js";
+import { createPeUnwindRangesService } from "./binaryDiagnostics/peUnwindRanges.js";
+import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
+import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
+import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
+import { createNativeExportsService } from "./binaryDiagnostics/nativeExports.js";
+import { createPeResourcesService } from "./binaryDiagnostics/peResources.js";
+import { createWindowsShortcutService } from "./binaryDiagnostics/windowsShortcut.js";
+import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js";
+import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
+import { createDevicetreeService } from "./binaryDiagnostics/devicetree.js";
+import { createElfNotesService } from "./binaryDiagnostics/elfNotes.js";
+import { createDwarfUnitsService } from "./binaryDiagnostics/dwarfUnits.js";
+import { createElfDebugLinkService } from "./binaryDiagnostics/elfDebugLink.js";
+import { createNativeInitializersService } from "./binaryDiagnostics/nativeInitializers.js";
+import { createElfUnwindRangesService } from "./binaryDiagnostics/elfUnwindRanges.js";
+import { createAppleIpsService } from "./binaryDiagnostics/appleIps.js";
+import { createKernelModuleService } from "./binaryDiagnostics/kernelModule.js";
+import { createElfDependenciesService } from "./binaryDiagnostics/elfDependencies.js";
+import { createKernelBuildConfigService } from "./binaryDiagnostics/kernelBuildConfig.js";
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -126,11 +130,7 @@ import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureS
 import type { JavaScriptRecoveryPort } from "../ports/javascript/JavaScriptRecoveryPort.js";
 import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
 import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
-import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
-import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
-import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
-import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
 import type { ComputerStartTiming } from "../desktop/AgentEnvComputer.js";
@@ -162,11 +162,11 @@ export interface CapabilityServiceOptions {
   readonly webRuntime?: WebRuntimeService;
   readonly webNetworkCapture?: WebNetworkCaptureService;
   readonly androidAnalysis?: AndroidAnalysisPort;
-  readonly apktoolAnalysis?: ApktoolResourceAnalysisPort;
-  readonly pcapAnalysis?: PcapAnalysisPort;
-  readonly flutterAnalysis?: FlutterBuildAnalysisPort;
+  readonly apktoolAnalysis?: RequestAnalysisPort<ApktoolRequest>;
+  readonly pcapAnalysis?: RequestAnalysisPort<PcapRequest>;
+  readonly flutterAnalysis?: RequestAnalysisPort<FlutterRequest>;
   readonly jebAnalysis?: JebAnalysisPort;
-  readonly adbDeviceAnalysis?: AdbDeviceAnalysisPort;
+  readonly adbDeviceAnalysis?: RequestAnalysisPort<AdbRequest>;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
@@ -407,6 +407,7 @@ const modules = {
   elfDependencies: service(() => createElfDependenciesService()),
   kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
+  peUnwindRanges: service(() => createPeUnwindRangesService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
@@ -492,11 +493,10 @@ const modules = {
       },
     }),
   ),
-  uefiAnalysis: service(
-    ({ options }) =>
-      new UefiAnalysisService(
-        options.uefiAnalysis ?? createUefiAnalysisProvider(),
-      ),
+  uefiAnalysis: service(({ options }) =>
+    createUefiAnalysisService(
+      options.uefiAnalysis ?? createUefiAnalysisProvider(),
+    ),
   ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>
@@ -793,6 +793,14 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
     createManagedBinarySession: async () => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();
+    },
+    createArtifactPathInspection: async () => {
+      const { createArtifactPathInspection } = await import("./binary.js");
+      return createArtifactPathInspection(
+        context.providerEnvironment,
+        context.platform,
+        context.settings,
+      );
     },
     close: () => scope.close(),
   };

@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { compareInspectionDimension } from "../../tests/support/browser/webCaptureComparison.js";
 
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
-import { compareWebCaptures } from "./webCaptureDiff.js";
-import { compareWebCapturesInputSchema } from "./webCaptureDiffSchemas.js";
 import { stableWebResources } from "./webInventory.js";
 
 const resource = (
@@ -23,16 +22,7 @@ const capture = (resources: readonly ReturnType<typeof resource>[]) => {
   return inspection;
 };
 
-const compareResources = (
-  before: WebPageInspection,
-  after: WebPageInspection,
-) =>
-  compareWebCaptures(
-    compareWebCapturesInputSchema.parse({
-      before: { inspection: before },
-      after: { inspection: after },
-    }),
-  ).dimensions.resources;
+const compareResources = compareInspectionDimension("resources");
 
 describe("web resource comparison identity and optional size", () => {
   it.each([

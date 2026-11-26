@@ -276,10 +276,15 @@ const parseGroupHeader = (
   return { bodyStart: afterOpen + 1, extractable: false };
 };
 
+// Nested alternation branches recurse; past this depth extraction abandons
+// the branch instead of growing the call stack with pattern nesting.
+const MAX_ALTERNATION_DEPTH = 24;
+
 const collectRequiredRuns = (
   pattern: string,
   groups: GroupIndex,
   caseSensitive: boolean,
+  depth: number = 0,
 ): readonly string[] => {
   const runs: string[] = [];
   const frames: GroupFrame[] = [];
@@ -321,12 +326,40 @@ const collectRequiredRuns = (
         bodyEnd,
       );
       const quantifier = parseQuantifier(pattern, bodyEnd + 1, limit);
-      if (
-        !extractable ||
-        groups.groupHasAlt[index] === 1 ||
-        quantifier.min === 0
-      ) {
+      if (!extractable || quantifier.min === 0) {
         flush();
+        index = quantifier.nextIndex;
+        continue;
+      }
+      if (groups.groupHasAlt[index] === 1) {
+        if (depth >= MAX_ALTERNATION_DEPTH) {
+          flush();
+          index = quantifier.nextIndex;
+          continue;
+        }
+        // Every branch must guarantee the segment for it to stay required.
+        const branches = splitTopLevelAlternatives(
+          pattern.slice(bodyStart, bodyEnd),
+        );
+        const runSets = branches.map((branch) =>
+          collectRequiredRuns(
+            branch,
+            analyzeRegexGroups(branch),
+            caseSensitive,
+            depth + 1,
+          ),
+        );
+        const common = runSets.some((runs) => runs.length === 0)
+          ? undefined
+          : longestCommonLiteral(runSets);
+        // The common segment floats inside each branch, so it cannot join
+        // neighbouring literals; it is only guaranteed on its own.
+        flush();
+        if (
+          common !== undefined &&
+          Array.from(common).length >= MIN_ALTERNATION_LITERAL_CODE_POINTS
+        )
+          runs.push(common);
         index = quantifier.nextIndex;
         continue;
       }
@@ -379,6 +412,81 @@ const collectRequiredRuns = (
   return runs;
 };
 
+const MAX_COMMON_LITERAL_CODE_POINTS = 1024;
+
+// An alternation-common segment is only worth a provider round trip when it
+// can prune; a single shared code point matches nearly every value.
+const MIN_ALTERNATION_LITERAL_CODE_POINTS = 2;
+
+/** Split by top-level `|`, honouring escapes, classes and group nesting. */
+const splitTopLevelAlternatives = (pattern: string): readonly string[] => {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let index = 0;
+  while (index < pattern.length) {
+    const ch = pattern[index]!;
+    if (ch === "\\") {
+      index += 2;
+      continue;
+    }
+    if (ch === "[") {
+      index = skipCharClass(pattern, index + 1, pattern.length);
+      continue;
+    }
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth -= 1;
+    else if (ch === "|" && depth === 0) {
+      parts.push(pattern.slice(start, index));
+      start = index + 1;
+    }
+    index += 1;
+  }
+  parts.push(pattern.slice(start));
+  return parts;
+};
+
+// Total substring probes across all runs; past this the extraction falls
+// back to the full inventory instead of blocking the calling thread.
+const MAX_COMMON_LITERAL_PROBES = 8192;
+
+/** Longest substring of `candidate` (by code point) present in some run of each set. */
+const longestCommonLiteral = (
+  runSets: readonly (readonly string[])[],
+): string | undefined => {
+  const [first, ...rest] = runSets;
+  if (first === undefined) return undefined;
+  const restRuns = rest;
+  let best: string | undefined;
+  let bestLength = 0;
+  let probes = 0;
+  for (const run of first) {
+    // generation-cap: candidate search work is bounded; longer runs still yield a valid shorter common literal.
+    const points = Array.from(run).slice(0, MAX_COMMON_LITERAL_CODE_POINTS);
+    // Probe decreasing lengths over the first run's substrings by start offset.
+    for (let length = points.length; length > bestLength; length -= 1) {
+      let found: string | undefined;
+      for (let offset = 0; offset + length <= points.length; offset += 1) {
+        probes += 1;
+        if (probes > MAX_COMMON_LITERAL_PROBES) return best;
+        const probe = points.slice(offset, offset + length).join("");
+        if (
+          restRuns.every((runs) => runs.some((other) => other.includes(probe)))
+        ) {
+          found = probe;
+          break;
+        }
+      }
+      if (found !== undefined) {
+        best = found;
+        bestLength = length;
+        break;
+      }
+    }
+  }
+  return best;
+};
+
 /**
  * Extract the longest contiguous literal substring that every match of a valid
  * ECMAScript `/u` (or `/iu`) regular expression is guaranteed to contain, or
@@ -395,7 +503,25 @@ export const extractRequiredRegexLiteral = (
     return undefined;
   }
   const groups = analyzeRegexGroups(pattern);
-  if (groups.topLevelHasAlt) return undefined;
+  if (groups.topLevelHasAlt) {
+    // A literal is safe only when every alternative guarantees it: collect
+    // each branch's required runs and keep their longest common substring.
+    const runSets: (readonly string[])[] = [];
+    for (const alternative of splitTopLevelAlternatives(pattern)) {
+      const runs = collectRequiredRuns(
+        alternative,
+        analyzeRegexGroups(alternative),
+        caseSensitive,
+      );
+      if (runs.length === 0) return undefined;
+      runSets.push(runs);
+    }
+    const common = longestCommonLiteral(runSets);
+    return common !== undefined &&
+      Array.from(common).length >= MIN_ALTERNATION_LITERAL_CODE_POINTS
+      ? common
+      : undefined;
+  }
   let longest = "";
   for (const run of collectRequiredRuns(pattern, groups, caseSensitive)) {
     if (run.length > longest.length) longest = run;

@@ -1,5 +1,5 @@
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { createHash } from "node:crypto";
+import { sha256 } from "../../support/sha256.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -55,9 +55,6 @@ const sliceTest = mcpTest.extend<{
   },
 });
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const goSlices = () => {
   const intel = createGoBinaryFixture({
     format: "macho",
@@ -86,6 +83,14 @@ const issues = (response: unknown) =>
       }),
     })
     .parse(parseMcpToolError(response as never)).error;
+
+/** A universal file's own format refusal: a target fault, no field to correct. */
+const containerRefusal = (response: unknown) => {
+  const { error } = parseMcpToolError(response as never);
+  expect(error).not.toHaveProperty("details.issues");
+  expect(error).not.toHaveProperty("recovery");
+  return error;
+};
 
 sliceTest(
   "reads the selected Go slice of a universal Mach-O with file-relative provenance",
@@ -249,7 +254,7 @@ sliceTest(
     const damaged = await write("damaged", truncated);
     for (const architecture of [undefined, "arm64"] as const)
       expect(
-        issues(
+        containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
             arguments: {
@@ -257,11 +262,37 @@ sliceTest(
               ...(architecture === undefined ? {} : { architecture }),
             },
           }),
-        ).details.issues[0],
+        ),
       ).toMatchObject({
-        path: ["path"],
-        message: expect.stringContaining(`Selected artifact ${damaged}: FAT`),
+        code: "unsupported_target",
+        details: {
+          path: damaged,
+          failure_kind: "truncated",
+          format: "macho",
+          reason: "FAT architecture 0 slice range extends beyond the file",
+        },
       });
+
+    // A FAT table cut off by the file's end is truncated, not corrupt: the
+    // container reader measured both the file and the table it declares.
+    const cutOff = await write("cut-off", truncated.subarray(0, 20));
+    expect(
+      containerRefusal(
+        await client.callTool({
+          name: "inspect_go_binary",
+          arguments: { path: cutOff, architecture: "arm64" },
+        }),
+      ),
+    ).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        path: cutOff,
+        failure_kind: "truncated",
+        format: "macho",
+        available_bytes: 20,
+        required_bytes: 28,
+      },
+    });
 
     // The FAT table and the slice header must agree before the slice is read.
     const disagreeing = await write(
@@ -276,21 +307,20 @@ sliceTest(
       ]).bytes,
     );
     expect(
-      issues(
+      containerRefusal(
         await client.callTool({
           name: "inspect_go_binary",
           arguments: { path: disagreeing, architecture: "arm64" },
         }),
       ),
     ).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
-        issues: [
-          {
-            path: ["path"],
-            message: `Selected artifact ${disagreeing}: FAT architecture 0 CPU type/subtype disagrees with its Mach-O header`,
-          },
-        ],
+        path: disagreeing,
+        failure_kind: "malformed",
+        format: "macho",
+        reason:
+          "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
       },
     });
   },
@@ -408,15 +438,20 @@ sliceTest(
     const path = await write("overlapping", universal.bytes);
     for (const architecture of ["arm64", "arm64e"])
       expect(
-        issues(
+        containerRefusal(
           await client.callTool({
             name: "inspect_go_binary",
             arguments: { path, architecture },
           }),
-        ).details.issues[0],
+        ),
       ).toMatchObject({
-        path: ["path"],
-        message: `Selected artifact ${path}: Mach-O slices 0 and 1 overlap.`,
+        code: "unsupported_target",
+        details: {
+          path,
+          failure_kind: "malformed",
+          format: "macho",
+          reason: "Mach-O slices 0 and 1 overlap.",
+        },
       });
   },
 );

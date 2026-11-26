@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
-import { RuleTester } from "oxlint/plugins-dev";
+import { createRuleTester } from "../support/createRuleTester.js";
 import rule from "../../scripts/lint/rules/no-positional-tool-contract.mjs";
 import { collectToolCatalogSources } from "../../scripts/lint/rules/tool-catalog-sources.mjs";
 
-RuleTester.describe = describe;
-RuleTester.it = it;
-const tester = new RuleTester({
-  languageOptions: { parserOptions: { lang: "ts" } },
-});
+const tester = createRuleTester();
 const filename = fileURLToPath(
   new URL("../../src/server/ruleControl.ts", import.meta.url),
 );
