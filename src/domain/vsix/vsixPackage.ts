@@ -1,3 +1,4 @@
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { z } from "zod";
 
 import { BinaryReader } from "../binaryContainer.js";
@@ -25,12 +26,45 @@ export const MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES = 16 * 1024 * 1024;
 /** Commands listed in the contributes summary; remaining stay in the total. */
 export const VSIX_COMMANDS_CAP = 32;
 
-export const VSIX_PACKAGE_LIMIT_MAXIMA = {
-  max_file_bytes: MAX_INSPECT_VSIX_PACKAGE_FILE_BYTES,
-  max_entries: MAX_INSPECT_VSIX_PACKAGE_ENTRIES,
-  max_manifest_bytes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
-  max_member_bytes: MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES,
+/** Each per-call budget's schema bounds and omitted value. */
+export const VSIX_PACKAGE_BUDGETS = {
+  max_file_bytes: {
+    minimum: 16,
+    maximum: MAX_INSPECT_VSIX_PACKAGE_FILE_BYTES,
+    default_value: 67108864,
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_VSIX_PACKAGE_ENTRIES,
+    default_value: 4096,
+  },
+  max_manifest_bytes: {
+    minimum: 1,
+    maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+    default_value: 1048576,
+  },
+  max_member_bytes: {
+    minimum: 1,
+    maximum: MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES,
+    default_value: 1048576,
+  },
 } as const;
+export type VsixPackageBudget = keyof typeof VSIX_PACKAGE_BUDGETS;
+
+/** The per-call control that stopped a package read, from the schema's bounds. */
+export const vsixPackageBudgetLimit = (
+  parameter: VsixPackageBudget,
+  effectiveValue: number,
+  requiredValue?: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: effectiveValue,
+  unit: parameter === "max_entries" ? "count" : "bytes",
+  ...VSIX_PACKAGE_BUDGETS[parameter],
+  applies_at: "next_call",
+  ...(requiredValue === undefined ? {} : { required_value: requiredValue }),
+});
 
 /** Path-derived or magic-derived ZIP member kinds for a .vsix package. */
 export const VSIX_MEMBER_KINDS = [

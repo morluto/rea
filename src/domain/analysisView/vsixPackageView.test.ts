@@ -1,11 +1,12 @@
 import { expect, it } from "vitest";
+import type { VsixPackage } from "../vsix/vsixPackage.js";
 import { createEvidence } from "../evidence.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { vsixPackageSummaryViewResultSchema } from "./analysisViewResult.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
-const report = {
+const report: VsixPackage = {
   artifact: {
     path: "/artifacts/demo.vsix",
     sha256: "a".repeat(64),
@@ -96,18 +97,18 @@ const report = {
   limitations: ["Package condition"],
 };
 
-const parent = (): AnalysisViewParent => {
+const parent = (override: typeof report = report): AnalysisViewParent => {
   const evidence = createEvidence(
     {
-      path: report.artifact.path,
-      sha256: report.artifact.sha256,
+      path: override.artifact.path,
+      sha256: override.artifact.sha256,
       format: "file",
     },
     { id: "rea-vsix-package", name: "REA VS Code vsix reader", version: "1" },
     {
       operation: "inspect_vsix_package",
       parameters: {},
-      result: report,
+      result: override,
       limitations: ["Parent condition"],
     },
   );
@@ -115,7 +116,7 @@ const parent = (): AnalysisViewParent => {
     predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
-    normalizedResult: report,
+    normalizedResult: override,
     subject: evidence.subject,
     limitations: evidence.limitations,
   };
@@ -130,6 +131,7 @@ it("summarizes VS Code extension Evidence with identity and counts", () => {
   const view = vsixPackageSummaryViewResultSchema.parse(result.value);
   expect(view.summary).toMatchObject({
     vsix_identity: { id: "demo.hello", version: "1.2.3" },
+    text_truncated: false,
     activation_event_count: 2,
     eager_activation_event_count: 1,
     content_count: 1,
@@ -137,5 +139,45 @@ it("summarizes VS Code extension Evidence with identity and counts", () => {
   });
   expect(view.limitations).toEqual(
     expect.arrayContaining(["Parent condition", "Package condition"]),
+  );
+  expect(
+    view.limitations.some((message) => message.includes("truncated")),
+  ).toBe(false);
+});
+
+it("bounds oversized summary text fields without splitting surrogate pairs", () => {
+  const longDescription = `${"a".repeat(399)}😀${"b".repeat(100 * 1024)}`;
+  const longDisplayName = "N".repeat(2000);
+  const longEntryPath = `extension/${"p".repeat(2000)}.js`;
+  const source = parent({
+    ...report,
+    vsix_identity: {
+      ...report.vsix_identity!,
+      display_name: longDisplayName,
+      description: longDescription,
+    },
+    entry_points: {
+      main: { path: longEntryPath, present: false },
+      browser: null,
+    },
+  });
+  const result = projectAnalysisView(
+    source,
+    analysisViewRequestSchema.parse({ kind: "summary" }),
+  );
+  if (!result.ok) throw result.error;
+  const view = vsixPackageSummaryViewResultSchema.parse(result.value);
+  expect(view.summary.text_truncated).toBe(true);
+  expect(view.summary.vsix_identity?.description).toBe("a".repeat(399));
+  expect(view.summary.vsix_identity?.display_name?.length).toBe(200);
+  expect(view.summary.entry_points.main?.path.length).toBe(200);
+  expect(Buffer.byteLength(JSON.stringify(view), "utf8")).toBeLessThan(
+    32 * 1024,
+  );
+  expect(view.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining(source.evidenceId),
+      expect.stringContaining("truncated"),
+    ]),
   );
 });

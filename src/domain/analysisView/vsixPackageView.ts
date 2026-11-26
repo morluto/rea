@@ -14,7 +14,23 @@ import {
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 
-/** Package identity and counts; member rows stay in the complete parent. */
+/** UTF-16 code-unit caps for summary text fields so summaries stay within the 32 KiB agent budget. */
+const SUMMARY_TEXT_UNITS = 200;
+const SUMMARY_DESCRIPTION_UNITS = 400;
+
+const truncateSummaryText = (
+  value: string,
+  limit: number,
+): { readonly text: string; readonly truncated: boolean } => {
+  if (value.length <= limit) return { text: value, truncated: false };
+  let end = limit;
+  const last = value.charCodeAt(end - 1);
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end--;
+  if (end === 0) end = limit;
+  return { text: value.slice(0, end), truncated: true };
+};
+
+/** Package identity and counts; member rows and full text stay in the complete parent. */
 export const vsixPackageSummarySchema = vsixPackageSchema
   .pick({
     artifact: true,
@@ -30,6 +46,7 @@ export const vsixPackageSummarySchema = vsixPackageSchema
     coverage: true,
   })
   .extend({
+    text_truncated: z.boolean(),
     activation_event_count: z.int().nonnegative(),
     eager_activation_event_count: z.int().nonnegative(),
     contribute_key_count: z.int().nonnegative(),
@@ -61,6 +78,75 @@ export const projectVsixPackageView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  let textTruncated = false;
+  const boundText = (
+    value: string,
+    limit: number = SUMMARY_TEXT_UNITS,
+  ): string => {
+    const bounded = truncateSummaryText(value, limit);
+    if (bounded.truncated) textTruncated = true;
+    return bounded.text;
+  };
+  const boundNullable = (
+    value: string | null,
+    limit: number = SUMMARY_TEXT_UNITS,
+  ): string | null => (value === null ? null : boundText(value, limit));
+  const summaryVsixIdentity =
+    report.vsix_identity === null
+      ? null
+      : {
+          id: boundNullable(report.vsix_identity.id),
+          version: boundNullable(report.vsix_identity.version),
+          publisher: boundNullable(report.vsix_identity.publisher),
+          target_platform: boundNullable(report.vsix_identity.target_platform),
+          display_name: boundNullable(report.vsix_identity.display_name),
+          description: boundNullable(
+            report.vsix_identity.description,
+            SUMMARY_DESCRIPTION_UNITS,
+          ),
+        };
+  const summaryPackageIdentity =
+    report.package_identity === null
+      ? null
+      : {
+          name: boundNullable(report.package_identity.name),
+          publisher: boundNullable(report.package_identity.publisher),
+          version: boundNullable(report.package_identity.version),
+        };
+  const summaryIdentityDisagreements = report.identity_disagreements.map(
+    (entry) => ({
+      field: boundText(entry.field),
+      vsixmanifest: boundNullable(entry.vsixmanifest),
+      package_json: boundNullable(entry.package_json),
+    }),
+  );
+  const summaryEngine = {
+    vsixmanifest: boundNullable(report.engine.vsixmanifest),
+    package_json: boundNullable(report.engine.package_json),
+    disagreement: report.engine.disagreement,
+  };
+  const summaryTargetPlatform = boundNullable(report.target_platform);
+  const summaryEntryPoints = {
+    main:
+      report.entry_points.main === null
+        ? null
+        : {
+            path: boundText(report.entry_points.main.path),
+            present: report.entry_points.main.present,
+          },
+    browser:
+      report.entry_points.browser === null
+        ? null
+        : {
+            path: boundText(report.entry_points.browser.path),
+            present: report.entry_points.browser.present,
+          },
+  };
+  const requiredLimitations = textTruncated
+    ? [
+        `One or more summary text fields were truncated to fit the summary view; inspect parent Evidence ${parent.evidenceId} for complete values.`,
+      ]
+    : [];
   return ok({
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_vsix_package" as const,
@@ -73,22 +159,24 @@ export const projectVsixPackageView = (
       [...parent.limitations, ...report.limitations],
       parent.evidenceId,
       "limitations",
+      requiredLimitations,
     ),
     unknowns: [],
     kind: "summary" as const,
     view,
     summary: {
       artifact: report.artifact,
-      vsix_identity: report.vsix_identity,
-      package_identity: report.package_identity,
-      identity_disagreements: report.identity_disagreements,
-      engine: report.engine,
-      target_platform: report.target_platform,
-      entry_points: report.entry_points,
+      vsix_identity: summaryVsixIdentity,
+      package_identity: summaryPackageIdentity,
+      identity_disagreements: summaryIdentityDisagreements,
+      engine: summaryEngine,
+      target_platform: summaryTargetPlatform,
+      entry_points: summaryEntryPoints,
       signatures: report.signatures,
       vsixmanifest: report.vsixmanifest,
       package_json: report.package_json,
       coverage: report.coverage,
+      text_truncated: textTruncated,
       activation_event_count: report.activation_events.length,
       eager_activation_event_count: report.activation_events.filter(
         (event) => event.eager,

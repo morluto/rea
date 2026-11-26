@@ -28,9 +28,11 @@ import { fixedCeilingConstraint } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
+  VSIX_PACKAGE_BUDGETS,
   VSIX_PACKAGE_FORMAT,
-  VSIX_PACKAGE_LIMIT_MAXIMA,
+  vsixPackageBudgetLimit,
   type InspectVsixPackageInput,
+  type VsixPackageBudget,
 } from "../domain/vsix/vsixPackage.js";
 import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -38,13 +40,18 @@ import { parseVsixPackage } from "./VsixPackageParser.js";
 
 const OPERATION = "inspect_vsix_package";
 
+/** The refusal options for an exhausted per-call budget. */
 const budgetRecovery = (
-  parameter: keyof typeof VSIX_PACKAGE_LIMIT_MAXIMA,
+  parameter: VsixPackageBudget,
   selected: number,
-): string =>
-  selected >= VSIX_PACKAGE_LIMIT_MAXIMA[parameter]
-    ? `${parameter} is at this operation's maximum of ${String(VSIX_PACKAGE_LIMIT_MAXIMA[parameter])}; select a complete artifact within that bound.`
-    : `Raise ${parameter} above ${String(selected)}, up to ${String(VSIX_PACKAGE_LIMIT_MAXIMA[parameter])}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`;
+  required?: number,
+) => ({
+  limit: vsixPackageBudgetLimit(parameter, selected, required),
+  remediationAction:
+    selected >= VSIX_PACKAGE_BUDGETS[parameter].maximum
+      ? `${parameter} is at this operation's maximum of ${String(VSIX_PACKAGE_BUDGETS[parameter].maximum)}; select a complete artifact within that bound.`
+      : `Raise ${parameter} above ${String(selected)}, up to ${String(VSIX_PACKAGE_BUDGETS[parameter].maximum)}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`,
+});
 
 const vsixFileSizeFailure = (
   cause: ArtifactReaderFailure,
@@ -63,7 +70,7 @@ const vsixFileSizeFailure = (
     {
       ...details,
       retryable: false,
-      remediationAction: budgetRecovery("max_file_bytes", input.max_file_bytes),
+      ...budgetRecovery("max_file_bytes", input.max_file_bytes),
     },
   );
 
@@ -91,9 +98,7 @@ const vsixParseLimit = (
       ),
     });
   const parameter = (
-    Object.keys(
-      VSIX_PACKAGE_LIMIT_MAXIMA,
-    ) as (keyof typeof VSIX_PACKAGE_LIMIT_MAXIMA)[]
+    Object.keys(VSIX_PACKAGE_BUDGETS) as VsixPackageBudget[]
   ).find((name) => name === cause.failure.limit.name);
   return parseLimitConstraint(
     OPERATION,
@@ -104,12 +109,13 @@ const vsixParseLimit = (
       retryable: false,
       ...(parameter === undefined
         ? {}
-        : {
-            remediationAction: budgetRecovery(
-              parameter,
-              cause.failure.limit.maximum,
-            ),
-          }),
+        : budgetRecovery(
+            parameter,
+            cause.failure.limit.maximum,
+            typeof cause.failure.limit.required === "number"
+              ? cause.failure.limit.required
+              : undefined,
+          )),
     },
   );
 };

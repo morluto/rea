@@ -149,6 +149,110 @@ mcpTest(
 );
 
 mcpTest(
+  "bounds a 100 KiB manifest description in the default summary while retaining complete Evidence",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp, "budgeted");
+    try {
+      const root = await createTestTempDirectory("rea-vsix-mcp-long-desc-");
+      const path = join(root, "long-description.vsix");
+      const longDescription = "D".repeat(100 * 1024);
+      const vsixmanifest = `<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
+  <Metadata>
+    <Identity Id="demo.hello" Version="1.2.3" Publisher="demo" />
+    <DisplayName>Hello Demo</DisplayName>
+    <Description xml:space="preserve">${longDescription}</Description>
+  </Metadata>
+  <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Code" />
+  </Installation>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" />
+  </Assets>
+</PackageManifest>
+`;
+      await writeFile(path, await vsixPackageFixture({ vsixmanifest }));
+
+      const summarized = await client.callTool({
+        name: "inspect_vsix_package",
+        arguments: { path },
+      });
+      expect(summarized.isError, JSON.stringify(summarized.content)).not.toBe(
+        true,
+      );
+      expect(
+        Buffer.byteLength(JSON.stringify(summarized.structuredContent), "utf8"),
+      ).toBeLessThan(32 * 1024);
+      const summary = vsixContract.outputSchema.parse(
+        summarized.structuredContent,
+      );
+      expect(summary.operation).toBe("inspect_analysis_view");
+      const view = summary.normalized_result;
+      if (!("kind" in view) || view.kind !== "summary")
+        throw new Error("Expected the retained VSIX summary");
+      expect(view.summary.text_truncated).toBe(true);
+      expect(view.summary.vsix_identity?.description?.length).toBeLessThan(
+        1024,
+      );
+      expect(view.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("truncated"),
+          expect.stringContaining(view.parent_evidence_id),
+        ]),
+      );
+
+      const complete = await client.callTool({
+        name: "inspect_vsix_package",
+        arguments: { path, detail: "complete" },
+      });
+      const evidence = completeVsixEvidenceSchema.parse(
+        complete.structuredContent,
+      );
+      expect(evidence.evidence_id).toBe(view.parent_evidence_id);
+      expect(evidence.normalized_result.vsix_identity?.description).toBe(
+        longDescription,
+      );
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "reports structured parameter limit facts when max_entries is exceeded",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-vsix-mcp-limit-");
+      const path = join(root, "demo.hello.vsix");
+      await writeFile(path, await vsixPackageFixture());
+      const response = await client.callTool({
+        name: "inspect_vsix_package",
+        arguments: { path, max_entries: 1 },
+      });
+      const { error } = parseMcpToolError(response);
+      expect(error).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          operation: "inspect_vsix_package",
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_entries",
+            effective_value: 1,
+            required_value: 2,
+            unit: "count",
+            applies_at: "next_call",
+          },
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
   "requires an absolute path for inspect_vsix_package",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
