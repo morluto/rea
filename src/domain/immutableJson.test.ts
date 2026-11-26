@@ -3,12 +3,40 @@ import { describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
   canBorrowParsedJsonSnapshot,
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 
 describe("owned immutable JSON snapshots", () => {
+  it("never borrows a member that sealing did not visit", () => {
+    const hidden = { mutable: true };
+    const named = { mutable: true };
+    const items: JsonValue[] = [1];
+    Object.defineProperty(items, "named", { value: named, enumerable: true });
+    const record: Record<string, JsonValue> = { items };
+    Object.defineProperty(record, "hidden", { value: hidden });
+    const sealed = freezeOwnedJsonTreeSnapshot(record);
+    expect(immutableJsonSnapshotMember(sealed, "hidden")).toBeUndefined();
+    const borrowed = immutableJsonSnapshotMember(sealed, "items");
+    expect(borrowed).toBe(items);
+    expect(immutableJsonSnapshotMember(borrowed, "named")).toBeUndefined();
+    expect(immutableJsonSnapshotMember(borrowed, "0")).toBe(1);
+    expect(isImmutableJsonSnapshot(hidden)).toBe(false);
+    expect(isImmutableJsonSnapshot(named)).toBe(false);
+    expect(Object.isFrozen(named)).toBe(false);
+  });
+
+  it("seals a shared subtree once rather than once per path", () => {
+    // Each level references the next twice: 2^60 paths, 61 objects.
+    let level: JsonValue = { leaf: true };
+    for (let depth = 0; depth < 60; depth += 1) level = [level, level];
+    const sealed = freezeOwnedJsonTreeSnapshot(level);
+    expect(isImmutableJsonSnapshot(sealed)).toBe(true);
+    expect(Object.isFrozen(sealed)).toBe(true);
+  });
+
   it("borrows only the selected own child of a completed sealed root", () => {
     const value = freezeJsonSnapshot({
       selected: { values: [1, 2] },
