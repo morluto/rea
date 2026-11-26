@@ -166,8 +166,6 @@ export const createExternalMutationToolHandler =
         : observed,
       contract,
       retention.recordEvidence,
-      undefined,
-      retention.evidenceById,
     );
   };
 

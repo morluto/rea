@@ -5,10 +5,7 @@ import {
 } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { expect } from "vitest";
-import {
-  evidenceDisplayMetadataAgree,
-  parseEvidence,
-} from "../../../src/domain/evidence.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import type { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import type { TestDelivery } from "../../support/completeEvidenceByDefault.js";
@@ -129,12 +126,7 @@ export const connectGhidraMcp = async (
 
 export const sessionEvidence = (session: BinarySession, value: unknown) => {
   const evidence = parseEvidence(value);
-  const retained = session.evidenceById(evidence.evidence_id);
-  // A tool handler stamps the recording session's provider selection onto the
-  // copy it delivers, so the two differ in display metadata only.
-  expect(
-    retained !== undefined && evidenceDisplayMetadataAgree(retained, evidence),
-  ).toBe(true);
+  expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   return evidence;
 };
 

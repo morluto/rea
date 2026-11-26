@@ -621,27 +621,6 @@ export const adoptEvidenceDisplayMetadata = (
   return rememberReboundEvidence(retained, display as unknown as Evidence);
 };
 
-/** Use an admitted payload while preserving this call's display paths and stored provenance. */
-export const withRetainedEvidencePayload = (
-  retained: Evidence,
-  presentation: Evidence,
-): Evidence => {
-  if (retained.evidence_id !== presentation.evidence_id)
-    throw new TypeError(
-      "Evidence presentation must name the admitted semantic record",
-    );
-  const metadata = { ...presentation };
-  if (retained.provider_selection === undefined)
-    delete metadata.provider_selection;
-  else metadata.provider_selection = retained.provider_selection;
-  const displayed = adoptEvidenceDisplayMetadata(retained, metadata);
-  return withEvidenceCallerInputPath(
-    displayed,
-    presentation.caller_input_path,
-    presentation.caller_input_paths,
-  );
-};
-
 /**
  * Per-field display facts keep the retained value wherever the copy omits one.
  * The subject is either present or null, so a null copy keeps the retained
@@ -667,16 +646,6 @@ const mergedSubjectDisplay = (
     name: incoming.name,
     local_path: incoming.local_path || retained.local_path,
   };
-};
-
-/** Recognize authenticated Evidence in a union of partial observations. */
-export const tryParseEvidence = (input: unknown): Evidence | undefined => {
-  if (typeof input !== "object" || input === null || !("evidence_id" in input))
-    return undefined;
-  const immutable = immutableEvidenceSnapshots.get(input);
-  if (immutable !== undefined) return immutable;
-  const parsed = authenticatedEvidenceSchema.safeParse(input);
-  return parsed.success ? parsed.data : undefined;
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */

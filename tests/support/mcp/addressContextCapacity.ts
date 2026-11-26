@@ -17,7 +17,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ownArtifactSession } from "./artifactSession.js";
 import type { TestMcp } from "./mcpFixture.js";
 
-/** Inspect the same address with a 9,500-byte Evidence store and caller-sized facets. */
+/** Inspect the same address with an 8,000-byte Evidence store and caller-sized facets. */
 export const inspectCapacityContext = async (
   mcp: TestMcp,
   onTestFinished: (handler: OnTestFinishedHandler) => void,
@@ -69,11 +69,8 @@ export const inspectCapacityContext = async (
         ok({ profile: createAnalysisProfile(identity, { fixture: true }) }),
     },
   );
-  // The session stamps each retained record with its provider selection.
-  // address_name stays admitted at this allowance while the multi-megabyte
-  // procedure observation does not, which is what these fixtures separate.
   const records = new InvestigationRecords({
-    maximumRepresentationBytes: 9500,
+    maximumRepresentationBytes: 8000,
   });
   const session = new BinarySession(router, records);
   ownArtifactSession(session, onTestFinished);

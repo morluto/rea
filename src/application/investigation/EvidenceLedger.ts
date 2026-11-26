@@ -23,8 +23,6 @@ import {
   adoptEvidenceDisplayMetadata,
   evidenceDisplayMetadataAgree,
   evidenceFileTarget,
-  withEvidenceProviderSelection,
-  type ProviderSelectionProvenance,
   type Evidence,
 } from "../../domain/evidence.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
@@ -56,17 +54,6 @@ import {
 
 type RecordResult = Result<"added" | "duplicate", AnalysisError>;
 
-/** One committed observation and the metadata changes owned by its admission. */
-export interface ProducedEvidenceRecord {
-  readonly disposition: "added" | "duplicate";
-  readonly replacements: readonly EvidenceMetadataReplacement[];
-}
-
-export interface ProducedUnknownRecord {
-  readonly unknown: ResidualUnknown | null;
-  readonly replacements: readonly EvidenceMetadataReplacement[];
-}
-
 /** Same authenticated semantic identity with new local display/request metadata. */
 export interface EvidenceMetadataReplacement {
   readonly kind: "metadata";
@@ -79,6 +66,11 @@ export interface EvidenceImportDelta {
   readonly recordsAdded: number;
   readonly unknownsAdded: number;
   readonly changed: boolean;
+  readonly replacements: readonly EvidenceMetadataReplacement[];
+}
+
+export interface EvidenceRecordDelta {
+  readonly disposition: "added" | "duplicate";
   readonly replacements: readonly EvidenceMetadataReplacement[];
 }
 
@@ -116,69 +108,65 @@ export class EvidenceLedger {
     };
   }
 
-  /** Record historical/source Evidence without changing its provenance. */
+  /** Record evidence idempotently; conflicting content is rejected. */
   record(input: Evidence): RecordResult {
-    const recorded = this.#record(input);
-    return recorded.ok ? ok(recorded.value.disposition) : recorded;
-  }
-
-  /** Admit a newly produced observation, then bind this recording session's selection. */
-  recordProduced(
-    input: Evidence,
-    selection: ProviderSelectionProvenance | undefined,
-  ): Result<ProducedEvidenceRecord, AnalysisError> {
-    // A replay/source borrower returns the exact authenticated historical handle.
-    // Its missing provenance is a fact, not an invitation to attribute it again.
-    if (
-      isImmutableEvidence(input) &&
-      this.#records.get(input.evidence_id) === input
-    )
-      return ok({ disposition: "duplicate", replacements: [] });
-    return this.#record(input, { selection });
-  }
-
-  #record(
-    input: Evidence,
-    produced?: { readonly selection: ProviderSelectionProvenance | undefined },
-  ): Result<ProducedEvidenceRecord, AnalysisError> {
     const authenticated = this.#readEvidence(
       input,
       "Evidence record validation failed",
     );
     if (!authenticated.ok) return authenticated;
-    const evidence =
-      produced === undefined
-        ? authenticated.value
-        : withEvidenceProviderSelection(
-            authenticated.value,
-            authenticated.value.provider_selection ?? produced.selection,
-          );
+    const evidence = authenticated.value;
     const existing = this.#records.get(evidence.evidence_id);
-    const current =
-      existing === undefined || produced === undefined
-        ? evidence
-        : adoptEvidenceDisplayMetadata(existing, evidence);
-    if (
-      existing !== undefined &&
-      (produced === undefined || current === existing)
-    )
+    if (existing !== undefined) {
+      // Both records were authenticated and sealed at ingestion. Their exact
+      // semantic IDs establish identity even when local display paths differ;
+      // serializing both complete payloads again adds no integrity proof.
+      return ok("duplicate");
+    }
+    const admitted = this.#admitChanges(
+      "record_evidence",
+      new Map([[evidence.evidence_id, evidence]]),
+    );
+    if (!admitted.ok)
+      return err(this.#exposeRefusedEvidence(admitted.error, evidence));
+    this.#records.set(evidence.evidence_id, evidence);
+    this.#commitAccounting(admitted.value);
+    return ok("added");
+  }
+
+  /** Reconcile provenance supplied by an authenticated record, never inferred from a session. */
+  recordWithMetadata(
+    input: Evidence,
+  ): Result<EvidenceRecordDelta, AnalysisError> {
+    const authenticated = this.#readEvidence(
+      input,
+      "Evidence record validation failed",
+    );
+    if (!authenticated.ok) return authenticated;
+    const incoming = authenticated.value;
+    const previous = this.#records.get(incoming.evidence_id);
+    if (previous === undefined) {
+      const recorded = this.record(incoming);
+      return recorded.ok
+        ? ok({ disposition: recorded.value, replacements: [] })
+        : recorded;
+    }
+    if (incoming.provider_selection === undefined)
+      return ok({ disposition: "duplicate", replacements: [] });
+    const current = adoptEvidenceDisplayMetadata(previous, incoming);
+    if (current === previous)
       return ok({ disposition: "duplicate", replacements: [] });
     const admitted = this.#admitChanges(
       "record_evidence",
       new Map([[current.evidence_id, current]]),
     );
     if (!admitted.ok)
-      return err(
-        this.#exposeRefusedEvidence(admitted.error, existing ?? current),
-      );
+      return err(this.#exposeRefusedEvidence(admitted.error, previous));
     this.#records.set(current.evidence_id, current);
     this.#commitAccounting(admitted.value);
     return ok({
-      disposition: existing === undefined ? "added" : "duplicate",
-      replacements:
-        existing === undefined
-          ? []
-          : [{ kind: "metadata", previous: existing, current }],
+      disposition: "duplicate",
+      replacements: [{ kind: "metadata", previous, current }],
     });
   }
 
@@ -390,31 +378,12 @@ export class EvidenceLedger {
     return this.#appendUnknown(unknown, parsedMutation);
   }
 
-  recordWithUnknown(
-    evidence: Evidence,
-    input: RecordUnknownInput,
-    mutation: Evidence,
-  ): Result<ResidualUnknown | null, AnalysisError> {
-    const recorded = this.#recordWithUnknown(evidence, input, mutation);
-    return recorded.ok ? ok(recorded.value.unknown) : recorded;
-  }
-
-  recordProducedWithUnknown(
-    evidence: Evidence,
-    input: RecordUnknownInput,
-    mutation: Evidence,
-    selection: ProviderSelectionProvenance | undefined,
-  ): Result<ProducedUnknownRecord, AnalysisError> {
-    return this.#recordWithUnknown(evidence, input, mutation, { selection });
-  }
-
   /** Atomically record derived Evidence and a linked residual unknown. */
-  #recordWithUnknown(
+  recordWithUnknown(
     evidenceInput: Evidence,
     input: RecordUnknownInput,
     mutationInput: Evidence,
-    produced?: { readonly selection: ProviderSelectionProvenance | undefined },
-  ): Result<ProducedUnknownRecord, AnalysisError> {
+  ): Result<ResidualUnknown | null, AnalysisError> {
     const headroom = admitInvestigationAuthentication(
       input,
       "record_unknown",
@@ -432,22 +401,8 @@ export class EvidenceLedger {
       "record_unknown",
     );
     if (!authenticatedMutation.ok) return authenticatedMutation;
-    const evidence =
-      produced === undefined
-        ? authenticatedEvidence.value
-        : withEvidenceProviderSelection(
-            authenticatedEvidence.value,
-            authenticatedEvidence.value.provider_selection ??
-              produced.selection,
-          );
-    const mutation =
-      produced === undefined
-        ? authenticatedMutation.value
-        : withEvidenceProviderSelection(
-            authenticatedMutation.value,
-            authenticatedMutation.value.provider_selection ??
-              produced.selection,
-          );
+    const evidence = authenticatedEvidence.value;
+    const mutation = authenticatedMutation.value;
     let unknown: ResidualUnknown;
     try {
       unknown = createResidualUnknown(
@@ -465,26 +420,15 @@ export class EvidenceLedger {
     if (creationUnknown !== undefined) {
       if (creationUnknown.revision_digest !== unknown.revision_digest)
         return err(new UnknownRegistryError("already-exists"));
-      const checked = this.#appendIncremental(
-        [evidence],
-        undefined,
-        produced !== undefined,
-      );
+      const checked = this.#appendIncremental([evidence]);
       if (!checked.ok)
         return err(this.#exposeRefusedEvidence(checked.error, evidence));
-      return ok({ unknown: null, replacements: checked.value });
+      return ok(null);
     }
-    const checked = this.#appendIncremental(
-      [evidence, mutation],
-      unknown,
-      produced !== undefined,
-    );
+    const checked = this.#appendIncremental([evidence, mutation], unknown);
     if (!checked.ok)
       return err(this.#exposeRefusedEvidence(checked.error, evidence));
-    return ok({
-      unknown: structuredClone(unknown),
-      replacements: checked.value,
-    });
+    return ok(structuredClone(unknown));
   }
 
   /** Report authenticated completed Evidence without inferring membership from this attempt. */
@@ -648,26 +592,13 @@ export class EvidenceLedger {
   #appendIncremental(
     records: readonly Evidence[],
     unknown?: ResidualUnknown,
-    reconcileMetadata = false,
-  ): Result<readonly EvidenceMetadataReplacement[], AnalysisError> {
+  ): Result<void, AnalysisError> {
     const additions = new Map<string, Evidence>();
-    const replacements: EvidenceMetadataReplacement[] = [];
     for (const evidence of records) {
       const existing =
         additions.get(evidence.evidence_id) ??
         this.#records.get(evidence.evidence_id);
       if (existing !== undefined) {
-        if (reconcileMetadata) {
-          const current = adoptEvidenceDisplayMetadata(existing, evidence);
-          if (current !== existing) {
-            additions.set(evidence.evidence_id, current);
-            replacements.push({
-              kind: "metadata",
-              previous: existing,
-              current,
-            });
-          }
-        }
         continue;
       }
       additions.set(evidence.evidence_id, evidence);
@@ -703,7 +634,7 @@ export class EvidenceLedger {
       this.#sortedUnknownHeads = undefined;
     }
     this.#commitAccounting(admitted.value);
-    return ok(replacements);
+    return ok(undefined);
   }
 
   /** Return the sealed candidate facts that the commit will adopt. */

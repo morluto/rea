@@ -14,7 +14,6 @@ import {
   createEvidence,
   evidenceSubject,
   immutableEvidence,
-  rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
@@ -1532,71 +1531,12 @@ it("replays source-bearing entries only when their complete retained closure exi
   const exported = cache.export(target, profile, ledger.export());
   if (!exported.ok) throw exported.error;
   const imported = new AnalysisSnapshotCache();
-  const authenticated = immutableAnalysisSnapshot(exported.value);
+  imported.stage(exported.value);
   expect(
-    imported.import(authenticated, { target, profile }, (bundle) => {
-      expect(bundle).toBe(authenticated.evidence_bundle);
-      return ok(bundle.records.length);
-    }).ok,
-  ).toBe(true);
-  const replaySources = imported.lookup(
-    target,
-    profile,
-    "procedure_info",
-    parameters,
-  )?.sourceEvidence;
-  expect(replaySources?.map((record) => record.evidence_id)).toEqual([
-    source.evidence_id,
-    parent.evidence_id,
-  ]);
-  for (const replaySource of replaySources ?? [])
-    expect(replaySource).toBe(
-      authenticated.evidence_bundle.records.find(
-        (record) => record.evidence_id === replaySource.evidence_id,
-      ),
-    );
-  const preloaded = new EvidenceLedger();
-  expect(
-    preloaded.import(structuredClone(authenticated.evidence_bundle)).ok,
-  ).toBe(true);
-  const canonical = new AnalysisSnapshotCache();
-  expect(
-    canonical.import(
-      authenticated,
-      { target, profile },
-      (bundle) => {
-        const merged = preloaded.import(bundle);
-        return merged.ok ? ok(merged.value.recordsAdded) : merged;
-      },
-      (id) => preloaded.forAnalysis(id),
-    ).ok,
-  ).toBe(true);
-  const canonicalReplay = canonical.lookup(
-    target,
-    profile,
-    "procedure_info",
-    parameters,
-  );
-  for (const replaySource of canonicalReplay?.sourceEvidence ?? []) {
-    expect(replaySource).toBe(preloaded.forAnalysis(replaySource.evidence_id));
-    expect(
-      preloaded.recordProduced(replaySource, {
-        selection_source: "environment",
-        candidates: [
-          {
-            provider: ANALYSIS_SNAPSHOT_PROVIDER,
-            selected: true,
-            availability: "available",
-            target_support: "supported",
-            rejection_codes: [],
-          },
-        ],
-      }).ok,
-    ).toBe(true);
-    expect(
-      preloaded.forAnalysis(replaySource.evidence_id)?.provider_selection,
-    ).toBeUndefined();
-  }
+    imported
+      .lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
   const pruned = parseAnalysisSnapshot({
     ...exported.value,
     evidence_bundle: createEvidenceBundle([parent, source]),
@@ -1817,62 +1757,4 @@ describe("snapshot recording refusals", () => {
     cache.record(extra);
     expect(cache.entries()).toHaveLength(10_000);
   });
-});
-
-it("exports after a produced duplicate changes the retained subject display path", () => {
-  const target = ANALYSIS_SNAPSHOT_TARGET;
-  const profile = ANALYSIS_SNAPSHOT_PROFILE;
-  const parameters = { address: "0x1000", document: "fixture" };
-  const execution = createAnalysisExecution(
-    "main",
-    ANALYSIS_SNAPSHOT_PROVIDER,
-    { subject: target, analysisProfile: profile },
-  );
-  const parent = immutableEvidence(
-    createAnalysisExecutionEvidence(
-      "procedure_info",
-      parameters,
-      execution,
-      "observed",
-    ),
-  );
-  const ledger = new EvidenceLedger();
-  expect(ledger.record(parent).ok).toBe(true);
-  const cache = new AnalysisSnapshotCache();
-  cache.record(
-    {
-      target,
-      profile,
-      operation: "procedure_info",
-      parameters,
-      execution: { ...execution, evidenceId: parent.evidence_id },
-    },
-    (id) => ledger.forAnalysis(id),
-  );
-  const relocated = rebindEvidenceToTargetPath(parent, {
-    ...target,
-    path: "/fixture/relocated",
-  });
-  const recorded = ledger.recordProduced(relocated, {
-    selection_source: "request",
-    candidates: [
-      {
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        selected: true,
-        availability: "available",
-        target_support: "supported",
-        rejection_codes: [],
-      },
-    ],
-  });
-  if (!recorded.ok) throw recorded.error;
-  cache.refreshEvidenceMetadata(recorded.value.replacements);
-  const exported = cache.export(target, profile, ledger.export());
-  if (!exported.ok) throw exported.error;
-  expect(exported.value.entries[0]?.execution.subject.local_path).toBe(
-    "/fixture/relocated",
-  );
-  expect(ledger.forAnalysis(parent.evidence_id)?.evidence_id).toBe(
-    parent.evidence_id,
-  );
 });

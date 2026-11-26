@@ -562,30 +562,18 @@ const runAnalysis = async (
       return executed;
     }
     const { cachePolicy } = executed.value;
-    const admitted = session.recordEvidence(executed.value.evidence);
-    if (!admitted.ok)
-      return err(
-        admitted.error.retainPartialObservation(executed.value.evidence),
-      );
-    const admittedEvidence =
-      session.evidenceForAnalysis(executed.value.evidence.evidence_id) ??
-      executed.value.evidence;
-    const callerEvidence = withEvidenceCallerInputPath(admittedEvidence, path);
+    const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
     // Provider execution may have already recorded the same semantic Evidence
     // without this invocation's request path. Import replaces that metadata
     // while retaining the authenticated result and snapshot binding.
-    const captured = captureSources(callerEvidence);
+    const captured = captureSources(evidence);
     if (!captured.ok)
-      return err(captured.error.retainPartialObservation(callerEvidence));
+      return err(captured.error.retainPartialObservation(evidence));
     const recorded = session.importEvidenceBundle(
-      createImmutableEvidenceBundle([callerEvidence]),
+      createImmutableEvidenceBundle([evidence]),
     );
     if (!recorded.ok)
-      return err(recorded.error.retainPartialObservation(callerEvidence));
-    // Rebinding a local request path preserves the already admitted selection;
-    // ordinary imports never attribute historical observations to this session.
-    const evidence =
-      session.evidenceForAnalysis(callerEvidence.evidence_id) ?? callerEvidence;
+      return err(recorded.error.retainPartialObservation(evidence));
     if (isWorkflowEvidenceTool(tool)) {
       const unknowns = recordWorkflowUnknowns({
         name: tool,
@@ -754,6 +742,10 @@ const executeAnalysisTool = async (input: {
         ...(input.saveSnapshot
           ? { snapshotContext: "one-shot-target" as const }
           : {}),
+      },
+      {
+        admitRecovery: session.admitRecoveryObservation.bind(session),
+        evidenceById: (id) => session.evidenceForAnalysis(id),
       },
     );
     result = retainAnalysisResultSources(

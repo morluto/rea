@@ -13,7 +13,6 @@ import { cancelledBy } from "../domain/analysisErrorCore.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { ok } from "../domain/result.js";
-import { withRetainedEvidencePayload } from "../domain/evidence.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 /** The session records an application workflow's delivery reads and writes. */
@@ -72,15 +71,9 @@ export const deliverApplicationExecution = async (
     execution.unknown === undefined
       ? records.recordEvidence?.(parent)
       : records.recordEvidenceWithUnknown?.(parent, execution.unknown);
-  const retainedParent =
-    saved?.ok === true ? records.evidenceById?.(parent.evidence_id) : undefined;
-  const deliveredParent =
-    retainedParent === undefined
-      ? parent
-      : withRetainedEvidencePayload(retainedParent, parent);
   if (view === undefined)
     return delivery.toEvidenceToolResult(
-      deliveredParent,
+      parent,
       contract,
       saved,
       undefined,
@@ -88,17 +81,10 @@ export const deliverApplicationExecution = async (
     );
   if (saved !== undefined && !saved.ok)
     return delivery.toCallToolResult(saved, contract);
-  const recordedView = records.recordEvidence?.(selected.value);
-  const retainedView =
-    recordedView?.ok === true
-      ? records.evidenceById?.(selected.value.evidence_id)
-      : undefined;
   return delivery.toSelectedViewToolResult(
-    retainedView === undefined
-      ? selected.value
-      : withRetainedEvidencePayload(retainedView, selected.value),
-    { parent: deliveredParent, request: ownedJsonValueSchema.parse(view) },
+    selected.value,
+    { parent, request: ownedJsonValueSchema.parse(view) },
     contract,
-    recordedView,
+    records.recordEvidence?.(selected.value),
   );
 };

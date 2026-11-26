@@ -1,5 +1,10 @@
 import { finalizedResult, runOwned } from "../../providers/runOwned.js";
-import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
+import {
+  bindSessionEvidenceExecution,
+  bindFreshNativeExecution,
+  carrySessionExecutionProvenance,
+  withSessionExecutionProvenance,
+} from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -58,7 +63,6 @@ import {
   routeAllowsSnapshotReplay,
   routeProviderIdentity,
 } from "./SessionProviderPolicy.js";
-import { selectionProvenanceForRoute } from "./ProviderSelectionProvenance.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
@@ -733,14 +737,12 @@ export class BinarySession
     }
     const profilelessWorkflowProfile =
       profile === null ? profilelessNativeDispatchProfile(route) : undefined;
-    const providerSelection = selectionProvenanceForRoute(route);
     this.#active = {
       target,
       profile,
       ...(profilelessWorkflowProfile === undefined
         ? {}
         : { profilelessWorkflowProfile }),
-      ...(providerSelection === undefined ? {} : { providerSelection }),
       ...run,
       nativeSourceAdmitted: false,
     };
@@ -1663,7 +1665,7 @@ export class BinarySession
         profile,
         operation: name,
         parameters: arguments_,
-        execution: execution.value,
+        execution: bindFreshNativeExecution(execution.value, active.route),
         cacheable,
         ...(options?.snapshotContext === undefined
           ? {}
@@ -1762,7 +1764,7 @@ export class BinarySession
       profile,
       operation,
       parameters,
-      execution: observed,
+      execution: carrySessionExecutionProvenance(execution, observed),
       cacheable,
       ...(options?.snapshotContext === undefined
         ? {}
@@ -1814,12 +1816,15 @@ export class BinarySession
       },
     );
     if (!admitted.ok) return admitted;
-    const evidence = createAnalysisExecutionEvidence(
-      operation,
-      parameters,
-      evidenceExecution,
-      "observed",
-      { callerTarget: active.target, immutable: true },
+    const evidence = withSessionExecutionProvenance(
+      execution,
+      createAnalysisExecutionEvidence(
+        operation,
+        parameters,
+        evidenceExecution,
+        "observed",
+        { callerTarget: active.target, immutable: true },
+      ),
     );
     const recorded = this.recordEvidence(evidence);
     if (!recorded.ok) {
@@ -1828,11 +1833,15 @@ export class BinarySession
       return recorded;
     }
     const authenticated = this.evidenceForAnalysis(evidence.evidence_id);
+    const identified = carrySessionExecutionProvenance(execution, {
+      ...execution,
+      evidenceId: evidence.evidence_id,
+    });
     const retained =
       authenticated === undefined
-        ? { ...execution, evidenceId: evidence.evidence_id }
+        ? identified
         : bindSessionEvidenceExecution(
-            { ...execution, evidenceId: evidence.evidence_id },
+            identified,
             authenticated,
             active.target.callerInputPath,
           );
@@ -1973,11 +1982,9 @@ export class BinarySession
     const run: SessionRun = { client, route, runId };
     const started = await client.execute("health", {});
     if (started.ok) {
-      const providerSelection = selectionProvenanceForRoute(route);
       this.#active = {
         ...previous,
         profile: route.profile,
-        ...(providerSelection === undefined ? {} : { providerSelection }),
         ...run,
         nativeSourceAdmitted: false,
       };

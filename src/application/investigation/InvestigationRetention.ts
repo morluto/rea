@@ -54,34 +54,14 @@ export const admitInvestigationAuthentication = (
     readonly serializedUtf16Bytes: number;
   },
 ): Result<void, AnalysisError> => {
-  const valid = validateInvestigationJson(input);
-  if (!valid.ok) return valid;
-  return authenticationHeadroom(input, operation, policy, additional);
-};
-
-const validateInvestigationJson = (
-  input: unknown,
-): Result<void, AnalysisError> => {
   const issue = jsonValueValidationIssue(input);
-  return issue === undefined
-    ? ok(undefined)
-    : err(
-        new EvidenceIntegrityError("Investigation input is not ordinary JSON", {
-          userMessage: issue,
-        }),
-      );
-};
-
-const authenticationHeadroom = (
-  input: unknown,
-  operation: string,
-  policy: InvestigationRetentionPolicy,
-  additional?: {
-    readonly valueBytes: number;
-    readonly serializedUtf16Bytes: number;
-  },
-): Result<void, AnalysisError> =>
-  requireAuthenticationHeadroom(input, {
+  if (issue !== undefined)
+    return err(
+      new EvidenceIntegrityError("Investigation input is not ordinary JSON", {
+        userMessage: issue,
+      }),
+    );
+  return requireAuthenticationHeadroom(input, {
     operation,
     path: "investigation",
     description:
@@ -91,6 +71,7 @@ const authenticationHeadroom = (
       ? {}
       : { availableBytes: policy.availableAuthenticationBytes() }),
   });
+};
 
 /** Exact for admitted data; above the budget it establishes only a lower bound. */
 export const investigationValueBytes = (
@@ -101,37 +82,6 @@ export const investigationValueBytes = (
     maximumValueBytes: Math.max(0, remainingBytes),
     includeSerialized: false,
   }).valueBytes;
-
-/**
- * Admit an unknown mutation against both the caller's input and the larger
- * Evidence representation derived from it. A mutation repeats parts of its
- * input (for example the question), so admitting only the input lets an
- * operation authenticate and seal a record that exceeds the stated bound. The
- * derived representation is charged in addition to the input, so the check
- * covers authenticating both working copies rather than whichever is smaller.
- */
-export const admitUnknownMutationAuthentication = (
-  input: unknown,
-  derived: () => unknown,
-  operation: string,
-  policy: InvestigationRetentionPolicy,
-): Result<void, AnalysisError> => {
-  const valid = validateInvestigationJson(input);
-  if (!valid.ok) return valid;
-  const remaining = policy.availableAuthenticationBytes?.() ?? undefined;
-  const estimate = estimateJsonStorage(
-    derived(),
-    remaining === undefined ? {} : { maximumValueBytes: remaining },
-  );
-  const admissionPolicy =
-    remaining === undefined
-      ? policy
-      : { ...policy, availableAuthenticationBytes: () => remaining };
-  return authenticationHeadroom(input, operation, admissionPolicy, {
-    valueBytes: estimate.valueBytes,
-    serializedUtf16Bytes: estimate.serializedUtf16Bytes,
-  });
-};
 
 export const admitInvestigationRetention = (
   operation: string,

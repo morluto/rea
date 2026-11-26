@@ -3,7 +3,7 @@ import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
-import { type EvidenceBundle } from "../../domain/evidenceBundle.js";
+import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -294,10 +294,7 @@ export class AnalysisSnapshotCache {
   }
 
   /** Merge already-validated entries and return the new-entry count. */
-  stage(
-    snapshot: AnalysisSnapshot,
-    retainedEvidence?: (id: string) => Evidence | undefined,
-  ): number {
+  stage(snapshot: AnalysisSnapshot): number {
     snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
@@ -320,25 +317,21 @@ export class AnalysisSnapshotCache {
       stagedQueryIds.add(entry.query_id);
       this.#replayBindings.delete(entry.query_id);
     }
-    // Snapshot validation authenticated these records. Once imported, bind the
-    // ledger's canonical handles even when it already held equivalent records.
-    // Replay caveats must not mint a new observation or reattribute its history.
+    // Snapshot validation authenticated these records. Recover the original
+    // identity before lookup adds replay caveats; do not mint a new record.
     const evidenceByQuery = new Map<string, Evidence>();
-    const records = new Map<string, Evidence>();
-    for (const record of snapshot.evidence_bundle.records) {
-      const retained =
-        retainedEvidence === undefined
-          ? record
-          : retainedEvidence(record.evidence_id);
-      if (retained?.evidence_id === record.evidence_id)
-        records.set(record.evidence_id, retained);
-    }
+    const records = new Map(
+      snapshot.evidence_bundle.records.map((record) => [
+        record.evidence_id,
+        record,
+      ]),
+    );
     const lookup = (id: string) => records.get(id);
     const checkClosure = createInvestigationEvidenceClosureChecker({
       evidenceForAnalysis: lookup,
     });
     const ambiguous = new Set<string>();
-    for (const evidence of records.values()) {
+    for (const evidence of snapshot.evidence_bundle.records) {
       const queryId = analysisQueryId(
         snapshot.target,
         snapshot.binding,
@@ -515,7 +508,6 @@ export class AnalysisSnapshotCache {
         }
       | undefined,
     mergeEvidence: (bundle: EvidenceBundle) => Result<number, AnalysisError>,
-    retainedEvidence?: (id: string) => Evidence | undefined,
   ): Result<number, AnalysisError> {
     let validated: AnalysisSnapshot;
     try {
@@ -542,8 +534,7 @@ export class AnalysisSnapshotCache {
         );
     }
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
-    if (!importedEvidence.ok) return importedEvidence;
-    return ok(this.stage(validated, retainedEvidence));
+    return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
   }
 
   /** Return canonical entries for persistence. */

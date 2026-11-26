@@ -1,8 +1,5 @@
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import type {
-  Evidence,
-  ProviderSelectionProvenance,
-} from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
@@ -16,13 +13,9 @@ import type { Result } from "../../domain/result.js";
 import {
   EvidenceLedger,
   type EvidenceImportDelta,
-  type ProducedEvidenceRecord,
-  type ProducedUnknownRecord,
+  type EvidenceRecordDelta,
 } from "./EvidenceLedger.js";
-import {
-  unknownMutationEvidence,
-  unknownMutationEnvelope,
-} from "./UnknownEvidence.js";
+import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import type {
   EvidenceReader,
   EvidenceWriter,
@@ -34,7 +27,6 @@ import type {
 } from "./InvestigationRecordPort.js";
 import {
   admitInvestigationAuthentication,
-  admitUnknownMutationAuthentication,
   type InvestigationRetentionPolicy,
 } from "./InvestigationRetention.js";
 
@@ -77,19 +69,18 @@ export class InvestigationRecords
     );
   }
 
-  /** Record historical/source Evidence without changing its provenance. */
+  /** Record immutable Evidence idempotently; reject conflicting content. */
   recordEvidence(
     evidence: Evidence,
   ): Result<"added" | "duplicate", AnalysisError> {
     return this.#evidence.record(evidence);
   }
 
-  /** Admit and reconcile one newly produced observation atomically. */
-  recordProducedEvidence(
+  /** Return the ledger's actual metadata delta without inventing provenance. */
+  recordEvidenceWithMetadata(
     evidence: Evidence,
-    selection: ProviderSelectionProvenance | undefined,
-  ): Result<ProducedEvidenceRecord, AnalysisError> {
-    return this.#evidence.recordProduced(evidence, selection);
+  ): Result<EvidenceRecordDelta, AnalysisError> {
+    return this.#evidence.recordWithMetadata(evidence);
   }
 
   /** Check one semantic Evidence ID without exposing stored values. */
@@ -133,64 +124,37 @@ export class InvestigationRecords
   recordUnknown(
     input: RecordUnknownInput,
     target?: BinaryTarget,
-    providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
-    const admitted = admitUnknownMutationAuthentication(
+    const admitted = admitInvestigationAuthentication(
       input,
-      () =>
-        unknownMutationEnvelope(
-          target,
-          { operation: "record_unknown", input },
-          providerSelection,
-        ),
       "record_unknown",
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    const mutation = unknownMutationEvidence(
-      target,
-      { operation: "record_unknown", input },
-      providerSelection,
+    return this.#evidence.recordUnknown(
+      input,
+      unknownMutationEvidence(target, { operation: "record_unknown", input }),
     );
-    return this.#evidence.recordUnknown(input, mutation);
   }
 
+  /** Commit derived Evidence and its Unknown atomically without an implicit subject. */
   recordEvidenceWithUnknown(
     evidence: Evidence,
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
-    const recorded = this.recordProducedEvidenceWithUnknown(evidence, input);
-    return recorded.ok ? { ok: true, value: recorded.value.unknown } : recorded;
-  }
-
-  /** Commit derived Evidence and its Unknown atomically without an implicit subject. */
-  recordProducedEvidenceWithUnknown(
-    evidence: Evidence,
-    input: RecordUnknownInput,
-    providerSelection?: ProviderSelectionProvenance,
-  ): Result<ProducedUnknownRecord, AnalysisError> {
-    const admitted = admitUnknownMutationAuthentication(
+    const admitted = admitInvestigationAuthentication(
       input,
-      () =>
-        unknownMutationEnvelope(
-          undefined,
-          { operation: "record_unknown", input },
-          providerSelection,
-        ),
       "record_unknown",
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    const mutation = unknownMutationEvidence(
-      undefined,
-      { operation: "record_unknown", input },
-      providerSelection,
-    );
-    return this.#evidence.recordProducedWithUnknown(
+    return this.#evidence.recordWithUnknown(
       evidence,
       input,
-      mutation,
-      providerSelection,
+      unknownMutationEvidence(undefined, {
+        operation: "record_unknown",
+        input,
+      }),
     );
   }
 
@@ -198,25 +162,17 @@ export class InvestigationRecords
   updateUnknown(
     input: UpdateUnknownInput,
     target?: BinaryTarget,
-    providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
-    const admitted = admitUnknownMutationAuthentication(
+    const admitted = admitInvestigationAuthentication(
       input,
-      () =>
-        unknownMutationEnvelope(
-          target,
-          { operation: "update_unknown", input },
-          providerSelection,
-        ),
       "update_unknown",
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    const evidence = unknownMutationEvidence(
-      target,
-      { operation: "update_unknown", input },
-      providerSelection,
-    );
+    const evidence = unknownMutationEvidence(target, {
+      operation: "update_unknown",
+      input,
+    });
     return this.#evidence.updateUnknown(input, evidence);
   }
 

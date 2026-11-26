@@ -976,17 +976,21 @@ checks its binding to the target, provider and profile.
 ## Import, export and compare Evidence
 
 Evidence `provider` identifies the producer of the observation. Optional
-`provider_selection` records how its recording session selected a deep provider,
-including candidate availability, target support, and rejection codes. Auxiliary
-observations can therefore name a different producer from the selected deep
-provider. Records made without a bound deep provider can omit this field.
+`provider_selection` records the captured selection of a fresh Hopper, Ghidra,
+IDA, or Kuna execution, including candidate availability, target support, and
+rejection codes. The execution must match the selected native provider and its
+known profile facts. Unknown version or profile facts remain unknown.
 
-Imports and snapshot replay preserve historical selection metadata, including
-its absence; opening another provider does not rewrite it. Selection metadata
-on an Evidence envelope does not change its `evidence_id`. A nested Evidence
-value remains the exact input captured by its parent: later admission metadata
-on the separately retained source does not rewrite that embedded value or the
-parent's commitment.
+Generic retention, imports, and snapshot replay preserve supplied metadata,
+including its absence; opening another provider does not rewrite history.
+Artifact, browser, managed, and capture output does not acquire native selection
+metadata. REA-derived summaries and views cite their attributed native sources
+without claiming to be native observations themselves.
+
+Selection metadata on an Evidence envelope does not change its `evidence_id`.
+A nested Evidence value remains the exact input captured by its parent: later
+admission metadata on the separately retained source does not rewrite that
+embedded value or the parent's commitment.
 
 Evidence records retain artifact identity, source locations, observations,
 inferences and unresolved findings. Validate an existing bundle, export its

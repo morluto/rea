@@ -27,7 +27,6 @@ import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { createOperationProgress } from "./operationProgress.js";
-import { withRetainedEvidencePayload } from "../domain/evidence.js";
 
 import { currentMcpToolRequest } from "./McpToolRequest.js";
 
@@ -171,21 +170,10 @@ export const createProviderOperationToolHandler =
             return progress.complete(
               server.delivery.toCallToolResult(projected, contract),
             );
-          // Recording stamps the session's provider selection onto the
-          // retained record under this evidence_id, so the copy delivered now
-          // must carry the same stamp or the response and the retained view
-          // disagree for one id.
           const recorded = dependencies.recordEvidence?.(projected.value);
-          const retained = dependencies.evidenceById?.(
-            projected.value.evidence_id,
-          );
-          const delivered =
-            recorded?.ok === true && retained !== undefined
-              ? withRetainedEvidencePayload(retained, projected.value)
-              : projected.value;
           return progress.complete(
             server.delivery.toEvidenceToolResult(
-              delivered,
+              projected.value,
               contract,
               recorded,
               undefined,

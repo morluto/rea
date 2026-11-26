@@ -190,7 +190,19 @@ export async function verifyProjectCoverage(run) {
       })),
     });
     const assertSelection = (evidence, selection) => {
-      assert.deepEqual(evidence.provider_selection, selection);
+      const selected = selection.candidates.find(
+        (candidate) => candidate.selected,
+      );
+      assert.ok(selected);
+      if (evidence.provider.id === selected.provider.id)
+        assert.deepEqual(evidence.provider_selection, selection);
+      else {
+        assert.equal(evidence.provider_selection, undefined);
+        assert.ok(
+          evidence.evidence_links.length > 0,
+          "Derived output must cite its native sources",
+        );
+      }
       assert.match(evidence.evidence_id, /^ev_[a-f0-9]{64}$/u);
     };
     for (const mode of ["fresh", "partial", "analyzed"]) {
@@ -216,6 +228,7 @@ export async function verifyProjectCoverage(run) {
         ).result;
         const selection = selectionFromStatus(status);
         assert.equal(selection.selection_source, "request");
+        const observed = [];
         const inventoryEvidence = await call(connection, "list_procedures", {
           detail: "complete",
         });
@@ -314,6 +327,7 @@ export async function verifyProjectCoverage(run) {
             direction: "forward",
           });
           assertSelection(callbackPath, selection);
+          observed.push(dossier, callbackPath);
           const coverages = Object.values(
             callbackPath.normalized_result.relationship_coverage,
           );
@@ -332,7 +346,34 @@ export async function verifyProjectCoverage(run) {
         }
         await call(connection, "export_evidence_bundle", { path: bundlePath });
         const exported = JSON.parse(await readFile(bundlePath, "utf8"));
-        for (const evidence of [inventoryEvidence, direct, ...paths]) {
+        observed.push(inventoryEvidence, direct, ...paths);
+        const exportedById = new Map(
+          exported.records.map((record) => [record.evidence_id, record]),
+        );
+        for (const native of exported.records.filter(
+          (record) => record.provider.id === "ghidra",
+        ))
+          assertSelection(native, selection);
+        const reachesNativeSource = (evidence) => {
+          const pending = [...evidence.evidence_links];
+          const seen = new Set();
+          while (pending.length > 0) {
+            const id = pending.pop();
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const source = exportedById.get(id);
+            if (source === undefined) continue;
+            if (source.provider.id === "ghidra") return true;
+            pending.push(...source.evidence_links);
+          }
+          return false;
+        };
+        for (const evidence of observed) {
+          if (evidence.provider.id !== "ghidra")
+            assert.ok(
+              reachesNativeSource(evidence),
+              "Derived output must reach an exported native source",
+            );
           const saved = exported.records.find(
             (record) => record.evidence_id === evidence.evidence_id,
           );
@@ -402,7 +443,6 @@ export async function verifyProjectCoverage(run) {
             direction: "forward",
           });
           assertSelection(replay, selection);
-          assert.equal(replay.evidence_id, paths[0].evidence_id);
           assert.deepEqual(
             replay.normalized_result,
             paths[0].normalized_result,
@@ -410,13 +450,17 @@ export async function verifyProjectCoverage(run) {
           await call(connection, "close_binary");
         } else await call(connection, "close_binary");
       }, [() => connections.closeConnection(connection)]);
+      const exportedNative = JSON.parse(
+        await readFile(bundlePath, "utf8"),
+      ).records.filter((record) => record.provider.id === "ghidra");
+      assert.ok(exportedNative.length > 0);
       const offline = await connect(env);
       await withVerifierCleanup(async () => {
         await call(offline, "import_evidence_bundle", { path: bundlePath });
         const records = (
           await call(offline, "get_evidence_bundle", { detail: "complete" })
         ).result.records;
-        for (const evidence of paths) {
+        for (const evidence of [...paths, ...exportedNative]) {
           const saved = records.find(
             (record) => record.evidence_id === evidence.evidence_id,
           );
@@ -443,7 +487,7 @@ export async function verifyProjectCoverage(run) {
           assert.equal(selection.selection_source, "environment");
           assert.notEqual(
             selection.selection_source,
-            paths[0].provider_selection.selection_source,
+            exportedNative[0].provider_selection.selection_source,
           );
           await call(activeImport, "import_evidence_bundle", {
             path: bundlePath,
@@ -457,7 +501,7 @@ export async function verifyProjectCoverage(run) {
               detail: "complete",
             })
           ).result.records;
-          for (const source of paths) {
+          for (const source of exportedNative) {
             const imported = records.find(
               (record) => record.evidence_id === source.evidence_id,
             );
@@ -471,6 +515,34 @@ export async function verifyProjectCoverage(run) {
               source.normalized_result,
             );
           }
+          const legacy = {
+            ...exportedNative.find(
+              (record) => record.evidence_links.length === 0,
+            ),
+          };
+          assert.ok(
+            legacy.evidence_id,
+            "Expected a complete native source without dependencies",
+          );
+          delete legacy.provider_selection;
+          const legacyPath = join(workspace, "legacy-selection-absent.json");
+          await writeFile(
+            legacyPath,
+            JSON.stringify(createEvidenceBundle([legacy])),
+          );
+          await call(activeImport, "import_evidence_bundle", {
+            path: legacyPath,
+          });
+          const importedLegacy = (
+            await call(activeImport, "get_evidence_bundle", {
+              detail: "complete",
+            })
+          ).result.records.find(
+            (record) => record.evidence_id === legacy.evidence_id,
+          );
+          assert.ok(importedLegacy);
+          assert.equal(importedLegacy.provider_selection, undefined);
+          assert.equal(importedLegacy.evidence_id, legacy.evidence_id);
           await call(activeImport, "close_binary");
         }, [() => connections.closeConnection(activeImport)]);
       }

@@ -181,12 +181,7 @@ it("reruns ambiguous imported observations without changing their historical Evi
   expect(fresh.value.limitations).not.toContainEqual(
     expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
-  // Recording stamps the session's provider selection onto retained Evidence,
-  // so compare the semantic members and the selection the fixture recorded.
-  for (const retained of [original, alternative])
-    expect({
-      ...session.evidenceById(retained.evidence_id),
-      provider_selection: retained.provider_selection,
-    }).toEqual(retained);
+  expect(session.evidenceById(original.evidence_id)).toEqual(original);
+  expect(session.evidenceById(alternative.evidence_id)).toEqual(alternative);
   expect((await readFile(ambiguousPath)).equals(historicalBytes)).toBe(true);
 });

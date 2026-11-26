@@ -14,10 +14,7 @@ import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
-import {
-  evidenceDisplayMetadataAgree,
-  parseEvidence,
-} from "../../../src/domain/evidence.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -427,16 +424,7 @@ it.each(tools)(
       code: "cleanup_incomplete",
       details: { resources: ["owned worker"] },
     });
-    // Recording stamps the session's provider selection onto the retained
-    // record, so the producer's own value and the retained copy differ only in
-    // display metadata; every semantic member must match it exactly.
-    const retained = await retainedPartial(client, session, error);
-    if (retained === undefined)
-      throw new Error("Failed read's own partial Evidence was not retained");
-    expect(evidenceDisplayMetadataAgree(retained, own)).toBe(false);
-    expect({ ...retained, provider_selection: own.provider_selection }).toEqual(
-      own,
-    );
+    expect(await retainedPartial(client, session, error)).toEqual(own);
   },
 );
 

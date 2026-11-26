@@ -22,9 +22,6 @@ import {
   createFixtureProviderIdentity,
   observed,
 } from "../fixtures/analysisExecution.js";
-import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
-import { createAnalysisExecutionEvidence } from "../../src/domain/analysisObservation.js";
-import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import {
   createBinarySessionTargets,
@@ -375,72 +372,4 @@ it("retries snapshot file cleanup before final close even when a published ident
   expect(events).toContain("session-close");
   expect(result).toMatchObject({ details: { published: true, bytes: 42 } });
   expect(result).not.toHaveProperty("details.published_path");
-});
-
-it("admits a fresh CLI observation when historical Evidence already owns its ID", async () => {
-  const [path] = await createBinarySessionTargets();
-  const provider = createFixtureProviderIdentity();
-  const profile = createAnalysisProfile(provider, {
-    fixture: "fresh-cli-provenance",
-  });
-  let executed = 0;
-  let evidenceId: string | undefined;
-  const createSession = async () => {
-    const session = createTestBinarySession(
-      () => ({
-        execute: async () => observed({ operation: "health" }),
-        close: async () => resultOk(null),
-      }),
-      { resolveAnalysisProfile: async () => resultOk({ profile }) },
-    );
-    const opened = await session.open(path);
-    if (!opened.ok) throw opened.error;
-    const execution = createAnalysisExecution(
-      { operation: "read_bytes" },
-      provider,
-      { subject: opened.value, analysisProfile: profile },
-    );
-    const historical = createAnalysisExecutionEvidence(
-      "read_bytes",
-      admittedReadBytes,
-      execution,
-      "observed",
-      { callerTarget: opened.value },
-    );
-    evidenceId = historical.evidence_id;
-    expect(
-      session.importEvidenceBundle(createEvidenceBundle([historical])).ok,
-    ).toBe(true);
-    expect(
-      session.evidenceForAnalysis(evidenceId)?.provider_selection,
-    ).toBeUndefined();
-    vi.spyOn(session, "executeForDirectObservation").mockImplementation(
-      async () => {
-        executed += 1;
-        return resultOk(execution);
-      },
-    );
-    return session;
-  };
-  const result = await runDirectAnalysis(
-    {
-      readConfiguration: () => parseConfig({}),
-      createBinarySession: createSession,
-      createArtifactBinarySession: createSession,
-      createNativeDispatchBinarySession: createSession,
-      createNativeBinarySession: createSession,
-      createManagedBinarySession: createSession,
-    },
-    path,
-    "read_bytes",
-    admittedReadBytes,
-  );
-  if (!result.ok) throw result.error;
-  expect(result.value.evidence_id).toBe(evidenceId);
-  expect(
-    result.value.provider_selection?.candidates.some(
-      (candidate) => candidate.selected,
-    ),
-  ).toBe(true);
-  expect(executed).toBe(1);
 });

@@ -1,9 +1,9 @@
+import { bindSnapshotReplayExecution } from "./SessionEvidenceReuse.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import { analysisProfilesEqual } from "../../domain/analysisProfile.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { type ProviderSelectionProvenance } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
@@ -75,8 +75,6 @@ export interface ActiveAnalysisBinding {
   readonly profile: AnalysisProfileCommitment | null;
   /** Current route profile for the single profileless native dispatch workflow. */
   readonly profilelessWorkflowProfile?: AnalysisProfileCommitment;
-  /** Recording session's provider selection, retained with every admitted record. */
-  readonly providerSelection?: ProviderSelectionProvenance;
 }
 
 /** Validated composed-workflow payload bound to the active target and profile. */
@@ -127,13 +125,9 @@ export abstract class BinarySessionRecords {
   ): Result<"added" | "duplicate", AnalysisError> {
     if (this.#investigationDisposed)
       return err(cancelledBy("record_evidence", OwnerCancellation.ownerClosed));
-    const recorded = this.#records.recordProducedEvidence(
-      evidence,
-      this.activeAnalysisBinding()?.providerSelection,
-    );
+    const recorded = this.#records.recordEvidenceWithMetadata(evidence);
     if (!recorded.ok) return recorded;
-    if (recorded.value.replacements.length > 0)
-      this.#snapshot.refreshEvidenceMetadata(recorded.value.replacements);
+    this.#snapshot.refreshEvidenceMetadata(recorded.value.replacements);
     if (
       recorded.value.disposition === "added" ||
       recorded.value.replacements.length > 0
@@ -325,7 +319,6 @@ export abstract class BinarySessionRecords {
         this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
         return ok(imported.value.recordsAdded);
       },
-      (id) => this.#records.evidenceForAnalysis(id),
     );
     if (imported.ok) this.#emitSnapshotChanged();
     return imported;
@@ -355,9 +348,18 @@ export abstract class BinarySessionRecords {
     >,
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
-    return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
-      this.evidenceForAnalysis(id),
+    const replay = this.#snapshot.lookup(
+      target,
+      profile,
+      operation,
+      parameters,
+      (id) => this.evidenceForAnalysis(id),
     );
+    if (replay?.evidenceId === undefined) return replay;
+    const source = this.evidenceForAnalysis(replay.evidenceId);
+    return source === undefined
+      ? replay
+      : bindSnapshotReplayExecution(replay, source);
   }
 
   /** Why recording this execution would keep no replay entry, if anything. */
@@ -496,12 +498,8 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
       return err(cancelledBy("record_unknown", OwnerCancellation.ownerClosed));
-    const binding = this.activeAnalysisBinding();
-    const recorded = this.#records.recordUnknown(
-      input,
-      binding?.target,
-      binding?.providerSelection,
-    );
+    const target = this.activeAnalysisBinding()?.target;
+    const recorded = this.#records.recordUnknown(input, target);
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }
@@ -517,18 +515,9 @@ export abstract class BinarySessionRecords {
           OwnerCancellation.ownerClosed,
         ),
       );
-    // The mutation record carries the same session attribution as the sibling
-    // recordUnknown/updateUnknown paths; otherwise this atomic workflow is the
-    // one place an exported record has no provider selection.
-    const recorded = this.#records.recordProducedEvidenceWithUnknown(
-      evidence,
-      input,
-      this.activeAnalysisBinding()?.providerSelection,
-    );
-    if (!recorded.ok) return recorded;
-    this.#snapshot.refreshEvidenceMetadata(recorded.value.replacements);
-    this.#emitSnapshotChanged();
-    return ok(recorded.value.unknown);
+    const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
+    if (recorded.ok) this.#emitSnapshotChanged();
+    return recorded;
   }
 
   updateUnknown(
@@ -536,12 +525,8 @@ export abstract class BinarySessionRecords {
   ): Result<ResidualUnknown, AnalysisError> {
     if (this.#investigationDisposed)
       return err(cancelledBy("update_unknown", OwnerCancellation.ownerClosed));
-    const binding = this.activeAnalysisBinding();
-    const updated = this.#records.updateUnknown(
-      input,
-      binding?.target,
-      binding?.providerSelection,
-    );
+    const target = this.activeAnalysisBinding()?.target;
+    const updated = this.#records.updateUnknown(input, target);
     if (updated.ok) this.#emitSnapshotChanged();
     return updated;
   }
