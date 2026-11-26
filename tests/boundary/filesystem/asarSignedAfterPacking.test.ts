@@ -5,6 +5,7 @@ import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
+  type ArtifactReader,
 } from "../../../src/resources/index.js";
 import { scanReader } from "../../../src/artifacts/inventory/scanReader.js";
 
@@ -219,4 +220,89 @@ it("retains the first mismatch when the optional read encounters an I/O failure"
   } finally {
     await reader.close();
   }
+});
+
+it("preserves the first mismatch digest pair when explanation cleanup also fails", async () => {
+  const { archive, addon, declaredSha256, observedSha256 } =
+    await createSignedAfterPackingAsarAddon();
+  const reader = new AsarArtifactReader(archive);
+  const open = reader.open.bind(reader);
+  let reads = 0;
+  vi.spyOn(reader, "open").mockImplementation(async (entry, signal) => {
+    if (entry.path === addon && ++reads === 2)
+      throw ArtifactReaderFailure.withCleanup(
+        new ArtifactEntryContentUnavailable("gone", "companion unavailable"),
+        { reason: "close failed", resources: ["companion handle"] },
+      );
+    return open(entry, signal);
+  });
+  try {
+    await expect(
+      scanReader(reader, [], undefined, "fail"),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "declared-digest",
+      details: {
+        logicalPath: addon,
+        declaredSha256,
+        calculatedSha256: observedSha256,
+      },
+      cleanup: { reason: "close failed", resources: ["companion handle"] },
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("skips the signing explanation when the acquisition byte budget is exhausted", async () => {
+  const { signed, original, addon } = await createSignedAfterPackingAsarAddon();
+  const declaredSha256 = createHash("sha256").update(original).digest("hex");
+  const observedSha256 = createHash("sha256").update(signed).digest("hex");
+  let opens = 0;
+  const reader: ArtifactReader = {
+    format: "asar",
+    async *entries(_signal, options) {
+      yield {
+        path: addon,
+        kind: "file",
+        declaredSize: signed.length,
+        compressedSize: null,
+        executable: false,
+        encrypted: false,
+        byteOffset: null,
+        declaredIntegrity: { algorithm: "sha256", digest: declaredSha256 },
+        unpacked: true,
+        limitations: [],
+        adapterKey: addon,
+      };
+      options?.onCoverage?.({ status: "complete", limitations: [] });
+    },
+    async open() {
+      opens += 1;
+      return Readable.from([signed]);
+    },
+    provenance: () => [],
+    async close() {},
+  };
+  const result = await scanReader(
+    reader,
+    [reader],
+    undefined,
+    "record-and-continue",
+    undefined,
+    // First read consumes the whole allowance; the optional second read must skip.
+    { maximumEntries: 10, maximumBytes: signed.length },
+  );
+  expect(opens).toBe(1);
+  expect(result.pendingContradictions[0]?.integrity).toMatchObject({
+    observed_sha256: observedSha256,
+  });
+  expect(result.pendingContradictions[0]?.signingExplanation).toBeUndefined();
+  expect(result.occurrences[0]?.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(
+        /Signing explanation skipped:.*reconstruction allowance/,
+      ),
+    ]),
+  );
 });

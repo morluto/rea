@@ -56,6 +56,7 @@ import {
 import {
   explainPeSignedAfterPacking,
   MAX_SIGNED_AFTER_PACKING_PE_BYTES,
+  signedAfterPackingBudgetLimitation,
 } from "../../native/pe/PeUnsignedDigest.js";
 
 export interface PendingIntegrityContradiction {
@@ -563,21 +564,35 @@ const digestArtifactEntry = async (
     claim.algorithm === "sha256" &&
     classified.contentFormat === "pe"
   ) {
+    const mismatchDetails = artifactIntegrityDetails(
+      logicalPath,
+      claim,
+      observed,
+      entry.unpacked,
+    );
     try {
-      signingExplanation =
-        (await explainUnpackedPeSignedAfterPacking({
-          reader: currentReader,
-          entry,
-          observedBytes: digest.bytes,
-          observedSha256: digest.sha256,
-          declaredSha256: claim.digest,
-          signal: context.signal,
-        })) ?? undefined;
+      const attempt = await explainUnpackedPeSignedAfterPacking({
+        reader: currentReader,
+        entry,
+        observedBytes: digest.bytes,
+        observedSha256: digest.sha256,
+        declaredSha256: claim.digest,
+        signal: context.signal,
+        context,
+      });
+      if (attempt.status === "explained")
+        signingExplanation = attempt.explanation;
+      else if (attempt.status === "skipped")
+        occurrence.limitations.push(attempt.limitation);
     } catch (cause: unknown) {
       if (
         cause instanceof ArtifactReaderFailure &&
         (cause.cleanup !== undefined || (cause.cleanupLeases?.length ?? 0) > 0)
       ) {
+        const cleanup = ArtifactReaderFailure.cleanupObservation(
+          cause,
+          `signing explanation for ${logicalPath}`,
+        );
         if (context.signal?.aborted === true)
           throw ArtifactReaderFailure.withCleanup(
             new ArtifactReaderFailure(
@@ -585,14 +600,26 @@ const digestArtifactEntry = async (
               "Artifact inventory cancelled",
               { cause: context.signal.reason },
             ),
-            ArtifactReaderFailure.cleanupObservation(
-              cause,
-              `signing explanation for ${logicalPath}`,
-            ),
+            cleanup,
             cause.partialObservation,
             cause.cleanupLeases,
           );
-        throw cause;
+        // Keep the first mismatch digest pair when the optional read's cleanup
+        // also fails; completed observations must survive later cleanup.
+        throw ArtifactReaderFailure.withCleanup(
+          new ArtifactReaderFailure(
+            "integrity",
+            `Artifact integrity metadata disagrees with content: ${logicalPath}`,
+            {
+              integrityCheck: "declared-digest",
+              cause,
+            },
+            mismatchDetails,
+          ),
+          cleanup,
+          cause.partialObservation,
+          cause.cleanupLeases,
+        );
       }
       abortIfNeeded(context.signal);
       if (
@@ -652,6 +679,14 @@ const digestArtifactEntry = async (
   };
 };
 
+type SigningExplanationAttempt =
+  | {
+      readonly status: "explained";
+      readonly explanation: SignedAfterPackingExplanation;
+    }
+  | { readonly status: "unexplained" }
+  | { readonly status: "skipped"; readonly limitation: string };
+
 const explainUnpackedPeSignedAfterPacking = async (input: {
   readonly reader: ArtifactReader;
   readonly entry: ArtifactEntry;
@@ -659,7 +694,8 @@ const explainUnpackedPeSignedAfterPacking = async (input: {
   readonly observedSha256: string;
   readonly declaredSha256: string;
   readonly signal: AbortSignal | undefined;
-}): Promise<SignedAfterPackingExplanation | null> => {
+  readonly context: ScanContext;
+}): Promise<SigningExplanationAttempt> => {
   const {
     reader,
     entry,
@@ -667,13 +703,23 @@ const explainUnpackedPeSignedAfterPacking = async (input: {
     observedSha256,
     declaredSha256,
     signal,
+    context,
   } = input;
-  if (
-    !Number.isSafeInteger(observedBytes) ||
-    observedBytes <= 0 ||
-    observedBytes > MAX_SIGNED_AFTER_PACKING_PE_BYTES
-  )
-    return null;
+  if (!Number.isSafeInteger(observedBytes) || observedBytes <= 0)
+    return { status: "unexplained" };
+  const remainingAcquisition =
+    context.acquisitionLimits === undefined
+      ? undefined
+      : context.acquisitionLimits.maximumBytes - context.bytesRead;
+  const budget = Math.min(
+    MAX_SIGNED_AFTER_PACKING_PE_BYTES,
+    remainingAcquisition ?? MAX_SIGNED_AFTER_PACKING_PE_BYTES,
+  );
+  if (observedBytes > budget)
+    return {
+      status: "skipped",
+      limitation: signedAfterPackingBudgetLimitation(observedBytes, budget),
+    };
   const stream = await reader.open(entry, signal);
   const chunks: Buffer[] = [];
   const hash = createHash("sha256");
@@ -681,17 +727,33 @@ const explainUnpackedPeSignedAfterPacking = async (input: {
   for await (const raw of stream) {
     abortIfNeeded(signal);
     const chunk = streamChunkToBuffer(raw);
+    if (
+      context.acquisitionLimits !== undefined &&
+      chunk.length > context.acquisitionLimits.maximumBytes - context.bytesRead
+    )
+      return {
+        status: "skipped",
+        limitation: signedAfterPackingBudgetLimitation(
+          observedBytes,
+          context.acquisitionLimits.maximumBytes,
+        ),
+      };
     total += chunk.length;
-    if (total > observedBytes) return null;
+    if (total > observedBytes) return { status: "unexplained" };
+    if (context.acquisitionLimits !== undefined)
+      context.bytesRead += chunk.length;
     hash.update(chunk);
     chunks.push(chunk);
   }
   if (total !== observedBytes || hash.digest("hex") !== observedSha256)
-    return null;
-  return explainPeSignedAfterPacking(
+    return { status: "unexplained" };
+  const explanation = explainPeSignedAfterPacking(
     Buffer.concat(chunks, total),
     declaredSha256,
   );
+  return explanation === null
+    ? { status: "unexplained" }
+    : { status: "explained", explanation };
 };
 
 const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>

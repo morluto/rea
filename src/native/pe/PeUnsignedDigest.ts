@@ -1,39 +1,37 @@
 import type { SignedAfterPackingExplanation } from "../../domain/artifactIntegrity.js";
-import {
-  BinaryFormatFailure,
-  BinaryReader,
-} from "../../domain/binaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { readPeImage } from "../../domain/native/peImage.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { PeCertificateAsn1Failure } from "./PeCertificateAsn1.js";
-import { parsePeCertificatesFromBytes } from "./PeCertificateParser.js";
+import {
+  certificateTableRange,
+  parsePeCertificatesFromBytes,
+  readWinCertificateEntryRanges,
+} from "./PeCertificateParser.js";
 
-/** Bound second-pass PE reads used only after an unpacked integrity mismatch. */
+/**
+ * Bound for the optional in-memory PE reconstruction used only after an
+ * unpacked integrity mismatch. Authenticode rebuild needs the whole image as
+ * one buffer; this representation ceiling is fixed for the release.
+ */
 export const MAX_SIGNED_AFTER_PACKING_PE_BYTES = 67_108_864;
 
 const CHECKSUM_OPTIONAL_HEADER_OFFSET = 64;
-
-const align8 = (value: number): number => Math.ceil(value / 8) * 8;
 
 /**
  * Confirm every WIN_CERTIFICATE entry is 8-byte aligned and in-bounds before
  * trusting the security directory's Size as a removable overlay.
  */
 const certificateTableIsWellFormed = (table: Buffer): boolean => {
-  const reader = new BinaryReader(table, true, "pe-certificate-table");
-  let at = 0;
-  while (at < table.length) {
-    if (table.length - at < 8) return false;
-    const length = reader.u32(at);
-    if (length < 8) return false;
-    const entryEnd = at + length;
-    if (entryEnd > table.length) return false;
-    const next = align8(entryEnd);
-    if (next > table.length) return false;
-    at = next;
+  try {
+    readWinCertificateEntryRanges(table);
+    return true;
+  } catch (cause) {
+    if (cause instanceof ParseFailureError) return false;
+    throw cause;
   }
-  return at === table.length;
 };
 
 /**
@@ -58,24 +56,15 @@ export const rebuildPeBytesWithoutCertificateTable = (
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
   }
-  const security = image.pe_data_directories[4];
-  if (
-    security === undefined ||
-    (security.address === 0 && security.size === 0) ||
-    security.size === 0
-  )
-    return null;
-  const tableOffset = security.address;
-  const tableSize = security.size;
-  if (
-    !Number.isSafeInteger(tableOffset) ||
-    !Number.isSafeInteger(tableSize) ||
-    tableOffset % 8 !== 0 ||
-    tableOffset < image.pe_size_of_headers ||
-    tableOffset > bytes.length - tableSize
-  )
-    return null;
-  const directoryAt = image.pe_optional_header_file_offset + security.offset;
+  let range: ReturnType<typeof certificateTableRange>;
+  try {
+    range = certificateTableRange(image, bytes.length);
+  } catch (cause) {
+    if (cause instanceof ParseFailureError) return null;
+    throw cause;
+  }
+  if (range === null) return null;
+  const { tableOffset, tableSize, directoryAt } = range;
   if (directoryAt + 8 > tableOffset) return null;
   if (
     !certificateTableIsWellFormed(
@@ -138,7 +127,8 @@ const signerSubjectsFromCertificateTable = (
     if (
       cause instanceof ArtifactReaderFailure ||
       cause instanceof PeCertificateAsn1Failure ||
-      cause instanceof BinaryFormatFailure
+      cause instanceof BinaryFormatFailure ||
+      cause instanceof ParseFailureError
     )
       return { subjects, complete: false };
     throw cause;
@@ -149,6 +139,10 @@ const signerSubjectsFromCertificateTable = (
  * When an unpacked PE's observed SHA-256 disagrees with the ASAR claim, check
  * whether removing Authenticode restores the declared digest. Match is exact;
  * any other mutation stays an unexplained mismatch.
+ *
+ * Returns null when reconstruction does not restore the claim. Callers must
+ * apply {@link MAX_SIGNED_AFTER_PACKING_PE_BYTES} (and any acquisition budget)
+ * before buffering bytes and report when that skip happens.
  */
 export const explainPeSignedAfterPacking = (
   bytes: Buffer,
@@ -169,3 +163,10 @@ export const explainPeSignedAfterPacking = (
     signer_subjects_complete: signers.complete,
   };
 };
+
+/** Limitation text when the optional PE reconstruction budget refuses the companion. */
+export const signedAfterPackingBudgetLimitation = (
+  observedBytes: number,
+  maximumBytes: number,
+): string =>
+  `Signing explanation skipped: PE companion of ${String(observedBytes)} bytes exceeds the ${String(maximumBytes)}-byte signed-after-packing reconstruction allowance.`;

@@ -70,6 +70,53 @@ const requireRange = (
 
 const align8 = (value: number): number => Math.ceil(value / 8) * 8;
 
+/** Index key for an Authenticode signer: encoded issuer Name bytes plus serial. */
+const issuerSerialKey = (issuer: Buffer, serialHex: string): string =>
+  `${serialHex}:${issuer.toString("hex")}`;
+
+/**
+ * One WIN_CERTIFICATE inside IMAGE_DIRECTORY_ENTRY_SECURITY. Offsets are relative
+ * to the certificate table start; `next` is the 8-byte-aligned successor offset.
+ */
+export interface WinCertificateEntryRange {
+  readonly at: number;
+  readonly length: number;
+  readonly entryEnd: number;
+  readonly next: number;
+}
+
+/**
+ * Walk every WIN_CERTIFICATE entry for structural bounds and alignment. Throws
+ * {@link ParseFailureError} when the table is malformed or truncated. Callers
+ * that only need a well-formedness check catch that failure.
+ */
+export const readWinCertificateEntryRanges = (
+  table: Buffer,
+): readonly WinCertificateEntryRange[] => {
+  const reader = new BinaryReader(table, true, FORMAT);
+  const entries: WinCertificateEntryRange[] = [];
+  let at = 0;
+  while (at < table.length) {
+    // Alignment padding sits inside the gap before the next 8-byte boundary.
+    // Bytes that remain after that boundary are a short header, including
+    // zeros at the start of the table.
+    if (table.length - at < 8)
+      failTruncated("WIN_CERTIFICATE header is truncated.");
+    const length = reader.u32(at);
+    if (length < 8)
+      fail("WIN_CERTIFICATE dwLength is shorter than its header.");
+    const entryEnd = at + length;
+    if (entryEnd > table.length)
+      fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
+    const next = align8(entryEnd);
+    if (next > table.length)
+      failTruncated("WIN_CERTIFICATE alignment padding is truncated.");
+    entries.push({ at, length, entryEnd, next });
+    at = next;
+  }
+  return entries;
+};
+
 const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
   "PKCS#7 fields are decoded structurally; cryptographic validity remains unobserved.",
@@ -86,7 +133,19 @@ const ABSENT_LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
 ] as const;
 
-const certificateTableRange = (image: PeImage, fileSize: number) => {
+/**
+ * Locate IMAGE_DIRECTORY_ENTRY_SECURITY in a PE image. Returns null when the
+ * directory is absent; throws {@link ParseFailureError} when it is present but
+ * structurally invalid.
+ */
+export const certificateTableRange = (
+  image: PeImage,
+  fileSize: number,
+): {
+  readonly tableOffset: number;
+  readonly tableSize: number;
+  readonly directoryAt: number;
+} | null => {
   const security = image.pe_data_directories[4];
   if (security === undefined || (security.address === 0 && security.size === 0))
     return null;
@@ -135,26 +194,11 @@ const parsePeCertificateTable = (
       { integrityCheck: "read-coverage" },
     );
   const entries: PeCertificates["entries"] = [];
-  let at = 0;
   const reader = new BinaryReader(table, true, FORMAT);
   let examined = 0;
   let teletexStringCompatibilityUsed = false;
   let unsignedAttributesPresent = false;
-  while (at < table.length) {
-    // Alignment padding sits inside the gap before the next 8-byte boundary.
-    // Bytes that remain after that boundary are a short header, including
-    // zeros at the start of the table.
-    if (table.length - at < 8)
-      failTruncated("WIN_CERTIFICATE header is truncated.");
-    const length = reader.u32(at);
-    if (length < 8)
-      fail("WIN_CERTIFICATE dwLength is shorter than its header.");
-    const entryEnd = at + length;
-    if (entryEnd > table.length)
-      fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
-    const next = align8(entryEnd);
-    if (next > table.length)
-      failTruncated("WIN_CERTIFICATE alignment padding is truncated.");
+  for (const { at, length, entryEnd } of readWinCertificateEntryRanges(table)) {
     examined += 1;
     if (examined > input.max_entries)
       throw new ArtifactReaderFailure(
@@ -185,23 +229,41 @@ const parsePeCertificateTable = (
         payload = entryPayload.subarray(0, root.end);
         const parsed = parsePkcs7SignedData(root);
         if (onSignerSubject !== undefined) {
+          const byIssuerSerial = new Map<
+            string,
+            { readonly subject: string; count: number }
+          >();
+          for (const certificate of parsed.certificates) {
+            if (certificate.serial_hex === null) continue;
+            const key = issuerSerialKey(
+              payload.subarray(
+                certificate.issuer.start,
+                certificate.issuer.end,
+              ),
+              certificate.serial_hex,
+            );
+            const existing = byIssuerSerial.get(key);
+            byIssuerSerial.set(key, {
+              subject: certificate.subject.text,
+              count: (existing?.count ?? 0) + 1,
+            });
+          }
           for (const signer of parsed.signers) {
             const issuer = signer.issuer;
-            const matches =
-              issuer === null || signer.serial_hex === null
-                ? []
-                : parsed.certificates.filter(
-                    (certificate) =>
-                      certificate.serial_hex === signer.serial_hex &&
-                      payload
-                        .subarray(
-                          certificate.issuer.start,
-                          certificate.issuer.end,
-                        )
-                        .equals(payload.subarray(issuer.start, issuer.end)),
-                  );
+            if (issuer === null || signer.serial_hex === null) {
+              onSignerSubject(undefined);
+              continue;
+            }
+            const match = byIssuerSerial.get(
+              issuerSerialKey(
+                payload.subarray(issuer.start, issuer.end),
+                signer.serial_hex,
+              ),
+            );
             onSignerSubject(
-              matches.length === 1 ? matches[0]?.subject.text : undefined,
+              match !== undefined && match.count === 1
+                ? match.subject
+                : undefined,
             );
           }
         }
@@ -292,7 +354,6 @@ const parsePeCertificateTable = (
       },
       pkcs7,
     });
-    at = next;
   }
   const certificates = entries.reduce(
     (count, entry) => count + (entry.pkcs7?.certificates.length ?? 0),

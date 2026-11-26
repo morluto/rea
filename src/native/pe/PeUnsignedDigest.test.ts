@@ -104,6 +104,31 @@ it("keeps the digest explanation when signer decoding exceeds its allowance", ()
   });
 });
 
+it("keeps the digest explanation when PKCS#7 parsing raises ParseFailureError", () => {
+  const signed = peCertificateFixture(false, pkcs7SignedDataFixture());
+  // Corrupt CMS content while leaving the WIN_CERTIFICATE header intact so
+  // reconstruction still restores the declared digest.
+  signed[0x210] = (signed[0x210] ?? 0) ^ 0xff;
+  expect(() =>
+    parsePeCertificatesFromBytes(
+      signed,
+      { path: "/fixture", sha256: digest(signed), bytes: signed.length },
+      { path: "/fixture", max_file_bytes: signed.length, max_entries: 64 },
+    ),
+  ).toThrow(
+    expect.objectContaining({
+      name: "ParseFailureError",
+    }),
+  );
+  expect(
+    explainPeSignedAfterPacking(signed, digest(unsignedFixture(false))),
+  ).toMatchObject({
+    kind: "signed-after-packing",
+    unsigned_sha256: digest(unsignedFixture(false)),
+    signer_subjects_complete: false,
+  });
+});
+
 it("keeps a real content mismatch unexplained", () => {
   const signed = peCertificateFixture();
   signed.writeUInt32LE(0x11111111, 0x98 + 64);
