@@ -30,11 +30,13 @@ import {
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 import type { PrefixedByteSource } from "../byteSource.js";
+import { APK_SIGNATURE_BUDGETS } from "./apkSignatureBudgets.js";
 
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
 const BLOCK_MAGIC = "APK Sig Block 42";
 /** A single pair is at least 12 bytes (uint64 length + uint32 id); cap the count. */
-export const APK_SIGNING_BLOCK_MAX_PAIRS = 4096;
+export const APK_SIGNING_BLOCK_MAX_PAIRS =
+  APK_SIGNATURE_BUDGETS.max_signing_block_pairs.default_value;
 
 /** Validate one size-prefixed pair without reading or allocating its value. */
 export const apkSigningPairEnd = (

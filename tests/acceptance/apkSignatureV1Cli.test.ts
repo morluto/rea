@@ -706,7 +706,16 @@ cliTest(
     malformed.writeUInt16LE(0xffff, central + 28);
 
     const { call } = await connectLocalToolsMcp();
-    for (const [name, selected, expected] of [
+    const framedLimit = {
+      control_kind: "parameter",
+      parameter: "max_v1_signature_entries",
+      effective_value: 4096,
+      default_value: 4096,
+      maximum: 65536,
+      unit: "count",
+      applies_at: "next_call",
+    };
+    for (const [name, selected, cliExpected, mcpExpected] of [
       [
         "framed",
         bytes,
@@ -717,17 +726,40 @@ cliTest(
             resource: "capacity",
             reason: parserReason,
             reported_limits: { max_v1_signature_entries: 4096 },
-            refusal: {
-              kind: "fixed_ceiling",
-              operation: "inspect_apk_signature",
-              allowance_kind: "count",
+            limit: {
+              ...framedLimit,
+              cli_flag: "--max-v1-signature-entries",
             },
+          },
+        },
+        {
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "capacity",
+            reason: parserReason,
+            reported_limits: { max_v1_signature_entries: 4096 },
+            limit: framedLimit,
           },
         },
       ],
       [
         "malformed",
         malformed,
+        {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(
+                  "central-directory file name runs past the directory",
+                ),
+              },
+            ],
+          },
+        },
         {
           code: "invalid_request",
           details: {
@@ -751,11 +783,11 @@ cliTest(
       });
       expect(reply.exitCode, reply.stderr).toBe(1);
       expect(analysisErrorProjectionSchema.parse(reply.json)).toMatchObject(
-        expected,
+        cliExpected,
       );
       expect(
         parseMcpToolError(await call("inspect_apk_signature", { path })).error,
-      ).toMatchObject(expected);
+      ).toMatchObject(mcpExpected);
     }
   },
 );

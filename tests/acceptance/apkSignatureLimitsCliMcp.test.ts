@@ -238,3 +238,42 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "keeps omitted budget defaults out of MCP Evidence parameters and records caller-selected budgets",
+  async () => {
+    const root = await createTestTempDirectory("rea-apk-mcp-params-");
+    const path = join(root, "unsigned.apk");
+    await writeFile(
+      path,
+      await zipWith([
+        { name: "AndroidManifest.xml", data: Uint8Array.of(3, 0, 8, 0) },
+      ]),
+    );
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+    });
+
+    const omitted = await call("inspect_apk_signature", {
+      path,
+      detail: "complete",
+    });
+    expect(omitted.isError, JSON.stringify(omitted.content)).not.toBe(true);
+    expect(parseEvidence(omitted.structuredContent).parameters).toEqual({
+      path,
+    });
+
+    const explicit = await call("inspect_apk_signature", {
+      path,
+      detail: "complete",
+      max_signers: 40,
+      max_output_bytes: 1024 * 1024,
+    });
+    expect(explicit.isError, JSON.stringify(explicit.content)).not.toBe(true);
+    expect(parseEvidence(explicit.structuredContent).parameters).toEqual({
+      path,
+      max_signers: 40,
+      max_output_bytes: 1024 * 1024,
+    });
+  },
+);

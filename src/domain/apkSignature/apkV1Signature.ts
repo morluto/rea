@@ -45,6 +45,7 @@ import {
   startsWithV1MetaInfPrefix,
   v1SignatureFileNameForBlock,
 } from "./apkV1MetadataName.js";
+import { APK_SIGNATURE_BUDGETS } from "./apkSignatureBudgets.js";
 
 export type ApkCentralDirectoryError =
   | {
@@ -53,12 +54,6 @@ export type ApkCentralDirectoryError =
       readonly detail: string;
     }
   | ParseFailureError<"limit">;
-
-/**
- * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
- * plus one `.SF` and one block per v1 signer; thousands is already pathological.
- */
-const MAX_V1_SIGNATURE_ENTRIES = 4096;
 
 /** Duplicated central-directory names decoded for the report; the rest are counted. */
 const MAX_DUPLICATE_NAME_SAMPLE = 5;
@@ -260,7 +255,8 @@ export const centralDirectoryV1SignatureEntries = (
   totalEntries: number,
   apksigRecords: number = totalEntries,
   baseOffset = 0,
-  maxV1SignatureEntries: number = MAX_V1_SIGNATURE_ENTRIES,
+  maxV1SignatureEntries: number = APK_SIGNATURE_BUDGETS.max_v1_signature_entries
+    .default_value,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
   const end = centralDirectoryOffset + centralDirectorySize;
   if (

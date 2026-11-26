@@ -254,7 +254,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   })) satisfies Bind<Pick<WasmArtifactService, "inspect">>,
   apkSignature: ((service, retention) => ({
     inspect_apk_signature: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<Pick<ApkSignatureService, "inspect">>,

@@ -62,8 +62,39 @@ export const certificateBytes = (der: Uint8Array | undefined): number =>
 export const certificateSummaryBytes = (der: Uint8Array): number =>
   128 + DN_EXPANSION * der.length;
 
-/**
- * Upper bound on a serialized string: a UTF-16 unit is at most 3 UTF-8 bytes,
- * and a control character JSON-escapes to `\u00XX` (6 bytes).
- */
-export const jsonStringBytes = (text: string): number => 2 + 6 * text.length;
+/** Exact UTF-8 byte length of a JSON-serialized string without allocating it. */
+export const jsonStringBytes = (text: string): number => {
+  let bytes = 2;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code === 0x22 || code === 0x5c) {
+      bytes += 2;
+    } else if (code < 0x20) {
+      bytes +=
+        code === 0x08 ||
+        code === 0x09 ||
+        code === 0x0a ||
+        code === 0x0c ||
+        code === 0x0d
+          ? 2
+          : 6;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        i += 1;
+      } else {
+        bytes += 6;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      bytes += 6;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+};

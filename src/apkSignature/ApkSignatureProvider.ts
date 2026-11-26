@@ -519,17 +519,22 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     );
     if (!v31.ok) return v31;
 
-    // Account for representation expansion before allocating large reports.
-    // Small caller budgets (<= 64 KiB) defer to the exact serialized check
-    // below so the 4 KiB base estimate never rejects a fitting report and
-    // refusals carry the exact required_value.
+    // Keep pre-materialization allocation protection separate from smaller
+    // caller max_output_bytes budgets: only refuse before materializing when
+    // the worst-case estimate exceeds the allocation ceiling (at least the
+    // default output budget). Reports within that ceiling are checked against
+    // the caller's exact serialized byte budget below.
     const projected = projectedOutputBytes(
       [v2.value, v3.value, v31.value],
       v1,
       v1Decoded,
       sourceStampPair(block.value)?.value,
     );
-    if (projected > Math.max(limits.maxOutputBytes, 64 * 1024))
+    const allocationCeiling = Math.max(
+      limits.maxOutputBytes,
+      APK_SIGNATURE_BUDGETS.max_output_bytes.default_value,
+    );
+    if (projected > allocationCeiling)
       return err(apkOutputBudgetError(projected, limits.maxOutputBytes, false));
 
     const matcher = await buildDigestMatcher(

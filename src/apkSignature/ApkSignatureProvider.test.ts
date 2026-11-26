@@ -732,6 +732,59 @@ describe("ApkSignatureProvider output budget", () => {
     expect(fits.ok, fits.ok ? "" : fits.error.message).toBe(true);
   });
 
+  it("accepts fitting reports when worst-case estimates exceed a smaller max_output_bytes budget", async () => {
+    // 128 distinct 96-char ASCII .SF names: old 6x string projection exceeded
+    // 64 KiB even though actual serialized output is well under 32 KiB.
+    const sfEntries = Array.from({ length: 128 }, (_, index) => ({
+      name: `META-INF/${"a".repeat(80)}_${String(index).padStart(3, "0")}.SF`,
+      data: "",
+      stored: true,
+    }));
+    const sfPath = await write(
+      "many-ascii-sf.apk",
+      await zipWith(sfEntries, { dataDescriptor: false }),
+    );
+    const sfFits = await provider.inspect({
+      path: sfPath,
+      max_output_bytes: 32_768,
+    });
+    expect(sfFits.ok, sfFits.ok ? "" : sfFits.error.message).toBe(true);
+
+    // A 50 KiB undecodable DER certificate has a >200 KiB worst-case
+    // certificateBytes estimate, but materializes to ~2 KiB of JSON.
+    const unreadableCert = new Uint8Array(50 * 1024);
+    const signedData = Buffer.concat([
+      Buffer.from(seq([BOGUS_DIGEST])),
+      lpBuf(lpBuf(unreadableCert)),
+      Buffer.from(seq([])),
+    ]);
+    const certPath = await write(
+      "large-unreadable-cert.apk",
+      syntheticSigned([{ id: V2, value: apkSchemeValue(signedData) }]),
+    );
+    const certFits = await provider.inspect({
+      path: certPath,
+      max_output_bytes: 32_768,
+    });
+    expect(certFits.ok, certFits.ok ? "" : certFits.error.message).toBe(true);
+
+    const certTooSmall = await provider.inspect({
+      path: certPath,
+      max_output_bytes: 1024,
+    });
+    expect(certTooSmall.ok).toBe(false);
+    if (!certTooSmall.ok) {
+      const required = (
+        projectAnalysisError(certTooSmall.error).details?.limit as
+          | { required_value?: number }
+          | undefined
+      )?.required_value;
+      expect(typeof required).toBe("number");
+      expect(required).toBeGreaterThan(1024);
+      expect(required).toBeLessThan(32_768);
+    }
+  });
+
   it("enforces max_file_bytes, max_v1_signature_entries, and max_signer_elements with typed details.limit", async () => {
     const v1Path = await write(
       "v1-budget.apk",

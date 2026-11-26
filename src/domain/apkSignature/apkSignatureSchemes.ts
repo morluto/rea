@@ -14,6 +14,7 @@
 import { BinaryReader } from "../binaryContainer.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
+import { APK_SIGNATURE_BUDGETS } from "./apkSignatureBudgets.js";
 
 export type ApkSchemeVersion = "v2" | "v3" | "v3.1";
 
@@ -58,18 +59,6 @@ export interface ApkSigner {
 /** Additional-attribute id carrying the v3 proof-of-rotation lineage. */
 export const PROOF_OF_ROTATION_ATTR_ID = 0x3ba06f8c;
 
-/** Generic cap on digests/certificates/attributes in one signer. */
-const MAX_ELEMENTS = 4096;
-/**
- * Resource admission for signer fan-out, including per-signer X.509 work.
- * This is not an APK format maximum; excess records return a capacity error.
- */
-const MAX_SIGNERS = 32;
-/**
- * Resource admission for lineage fan-out before certificate materialisation.
- * This is not a format maximum; longer declared chains are refused explicitly.
- */
-const MAX_LINEAGE_NODES = 32;
 /** The only proof-of-rotation lineage encoding version apksig accepts. */
 const LINEAGE_VERSION = 1;
 
@@ -124,7 +113,7 @@ const elements = (
   seq: Uint8Array | null,
   what: string,
   version: ApkSchemeVersion,
-  limit = MAX_ELEMENTS,
+  limit: number = APK_SIGNATURE_BUDGETS.max_signer_elements.default_value,
 ): Result<Uint8Array[], ApkSchemeError> => {
   if (seq === null) return malformed(`${what} sequence missing or truncated`);
   const reader = new LeReader(seq);
@@ -147,7 +136,7 @@ const decodeAlgorithmRecords = <T>(
     bytes: Uint8Array,
     uninterpretedBytes: number,
   ) => T,
-  maxElements: number = MAX_ELEMENTS,
+  maxElements: number = APK_SIGNATURE_BUDGETS.max_signer_elements.default_value,
 ): Result<T[], ApkSchemeError> => {
   const items = elements(seq, what, version, maxElements);
   if (!items.ok) return items;
@@ -166,7 +155,7 @@ const decodeAlgorithmRecords = <T>(
 const decodeAttributes = (
   seq: Uint8Array | null,
   version: ApkSchemeVersion,
-  maxElements: number = MAX_ELEMENTS,
+  maxElements: number = APK_SIGNATURE_BUDGETS.max_signer_elements.default_value,
 ): Result<ApkSignerAttribute[], ApkSchemeError> => {
   const items = elements(seq, "attributes", version, maxElements);
   if (!items.ok) return items;
@@ -183,7 +172,7 @@ const decodeAttributes = (
 const decodeSignedData = (
   signedData: Uint8Array,
   version: ApkSchemeVersion,
-  maxElements: number = MAX_ELEMENTS,
+  maxElements: number = APK_SIGNATURE_BUDGETS.max_signer_elements.default_value,
 ): Result<
   Omit<ApkSigner, "signatures" | "publicKey" | "uninterpretedSignerBytes">,
   ApkSchemeError
@@ -232,7 +221,7 @@ const decodeSignedData = (
 const decodeSigner = (
   chunk: Uint8Array,
   version: ApkSchemeVersion,
-  maxElements: number = MAX_ELEMENTS,
+  maxElements: number = APK_SIGNATURE_BUDGETS.max_signer_elements.default_value,
 ): Result<ApkSigner, ApkSchemeError> => {
   const reader = new LeReader(chunk);
   const signedData = reader.lenChunk();
@@ -283,8 +272,11 @@ export const decodeSigners = (
     readonly maxElements?: number;
   },
 ): Result<ApkDecodedScheme, ApkSchemeError> => {
-  const maxSigners = limits?.maxSigners ?? MAX_SIGNERS;
-  const maxElements = limits?.maxElements ?? MAX_ELEMENTS;
+  const maxSigners =
+    limits?.maxSigners ?? APK_SIGNATURE_BUDGETS.max_signers.default_value;
+  const maxElements =
+    limits?.maxElements ??
+    APK_SIGNATURE_BUDGETS.max_signer_elements.default_value;
   const reader = new LeReader(value);
   const chunks = elements(reader.lenChunk(), "signers", version, maxSigners);
   if (!chunks.ok) return chunks;
@@ -322,7 +314,8 @@ export interface ApkLineageNode {
 export const decodeRotationLineage = (
   value: Uint8Array,
   version: Exclude<ApkSchemeVersion, "v2">,
-  maxLineageNodes: number = MAX_LINEAGE_NODES,
+  maxLineageNodes: number = APK_SIGNATURE_BUDGETS.max_lineage_nodes
+    .default_value,
 ): Result<ApkLineageNode[], ApkSchemeError> => {
   const reader = new LeReader(value);
   const lineageVersion = reader.u32();
