@@ -267,11 +267,6 @@
       "class": "pending",
       "issue": 14235,
       "reason": "The streamed candidate is hashed in bounded chunks; its 0xffffffff-byte whole-file ceiling states no format reason, so it is a policy awaiting a control or a stated reason."
-    },
-    "ELF_NOTE_TEXT_ALLOWANCE": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Native reader structural, text and inventory allowances are resource policies without a per-call control."
     }
   },
   "src/native/elf/ElfDependenciesProvider.ts": {
@@ -281,7 +276,7 @@
       "reason": "ELF dependency entry allowances are resource policies; the text budget is derived from the admitted image length."
     }
   },
-  "src/native/elf/ElfNotesProvider.ts": {
+  "src/native/elf/elfNoteLimitConstraint.ts": {
     "ELF_NOTE_TEXT_ALLOWANCE": {
       "class": "pending",
       "issue": 14235,
