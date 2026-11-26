@@ -616,9 +616,11 @@ def render_fallback(root, path, language, page_languages, messages):
     source = source.replace("</head>", '<meta name="robots" content="noindex, follow" />\n  </head>')
     source = replace_language_markup(source, root, relative, code, page_languages)
     notice = messages.get(("runtime", FALLBACK_NOTICE), FALLBACK_NOTICE)
-    notice_lang = code if ("runtime", FALLBACK_NOTICE) in messages else "en"
+    translated = ("runtime", FALLBACK_NOTICE) in messages
+    # An untranslated notice is English text and keeps English direction.
+    notice_lang, notice_dir = (code, language["dir"]) if translated else ("en", "ltr")
     main = next(node for node in Document(source).nodes if node.tag == "main")
-    source = source[:main.open_end] + f'<aside class="container translation-notice" lang="{notice_lang}" dir="{language["dir"]}">{escape(notice)}</aside>' + source[main.open_end:]
+    source = source[:main.open_end] + f'<aside class="container translation-notice" lang="{notice_lang}" dir="{notice_dir}">{escape(notice)}</aside>' + source[main.open_end:]
     return source
 
 

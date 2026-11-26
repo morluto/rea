@@ -211,6 +211,15 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         options.retainCleanup?.(lease);
       },
     });
+    let openingSettled = false;
+    void opening.then(
+      () => {
+        openingSettled = true;
+      },
+      () => {
+        openingSettled = true;
+      },
+    );
     let opened: OpenedScenarioBrowser;
     try {
       opened = await withPlaywrightExecutionBoundary(
@@ -256,11 +265,15 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
           },
         },
       );
+      // Own the cleanup before awaiting it. An open that already failed gets
+      // its bounded release now, so a clean failure is not reported as
+      // retained; a cancellation of a still-pending open returns at once.
       options.retainCleanup?.(cleanup);
-      void withPlaywrightExecutionBoundary(
+      const releasing = withPlaywrightExecutionBoundary(
         () => cleanup.release(),
         1_000,
       ).catch(() => undefined);
+      if (openingSettled) await releasing;
       throw cause;
     }
     const session = await this.initializeSession(
