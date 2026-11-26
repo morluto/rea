@@ -2103,7 +2103,7 @@ it("bounds the ELF dynamic table by max_structure_bytes", () => {
 it("enforces maxTableEntries on ELF symbol tables and rejects non-finite budgets fail-closed", async () => {
   const manySymbols = elfHardeningFixture({
     stackChk: true,
-    symbolScanBudget: true,
+    extraSymbols: 20,
   });
   const degraded = readElfHardening(manySymbols, undefined, undefined, 16);
   expect(degraded.status).toBe("parsed");
@@ -2111,10 +2111,11 @@ it("enforces maxTableEntries on ELF symbol tables and rejects non-finite budgets
     state: "unknown",
     note: expect.stringContaining("max_table_entries"),
   });
-  const raised = readElfHardening(manySymbols, undefined, undefined, 512);
-  expect(findRow(raised.rows, "stack_protector").note).not.toContain(
-    "max_table_entries",
-  );
+  const raised = readElfHardening(manySymbols, undefined, undefined, 64);
+  expect(findRow(raised.rows, "stack_protector")).toMatchObject({
+    state: "enabled",
+    note: null,
+  });
   expect(() =>
     readElfHardening(manySymbols, undefined, undefined, Number.NaN),
   ).toThrow(expect.objectContaining({ unit: "entries" }));

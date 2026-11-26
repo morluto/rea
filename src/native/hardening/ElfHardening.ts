@@ -944,6 +944,10 @@ function* readGnuHashCount(
   let winStart = 0;
   let winBuf: Buffer = Buffer.alloc(0);
   let winReader = new BinaryReader(winBuf, little, "elf");
+  let headerRead = 0;
+  let buckets = 0;
+  let bloomWords = 0;
+  let endProbed = false;
   const steps = readElfGnuHashSymbolCountSteps(wordBytes, maxTableEntries);
   let next = steps.next();
   while (!next.done) {
@@ -967,6 +971,22 @@ function* readGnuHashCount(
       next = steps.next(err("extends outside the file"));
       continue;
     }
+    // After the 16-byte header, readElfGnuHashSymbolCountSteps yields
+    // `prefixBytes - 4` purely as an end-of-buckets bounds probe before
+    // scanning sequentially from `bucketsAt`. Satisfying that probe from the
+    // bounds checks above avoids pre-reading a 64 KiB window at the tail only
+    // to cache-miss immediately at `bucketsAt`.
+    if (
+      !endProbed &&
+      headerRead === 4 &&
+      buckets > 0 &&
+      bloomWords > 0 &&
+      relative === 16 + bloomWords * wordBytes + buckets * 4 - 4
+    ) {
+      endProbed = true;
+      next = steps.next(ok(0));
+      continue;
+    }
     if (
       winBuf.length === 0 ||
       relative < winStart ||
@@ -982,7 +1002,13 @@ function* readGnuHashCount(
       winStart = relative;
       winReader = new BinaryReader(winBuf, little, "elf");
     }
-    next = steps.next(ok(winReader.u32(relative - winStart)));
+    const value = winReader.u32(relative - winStart);
+    if (headerRead < 4) {
+      if (relative === 0) buckets = value;
+      else if (relative === 8) bloomWords = value;
+      headerRead += 1;
+    }
+    next = steps.next(ok(value));
   }
   return admitHashCount(next.value, maxTableEntries);
 }

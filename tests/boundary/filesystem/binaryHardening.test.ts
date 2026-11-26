@@ -213,6 +213,73 @@ describe("binary hardening stable filesystem boundary", () => {
         gnuRows.find((row) => row.property === "stack_protector")?.state,
       ).toBe("enabled");
 
+      // Multi-bucket DT_GNU_HASH must not double-read 64 KiB windows because
+      // of the end-of-buckets bounds probe: an 87 KiB ELF fits a 100 KiB
+      // max_file_bytes budget.
+      const multiBucketBase = elfHardeningFixture({
+        stackChk: true,
+        sections: false,
+      });
+      const multiBucket = Buffer.concat([
+        multiBucketBase,
+        Buffer.alloc(85 * 1024),
+      ]);
+      const mbPhoff = Number(multiBucket.readBigUInt64LE(32));
+      const mbPhentsize = multiBucket.readUInt16LE(54);
+      const mbPhnum = multiBucket.readUInt16LE(56);
+      let mbDynOffset = 0;
+      let mbDynSize = 0;
+      let mbLoadVaddr = 0n;
+      let mbLoadOffset = 0;
+      for (let i = 0; i < mbPhnum; i += 1) {
+        const at = mbPhoff + i * mbPhentsize;
+        const type = multiBucket.readUInt32LE(at);
+        if (type === 1) {
+          mbLoadOffset = Number(multiBucket.readBigUInt64LE(at + 8));
+          mbLoadVaddr = multiBucket.readBigUInt64LE(at + 16);
+          const span = BigInt(multiBucket.length - mbLoadOffset);
+          multiBucket.writeBigUInt64LE(span, at + 32);
+          multiBucket.writeBigUInt64LE(span, at + 40);
+        } else if (type === 2) {
+          mbDynOffset = Number(multiBucket.readBigUInt64LE(at + 8));
+          mbDynSize = Number(multiBucket.readBigUInt64LE(at + 32));
+        }
+      }
+      const mbHashOffset = multiBucketBase.length;
+      const mbHashVaddr = mbLoadVaddr + BigInt(mbHashOffset - mbLoadOffset);
+      // buckets=2, firstSymbol=1, bloomWords=1, bloomShift=0, bloom[0]=0,
+      // buckets=[0, 1], chain[0]=1 (end).
+      multiBucket.writeUInt32LE(2, mbHashOffset);
+      multiBucket.writeUInt32LE(1, mbHashOffset + 4);
+      multiBucket.writeUInt32LE(1, mbHashOffset + 8);
+      multiBucket.writeUInt32LE(0, mbHashOffset + 12);
+      multiBucket.writeBigUInt64LE(0n, mbHashOffset + 16);
+      multiBucket.writeUInt32LE(0, mbHashOffset + 24);
+      multiBucket.writeUInt32LE(1, mbHashOffset + 28);
+      multiBucket.writeUInt32LE(1, mbHashOffset + 32);
+      for (let off = mbDynOffset; off < mbDynOffset + mbDynSize; off += 16) {
+        if (multiBucket.readBigUInt64LE(off) === 4n) {
+          multiBucket.writeBigUInt64LE(0x6ffffef5n, off);
+          multiBucket.writeBigUInt64LE(mbHashVaddr, off + 8);
+          break;
+        }
+      }
+      const mbPath = join(root, "gnu-hash-multi-bucket");
+      await writeFile(mbPath, multiBucket);
+      const mbRes = await service.inspect({
+        path: mbPath,
+        max_file_bytes: 100_000,
+      });
+      if (!mbRes.ok) throw mbRes.error;
+      const mbRows = (
+        mbRes.value.normalized_result as {
+          images: { rows: { property: string; state: string }[] }[];
+        }
+      ).images[0]!.rows;
+      expect(
+        mbRows.find((row) => row.property === "stack_protector")?.state,
+      ).toBe("enabled");
+
       // firstSymbol > max_table_entries must degrade cleanly without over-reading.
       padded.writeUInt32LE(700_000, gnuHashOffset + 4);
       const overFirstPath = join(root, "gnu-hash-first-over");

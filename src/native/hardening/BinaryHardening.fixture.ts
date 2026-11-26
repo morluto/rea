@@ -84,6 +84,8 @@ export interface ElfHardeningFixtureOptions {
   readonly buildIdCount?: number;
   /** Repeated SHT_NOTE headers naming that same build-id range. */
   readonly buildIdSections?: number;
+  /** Extra normal short-named symbols placed before protector symbols in `.dynsym`. */
+  readonly extraSymbols?: number;
   /** 300 symbols sharing one long terminated name. */
   readonly symbolScanBudget?: boolean;
   /** One symbol whose name exceeds the per-name scan cap. */
@@ -226,6 +228,9 @@ const elfSymbolPayload = (
     };
   }
   const symbolNames: string[] = [];
+  if (options.extraSymbols !== undefined)
+    for (let i = 0; i < options.extraSymbols; i += 1)
+      symbolNames.push(`sym_${String(i)}`);
   if (options.stackChk === true) symbolNames.push("__stack_chk_fail");
   if (options.fortify === true)
     symbolNames.push(options.fortifyName ?? "__memcpy_chk");
