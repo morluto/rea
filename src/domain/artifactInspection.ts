@@ -466,6 +466,7 @@ const formatProbes = (
           },
         ]
       : [];
+  if (format === "bflt") return bfltProbes(inventory);
   if (format === "esp-image") return espFlashDumpProbes(inventory);
   if (format === "zip") return zipPackageProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
@@ -473,6 +474,32 @@ const formatProbes = (
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
   return probesForFormat(format);
+};
+
+// text.bin starts with the 64-byte bFLT header at file offset 0 and the
+// header names no CPU. Only ARM M-profile (with architecture_variant)
+// accepts a separate base_address; other raw-binary loads map offset 0 and
+// start analysis at entry_point, in the header rather than at base + entry.
+const bfltProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const root = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === ".",
+  )?.format_metadata;
+  const text = inventory.occurrences.some(
+    (row) =>
+      row.format_metadata?.kind === "bflt-segment" &&
+      row.format_metadata.segment === "text",
+  );
+  if (root?.kind !== "bflt" || !text) return [];
+  const entryOffset = offsetText(root.entry);
+  return [
+    {
+      operation: "open_binary",
+      rationale: `Extract text.bin with extract_artifact (the bFLT header names no CPU; relocations are not applied). For ARM M-profile (Cortex-M) targets, open it with format raw-binary, architecture arm, an architecture_variant, base_address set to a chosen load base and entry_point set to that base plus ${entryOffset}. For other CPUs, raw-binary maps file offset 0 at entry_point and starts analysis there, which is the bFLT header, not code; the program entry is the chosen base plus ${entryOffset}, so code starts there.`,
+      authority: "native-analysis-provider",
+    },
+  ];
 };
 
 // A ZIP whose root holds `extension.vsixmanifest` is a VS Code extension
