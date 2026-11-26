@@ -20,6 +20,8 @@ import {
 } from "../domain/apple/machoContainer.js";
 import type { ReadAt } from "../domain/apple/machoLoadCommandReader.js";
 import {
+  DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+  DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
   electronFuseName,
   electronFuseState,
   ELECTRON_FUSE_SENTINEL,
@@ -40,9 +42,9 @@ import {
 
 /** Admission and search bounds for one Electron executable. */
 export const ELECTRON_FUSE_LIMITS = {
-  maximumFileBytes: 1024 * 1024 * 1024,
+  maximumFileBytes: DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES,
   chunkBytes: 256 * 1024,
-  maximumSentinelsPerSlice: 32,
+  maximumSentinelsPerSlice: DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
   maximumPeHeaderOffset: 1024 * 1024,
 } as const;
 
@@ -89,9 +91,16 @@ export const readElectronFuseImage = async (
     readonly signal?: AbortSignal;
     readonly selection?: ResolvedElectronFuseFile;
     readonly resources?: ArtifactResourceScope;
+    readonly maxFileBytes?: number;
+    readonly maxSentinelsPerSlice?: number;
   },
 ): Promise<ElectronFuseImage> => {
   const signal = options?.signal;
+  const maxFileBytes =
+    options?.maxFileBytes ?? ELECTRON_FUSE_LIMITS.maximumFileBytes;
+  const maxSentinelsPerSlice =
+    options?.maxSentinelsPerSlice ??
+    ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice;
   assertArtifactReadActive(signal);
   const selection = options?.selection;
   const recheckPath = async (candidate: string) => {
@@ -132,14 +141,14 @@ export const readElectronFuseImage = async (
       "native-binary",
       `Expected a regular file without a symlink: ${path}`,
     );
-  if (before.size > BigInt(ELECTRON_FUSE_LIMITS.maximumFileBytes))
+  if (before.size > BigInt(maxFileBytes))
     throw new ElectronFuseResourceFailure(
       {
         name: "maximum_input_bytes",
-        maximum: ELECTRON_FUSE_LIMITS.maximumFileBytes,
+        maximum: maxFileBytes,
         required: before.size,
       },
-      `Selected artifact exceeds ${ELECTRON_FUSE_LIMITS.maximumFileBytes} bytes: ${path}`,
+      `Selected artifact exceeds ${maxFileBytes} bytes: ${path}`,
     );
   const size = Number(before.size);
   return withArtifactRegularFile(
@@ -158,6 +167,7 @@ export const readElectronFuseImage = async (
         path,
         size,
         container.slices,
+        maxSentinelsPerSlice,
         signal,
       );
       const current = await recheckPath(path);
@@ -175,8 +185,21 @@ export const readElectronFuseImage = async (
 };
 
 /** Sentence describing the file and sentinel bounds enforced by this reader. */
-export const electronFuseReadLimitation = (): string =>
-  `The selected file is admitted as one regular file of at most 1 GiB. Sentinel search uses ${ELECTRON_FUSE_LIMITS.chunkBytes}-byte windows, and each slice keeps at most ${ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice} sentinels.`;
+export const electronFuseReadLimitation = (limits?: {
+  readonly maxFileBytes?: number;
+  readonly maxSentinelsPerSlice?: number;
+}): string => {
+  const maxFileBytes =
+    limits?.maxFileBytes ?? ELECTRON_FUSE_LIMITS.maximumFileBytes;
+  const maxSentinelsPerSlice =
+    limits?.maxSentinelsPerSlice ??
+    ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice;
+  const fileLimit =
+    maxFileBytes === ELECTRON_FUSE_LIMITS.maximumFileBytes
+      ? "1 GiB"
+      : `${String(maxFileBytes)} bytes`;
+  return `The selected file is admitted as one regular file of at most ${fileLimit}. Sentinel search uses ${ELECTRON_FUSE_LIMITS.chunkBytes}-byte windows, and each slice keeps at most ${String(maxSentinelsPerSlice)} sentinels.`;
+};
 
 const readerFor =
   (
@@ -276,6 +299,7 @@ const scanSlices = async (
   path: string,
   size: number,
   ranges: readonly SliceRange[],
+  maxSentinelsPerSlice: number,
   signal: AbortSignal | undefined,
 ): Promise<{
   readonly sha256: string;
@@ -297,7 +321,7 @@ const scanSlices = async (
     assertArtifactReadActive(signal);
     const piece = chunk.subarray(0, read.bytesRead);
     hash.update(piece);
-    absorbChunk(states, piece, position);
+    absorbChunk(states, piece, position, maxSentinelsPerSlice);
     position += read.bytesRead;
   }
   if (position !== size) throw new RegularFileChangedError(path);
@@ -337,15 +361,16 @@ const recordSentinelHit = (
     readonly hits: number[];
   },
   sentinelOffset: number,
+  maxSentinelsPerSlice: number,
 ): void => {
   if (state.hits.includes(sentinelOffset)) return;
-  if (state.hits.length >= ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice)
+  if (state.hits.length >= maxSentinelsPerSlice)
     throw new ElectronFuseResourceFailure(
       {
         name: "maximum_sentinels_per_slice",
-        maximum: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
+        maximum: maxSentinelsPerSlice,
       },
-      `Slice ${state.slice.index} contains more than ${ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice} Electron fuse sentinels.`,
+      `Slice ${state.slice.index} contains more than ${maxSentinelsPerSlice} Electron fuse sentinels.`,
     );
   state.hits.push(sentinelOffset);
 };
@@ -358,6 +383,7 @@ const absorbChunk = (
   }[],
   chunk: Buffer,
   position: number,
+  maxSentinelsPerSlice: number,
 ): void => {
   const chunkEnd = position + chunk.length;
   const tail = SENTINEL.length - 1;
@@ -381,7 +407,11 @@ const absorbChunk = (
         while (from <= bridgeLength - SENTINEL.length) {
           const found = bridge.indexOf(SENTINEL, from);
           if (found < 0) break;
-          recordSentinelHit(state, bridgeFileStart + found);
+          recordSentinelHit(
+            state,
+            bridgeFileStart + found,
+            maxSentinelsPerSlice,
+          );
           from = found + 1;
         }
       }
@@ -390,7 +420,7 @@ const absorbChunk = (
     while (from <= piece.length - SENTINEL.length) {
       const found = piece.indexOf(SENTINEL, from);
       if (found < 0) break;
-      recordSentinelHit(state, start + found);
+      recordSentinelHit(state, start + found, maxSentinelsPerSlice);
       from = found + 1;
     }
     if (piece.length >= tail) {

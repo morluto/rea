@@ -27,9 +27,11 @@ import {
 } from "../../tests/fixtures/electron/fuseImage.js";
 import { ELECTRON_FUSE_STATE_BYTES } from "../domain/electron/electronFuses.js";
 import { ElectronFuseProvider } from "./ElectronFuseProvider.js";
+import { electronFuseFailure } from "./ElectronFuseFailures.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   ELECTRON_FUSE_LIMITS,
+  ElectronFuseResourceFailure,
   readElectronFuseImage,
 } from "./ElectronFuseReader.js";
 
@@ -844,31 +846,45 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-        expect(projectAnalysisError(result.error)).toMatchObject({
+        const projected = projectAnalysisError(result.error);
+        expect(projected).toMatchObject({
           code: "resource_constraint",
           retryable: false,
           details: {
             reported_limits: { maximum_sentinels_per_slice: 32 },
-            refusal: {
-              kind: "fixed_ceiling",
-              allowance_kind: "count",
-              limit: 32,
-              unit: "sentinels per slice",
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_sentinels_per_slice",
+              effective_value: 32,
+              minimum: 1,
+              maximum: 1024,
+              default_value: 32,
+              unit: "count",
+              applies_at: "next_call",
             },
           },
-          remediation: {
-            action: expect.stringContaining("sentinel inventory"),
-          },
         });
-        expect(
-          projectAnalysisError(result.error).remediation.action,
-        ).not.toMatch(/Wait for an active analysis/u);
+        expect(projected.details?.limit).not.toHaveProperty("required_value");
+        expect(projected.remediation.action).not.toMatch(
+          /Wait for an active analysis/u,
+        );
+      }
+      const raised = await provider.inspect({
+        path,
+        max_sentinels_per_slice: 33,
+      });
+      expect(raised.ok).toBe(true);
+      if (raised.ok) {
+        expect(raised.value.slices[0]?.sentinel_count).toBe(33);
+        expect(raised.value.limitations).toContainEqual(
+          expect.stringContaining("at most 33 sentinels"),
+        );
       }
     }
   }
 });
 
-it("rejects a sparse artifact over 1 GiB before scanning", async () => {
+it("rejects a sparse artifact over 1 GiB before scanning and honors max_file_bytes", async () => {
   const root = await createTestTempDirectory("rea-electron-input-limit-");
   const path = join(root, "large");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
@@ -894,14 +910,51 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
       retryable: false,
       details: {
         reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 },
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance_kind: "input",
-          limit: 1024 * 1024 * 1024,
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 1024 * 1024 * 1024,
+          minimum: 32,
+          maximum: 4 * 1024 * 1024 * 1024,
+          default_value: 1024 * 1024 * 1024,
           unit: "bytes",
+          applies_at: "next_call",
+          required_value: 1_073_741_825,
         },
       },
     });
+  }
+  const smallPath = join(root, "small");
+  const smallBytes = thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes;
+  await writeFile(smallPath, smallBytes);
+  const tight = await provider.inspect({
+    path: smallPath,
+    max_file_bytes: 64,
+  });
+  expect(tight.ok).toBe(false);
+  if (!tight.ok) {
+    expect(projectAnalysisError(tight.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: { maximum_input_bytes: 64 },
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64,
+          required_value: smallBytes.length,
+        },
+      },
+    });
+  }
+  const exact = await provider.inspect({
+    path: smallPath,
+    max_file_bytes: smallBytes.length,
+  });
+  expect(exact.ok).toBe(true);
+  if (exact.ok) {
+    expect(exact.value.limitations).toContainEqual(
+      expect.stringContaining(`at most ${String(smallBytes.length)} bytes`),
+    );
   }
 });
 
@@ -1005,4 +1058,32 @@ it("retains the identity of a directory removed by a terminal parent segment", a
   await expect(
     readElectronFuseImage(located.file.path, { selection: located.file }),
   ).rejects.toBeInstanceOf(RegularFileChangedError);
+});
+
+it("omits required_value when a bigint size exceeds MAX_SAFE_INTEGER and keeps budget controls scoped to inspect_electron_fuses", () => {
+  const huge = new ElectronFuseResourceFailure(
+    {
+      name: "maximum_input_bytes",
+      maximum: 1024,
+      required: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+    },
+    "Selected artifact exceeds the 1024-byte Electron fuse read budget.",
+  );
+  const projected = projectAnalysisError(electronFuseFailure(huge, "/app"));
+  expect(projected.details).toMatchObject({
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_file_bytes",
+      effective_value: 1024,
+    },
+  });
+  expect(
+    (projected.details as { limit?: Record<string, unknown> }).limit,
+  ).not.toHaveProperty("required_value");
+
+  const otherOp = projectAnalysisError(
+    electronFuseFailure(huge, "/app", "capture_electron_scenario"),
+  );
+  expect(otherOp.code).toBe("execution_failure");
+  expect(otherOp.details).not.toHaveProperty("limit");
 });

@@ -5,6 +5,38 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import {
+  parameterBudgetLimitFor,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
+
+/** Default and hard ceilings on caller-selected Electron fuse inspection budgets. */
+export const DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES = 1024 * 1024 * 1024;
+export const MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES = 4 * 1024 * 1024 * 1024;
+export const DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 32;
+export const MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE = 1024;
+
+/** The per-call budgets of `inspect_electron_fuses`. */
+export const ELECTRON_FUSE_BUDGETS = {
+  max_file_bytes: {
+    minimum: 32,
+    maximum: MAX_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+    default_value: DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+    unit: "bytes",
+  },
+  max_sentinels_per_slice: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
+    default_value: DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
+    unit: "count",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type ElectronFuseBudget = keyof typeof ELECTRON_FUSE_BUDGETS;
+
+/** The per-call budget that stopped an Electron fuse inspection. */
+export const electronFuseBudgetLimit =
+  parameterBudgetLimitFor<ElectronFuseBudget>(ELECTRON_FUSE_BUDGETS);
 
 /** ASCII sentinel that introduces an Electron fuse wire in an Electron binary. */
 export const ELECTRON_FUSE_SENTINEL = "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
@@ -165,6 +197,16 @@ export const inspectElectronFusesInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a macOS .app bundle, Electron Framework binary, Windows PE executable, or Linux ELF executable",
   ),
+  max_file_bytes: parameterBudgetSchema(
+    ELECTRON_FUSE_BUDGETS.max_file_bytes,
+  ).describe(
+    "Maximum regular-file bytes to admit and scan (default 1 GiB, maximum 4 GiB)",
+  ),
+  max_sentinels_per_slice: parameterBudgetSchema(
+    ELECTRON_FUSE_BUDGETS.max_sentinels_per_slice,
+  ).describe(
+    "Maximum Electron fuse sentinels retained per slice (default 32, maximum 1024); exceeding the budget fails without partial success",
+  ),
 });
 
 export type ElectronFuseState = z.infer<typeof fuseStateSchema>;
@@ -175,6 +217,9 @@ export type ElectronFuseImplication = z.infer<
 >;
 export type ElectronFuseReport = z.infer<typeof electronFuseReportSchema>;
 export type InspectElectronFusesInput = z.infer<
+  typeof inspectElectronFusesInputSchema
+>;
+export type InspectElectronFusesRequest = z.input<
   typeof inspectElectronFusesInputSchema
 >;
 

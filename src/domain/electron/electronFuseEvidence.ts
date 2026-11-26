@@ -2,12 +2,12 @@ import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
 import { createEvidence, type Evidence } from "../evidence.js";
 import type {
   ElectronFuseReport,
-  InspectElectronFusesInput,
+  InspectElectronFusesRequest,
 } from "./electronFuses.js";
 
 /** Preserve the same validated fuse facts on success and incomplete finalization. */
 export const createElectronFuseEvidence = (
-  input: InspectElectronFusesInput,
+  input: InspectElectronFusesRequest,
   value: ElectronFuseReport,
   provider: Evidence["provider"],
 ): Evidence => {

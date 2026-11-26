@@ -9,9 +9,15 @@ import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { thinFuseImage } from "../../tests/fixtures/electron/fuseImage.js";
+import {
+  FUSE_SENTINEL,
+  fuseWire,
+  thinFuseImage,
+  thinMacho,
+} from "../../tests/fixtures/electron/fuseImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createHash } from "node:crypto";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ElectronFuseProvider } from "./ElectronFuseProvider.js";
@@ -600,5 +606,51 @@ it("releases successful descriptor peers while retaining the failed owner's exac
       await control.release();
     }
     await provider.close();
+  }
+});
+
+it("keeps active preflight cleanup failures free of inspect_electron_fuses budget controls", async () => {
+  const root = await createTestTempDirectory("rea-fuse-preflight-budget-");
+  const path = join(root, "many-sentinels");
+  const payload = Buffer.concat(
+    Array.from({ length: 33 }, () =>
+      Buffer.concat([FUSE_SENTINEL, fuseWire(1, [0x31])]),
+    ),
+  );
+  await fileSystem.writeFile(path, thinMacho(0x0100000c, payload));
+  const originalOpen = fileSystem.open;
+  const releases: (() => Promise<void>)[] = [];
+  let denyClose = true;
+  vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+    const file = await originalOpen(...args);
+    if (String(args[0]) !== path) return file;
+    const close = file.close.bind(file);
+    releases.push(close);
+    vi.spyOn(file, "close").mockImplementation(async () => {
+      if (denyClose)
+        throw Object.assign(new Error("close denied"), { code: "EIO" });
+      await close();
+    });
+    return file;
+  });
+  syncBuiltinESMExports();
+  const resources = new ArtifactResourceScope();
+  try {
+    const thrown: unknown = await assertNodeCliInspectArgumentsSupported(path, {
+      resources,
+    }).catch((cause: unknown) => cause);
+    if (!(thrown instanceof AnalysisError))
+      throw new Error("Expected cleanup AnalysisError", { cause: thrown });
+    const projected = projectAnalysisError(thrown);
+    expect(projected.code).toBe("cleanup_incomplete");
+    expect(projected.details).not.toHaveProperty("limit");
+    expect(projected.details).not.toHaveProperty("refusal");
+    expect(projected.remediation.action).not.toContain(
+      "max_sentinels_per_slice",
+    );
+  } finally {
+    denyClose = false;
+    await resources.close().catch(() => {});
+    for (const close of releases) await close().catch(() => {});
   }
 });

@@ -151,13 +151,6 @@
       "reason": "`fixedNativeAllowance` relays the allowance its caller names."
     }
   },
-  "src/electron/ElectronFuseFailures.ts": {
-    "fileSize ? \"the Electron fuse input allowance\" : \"The Electron fuse sentinel inventory\"": {
-      "class": "pending",
-      "issue": 14235,
-      "reason": "Electron fuse input bytes and sentinel inventory are resource policies."
-    }
-  },
   "src/flutter/FlutterBuildProvider.ts": {
     "\"The Flutter APK expansion allowance (derived from the APK size)\"": {
       "class": "derived",

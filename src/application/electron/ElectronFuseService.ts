@@ -2,12 +2,16 @@ import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElectronFusePort } from "../../ports/electron/ElectronFusePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES,
+  DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE,
   electronFuseReportSchema,
   inspectElectronFusesInputSchema,
+  type InspectElectronFusesRequest,
 } from "../../domain/electron/electronFuses.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createElectronFuseEvidence } from "../../domain/electron/electronFuseEvidence.js";
 import type { Result } from "../../domain/result.js";
+import { callerAnalysisParameters } from "../AnalysisInput.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_electron_fuses";
@@ -33,10 +37,22 @@ export class ElectronFuseService {
         outputSchema: electronFuseReportSchema,
         provider: this.provider,
         invalidOutputMessage:
-          "Electron fuse reader returned a malformed report or changed the selected artifact identity.",
-        toParameters: (input) => input,
+          "Electron fuse reader returned a malformed report, changed the selected artifact identity, or exceeded the requested file or sentinel budget.",
+        toParameters: (input): InspectElectronFusesRequest => ({
+          ...callerAnalysisParameters(rawInput)(input),
+          path: input.path,
+        }),
         validateReport: (report, parameters) =>
-          report.artifact.selected_path === parameters.path,
+          report.artifact.selected_path === parameters.path &&
+          report.artifact.bytes <=
+            (parameters.max_file_bytes ??
+              DEFAULT_INSPECT_ELECTRON_FUSES_FILE_BYTES) &&
+          report.slices.every(
+            (slice) =>
+              slice.sentinel_count <=
+              (parameters.max_sentinels_per_slice ??
+                DEFAULT_INSPECT_ELECTRON_FUSES_SENTINELS_PER_SLICE),
+          ),
         buildEvidence: (report, identity, parameters) =>
           createElectronFuseEvidence(parameters, report, identity),
       },

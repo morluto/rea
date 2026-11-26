@@ -12,7 +12,7 @@ import {
   describeElectronFuseFindings,
   electronFuseReportSchema,
   type ElectronFuseReport,
-  type InspectElectronFusesInput,
+  type InspectElectronFusesRequest,
 } from "../domain/electron/electronFuses.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { resolveElectronFuseTarget } from "./ElectronFusePath.js";
@@ -41,7 +41,7 @@ export class ElectronFuseProvider implements ElectronFusePort {
   }
 
   async inspect(
-    input: InspectElectronFusesInput,
+    input: InspectElectronFusesRequest,
     options?: ExecutionOptions,
   ): Promise<Result<ElectronFuseReport, AnalysisError>> {
     try {
@@ -52,11 +52,19 @@ export class ElectronFuseProvider implements ElectronFusePort {
   }
 
   async #inspectFile(
-    input: InspectElectronFusesInput,
+    input: InspectElectronFusesRequest,
     options?: ExecutionOptions,
   ): Promise<Result<ElectronFuseReport, AnalysisError>> {
     let resolvedPath = input.path;
     let completed: ElectronFuseReport | undefined;
+    const readLimits = {
+      ...(input.max_file_bytes === undefined
+        ? {}
+        : { maxFileBytes: input.max_file_bytes }),
+      ...(input.max_sentinels_per_slice === undefined
+        ? {}
+        : { maxSentinelsPerSlice: input.max_sentinels_per_slice }),
+    };
     try {
       assertArtifactReadActive(options?.signal);
       const located = await resolveElectronFuseTarget(
@@ -68,9 +76,15 @@ export class ElectronFuseProvider implements ElectronFusePort {
       const image = await readElectronFuseImage(located.file.path, {
         resources: this.#resources,
         selection: located.file,
+        ...readLimits,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
       });
-      completed = reportFor(image, located.selectedPath, resolvedPath);
+      completed = reportFor(
+        image,
+        located.selectedPath,
+        resolvedPath,
+        readLimits,
+      );
       assertArtifactReadActive(options?.signal);
       return ok(completed);
     } catch (cause: unknown) {
@@ -85,6 +99,7 @@ export class ElectronFuseProvider implements ElectronFusePort {
               completion.value as ElectronFuseImage,
               input.path,
               resolvedPath,
+              readLimits,
             ));
       if (report !== undefined) {
         failure.retainPartialObservation(
@@ -100,6 +115,10 @@ const reportFor = (
   image: ElectronFuseImage,
   selectedPath: string,
   resolvedPath: string,
+  readLimits: {
+    readonly maxFileBytes?: number;
+    readonly maxSentinelsPerSlice?: number;
+  },
 ): ElectronFuseReport => {
   const findings = describeElectronFuseFindings(image.slices, image.format);
   const parsed = electronFuseReportSchema.safeParse({
@@ -112,7 +131,10 @@ const reportFor = (
     },
     slices: image.slices,
     runtime_implications: findings.runtime_implications,
-    limitations: [...findings.limitations, electronFuseReadLimitation()],
+    limitations: [
+      ...findings.limitations,
+      electronFuseReadLimitation(readLimits),
+    ],
   });
   if (!parsed.success)
     throw new AnalysisOutputError(
