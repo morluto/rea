@@ -1,4 +1,5 @@
 import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import type { WebBundleEndpointLiteralAdmission } from "../domain/webBundleEndpointLiteralBudget.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -148,6 +149,7 @@ export class IsolatedWebBundleAnalyzer {
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
     memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+    endpointLiterals?: WebBundleEndpointLiteralAdmission,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     if (this.#closed)
       return Promise.resolve(
@@ -176,6 +178,7 @@ export class IsolatedWebBundleAnalyzer {
       input,
       signal,
       memberMutationAllowance,
+      endpointLiterals,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
@@ -190,6 +193,7 @@ export class IsolatedWebBundleAnalyzer {
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
     memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+    endpointLiterals?: WebBundleEndpointLiteralAdmission,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const scripts = inspection.scripts.items.filter(isIncludedScript);
     const results: WebBundleScriptAnalysis[] = [];
@@ -232,6 +236,7 @@ export class IsolatedWebBundleAnalyzer {
           deadline.signal,
           input.semantic_precision,
           memberMutationAllowance,
+          endpointLiterals,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {

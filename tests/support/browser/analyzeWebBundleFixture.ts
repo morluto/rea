@@ -3,6 +3,7 @@ import type { WebBundleAnalysis } from "../../../src/domain/webBundleAnalysis.js
 import { analyzeCapturedWebScript } from "../../../src/domain/webBundleAnalyzer.js";
 import { buildCapturedWebBundleAnalysis } from "../../../src/domain/webBundleAnalyzerResult.js";
 import { isIncludedScript } from "../../../src/domain/webBundleAnalyzerState.js";
+import type { WebBundleEndpointLiteralAdmission } from "../../../src/domain/webBundleEndpointLiteralBudget.js";
 
 /** Compose the production script parser and result merger for semantic fixtures. */
 export const analyzeWebBundleFixture = (
@@ -13,11 +14,14 @@ export const analyzeWebBundleFixture = (
     processed: 0,
     items: [],
   },
+  endpointLiterals?: WebBundleEndpointLiteralAdmission,
 ): WebBundleAnalysis => {
   const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
   return buildCapturedWebBundleAnalysis(
     inspection,
     sourceMaps,
-    sourceScripts.map((script) => analyzeCapturedWebScript(script)),
+    sourceScripts.map((script) =>
+      analyzeCapturedWebScript(script, undefined, undefined, endpointLiterals),
+    ),
   );
 };

@@ -213,6 +213,51 @@ it("refuses with the allowance the parent sent and reports its limit", async () 
   });
 });
 
+it("applies the parent's literal ceiling and reports the omission", async () => {
+  const server = await framingServer();
+  const input = sourceDescriptor(
+    makeScript("const routes = ['/api/one', '/api/two']; fetch('/api/kept');"),
+  );
+  const id = randomUUID();
+  await writeSource(server.root, id, input.bytes);
+  await send(server.process, {
+    kind: "analyze",
+    member_mutation_allowance: DEFAULT_ALLOWANCE,
+    id,
+    endpoint_literal_candidates: { maximum_count: 1, source: "runtime" },
+    source: input.descriptor,
+    result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+  });
+  expect(await server.next()).toMatchObject({ kind: "phase", id });
+  expect(await server.next()).toMatchObject({ kind: "complete", id });
+  const result = webBundleScriptAnalysisSchema.parse(
+    JSON.parse(await readFile(join(server.root, `${id}.result`), "utf8")),
+  );
+  if (result.status !== "analyzed") throw new Error("Expected analyzed script");
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/one"]);
+  expect(result.endpoint_literal_candidates).toMatchObject({
+    coverage: "partial",
+    code: "web_bundle_endpoint_literal_candidates",
+    admitted_count: 1,
+    omitted_by_count: 1,
+    omitted_by_result_budget: 0,
+    ceiling: "adjustable",
+    limit: {
+      setting: "web.bundle_endpoint_literal_candidates",
+      effective_value: 1,
+      source: "runtime",
+    },
+  });
+  // The ceiling bounds a literal inventory, not the request scanners.
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/api/kept",
+  ]);
+});
+
 const framingServer = async () => {
   const root = await createTestTempDirectory("rea-web-worker-framing-");
   let worker: ChildProcessWithoutNullStreams | undefined;

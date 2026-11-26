@@ -206,6 +206,55 @@ it("keeps per-script refusal coverage and any completed facts under the selected
   ]);
 });
 
+it("passes the literal admission to every script analysis", async () => {
+  const captured = inspection([
+    "const routes = ['/api/one', '/api/two'];",
+    "fetch('/kept');",
+  ]);
+  const admission = { maximumCount: 1, source: "runtime" } as const;
+  const received: unknown[] = [];
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (
+      script,
+      _timeout,
+      _signal,
+      _precision,
+      _allowance,
+      literals,
+    ) => {
+      received.push(literals);
+      return ok(
+        analyzeCapturedWebScript(script, undefined, undefined, literals),
+      );
+    },
+    close: async () => {},
+  }));
+  expect((await analyzer.reserve()).ok).toBe(true);
+  const result = await analyzer.analyze(
+    captured,
+    noSourceMaps,
+    input,
+    undefined,
+    undefined,
+    admission,
+  );
+  analyzer.releaseReservation();
+  if (!result.ok) throw result.error;
+  // The wrapper must forward the admission; dropping it here leaves the worker
+  // on its default ceiling, which no domain test can see.
+  expect(received).toEqual([admission, admission]);
+  expect(
+    result.value.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/one"]);
+  expect(result.value.endpoint_literal_candidates).toMatchObject({
+    admitted_count: 1,
+    omitted_by_count: 1,
+    ceiling: "adjustable",
+  });
+});
+
 it("marks the unstarted suffix when the aggregate deadline expires", async () => {
   const captured = inspection([
     "fetch('/prefix');",

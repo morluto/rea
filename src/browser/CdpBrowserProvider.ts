@@ -25,6 +25,10 @@ import {
   type WebBundleAnalysisAdmission,
 } from "./IsolatedWebBundleAnalyzer.js";
 import { sourceMapsWithCaptureExclusions } from "../domain/webSourceMapCoverage.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
+  type WebBundleEndpointLiteralAdmission,
+} from "../domain/webBundleEndpointLiteralBudget.js";
 import type {
   AnalyzeWebBundleInput,
   WebBundleAnalysis,
@@ -123,9 +127,15 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     ConfigurationError
   >;
 
+  readonly #endpointLiterals: () => Result<
+    WebBundleEndpointLiteralAdmission,
+    ConfigurationError
+  >;
+
   /**
-   * `memberMutationAllowance` resolves the accepted operation's allowance at
-   * each bundle analysis; the default applies when the host selects none.
+   * `memberMutationAllowance` and `endpointLiterals` resolve the accepted
+   * operation's limits at each bundle analysis; the defaults apply when the
+   * host selects none.
    */
   constructor(
     admission?: WebBundleAnalysisAdmission,
@@ -133,9 +143,14 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       JavaScriptMemberMutationAllowance,
       ConfigurationError
     > = () => ok(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE),
+    endpointLiterals: () => Result<
+      WebBundleEndpointLiteralAdmission,
+      ConfigurationError
+    > = () => ok(DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION),
   ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
     this.#memberMutationAllowance = memberMutationAllowance;
+    this.#endpointLiterals = endpointLiterals;
   }
 
   async close(): Promise<void> {
@@ -302,6 +317,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     // An invalid setting is refused before capture, never replaced by the default.
     const memberMutationAllowance = this.#memberMutationAllowance();
     if (!memberMutationAllowance.ok) return memberMutationAllowance;
+    const endpointLiterals = this.#endpointLiterals();
+    if (!endpointLiterals.ok) return endpointLiterals;
     const admission = await this.#bundleAnalyzer.reserve();
     if (!admission.ok) return admission;
     let captured: CapturedPage | undefined;
@@ -355,6 +372,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         input,
         options.signal,
         memberMutationAllowance.value,
+        endpointLiterals.value,
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.

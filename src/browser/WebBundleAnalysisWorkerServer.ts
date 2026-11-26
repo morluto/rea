@@ -6,6 +6,11 @@ import {
 } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { fitJavaScriptRouteSourceFacts } from "../domain/javascript/javascriptRouteResultBudget.js";
+import { fitWebBundleEndpointLiteralCandidates } from "../domain/webBundleEndpointLiteralResultBudget.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
+  type WebBundleEndpointLiteralAdmission,
+} from "../domain/webBundleEndpointLiteralBudget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createHash } from "node:crypto";
@@ -44,6 +49,7 @@ export interface WebBundleScriptAnalyzer {
     script: IncludedScript,
     precision: JavaScriptSemanticPrecisionInput | undefined,
     memberMutationAllowance: JavaScriptMemberMutationAllowance,
+    endpointLiterals: WebBundleEndpointLiteralAdmission,
   ): WebBundleScriptAnalysis;
 }
 
@@ -140,6 +146,13 @@ const analyzeJob = async (
         `Web bundle worker source is not a valid included script: ${errorMessage(cause)}`,
       );
     }
+    const literalAdmission: WebBundleEndpointLiteralAdmission =
+      request.endpoint_literal_candidates === undefined
+        ? DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION
+        : {
+            maximumCount: request.endpoint_literal_candidates.maximum_count,
+            source: request.endpoint_literal_candidates.source,
+          };
     await send({ kind: "phase", id: request.id, phase: "analyze" });
     let result: WebBundleScriptAnalysis;
     try {
@@ -150,6 +163,7 @@ const analyzeJob = async (
           javaScriptMemberMutationAllowanceFromField(
             request.member_mutation_allowance,
           ),
+          literalAdmission,
         ),
       );
     } catch (cause) {
@@ -163,6 +177,12 @@ const analyzeJob = async (
     if (result.status !== "analyzed" && result.partial === undefined)
       throw new WebBundleWorkerOutputError(
         "Web bundle analyzer did not produce a completed per-script result",
+      );
+    if (result.status === "analyzed")
+      result = fitWebBundleEndpointLiteralCandidates(
+        result,
+        request.result_budget_bytes,
+        literalAdmission,
       );
     if (result.status === "analyzed" && result.route_facts != null) {
       const { route_facts, ...existing } = result;
