@@ -78,13 +78,14 @@ describe("typed refusals", () => {
     );
 
     expect(projected.remediation.action).toBe(
-      `analyze_javascript_application reached its max_heap_mb budget of 128 MiB (source request). Pass a larger max_heap_mb on the next analyze_javascript_application call (range ${String(limit.minimum)}..${String(limit.maximum)} MiB), then retry.`,
+      `analyze_javascript_application reached its max_heap_mb budget of 128 MiB (source request). Pass a larger max_heap_mb on the next analyze_javascript_application call (range ${String(limit.minimum)}..${String(limit.maximum)} MiB), then retry. To raise it for this session, set javascript.max_heap_mb with update_analysis_settings.`,
     );
     expect(projected.details?.refusal).toEqual({
       kind: "adjustable_budget",
       operation: "analyze_javascript_application",
       control: "max_heap_mb",
       setting: "javascript.max_heap_mb",
+      source: "request",
       effective_value: 128,
       unit: "MiB",
       range: { minimum: limit.minimum, maximum: limit.maximum },
@@ -282,6 +283,57 @@ describe("adjustable budget minimum", () => {
     ).remediation.action;
     expect(unreachable).toContain("above the asar.max_listing_bytes maximum");
     expect(unreachable).not.toContain("update_analysis_settings");
+  });
+});
+
+describe("setting-backed per-call budgets", () => {
+  const refused = (
+    limit: ReturnType<typeof analysisSettingLimit>,
+    callerLifetime?: "invocation",
+  ) =>
+    projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_binary_layout",
+        "memory",
+        "Input exceeds the budget.",
+        null,
+        { retryable: false, limit },
+      ),
+      callerLifetime,
+    ).remediation.action;
+  const limit = {
+    ...analysisSettingLimit("pwntools.max_input_bytes", 1024, "request"),
+    required_value: 4096,
+  };
+  const perCall = `inspect_binary_layout reached its producer_limits.input_bytes budget of 1024 bytes (source request). Pass a larger producer_limits.input_bytes on the next inspect_binary_layout call (at least 4096 bytes; range ${String(limit.minimum)}..${String(limit.maximum)} bytes), then retry.`;
+
+  it("offers the next call and the session setting for every source", () => {
+    expect(refused(limit)).toBe(
+      `${perCall} To raise it for this session, set pwntools.max_input_bytes with update_analysis_settings.`,
+    );
+    expect(
+      refused({
+        ...analysisSettingLimit("pwntools.max_input_bytes", 1024, "default"),
+        required_value: 4096,
+      }),
+    ).toBe(
+      `${perCall.replace("(source request)", "(source default)")} To raise it for this session, set pwntools.max_input_bytes with update_analysis_settings.`,
+    );
+  });
+
+  it("names the launch environment for a one-invocation caller", () => {
+    expect(refused(limit, "invocation")).toBe(
+      `${perCall} To raise it for later invocations, set REA_PWNTOOLS_MAX_INPUT_BYTES in the environment that starts them.`,
+    );
+  });
+
+  it("keeps the single per-call route when an invocation has no seed", () => {
+    const heap = analysisSettingLimit("javascript.max_heap_mb", 128, "default");
+    const action = refused(heap, "invocation");
+
+    expect(action).toContain("Pass a larger max_heap_mb");
+    expect(action).not.toContain("To raise it");
+    expect(action).not.toContain("update_analysis_settings");
   });
 });
 

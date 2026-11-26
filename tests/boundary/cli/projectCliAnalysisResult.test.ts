@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisTargetFailureError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
@@ -128,6 +129,51 @@ it("passes through successful data, unbound operations and unknown error values"
     },
   };
   expect(projectCliInputFields(unknown, binding)).toEqual(unknown);
+});
+
+it("renders a generated per-call budget recovery from its facts and keeps authored recovery", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const entry = cliCommand(cli, "inspect-pe-resources");
+  if (entry === undefined) throw new Error("Expected inspect-pe-resources");
+  const refusal = (remediationAction?: string) =>
+    projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_pe_resources",
+        "capacity",
+        "Reads exceed max_file_bytes.",
+        null,
+        {
+          retryable: false,
+          limit: {
+            control_kind: "parameter",
+            parameter: "max_file_bytes",
+            effective_value: 4096,
+            unit: "bytes",
+            minimum: 64,
+            maximum: 8192,
+            default_value: 4096,
+            applies_at: "next_call",
+            required_value: 5000,
+          },
+          ...(remediationAction === undefined ? {} : { remediationAction }),
+        },
+      ),
+      "invocation",
+    );
+  const project = (output: unknown) =>
+    projectCliCommandOutput(output, {
+      operations: entry.operations,
+      commands: entries,
+    }) as { remediation: { action: string } };
+
+  expect(project(refusal()).remediation.action).toBe(
+    "inspect_pe_resources reached its max_file_bytes budget of 4096 bytes. Pass a larger --max-file-bytes on the next rea inspect-pe-resources run (at least 5000 bytes; range 64..8192 bytes), then retry.",
+  );
+  // Authored text that merely quotes the generated step is not rewritten.
+  const authored =
+    "Producer note. Pass a larger max_file_bytes on the next inspect_pe_resources call.";
+  expect(project(refusal(authored)).remediation.action).toBe(authored);
 });
 
 it("spells an input refusal with the CLI command and drops the MCP catalog clause", () => {

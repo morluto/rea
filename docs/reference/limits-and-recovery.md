@@ -461,24 +461,47 @@ recovery to the resource kind. The domain owner is
 It has three variants. Each one projects under `details.refusal` with the
 `operation` the error is attributed to:
 
-| Variant              | Producer fact                                                                                                                            | Projected fields                                                                                                                       |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                                                                            |
-| `adjustable_budget`  | an `AnalysisSettingLimit`, or a `control_kind: "parameter"` limit, bound as `limit`                                                      | `control`, `setting` (settings only), `effective_value`, `unit`, `range`, `default_value` (parameters only), optional `required_value` |
-| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                                                                                  |
+| Variant              | Producer fact                                                                                                                            | Projected fields                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                                                                                         |
+| `adjustable_budget`  | an `AnalysisSettingLimit`, or a `control_kind: "parameter"` limit, bound as `limit`                                                      | `control`, `setting` and `source` (settings only), `effective_value`, `unit`, `range`, `default_value` (parameters only), optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                                                                                               |
 
 Presentation is total over these variants. Authored remediation still wins,
 so a producer that binds a parameter or setting limit omits it unless it adds
 something the facts cannot say. Without it, the variant names the recovery:
 fixed ceilings and their narrowing step, the budget's control and range for the
-caller's lifetime, or the selector field and its candidates. A per-call
-parameter reads "Pass a larger `<parameter>` on the next `<operation>` call
-(at least `<required_value>`; range `<minimum>..<maximum>`), then retry." When
-the control is already at its maximum, or `required_value` is above it, the
-recovery asks for a narrower request instead. An environment control is not
-an adjustable budget. A resource refusal never falls back to text about
-worker limits, the MCP transport, or doctor. An ambiguous selector conforms to
-the input contract, so it does not ask the caller to inspect the schema.
+caller's lifetime, or the selector field and its candidates. A resource refusal
+never falls back to text about worker limits, the MCP transport, or doctor. An
+ambiguous selector conforms to the input contract, so it does not ask the
+caller to inspect the schema.
+
+### Adjustable budget recovery
+
+The recovery is generated from the refusal's facts only, never from earlier
+calls. `required_value` is the smallest value that admits the refused request;
+the refusal reports it, in `details.limit` and `details.refusal`, whenever the
+producer measured it.
+
+- A per-call control reads "Pass a larger `<parameter>` on the next
+  `<operation>` call (at least `<required_value>`; range
+  `<minimum>..<maximum>`), then retry."
+- A per-call control backed by a registered setting is reported as that
+  setting's limit with `parameter` and `source` (see
+  [precedence](#precedence-and-lifetime)). Its recovery names both routes:
+  the per-call argument for one large input, then the setting for repeated
+  work, "To raise it for this session, set `<setting>` with
+  update_analysis_settings." A one-invocation caller (the CLI) gets the
+  setting's launch environment variable instead, or only the per-call route
+  when the setting has none.
+- A per-call control without a backing setting has only the per-call route.
+- When the control is already at its maximum, or `required_value` is above it,
+  the recovery asks for a narrower request instead.
+- On the CLI, the per-call step names the command's flag and command; MCP
+  names the contract field and tool.
+
+An environment control is not an adjustable budget. REA never raises a limit
+on its own or retries a refused request automatically.
 
 A measured exhaustion or occupied admission is not a refusal. It declares
 `measuredExhaustion: true` and keeps the resource kind's recovery. The
@@ -510,8 +533,9 @@ whether live repair is possible.
 Use `details.limit` for a direct runtime update when it names an editable
 setting with `scope: "rea-runtime"`. For `scope: "rea-invocation"`, set its
 `environment` or `parameter` for a new invocation instead.
-For `control_kind: "parameter"`, pass at least `required_value` (when
-present) for `parameter` on the next call. Follow `remediation.action` for
+For a per-call control, pass at least `required_value` (when present) for
+`parameter` on the next call; raise its backing setting instead when the same
+limit keeps refusing work in this session. Follow `remediation.action` for
 fixed and external controls.
 Inspect settings only when bounds or application details are missing. Restart only when it says the value is
 read at startup. A sentence that a control does not raise the limit is not a
