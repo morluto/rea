@@ -366,6 +366,7 @@
 * **javascript:** account for active nullish pattern defaults ([c1943f1](https://github.com/morluto/rea/commit/c1943f196cde8d232029e184648bf0a1356b685a))
 * **javascript:** answer an over-budget member-mutation query by escaping whole objects ([#14153](https://github.com/morluto/rea/issues/14153)) ([c4916a6](https://github.com/morluto/rea/commit/c4916a6ff779c1ef39f998bf49b0e11840bd8889))
 * **javascript:** include the underscore in the http token class ([62c4c25](https://github.com/morluto/rea/commit/62c4c25d19b67363784b58961072cd12c509de52))
+* **javascript:** keep Electron options visible past conditional literal spreads ([#9510](https://github.com/morluto/rea/issues/9510)) ([abdf383](https://github.com/morluto/rea/commit/abdf383939bd4190c9a06dd6576f3d698718d842))
 * **javascript:** omit requests rejected by the default agent protocol ([f54cc2f](https://github.com/morluto/rea/commit/f54cc2f3acf5e73b1007aafe8db69bc4b0ca29c3))
 * **javascript:** preserve abrupt destructuring boundaries ([#13433](https://github.com/morluto/rea/issues/13433)) ([365bbd9](https://github.com/morluto/rea/commit/365bbd9008ddde7b4ff6c0ba3b239e24309a7a64))
 * **javascript:** preserve Electron identity beside unrelated alias exhaustion ([#12988](https://github.com/morluto/rea/issues/12988)) ([c2870f9](https://github.com/morluto/rea/commit/c2870f91320721222a6157b5728eaff92a6c5a2a))
