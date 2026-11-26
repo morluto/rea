@@ -35,6 +35,15 @@ cliTest(
           maximum: 64,
           nesting_levels: 64,
         },
+        refusal: {
+          kind: "adjustable_budget",
+          operation: "inspect_playwright_trace",
+          control: "trace_limits.nesting_depth",
+          effective_value: 64,
+          default_value: 64,
+          range: { minimum: 1, maximum: 996 },
+          unit: "count",
+        },
         limit: {
           control_kind: "parameter",
           parameter: "trace_limits.nesting_depth",
@@ -52,7 +61,6 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.json).toMatchObject(expected);
-    expect(result.json).not.toHaveProperty(["details", "refusal"]);
     const recovered = await cli.run({
       arguments: [
         "inspect-playwright-trace",

@@ -1,7 +1,4 @@
-import {
-  isParseLimit,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
   closeArtifactResources,
@@ -19,7 +16,6 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../../domain/compression/zstandardFrameAllowance.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   ELF_NOTES_READ_BUDGETS,
   type ElfNotes,
@@ -28,11 +24,8 @@ import {
 import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
-import {
-  ELF_NOTE_TEXT_ALLOWANCE,
-  parseElfNotesFromHandle,
-} from "./ElfNoteParser.js";
+import { elfNoteLimitConstraint } from "./elfNoteLimitConstraint.js";
+import { parseElfNotesFromHandle } from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
 const HEADER_PREFIX_BYTES = 4096;
@@ -106,43 +99,15 @@ const elfNotesFailure = (
       path: input.path,
       description: "ELF image",
       fallbackMessage: "ELF note inspection failed.",
-      recognise: (failure) => {
-        if (failure instanceof ZstandardFrameAllowanceError)
-          return projectZstandardFrameAllowance(OPERATION, failure);
-        const sectionNameBudget = elfSectionNameBudget(failure);
-        if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
-          return parseLimitConstraint(OPERATION, "memory", failure, {
-            retryable: false,
-            limit: elfReadBudgetLimit(
+      recognise: (failure) =>
+        failure instanceof ZstandardFrameAllowanceError
+          ? projectZstandardFrameAllowance(OPERATION, failure)
+          : elfNoteLimitConstraint(
+              OPERATION,
+              failure,
+              input,
               ELF_NOTES_READ_BUDGETS,
-              "max_file_bytes",
-              input.max_file_bytes,
-              sectionNameBudget.required,
             ),
-          });
-        if (isParseLimit(failure, "elf-notes")) {
-          const entryBudget = failure.failure.limit.name === "max_entries";
-          return parseLimitConstraint(
-            OPERATION,
-            entryBudget ? "capacity" : "memory",
-            failure,
-            entryBudget
-              ? {
-                  retryable: false,
-                  limit: elfReadBudgetLimit(
-                    ELF_NOTES_READ_BUDGETS,
-                    "max_entries",
-                    input.max_entries,
-                  ),
-                }
-              : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
-                  limit: failure.failure.limit.maximum,
-                  unit: "bytes",
-                }),
-          );
-        }
-        return undefined;
-      },
       fileSize: (failure) =>
         parseLimitConstraint(
           OPERATION,

@@ -1,4 +1,10 @@
 import { z } from "zod";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
@@ -24,45 +30,69 @@ export const MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS = 1024;
 /** Hard ceiling on retained string payload bytes across StringData, LinkInfo, and ExtraData. */
 export const MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES = 1024 * 1024;
 
+/** The per-call budgets of `inspect_windows_shortcut`. */
+export const WINDOWS_SHORTCUT_BUDGETS = {
+  max_file_bytes: {
+    minimum: 76,
+    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES,
+    default_value: 1048576,
+    unit: "bytes",
+  },
+  max_id_list_items: {
+    minimum: 1,
+    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_ID_LIST_ITEMS,
+    default_value: 256,
+    unit: "count",
+  },
+  max_extra_data_blocks: {
+    minimum: 1,
+    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS,
+    default_value: 64,
+    unit: "count",
+  },
+  max_string_bytes: {
+    minimum: 1,
+    maximum: MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES,
+    default_value: 65536,
+    unit: "bytes",
+  },
+} as const satisfies Record<string, ParameterBudget>;
+export type WindowsShortcutBudget = keyof typeof WINDOWS_SHORTCUT_BUDGETS;
+
+/** The per-call budget that stopped a shortcut inspection. */
+export const windowsShortcutBudgetLimit = (
+  parameter: WindowsShortcutBudget,
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    parameter,
+    WINDOWS_SHORTCUT_BUDGETS[parameter],
+    effectiveValue,
+  );
+
 /** Complete bounded inspection of one Windows Shell Link (.lnk) file. */
 export const inspectWindowsShortcutInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a Windows Shell Link (.lnk) file",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(76)
-    .max(MAX_INSPECT_WINDOWS_SHORTCUT_FILE_BYTES)
-    .default(1048576)
-    .describe("Maximum stable artifact bytes to read (default 1 MiB)"),
-  max_id_list_items: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_WINDOWS_SHORTCUT_ID_LIST_ITEMS)
-    .default(256)
-    .describe(
-      "Maximum LinkTargetIDList items to examine; exceeding the budget fails without partial success",
-    ),
-  max_extra_data_blocks: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_WINDOWS_SHORTCUT_EXTRA_DATA_BLOCKS)
-    .default(64)
-    .describe(
-      "Maximum ExtraData blocks to examine; exceeding the budget fails without partial success",
-    ),
-  max_string_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_INSPECT_WINDOWS_SHORTCUT_STRING_BYTES)
-    .default(65536)
-    .describe(
-      "Maximum retained string payload bytes across StringData, LinkInfo, and ExtraData (default 64 KiB)",
-    ),
+  max_file_bytes: parameterBudgetSchema(
+    WINDOWS_SHORTCUT_BUDGETS.max_file_bytes,
+  ).describe("Maximum stable artifact bytes to read (default 1 MiB)"),
+  max_id_list_items: parameterBudgetSchema(
+    WINDOWS_SHORTCUT_BUDGETS.max_id_list_items,
+  ).describe(
+    "Maximum LinkTargetIDList items to examine; exceeding the budget fails without partial success",
+  ),
+  max_extra_data_blocks: parameterBudgetSchema(
+    WINDOWS_SHORTCUT_BUDGETS.max_extra_data_blocks,
+  ).describe(
+    "Maximum ExtraData blocks to examine; exceeding the budget fails without partial success",
+  ),
+  max_string_bytes: parameterBudgetSchema(
+    WINDOWS_SHORTCUT_BUDGETS.max_string_bytes,
+  ).describe(
+    "Maximum retained string payload bytes across StringData, LinkInfo, and ExtraData (default 64 KiB)",
+  ),
 });
 export type InspectWindowsShortcutInput = z.infer<
   typeof inspectWindowsShortcutInputSchema

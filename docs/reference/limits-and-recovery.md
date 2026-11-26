@@ -101,6 +101,17 @@ accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
 index of `binary_path`; its refusal reports the same kind of limit. See
 [IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
 
+`inspect_devicetree`, `inspect_windows_shortcut`, `inspect_kernel_build_config`,
+`extract_firmware` and `inspect_byte_entropy` report the same parameter limit for
+their per-call budgets (`max_file_bytes`, entry, depth and decoded-byte budgets,
+`max_output_bytes`/`max_output_files`, and `block_size` or `length`).
+`inspect_devicetree` bounds its estimated decoded representation with
+`max_decoded_bytes` (default 32 MiB, at most 256 MiB).
+`inspect_elf_dependencies`, `inspect_elf_unwind_ranges`, `inspect_apple_ips`,
+`inspect_dwarf_units`, `inspect_native_initializers`, `inspect_pe_resources`
+(`max_entries`) and `inspect_erlang_beam` report it too. The per-page symbol-name text allowance of `inspect_elf_unwind_ranges` is a fixed allowance (`details.refusal.kind` `fixed_ceiling`); its `narrowing` asks for a smaller page `limit` or paging with `offset`. `inspect_erlang_beam` accepts `max_table_rows` (export,
+import and lambda rows combined; default 65,536, at most 1,048,576).
+
 ### Native table structure budget
 
 `inspect_elf_unwind_ranges`, `inspect_kernel_module`, `inspect_elf_debug_link`,
@@ -134,8 +145,9 @@ one streaming pass that hashes the file for its identity is not counted.
 An exhausted allowance is a `capacity` refusal. `details.limit` has
 `control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
 value, the bounds, the default and `applies_at: "next_call"`, and
-`details.limit.required_value` (also `details.reported_limits.required_read_bytes`)
-holds the reads needed so far. Pass at least that `max_file_bytes` and retry;
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+It is a lower bound, since later reads depend on structures not yet decoded, so
+the limit reports no `required_value`. Raise `max_file_bytes` and retry;
 `update_analysis_settings` does not change it.
 The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
 PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
@@ -170,13 +182,14 @@ rejected.
 | `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_sqlite_database`                                    | `input_bytes` 256 MiB (the database and WAL copied to the private snapshot)                                                                                                                   |
 | `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
-inherited OS ceiling can appear as `0`. When packet, signal, pwntools, Rust or
-pcap work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
+inherited OS ceiling can appear as `0`. When packet, signal, pwntools, Rust,
+pcap or SQLite work exhausts a budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
 the other producers name the field to raise in their remediation. A pwntools
@@ -501,7 +514,9 @@ caller to inspect the schema.
 The recovery is generated from the refusal's facts only, never from earlier
 calls. `required_value` is the smallest value that admits the refused request;
 the refusal reports it, in `details.limit` and `details.refusal`, whenever the
-producer measured it.
+producer measured it. A producer that knows only a lower bound, such as the
+reads counted before a refusal, omits it and reports the bound in
+`details.reported_limits`.
 
 - A per-call control reads "Pass a larger `<parameter>` on the next
   `<operation>` call (at least `<required_value>`; range

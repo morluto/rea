@@ -462,10 +462,19 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       table: "selected",
       columns: ["", "id", "id"],
       worker_timeout_ms: 42000,
+      producer_limits: { input_bytes: 512 * 1024 * 1024 },
     });
     expect(selected.isError).not.toBe(true);
     expect(selected.structuredContent).toMatchObject({
-      parameters: { worker_timeout_ms: 42000 },
+      parameters: {
+        worker_timeout_ms: 42000,
+        producer_limits: { input_bytes: 512 * 1024 * 1024 },
+      },
+      limitations: expect.arrayContaining([
+        expect.stringContaining(
+          `combined input ${String(512 * 1024 * 1024)} bytes per inspection`,
+        ),
+      ]),
       normalized_result: {
         worker_timeout_ms: 42000,
         schema: {
@@ -509,13 +518,16 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         "1",
         "--worker-timeout-ms",
         "42000",
+        "--producer-limits",
+        "{}",
         "--json",
       ],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(cliResult.exitCode, cliResult.stdout + cliResult.stderr).toBe(0);
     expect(cliResult.json).toMatchObject({
-      parameters: { worker_timeout_ms: 42000 },
+      // An explicit empty object stays explicit; omission stays omitted.
+      parameters: { worker_timeout_ms: 42000, producer_limits: {} },
       normalized_result: {
         worker_timeout_ms: 42000,
         rows: { columns: ["id", ""], returned_rows: 1 },

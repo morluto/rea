@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): ace4d479bfa0c00c686481331dd503029223c8c5f91c52f82613fd65032cf6dd
+Runtime dependency fingerprint (SHA-256): 4cee8a5e40b5fdc0888ba56ed8ec9df05c5da195255c00593654e4a6e2d01d50
 
 ===== @babel/helper-string-parser@8.1.2 =====
 Declared license: MIT
@@ -4552,10 +4552,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== lossless-json@4.3.3 =====
+===== lossless-json@4.3.4 =====
 Declared license: MIT
-Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.3.tgz
-Integrity: sha512-FGFrGArHsv7BRiYOf37ZRieT9HlKw+Kpu9HvtpYjcoOEo8lqNkjny8A2YAfWNWWQC+9pcLIrLZ+IviKJhaHwGQ==
+Archive: https://registry.npmjs.org/lossless-json/-/lossless-json-4.3.4.tgz
+Integrity: sha512-zfmBtt+IgL7aiem9qNhAmW8/kZOVzA0Y219UNj/FN7p21hQ4ZOghT4y9FzxQAm/64e4wi4jR7lBXUXy2IrjaMA==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE.md ---

@@ -260,7 +260,8 @@ does not establish another instance.
     limits, such as nesting depth or a single document, stay per-call. A
     limit that is a real format, protocol or representation fact stays fixed
     with its stated reason.
-  - Set `required_value` whenever the producer measured the need, and let the
+  - Set `required_value` whenever the producer measured the complete need (not
+    a lower bound), and let the
     typed refusal generate the recovery
     ([adjustable budget recovery](../reference/limits-and-recovery.md#adjustable-budget-recovery));
     do not author duplicate recovery prose.
