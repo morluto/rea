@@ -291,6 +291,7 @@
 * **desktop:** respect TryExec when selecting Linux launchers ([b185803](https://github.com/morluto/rea/commit/b185803bc8262e41adaa34943e278ba38924939e))
 * **desktop:** retain reader scratch files under its cleanup owner ([#9775](https://github.com/morluto/rea/issues/9775)) ([0d67095](https://github.com/morluto/rea/commit/0d67095295c2704ef4d92929578e3c209e5b9f05))
 * **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
+* **desktop:** tear down build computers whose reader or run state is uncertain ([#14778](https://github.com/morluto/rea/issues/14778)) ([0844339](https://github.com/morluto/rea/commit/084433987d666f2b17ebd671341401438f6466aa))
 * **devicetree:** validate retained report ranges and coverage ([#14066](https://github.com/morluto/rea/issues/14066)) ([a5f735c](https://github.com/morluto/rea/commit/a5f735c67b2226ec66913add6b5424a884ad5c11))
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **doctor:** emit each check once and classify passing checks healthy ([#14251](https://github.com/morluto/rea/issues/14251)) ([f986b25](https://github.com/morluto/rea/commit/f986b25df9e8668491096245ce8b3e5acb3325ca))
