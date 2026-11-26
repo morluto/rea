@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const uint16 = z.number().int().min(0).max(0xffff);
@@ -10,12 +16,32 @@ const range = z.strictObject({ offset: uint, bytes: uint });
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES = 536870912;
+/** `max_entries` of `inspect_pe_rich_header`: decoded Rich header `@comp.id` records. */
+export const PE_RICH_HEADER_ENTRY_BUDGET = {
+  minimum: 1,
+  maximum: 65536,
+  default_value: 1024,
+  unit: "count",
+} as const satisfies ParameterBudget;
 /** Minimum caller-selected Rich header entry budget. */
-export const MIN_INSPECT_PE_RICH_HEADER_ENTRIES = 1;
+export const MIN_INSPECT_PE_RICH_HEADER_ENTRIES =
+  PE_RICH_HEADER_ENTRY_BUDGET.minimum;
 /** Default caller-selected Rich header entry budget. */
-export const DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES = 1024;
+export const DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES =
+  PE_RICH_HEADER_ENTRY_BUDGET.default_value;
 /** Hard ceiling on decoded Rich header entries. */
-export const MAX_INSPECT_PE_RICH_HEADER_ENTRIES = 65536;
+export const MAX_INSPECT_PE_RICH_HEADER_ENTRIES =
+  PE_RICH_HEADER_ENTRY_BUDGET.maximum;
+
+/** Structured `details.limit` for an exhausted Rich header entry budget. */
+export const peRichHeaderEntryLimit = (
+  effectiveValue: number,
+): AnalysisParameterLimit =>
+  parameterBudgetLimit(
+    "max_entries",
+    PE_RICH_HEADER_ENTRY_BUDGET,
+    effectiveValue,
+  );
 
 /** Byte width of the `DanS` marker plus its three padding DWORDs. */
 export const PE_RICH_HEADER_START_BYTES = 16;
@@ -38,15 +64,9 @@ export const inspectPeRichHeaderInputSchema = z.strictObject({
     .describe(
       "Maximum bytes this reader reads from the artifact: headers, DOS stub and Rich header (default 64 MiB). The file may be larger; its one hashing pass is not counted",
     ),
-  max_entries: z
-    .number()
-    .int()
-    .min(MIN_INSPECT_PE_RICH_HEADER_ENTRIES)
-    .max(MAX_INSPECT_PE_RICH_HEADER_ENTRIES)
-    .default(DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES)
-    .describe(
-      "Maximum Rich header entries to decode; exceeding the budget fails without partial success",
-    ),
+  max_entries: parameterBudgetSchema(PE_RICH_HEADER_ENTRY_BUDGET).describe(
+    "Maximum Rich header entries to decode; exceeding the budget fails without partial success",
+  ),
 });
 export type InspectPeRichHeaderInput = z.infer<
   typeof inspectPeRichHeaderInputSchema

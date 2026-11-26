@@ -54,6 +54,7 @@ describe("PE Rich header provider failures after a completed read", () => {
             control_kind: "parameter",
             parameter: "max_entries",
             effective_value: maxEntries,
+            required_value: 3,
             unit: "count",
             minimum: 1,
             maximum: 65536,

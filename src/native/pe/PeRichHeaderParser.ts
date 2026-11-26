@@ -178,6 +178,8 @@ const richRecord = async (
       input.max_entries,
       `PE Rich header holds ${String(count)} entries, over the ${String(input.max_entries)}-entry budget.`,
       PE_RICH_HEADER_ENTRY_ALLOWANCE,
+      "entries",
+      count,
     );
   const decode = (at: number): number => (reader.u32(at) ^ key) >>> 0;
   const entries: PeRichHeaderEntry[] = [];

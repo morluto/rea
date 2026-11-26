@@ -174,7 +174,9 @@ The PE readers also report `details.limit` for their per-call inventory budgets:
 `inspect_pe_imports` `max_dlls`, `max_functions` and `max_text_bytes` (decoded
 names, default 16 MiB, at most 256 MiB); `inspect_pe_load_config`
 `max_callbacks`; `inspect_pe_unwind_ranges` `max_entries` (default 2,097,152, at
-most 16,777,216; the declared count is its `required_value`); and
+most 16,777,216; the declared count is its `required_value`);
+`inspect_pe_rich_header` `max_entries` (default 1,024, at most 65,536; the
+decoded entry count is its `required_value`); and
 `inspect_pe_resources` `max_entries` and `max_metadata_bytes` (the complete
 result, default 8 MiB, at most 256 MiB).
 

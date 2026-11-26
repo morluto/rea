@@ -155,7 +155,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   })) satisfies Bind<PeImportsService>,
   peRichHeader: ((service) => ({
     inspect_pe_rich_header: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeRichHeaderService>,

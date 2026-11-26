@@ -52,9 +52,9 @@ mcpTest(
         { toolDefinition: definition },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const report = contract.outputSchema.parse(
-        response.structuredContent,
-      ).normalized_result;
+      const evidence = contract.outputSchema.parse(response.structuredContent);
+      expect(evidence.parameters).toEqual({ path });
+      const report = evidence.normalized_result;
       expect(report.rich_header).toMatchObject({
         state: "present",
         checksum: { matches: true },
@@ -64,6 +64,17 @@ mcpTest(
       expect(report.rich_header.entries).toHaveLength(
         RICH_FIXTURE_ENTRIES.length,
       );
+      const explicit = await client.callTool(
+        {
+          name: "inspect_pe_rich_header",
+          arguments: { path, max_entries: 16 },
+        },
+        { toolDefinition: definition },
+      );
+      expect(explicit.isError, JSON.stringify(explicit.content)).not.toBe(true);
+      expect(
+        contract.outputSchema.parse(explicit.structuredContent).parameters,
+      ).toEqual({ path, max_entries: 16 });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       const bad = await client.callTool(
         { name: "inspect_pe_rich_header", arguments: { path: "relative.exe" } },

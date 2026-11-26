@@ -11,13 +11,9 @@ import {
 } from "../../resources/index.js";
 import type { PeRichHeaderPort } from "../../ports/binaryDiagnostics/PeRichHeaderPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
-  DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES,
-  MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
   MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
-  MIN_INSPECT_PE_RICH_HEADER_ENTRIES,
+  peRichHeaderEntryLimit,
   type InspectPeRichHeaderInput,
   type PeRichHeader,
 } from "../../domain/native/peRichHeader.js";
@@ -102,11 +98,18 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
               bytes: PE_FILE_CEILING_BYTES,
             },
             limits: [PE_RICH_HEADER_ENTRY_ALLOWANCE],
-            limitRecovery: () => ({
-              retryable: false,
-              limit: entryLimit(input),
-              remediationAction: entryRemediation(input),
-            }),
+            limitRecovery: (_limit, failure) => {
+              const { required } = failure.failure.limit;
+              return {
+                retryable: false,
+                limit: {
+                  ...peRichHeaderEntryLimit(failure.maximum_bytes),
+                  ...(typeof required === "number"
+                    ? { required_value: required }
+                    : {}),
+                },
+              };
+            },
             ...(completed === undefined ? {} : { completed }),
           },
           observed,
@@ -115,21 +118,3 @@ export class PeRichHeaderProvider implements PeRichHeaderPort {
     }
   }
 }
-
-const entryRemediation = (input: InspectPeRichHeaderInput): string =>
-  input.max_entries >= MAX_INSPECT_PE_RICH_HEADER_ENTRIES
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_RICH_HEADER_ENTRIES)}-entry Rich header ceiling this operation accepts; select a smaller artifact.`
-    : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected Rich header entry budget.`;
-
-const entryLimit = (
-  input: InspectPeRichHeaderInput,
-): AnalysisParameterLimit => ({
-  control_kind: "parameter",
-  parameter: "max_entries",
-  effective_value: input.max_entries,
-  unit: "count",
-  minimum: MIN_INSPECT_PE_RICH_HEADER_ENTRIES,
-  maximum: MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
-  default_value: DEFAULT_INSPECT_PE_RICH_HEADER_ENTRIES,
-  applies_at: "next_call",
-});

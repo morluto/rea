@@ -75,6 +75,7 @@ cliTest("fails closed at the entry budget", async ({ cli }) => {
         parameter: "max_entries",
         cli_flag: "--max-entries",
         effective_value: 2,
+        required_value: 3,
         unit: "count",
         minimum: 1,
         maximum: 65536,
@@ -83,7 +84,7 @@ cliTest("fails closed at the entry budget", async ({ cli }) => {
       },
     },
     remediation: {
-      action: expect.stringContaining("Raise max_entries above 2"),
+      action: expect.stringContaining("--max-entries"),
     },
   });
   const retried = await cli.run({
@@ -91,4 +92,37 @@ cliTest("fails closed at the entry budget", async ({ cli }) => {
   });
   expect(retried.exitCode, retried.stderr).toBe(0);
   expect(report(retried.json).rich_header.state).toBe("present");
+
+  const overCeilingPath = join(root, "over-ceiling.exe");
+  await writeFile(
+    overCeilingPath,
+    peRichHeaderImage({
+      entries: Array.from({ length: 65537 }, (_, index) => ({
+        productId: 0x0104,
+        build: index & 0xffff,
+        count: 1,
+      })),
+    }),
+  );
+  const overCeiling = await cli.run({
+    arguments: ["inspect-pe-rich-header", overCeilingPath, "--json"],
+  });
+  expect(overCeiling.exitCode).toBe(1);
+  expect(overCeiling.json).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_entries",
+        cli_flag: "--max-entries",
+        effective_value: 1024,
+        required_value: 65537,
+        maximum: 65536,
+      },
+    },
+    remediation: {
+      action: expect.stringContaining("above the max_entries maximum"),
+    },
+  });
 });
