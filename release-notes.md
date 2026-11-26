@@ -1317,6 +1317,7 @@
 * **evidence:** distinguish legacy format from schema refusal ([#13045](https://github.com/morluto/rea/issues/13045)) ([184e9c0](https://github.com/morluto/rea/commit/184e9c083cd58a13ef03c89f45f3fff2acad0654))
 * **evidence:** verify request admission and retained display ownership ([#13053](https://github.com/morluto/rea/issues/13053)) ([0c3e1d6](https://github.com/morluto/rea/commit/0c3e1d69aa862e66f032959dcbf80cae2e8ceed6))
 * **filesystem:** consolidate stable hash and descriptor ownership checks ([#12879](https://github.com/morluto/rea/issues/12879)) ([79bd830](https://github.com/morluto/rea/commit/79bd830f4e4514e3cabf4af7fa9b2b26076d080a))
+* **filesystem:** release the lease after simulated device changes ([#14731](https://github.com/morluto/rea/issues/14731)) ([b343218](https://github.com/morluto/rea/commit/b3432183571dd9e7b4cdd82b7b9142edd8c0af51))
 * **filesystem:** share invalid file selection assertions ([#14313](https://github.com/morluto/rea/issues/14313)) ([8730a1d](https://github.com/morluto/rea/commit/8730a1d49a4d61e915cf57a3363784de97b6fdac))
 * **filesystem:** verify commit cancellation closes its parent descriptor ([#12814](https://github.com/morluto/rea/issues/12814)) ([84ee3c1](https://github.com/morluto/rea/commit/84ee3c1edc7930360d6004d33baab0a4ebe7c5f7))
 * **firmware:** consolidate extraction report ownership checks ([#13351](https://github.com/morluto/rea/issues/13351)) ([734ef0f](https://github.com/morluto/rea/commit/734ef0f9b2a450514a56ed9f2b2945878d37f98c))
