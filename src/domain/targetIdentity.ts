@@ -1,4 +1,4 @@
-import { serializeCanonicalValue } from "./canonicalDigest.js";
+import { canonicalJsonSerializer } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import type {
@@ -312,13 +312,13 @@ export const binaryTargetIdentity = (
   selection: binaryTargetSelection(target),
 });
 
+const serializeIdentity = canonicalJsonSerializer(
+  "RFC 8785 canonicalization rejected a target identity",
+);
+
 /** The only comparison of two target identities: an RFC 8785 canonical digest. */
-export const targetIdentityKey = (identity: TargetIdentity): string => {
-  const encoded = serializeCanonicalValue(identity);
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
-  return `target_${sha256Hex(encoded)}`;
-};
+export const targetIdentityKey = (identity: TargetIdentity): string =>
+  `target_${sha256Hex(serializeIdentity(identity))}`;
 
 /** Whether two identities name the same target. */
 export const sameTargetIdentity = (
@@ -343,7 +343,7 @@ const coordinateKey = (identity: TargetIdentity): string => {
       : undefined;
   if (identity.kind !== "file" || load === undefined)
     return targetIdentityKey(identity);
-  const encoded = serializeCanonicalValue({
+  const encoded = serializeIdentity({
     kind: "raw-load-coordinates",
     sha256: identity.sha256,
     format: identity.format,
@@ -352,8 +352,6 @@ const coordinateKey = (identity: TargetIdentity): string => {
     base_address: load.base_address,
     architecture_variant: load.architecture_variant ?? null,
   });
-  if (encoded === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
   return `coordinates_${sha256Hex(encoded)}`;
 };
 
