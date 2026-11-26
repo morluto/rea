@@ -257,7 +257,7 @@ it("preserves default and mixed launcher facts, metadata, backups and no-op iden
   const all = mcpRegistrationReportSchema.parse(observed.all.document);
   expect(observed.all.exitCode).toBe(0);
   expect(all.ok).toBe(true);
-  expect(all.clients).toHaveLength(26);
+  expect(all.clients).toHaveLength(27);
   expect(all.clients.every((client) => client.status === "configured")).toBe(
     true,
   );
@@ -271,7 +271,7 @@ it("preserves default and mixed launcher facts, metadata, backups and no-op iden
     ).toEqual(observed.expectedDefault);
     expect(native.ambientPersisted, native.client).toBe(false);
   }
-  expect(observed.native).toHaveLength(26);
+  expect(observed.native).toHaveLength(27);
   const repeated = mcpRegistrationReportSchema.parse(
     observed.repeatedAll.document,
   );
