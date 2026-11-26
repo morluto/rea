@@ -101,11 +101,9 @@ export const decodeUnityLzmaBlock = async (
   const pb = (remainder / 5) | 0;
   if (pb > 4 || lc + lp > 4)
     return rejectLzma("Unity LZMA properties are out of range");
-  const dictionaryBytes = new BinaryReader(
-    input,
-    true,
-    "Unity LZMA",
-  ).u32(LZMA_DICTIONARY_OFFSET);
+  const dictionaryBytes = new BinaryReader(input, true, "Unity LZMA").u32(
+    LZMA_DICTIONARY_OFFSET,
+  );
   if (dictionaryBytes > maximumBytes)
     throw new BinaryResourceFailure(
       "structure",
@@ -125,7 +123,10 @@ export const decodeUnityLzmaBlock = async (
   if (dictionaryBytes < LZMA_MIN_DICTIONARY_BYTES)
     alone.writeUInt32LE(LZMA_MIN_DICTIONARY_BYTES, LZMA_DICTIONARY_OFFSET);
 
-  const output = new BoundedLzmaOutput(Math.min(expected, maximumBytes), signal);
+  const output = new BoundedLzmaOutput(
+    Math.min(expected, maximumBytes),
+    signal,
+  );
   let position = 0;
   const codec = loadCodec();
   try {

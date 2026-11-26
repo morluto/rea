@@ -22,14 +22,20 @@ it("decodes a Unity LZMA block to its declared size", async () => {
 });
 
 it("refuses a truncated Unity LZMA header", async () => {
-  await expect(decodeUnityLzmaBlock(Buffer.from([0x5d, 0, 0]), 4, 4)).rejects.toMatchObject({
+  await expect(
+    decodeUnityLzmaBlock(Buffer.from([0x5d, 0, 0]), 4, 4),
+  ).rejects.toMatchObject({
     kind: "malformed",
   });
 });
 
 it("refuses Unity LZMA properties outside the decoder range", async () => {
   await expect(
-    decodeUnityLzmaBlock(Buffer.from([0xff, 0, 0, 0x80, 0, 0, 1, 2, 3, 4]), 1, 1),
+    decodeUnityLzmaBlock(
+      Buffer.from([0xff, 0, 0, 0x80, 0, 0, 1, 2, 3, 4]),
+      1,
+      1,
+    ),
   ).rejects.toMatchObject({ kind: "malformed" });
 });
 
