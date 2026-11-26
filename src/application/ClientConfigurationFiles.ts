@@ -340,6 +340,9 @@ const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
   );
 };
 
+/** The `schema_version` Muse Code requires on `settings.json`. */
+const MUSE_SETTINGS_SCHEMA_VERSION = 1;
+
 /** Native OpenCode dialect applies across all selected configuration layers. */
 export const clientWriteDialect = (
   dialect: ClientRegistrationDialect,
@@ -355,6 +358,20 @@ export const clientConfigurationForWrite = (
   parsed: ClientConfigurationDocument,
   sources: readonly ClientConfigurationDocument[],
 ): Result<ClientConfigurationDocument, ConfigurationError> => {
+  // Muse Code reads `settings.json` with a required numeric `schema_version`, so
+  // a document that does not carry one yet is written with the version this
+  // reader admits instead of producing a file the client cannot load.
+  if (
+    parsed.dialect === "muse" &&
+    !Object.hasOwn(parsed.document, "schema_version")
+  )
+    return ok({
+      ...parsed,
+      document: {
+        ...parsed.document,
+        schema_version: MUSE_SETTINGS_SCHEMA_VERSION,
+      },
+    });
   if (
     parsed.dialect !== "opencode" ||
     clientWriteDialect(parsed.dialect, sources) !== "opencode_v2"

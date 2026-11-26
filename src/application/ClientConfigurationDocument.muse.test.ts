@@ -4,6 +4,7 @@ import {
   clientRegistrationLauncherEntry,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationForWrite } from "./ClientConfigurationFiles.js";
 
 const parsed = (text: string) => {
   const result = parseClientConfiguration(text, "muse");
@@ -63,6 +64,32 @@ describe("Muse Code registration launcher entry", () => {
       type: "stdio",
       command: "rea",
       args: ["mcp"],
+    });
+  });
+});
+
+/**
+ * Muse Code requires a numeric `schema_version`. A document that does not carry
+ * one yet is written with it, so setup cannot produce a settings file the
+ * client refuses to load.
+ */
+describe("Muse Code write fragment", () => {
+  const written = (text: string) => {
+    const parsed = parseClientConfiguration(text, "muse");
+    if (!parsed.ok)
+      throw new Error(`expected a document, got ${parsed.error.kind}`);
+    const forWrite = clientConfigurationForWrite(parsed.value, [parsed.value]);
+    if (!forWrite.ok) throw forWrite.error;
+    return forWrite.value.document;
+  };
+
+  it("writes the schema version a fresh document lacks", () => {
+    expect(written('{"mcpServers":{}}')).toMatchObject({ schema_version: 1 });
+  });
+
+  it("keeps the version a caller already declared", () => {
+    expect(written('{"schema_version":3,"mcpServers":{}}')).toMatchObject({
+      schema_version: 3,
     });
   });
 });
