@@ -2,7 +2,8 @@ import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 import {
   peOverlayImage,
@@ -12,6 +13,11 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+
+const overlayContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_pe_overlay",
+);
 
 mcpTest(
   "advertises and reads a PE overlay without executing or changing the image",
@@ -41,7 +47,7 @@ mcpTest(
         { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_pe_overlay").outputSchema.parse(
+      const evidence = overlayContract.outputSchema.parse(
         response.structuredContent,
       );
       expect(evidence.parameters).toEqual({ path });

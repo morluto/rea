@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { sha256Hex } from "../../src/kernel/sha256Hex.js";
 import { peCertificateFixture } from "../../src/native/pe/PeCertificates.fixture.js";
 import {
@@ -10,6 +11,11 @@ import {
 } from "../../src/native/pe/PeOverlay.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const overlayContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_pe_overlay",
+);
 
 cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-pe-overlay-cli-");
@@ -20,7 +26,7 @@ cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
     arguments: ["inspect-pe-overlay", absentPath, "--json"],
   });
   expect(absent.exitCode, absent.stderr).toBe(0);
-  const absentReport = toolContract("inspect_pe_overlay").outputSchema.parse(
+  const absentReport = overlayContract.outputSchema.parse(
     absent.json,
   ).normalized_result;
   expect(absentReport.present).toBe(false);
@@ -35,7 +41,7 @@ cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
     cwd: root,
   });
   expect(zip.exitCode, zip.stderr).toBe(0);
-  const zipReport = toolContract("inspect_pe_overlay").outputSchema.parse(
+  const zipReport = overlayContract.outputSchema.parse(
     zip.json,
   ).normalized_result;
   expect(zipReport.ranges).toEqual([
@@ -55,7 +61,7 @@ cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
     arguments: ["inspect-pe-overlay", signedPath, "--json"],
   });
   expect(signedResult.exitCode, signedResult.stderr).toBe(0);
-  const signedReport = toolContract("inspect_pe_overlay").outputSchema.parse(
+  const signedReport = overlayContract.outputSchema.parse(
     signedResult.json,
   ).normalized_result;
   expect(
@@ -85,7 +91,7 @@ cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
     arguments: ["inspect-pe-overlay", roundedPath, "--json"],
   });
   expect(rounded.exitCode, rounded.stderr).toBe(0);
-  const roundedReport = toolContract("inspect_pe_overlay").outputSchema.parse(
+  const roundedReport = overlayContract.outputSchema.parse(
     rounded.json,
   ).normalized_result;
   expect(roundedReport.sections[0]).toMatchObject({
@@ -137,9 +143,9 @@ cliTest.for([1, 9])(
       arguments: ["inspect-pe-overlay", path, "--json"],
     });
     expect(overlay.exitCode, overlay.stderr).toBe(0);
-    const { normalized_result: report } = toolContract(
-      "inspect_pe_overlay",
-    ).outputSchema.parse(overlay.json);
+    const { normalized_result: report } = overlayContract.outputSchema.parse(
+      overlay.json,
+    );
     expect(report.security_directory).toEqual({
       status: "malformed",
       defect: "invalid-size",
@@ -197,9 +203,9 @@ cliTest("recognizes a leading XML plist in the overlay", async ({ cli }) => {
     arguments: ["inspect-pe-overlay", path, "--json"],
   });
   expect(overlay.exitCode, overlay.stderr).toBe(0);
-  const { normalized_result: report } = toolContract(
-    "inspect_pe_overlay",
-  ).outputSchema.parse(overlay.json);
+  const { normalized_result: report } = overlayContract.outputSchema.parse(
+    overlay.json,
+  );
   expect(report.ranges).toEqual([
     expect.objectContaining({
       role: "other",
