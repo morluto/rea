@@ -392,7 +392,7 @@ export function* linkGenericMethodsSteps(
       );
       return { ...named, ...unknown };
     }
-    if (pointer === "unknown") {
+    if (pointer === "unknown" || pointer === "imported") {
       issue(
         row,
         slotAt,
