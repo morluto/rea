@@ -1649,14 +1649,14 @@ export class BinarySession
           error: sourcesRecorded.error,
           operation: name,
           parameters: recoveryParameters ?? arguments_,
-          execution: {
+          execution: carrySessionExecutionProvenance(execution.value, {
             ...execution.value,
             sourceEvidence: execution.value.sourceEvidence,
             subject:
               execution.value.subject === undefined
                 ? active.target
                 : execution.value.subject,
-          },
+          }),
           admit: this.admitRecoveryObservation.bind(this),
           evidenceForAnalysis: this.evidenceForAnalysis.bind(this),
         });

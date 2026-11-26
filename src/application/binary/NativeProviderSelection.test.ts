@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import {
@@ -37,12 +37,15 @@ import {
 } from "../../../tests/fixtures/binarySession.js";
 
 import { BinarySession } from "./BinarySession.js";
+import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
+import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
 
 const fixture = (
   id: string,
   shared: readonly string[] = [],
   delivery: "inline" | "reference" = "inline",
   sources: readonly Evidence[] = [],
+  records?: InvestigationRecords,
 ) => {
   const identity = { id, name: `${id} fixture`, version: "1" };
   const profile = createAnalysisProfile(identity, { fixture: true });
@@ -109,7 +112,7 @@ const fixture = (
   return {
     session: new BinarySession(
       createTestProviderRouter(provider),
-      undefined,
+      records,
       undefined,
       delivery,
     ),
@@ -557,3 +560,105 @@ it.each([
     }
   },
 );
+
+it.each(["ghidra", "artifact-graph"])(
+  "keeps %s completed recovery provenance when source retention is full",
+  async (id) => {
+    const [path] = await createBinarySessionTargets();
+    const records = new InvestigationRecords({ maximumRepresentationBytes: 0 });
+    const sources: Evidence[] = [];
+    const { session, provider } = fixture(id, [], "inline", sources, records);
+    let charged: ReturnType<typeof estimateJsonStorage> | undefined;
+    const admit = records.admitRecoveryObservation.bind(records);
+    const admission = vi
+      .spyOn(records, "admitRecoveryObservation")
+      .mockImplementation((input, operation, additional) => {
+        const base = estimateJsonStorage(input);
+        charged = {
+          valueBytes: base.valueBytes + additional.valueBytes,
+          serializedUtf16Bytes:
+            base.serializedUtf16Bytes + additional.serializedUtf16Bytes,
+        };
+        return admit(input, operation, additional);
+      });
+    try {
+      const opened = await session.open(path, { providerId: id });
+      if (!opened.ok) throw opened.error;
+      const source = createEvidence(
+        opened.value,
+        provider.identity(),
+        {
+          operation: "health",
+          parameters: { facet: "historical" },
+          result: "existing source",
+        },
+        { immutable: true },
+      );
+      sources.push(source);
+      const failed = await session.execute("read_bytes", {
+        address: "0x1000",
+        length: 1,
+      });
+      expect(failed.ok).toBe(false);
+      if (failed.ok) throw new Error("Expected source capacity refusal");
+      const completed = failed.error.sourcePublicationRecovery?.completed;
+      expect(completed?.kind).toBe("unretained-evidence");
+      if (completed?.kind !== "unretained-evidence")
+        throw new Error("Expected completed Evidence");
+      expect(completed.evidence.provider_selection?.selection_source).toBe(
+        id === "ghidra" ? "request" : undefined,
+      );
+      expect(completed.evidence.evidence_links).toEqual([source.evidence_id]);
+      expect(source.provider_selection).toBeUndefined();
+      expect(session.exportEvidenceBundle().records).toHaveLength(0);
+      const actual = estimateJsonStorage(completed.evidence);
+      expect(charged?.valueBytes).toBeGreaterThanOrEqual(actual.valueBytes);
+      expect(charged?.serializedUtf16Bytes).toBeGreaterThanOrEqual(
+        actual.serializedUtf16Bytes,
+      );
+    } finally {
+      admission.mockRestore();
+      await session.dispose();
+    }
+  },
+);
+
+it("omits recovery before materialization when authentication headroom is exhausted", async () => {
+  const [path] = await createBinarySessionTargets();
+  const records = new InvestigationRecords({
+    maximumRepresentationBytes: 0,
+    availableAuthenticationBytes: () => 0,
+  });
+  const sources: Evidence[] = [];
+  const { session, provider } = fixture(
+    "ghidra",
+    [],
+    "inline",
+    sources,
+    records,
+  );
+  try {
+    const opened = await session.open(path, { providerId: "ghidra" });
+    if (!opened.ok) throw opened.error;
+    sources.push(
+      createEvidence(
+        opened.value,
+        provider.identity(),
+        { operation: "health", parameters: {}, result: "existing source" },
+        { immutable: true },
+      ),
+    );
+    const failed = await session.execute("read_bytes", {
+      address: "0x1000",
+      length: 1,
+    });
+    if (failed.ok) throw new Error("Expected source capacity refusal");
+    expect(failed.error.sourcePublicationRecovery?.completed).toMatchObject({
+      kind: "omitted",
+      reason: "insufficient-authentication-headroom",
+    });
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+  } finally {
+    await session.dispose();
+  }
+});
