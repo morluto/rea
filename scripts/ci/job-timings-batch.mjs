@@ -67,7 +67,7 @@ export async function collectJobTimingsBatch({
     }
     try {
       const response = await apiJson(
-        `repos/${identity}/actions/workflows/${workflow.id}/runs?status=completed&created=%3E%3D${encodeURIComponent(cutoff)}&per_page=${String(MAX_RUNS_PER_WORKFLOW)}&page=1`,
+        `repos/${identity}/actions/workflows/${workflow.id}/runs?status=completed&exclude_pull_requests=true&created=%3E%3D${encodeURIComponent(cutoff)}&per_page=${String(MAX_RUNS_PER_WORKFLOW)}&page=1`,
         env,
         started,
         now,
