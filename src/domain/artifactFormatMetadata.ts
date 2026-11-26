@@ -23,6 +23,8 @@ import {
   tarEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
+  bfltMetadataSchema,
+  bfltSegmentMetadataSchema,
   dfuSeElementMetadataSchema,
   dfuSeMetadataSchema,
   espFlashImageMetadataSchema,
@@ -92,6 +94,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ntfsMftMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
+  bfltMetadataSchema,
+  bfltSegmentMetadataSchema,
   espFlashImageMetadataSchema,
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
@@ -315,6 +319,14 @@ const declarationsByKind: {
       alternate_setting: metadata.alternate_setting,
       target_name: metadata.target_name,
     }),
+  },
+  bflt: {
+    notCompared:
+      "Its fields come from the file's own 64-byte header and relocation table, which content comparison covers.",
+  },
+  "bflt-segment": {
+    notCompared:
+      "Its segment name is in its path and its offset and length are layout; content comparison covers its bytes.",
   },
   "esp-flash-image": {
     notCompared:
