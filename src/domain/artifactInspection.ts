@@ -463,12 +463,36 @@ const formatProbes = (
           },
         ]
       : [];
+  if (format === "bflt") return bfltProbes(inventory);
   if (format === "esp-image") return espFlashDumpProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
   if (format === "directory") return directoryProbes(inventory);
   if (format === "pe")
     return nativeImageProbes({ format, managed: rootImage?.managed });
   return probesForFormat(format);
+};
+
+// bFLT text is served with its header at image offset 0, so the header's
+// entry offset applies to it directly; the header names no CPU.
+const bfltProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  const root = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === ".",
+  )?.format_metadata;
+  const text = inventory.occurrences.some(
+    (row) =>
+      row.format_metadata?.kind === "bflt-segment" &&
+      row.format_metadata.segment === "text",
+  );
+  if (root?.kind !== "bflt" || !text) return [];
+  return [
+    {
+      operation: "open_binary",
+      rationale: `Extract text.bin with extract_artifact, then open it with format raw-binary, a caller-chosen architecture (the bFLT header names none) and entry_point set to a chosen load base. The program entry is that base plus ${offsetText(root.entry)}; relocations are not applied.`,
+      authority: "native-analysis-provider",
+    },
+  ];
 };
 
 // An ESP image that its reader found at the start of a flash dump read from

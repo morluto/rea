@@ -567,7 +567,7 @@ Each group follows one domain-owned default policy. See [.NET bundles](../dotnet
 [Bun standalone](../bun-standalone.md) for format semantics.
 
 `artifact_limits.expanded_bytes` selects aggregate plaintext work for ZIP, Bun,
-SEA and PCK readers, including repeated readable logical occurrences. Omission
+SEA and PCK readers and bFLT gzip decompression, including repeated readable logical occurrences. Omission
 retains each archive's encoded-size-derived default. The .NET bundle group's
 own `expanded_bytes` controls its independently enforced bundle expansion.
 

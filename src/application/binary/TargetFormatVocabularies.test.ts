@@ -137,6 +137,7 @@ const TARGETS: TargetFixtures = {
   "android-ota-payload": { ...archive, format: "android-ota-payload" },
   uf2: { ...archive, format: "uf2" },
   dfuse: { ...archive, format: "dfuse" },
+  bflt: { ...archive, format: "bflt" },
   dmg: { ...archive, format: "dmg" },
   pkg: { ...archive, format: "pkg" },
   "intel-hex": { ...archive, format: "intel-hex" },

@@ -52,6 +52,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
+import { BfltArtifactReader } from "./BfltArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 import { TarArtifactReader } from "./tar/TarArtifactReader.js";
@@ -553,6 +554,20 @@ const NON_ZIP_FORMATS = {
       "DfuSe inventory lists each target element as one region at its declared address. It does not establish CPU, byte order, memory map, or an entry point; an alternate setting selects a device memory, not an address space REA can interpret.",
     createReader: (path, options) =>
       new DfuSeArtifactReader(path, sourceOf(options)),
+  }),
+  bflt: container("bflt", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "bFLT inventory reports the flat header and serves text (header included), data and the relocation table at their loader offsets. gzip bodies are inflated under artifact_limits.expanded_bytes; relocations are not applied, and the executable is not run. The header does not name a CPU.",
+    createReader: (path, options) =>
+      new BfltArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "esp-flash-image": container("esp-flash-image", {
     roleContainer: true,
