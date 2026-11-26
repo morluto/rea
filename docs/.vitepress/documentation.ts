@@ -184,6 +184,11 @@ export const documentationSections = [
         route: "/pe-unwind-ranges",
       },
       {
+        text: "PE overlay",
+        source: "guides/native/pe-overlay.md",
+        route: "/pe-overlay",
+      },
+      {
         text: "Match native functions across builds",
         source: "native-function-matching.md",
         route: "/native-function-matching",
@@ -384,6 +389,11 @@ export const documentationSections = [
         route: "/nuget-nupkg",
       },
       {
+        text: "VS Code extension packages",
+        source: "guides/managed/vsix-package.md",
+        route: "/vsix-package",
+      },
+      {
         text: ".NET single-file bundles",
         source: "dotnet-bundles.md",
         route: "/dotnet-bundles",
@@ -407,6 +417,11 @@ export const documentationSections = [
         text: "Android OTA update payloads",
         source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",
+      },
+      {
+        text: "Android Verified Boot vbmeta images",
+        source: "guides/firmware/android-vbmeta.md",
+        route: "/android-vbmeta",
       },
       {
         text: "Android sparse images",
@@ -434,6 +449,11 @@ export const documentationSections = [
         route: "/fit-images",
       },
       {
+        text: "Qualcomm MBN images",
+        source: "guides/firmware/qualcomm-mbn-images.md",
+        route: "/qualcomm-mbn-images",
+      },
+      {
         text: "Intel HEX and S-record images",
         source: "hex-records.md",
         route: "/hex-records",
@@ -452,6 +472,16 @@ export const documentationSections = [
         text: "uClinux bFLT flat executables",
         source: "bflt-executables.md",
         route: "/bflt-executables",
+      },
+    ],
+  },
+  {
+    text: "Container images",
+    items: [
+      {
+        text: "OCI image layouts",
+        source: "guides/artifacts/oci-image-layout.md",
+        route: "/oci-image-layout",
       },
     ],
   },

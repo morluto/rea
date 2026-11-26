@@ -86,7 +86,7 @@ const CHILD_PROGRAM = `
       await symlink(process.execPath, join(sessionBin, 'node'));
       await symlink(runtimeDirectory, runtimeAlias, 'dir');
       await symlink(sessionBin, outsideBin, 'dir');
-      defaultsEnvironment.PATH = outsideBin + delimiter + defaultsEnvironment.PATH;
+      defaultsEnvironment.PATH = outsideBin + delimiter + bin;
       defaultsEnvironment.XDG_RUNTIME_DIR = runtimeAlias;
     }
     const schema = await serve(defaultsEnvironment, ['mcp','add','--schema','--json']);

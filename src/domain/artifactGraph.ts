@@ -86,6 +86,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "nro",
   "android-boot-image",
   "android-ota-payload",
+  "android-vbmeta",
   "android-sparse-image",
   "iso9660",
   "uefi",
@@ -116,6 +117,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "bflt",
   "esp-flash-image",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
   "sqlite",
   "windows-shortcut",
@@ -146,6 +148,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "nro",
   "android-boot-image",
   "android-ota-payload",
+  "android-vbmeta",
   "android-sparse-image",
   "iso9660",
   "uefi",
@@ -156,6 +159,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "dfuse",
   "bflt",
   "fit",
+  "qualcomm-mbn",
   "ntfs-mft",
   "mach-o-universal",
   "mach-o",
@@ -335,6 +339,13 @@ const extractedArtifactSchema = z.object({
   sha256: sha256Schema,
   bytes_written: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   created: z.boolean(),
+  limitations: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "The inventory occurrence's own limitations, such as a case-folding collision or a normalized member name; absent when it has none",
+    ),
 });
 
 /** Path-independent commitment to one selected extraction operation. */

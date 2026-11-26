@@ -34,6 +34,7 @@ import {
   fitMetadataSchema,
   hexRecordRegionMetadataSchema,
   hexRecordsMetadataSchema,
+  qualcommMbnMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
   uImageEntryMetadataSchema,
@@ -44,6 +45,9 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  androidVbmetaEntryMetadataSchema,
+  androidVbmetaDescriptorEntryMetadataSchema,
+  androidVbmetaMetadataSchema,
   androidSparseImageMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
@@ -99,8 +103,12 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
   fitImageMetadataSchema,
+  qualcommMbnMetadataSchema,
   androidBootImageMetadataSchema,
   androidBootImageEntryMetadataSchema,
+  androidVbmetaMetadataSchema,
+  androidVbmetaEntryMetadataSchema,
+  androidVbmetaDescriptorEntryMetadataSchema,
   iso9660MetadataSchema,
   iso9660EntryMetadataSchema,
   ddsMetadataSchema,
@@ -260,6 +268,18 @@ const declarationsByKind: {
     notCompared:
       "role and index restate the entry's path, compression is observed from its bytes, and load addresses, names and board IDs come from the image header or vendor ramdisk table, which the image's content comparison covers.",
   },
+  "android-vbmeta": {
+    notCompared:
+      "Its header and descriptor facts come from the image's own bytes, which content comparison covers. Signatures and digests are recorded and not verified.",
+  },
+  "android-vbmeta-entry": {
+    notCompared:
+      "role restates the entry's path; its stored bytes are compared by content.",
+  },
+  "android-vbmeta-descriptor": {
+    notCompared:
+      "index and tag name restate the entry's path; its stored descriptor bytes are compared by content.",
+  },
   iso9660: {
     notCompared:
       "Its fields come from the image's own volume descriptors, which content comparison covers.",
@@ -404,6 +424,10 @@ const declarationsByKind: {
   fit: {
     notCompared:
       "Its fields come from the FIT's own bytes, which content comparison covers.",
+  },
+  "qualcomm-mbn": {
+    notCompared:
+      "Its header and hash-segment facts come from the image's own bytes, which content comparison covers. Signatures are located, not verified.",
   },
   /**
    * Payload interpretation and sharing declarations, independent of FIT

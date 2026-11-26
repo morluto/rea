@@ -265,6 +265,7 @@ export interface ArtifactReader {
     | "nro"
     | "android-boot-image"
     | "android-ota-payload"
+    | "android-vbmeta"
     | "android-sparse-image"
     | "iso9660"
     | "uefi"
@@ -281,6 +282,7 @@ export interface ArtifactReader {
     | "bflt"
     | "esp-flash-image"
     | "fit"
+    | "qualcomm-mbn"
     | "ntfs-mft"
     | "file";
   entries(

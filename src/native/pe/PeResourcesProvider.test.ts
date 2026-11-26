@@ -180,8 +180,10 @@ describe("PE resource provider budget reporting", () => {
 it("names max_metadata_bytes instead of host memory", async () => {
   const root = await createTestTempDirectory("rea-pe-metadata-budget-");
   const path = join(root, "resource.exe");
-  const name = "n".repeat(200);
-  const resources = Array.from({ length: 5500 }, (_, index) => ({
+  // Each name is retained as text and hex in both directory and resource rows.
+  // Long names reach the metadata limit with fewer file reads.
+  const name = "n".repeat(12_000);
+  const resources = Array.from({ length: 100 }, (_, index) => ({
     type: 10,
     name: `${name}${String(index).padStart(4, "0")}`,
     language: 1033,
