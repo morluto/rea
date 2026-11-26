@@ -11,6 +11,10 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { vsixPackageFixture } from "../../../src/vsix/VsixPackage.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+import {
+  testDeliveryEnvironment,
+  type TestDelivery,
+} from "../../support/completeEvidenceByDefault.js";
 
 const vsixContract = contractNamed(
   VSIX_PACKAGE_TOOL_CONTRACTS,
@@ -20,18 +24,27 @@ const completeVsixEvidenceSchema = vsixContract.outputSchema.safeExtend({
   normalized_result: vsixPackageSchema,
 });
 
-const connect = async (mcp: TestMcp) => {
+const connect = async (
+  mcp: TestMcp,
+  delivery: TestDelivery = "completeEvidenceByDefault",
+) => {
   const session = createTestBinarySession(() => {
     throw new Error("VS Code vsix inspection must not start a deep provider");
   });
-  const client = await mcp.connect(createServer({ kind: "session", session }));
+  const environment = testDeliveryEnvironment(process.env, delivery);
+  const client = await mcp.connect(
+    createServer({ kind: "session", session }, { environment }),
+    undefined,
+    undefined,
+    delivery,
+  );
   return { client, session };
 };
 
 mcpTest(
   "advertises inspect_vsix_package and reads package identity",
   async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
+    const { client, session } = await connect(mcp, "budgeted");
     try {
       const advertised = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_vsix_package",
@@ -54,6 +67,81 @@ mcpTest(
       expect(evidence.normalized_result.vsix_identity?.id).toBe("demo.hello");
       expect(evidence.normalized_result.vsix_identity?.version).toBe("1.2.3");
       expect(evidence.normalized_result.package_identity?.name).toBe("hello");
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "summarizes an oversized VSIX by default and retains complete Evidence",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp, "budgeted");
+    try {
+      const root = await createTestTempDirectory("rea-vsix-mcp-");
+      const path = join(root, "large.vsix");
+      const extraMembers = Object.fromEntries(
+        Array.from({ length: 400 }, (_, index) => [
+          `extension/out/generated/member-${index}.js`,
+          "x",
+        ]),
+      );
+      await writeFile(path, await vsixPackageFixture({ extraMembers }));
+
+      const summarized = await client.callTool({
+        name: "inspect_vsix_package",
+        arguments: { path },
+      });
+      const summary = vsixContract.outputSchema.parse(
+        summarized.structuredContent,
+      );
+      expect(summary.operation).toBe("inspect_analysis_view");
+      const view = summary.normalized_result;
+      if (!("kind" in view) || view.kind !== "summary")
+        throw new Error("Expected the retained VSIX summary");
+      expect(view).toMatchObject({
+        parent_operation: "inspect_vsix_package",
+        summary: { vsix_identity: { id: "demo.hello" } },
+      });
+
+      const page = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: view.parent_evidence_id,
+          },
+          view: { kind: "evidence-json", offset: 0 },
+        },
+      });
+      expect(page.isError, JSON.stringify(page.content)).not.toBe(true);
+      expect(page.structuredContent).toMatchObject({
+        normalized_result: {
+          kind: "evidence-json",
+          parent_evidence_id: view.parent_evidence_id,
+        },
+      });
+
+      const explicit = await client.callTool({
+        name: "inspect_vsix_package",
+        arguments: { path, detail: "summary" },
+      });
+      expect(
+        vsixContract.outputSchema.parse(explicit.structuredContent),
+      ).toMatchObject({ evidence_id: summary.evidence_id });
+
+      const complete = await client.callTool({
+        name: "inspect_vsix_package",
+        arguments: { path, detail: "complete" },
+      });
+      const evidence = completeVsixEvidenceSchema.parse(
+        complete.structuredContent,
+      );
+      expect(evidence.evidence_id).toBe(view.parent_evidence_id);
+      expect(evidence.normalized_result.contents).toHaveLength(
+        view.summary.content_count,
+      );
+      expect(view.summary.content_count).toBeGreaterThanOrEqual(400);
     } finally {
       await session.close();
     }

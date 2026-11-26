@@ -216,7 +216,7 @@ export const OFFLINE_INSPECTION_TOOL_BINDINGS = {
   vsixPackage: ((service) => ({
     inspect_vsix_package: {
       admission: "application",
-      run: (input, options) => service.inspect(input, options),
+      summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<VsixPackageService>,
   pythonPyc: ((service) => ({
