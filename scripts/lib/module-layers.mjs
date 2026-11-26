@@ -433,6 +433,13 @@ const isEntryFile = (unit, target) =>
 export const PROVIDER_DEPENDENCIES = Object.freeze([
   Object.freeze({
     from: "artifacts",
+    to: "native",
+    files: Object.freeze(["pe/PeUnsignedDigest.ts"]),
+    reason:
+      "ASAR inventory explains PE Authenticode signed-after-packing integrity mismatches",
+  }),
+  Object.freeze({
+    from: "artifacts",
     to: "uefi",
     files: Object.freeze(["UefiArtifactReader.ts", "UefiFormatProbe.ts"]),
     reason:

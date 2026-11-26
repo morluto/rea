@@ -1,13 +1,11 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import {
@@ -24,14 +22,8 @@ import {
   type AndroidSparseChunkSpec,
 } from "../domain/firmware/androidSparseImage.fixture.js";
 
-const fixture = async (bytes: Buffer): Promise<string> => {
-  const path = join(
-    await createTestTempDirectory("rea-android-sparse-boundary-"),
-    "system.img",
-  );
-  await writeFile(path, bytes);
-  return path;
-};
+const fixture = (bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-android-sparse-boundary-", "system.img", bytes);
 
 const entries = async (reader: AndroidSparseImageArtifactReader) => {
   const result = [];
