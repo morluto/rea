@@ -98,6 +98,7 @@ const registerInventoryCommands = (
             "Inventory occurrence ID to extract (repeatable); omit to extract all regular entries",
         },
       },
+      evidenceDelivery: true,
     },
     (input, context) =>
       run(

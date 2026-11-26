@@ -746,6 +746,19 @@ dependency groups with version ranges, and a ZIP contents inventory with
 path-derived folder roles. Missing or malformed `.nuspec` members still return
 the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
+Inspect a VS Code `.vsix` without installing the extension or contacting a
+marketplace:
+
+```bash
+rea inspect-vsix-package /absolute/path/to/demo.hello-1.2.3.vsix --json
+```
+
+The workflow reports identity from `extension.vsixmanifest` and
+`extension/package.json`, engine range, activation events, a contributes
+summary, hashed native/wasm/executable members, and a ZIP contents inventory.
+Missing or malformed manifests still return the inventory with limitations.
+See [VS Code extension packages](../guides/managed/vsix-package.md).
+
 Inspect an OCI image-layout directory without unpacking a tar, decompressing
 layers, or contacting a registry:
 
