@@ -86,6 +86,11 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
       return mocks.finishEvents();
     }
 
+    // This stub does not prove selected event content and privacy have settled.
+    captureFinalized() {
+      return false;
+    }
+
     result() {
       return {
         retained: 0,

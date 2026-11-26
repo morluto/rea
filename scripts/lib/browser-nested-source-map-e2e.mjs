@@ -112,6 +112,8 @@ async function verifyCase(executable, entrypoint, scenario) {
         [
           entrypoint,
           "analyze-web-bundle",
+          "--detail",
+          "complete",
           endpoint,
           target.target_id,
           "--allowed-origins",

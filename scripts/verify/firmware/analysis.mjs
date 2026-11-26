@@ -14,6 +14,7 @@ import {
   VerifierFixture,
   withVerifierFixture,
 } from "../../lib/verifier-fixture.mjs";
+import { completeEvidenceClient } from "../../lib/complete-evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 const { join, resolve, dirname } = nodePath;
@@ -92,10 +93,12 @@ const workDir = workFixture.path;
 const baseEnv = Object.fromEntries(
   Object.entries(process.env).filter(([, v]) => v !== undefined),
 );
-const mcpClient = new Client({
-  name: "rea-real-firmware-verifier",
-  version: "1",
-});
+const mcpClient = completeEvidenceClient(
+  new Client({
+    name: "rea-real-firmware-verifier",
+    version: "1",
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Invocation helpers
@@ -365,6 +368,7 @@ async function stageGhidra(mcpFiles) {
   );
 
   const pseudoRaw = await callTool("procedure_pseudo_code", {
+    detail: "complete",
     procedure: "firmware_probe",
   });
   assert.equal(parseEvidence(pseudoRaw).provider.id, "ghidra");

@@ -3,7 +3,7 @@ import {
   bindArtifactFileCleanup,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  artifactFileCancellationError,
   ArtifactFileCleanupFailure,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -204,16 +204,9 @@ const nativeMachoSourcePrimary = (
     if (completedFailure !== undefined)
       return analysisErrorWithCancellation(
         completedFailure,
-        cancelledBy(
-          operation,
-          carriedReason(artifactFileCancellationCause(cause)),
-        ),
+        artifactFileCancellationError(operation, cause),
       );
-    return cancelledBy(
-      operation,
-      carriedReason(artifactFileCancellationCause(cause)),
-      optionsWithoutCause,
-    );
+    return artifactFileCancellationError(operation, cause, optionsWithoutCause);
   }
   if (
     cause instanceof ArtifactReaderFailure &&

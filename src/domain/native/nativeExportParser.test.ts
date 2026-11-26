@@ -318,7 +318,9 @@ it("ends an exhausted ELF name cache scope after one diagnostic", () => {
     issues: [
       {
         code: "version_unresolved",
-        message: expect.stringContaining("16 MiB cache allowance"),
+        message: expect.stringContaining(
+          "16777216-byte cache allowance (max_text_bytes)",
+        ),
       },
       {
         code: "version_unresolved",
@@ -653,12 +655,12 @@ describe("PE export directories", () => {
         kind: "limit",
         limit: {
           name: "rows",
-          maximum: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
+          maximum: nativeExportContracts.DEFAULT_NATIVE_EXPORT_ROWS,
         },
       },
       boundary: "structure",
-      maximum_bytes: nativeExportContracts.MAX_NATIVE_EXPORT_ROWS,
-      message: expect.stringContaining("262144-entry export inventory"),
+      maximum_bytes: nativeExportContracts.DEFAULT_NATIVE_EXPORT_ROWS,
+      message: expect.stringContaining("above max_entries (262144)"),
     });
   });
 });
@@ -1199,7 +1201,7 @@ describe("export inventory review regressions", () => {
       },
       boundary: "structure",
       maximum_bytes: 16_777_216,
-      message: expect.stringContaining("16777216-byte retained-text"),
+      message: expect.stringContaining("exceed max_text_bytes (16777216)"),
     });
   });
 

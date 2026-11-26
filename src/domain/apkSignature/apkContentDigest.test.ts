@@ -1,3 +1,8 @@
+import {
+  u16,
+  u32,
+  u64,
+} from "../../../tests/fixtures/apkSignature/integers.js";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
@@ -19,15 +24,6 @@ const nodeHash: HashFactory = (algorithm) => {
     digest: () => new Uint8Array(hash.digest()),
   };
 };
-
-const u16 = (v: number): number[] => [v & 0xff, (v >> 8) & 0xff];
-const u32 = (v: number): number[] => [
-  v & 0xff,
-  (v >> 8) & 0xff,
-  (v >> 16) & 0xff,
-  (v >>> 24) & 0xff,
-];
-const u64 = (v: number): number[] => [...u32(v), ...u32(0)];
 
 const eocd = (cdSize: number, cdOffset: number): number[] => [
   ...u32(0x06054b50),

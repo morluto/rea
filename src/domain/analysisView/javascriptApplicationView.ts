@@ -1,3 +1,4 @@
+import { appendToMapList } from "../appendToMapList.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
@@ -112,19 +113,13 @@ const buildModuleIndex = (nodes: readonly ApplicationNode[]): ModuleIndex => {
       byNodeId.has(entry.node.node_id) ? null : entry,
     );
     if (entry.paths.length === 0) {
-      const existing = nodesByPath.get(null);
-      if (existing === undefined) nodesByPath.set(null, [entry]);
-      else existing.push(entry);
+      appendToMapList(nodesByPath, null, entry);
     } else {
       for (const path of entry.paths) {
-        const existing = nodesByPath.get(path);
-        if (existing === undefined) nodesByPath.set(path, [entry]);
-        else existing.push(entry);
+        appendToMapList(nodesByPath, path, entry);
       }
     }
-    const kindList = nodesByKind.get(entry.node.kind);
-    if (kindList === undefined) nodesByKind.set(entry.node.kind, [entry]);
-    else kindList.push(entry);
+    appendToMapList(nodesByKind, entry.node.kind, entry);
   }
   return { moduleEntries: entries, byNodeId, nodesByPath, nodesByKind };
 };

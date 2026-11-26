@@ -11,7 +11,7 @@ Arguments:
 
 Options:
   --analysis <independent_fresh|call_destination>                                             Select standalone analysis. independent_fresh requires independent_decompile. call_destination requires call_destination_decompile and an exact address.
-  --detail <complete|summary>                                                                 Deliver complete Evidence, or a summary with --evidence_output (default: complete)
+  --detail <complete|summary>                                                                 Omit for complete Evidence when it fits the agent result budget (32768 compact JSON bytes by default, about 11k tokens) and its summary otherwise; complete always delivers everything; summary needs --evidence_output
   --snapshot <string>                                                                         Load and update a local analysis snapshot
   --target-format <dos-com|raw-binary|gamecube-dol>                                           Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection
   --architecture <6502|x86|x86_64|arm|arm64|m68k>                                             Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol
@@ -34,6 +34,7 @@ Global Options:
   --help                                      Show help
   --json                                      Shorthand for --format json
   --llms, --llms-full                         Print LLM-readable manifest
+  --no-retain                                 Write no over-budget result to the retained-Evidence cache
   --schema                                    Show JSON Schema for command
   --token-count                               Print token count of output (instead of output)
   --token-limit <n>                           Limit output to n tokens

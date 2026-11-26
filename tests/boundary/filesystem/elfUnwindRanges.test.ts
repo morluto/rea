@@ -2,6 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
 import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
@@ -79,6 +80,36 @@ describe("ELF unwind range stable filesystem boundary", () => {
 });
 
 describe("ELF unwind range budgets", () => {
+  it("names max_structure_bytes when a header table exceeds it", async () => {
+    const root = await createTestTempDirectory("rea-elf-unwind-structure-");
+    const path = join(root, "program");
+    await writeFile(path, elfUnwindFixture());
+    const service = createElfUnwindRangesService();
+    try {
+      const refused = await service.inspect({ path, max_structure_bytes: 64 });
+      if (refused.ok) throw new Error("Expected a max_structure_bytes refusal");
+      expect(refused.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_structure_bytes",
+          effective_value: 64,
+          unit: "bytes",
+          minimum: 64,
+          maximum: 512 * 1024 * 1024,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
+      });
+      expect(
+        (await service.inspect({ path, max_structure_bytes: 65536 })).ok,
+      ).toBe(true);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("tells a caller over the symbol-name text allowance to request a smaller page", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-names-");
     const path = join(root, "program");
@@ -97,6 +128,11 @@ describe("ELF unwind range budgets", () => {
           limit: 300,
           maximum_bytes: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
         },
+        fixedAllowance: {
+          name: "The ELF unwind symbol-name text allowance",
+          limit: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+          narrowing: expect.stringContaining("smaller limit than 300"),
+        },
         cause: {
           failure: {
             kind: "limit",
@@ -108,12 +144,9 @@ describe("ELF unwind range budgets", () => {
           },
         },
       });
-      const remediation =
-        "remediationAction" in result.error
-          ? result.error.remediationAction
-          : undefined;
+      const remediation = projectAnalysisError(result.error).remediation.action;
       expect(remediation).toContain("smaller limit than 300");
-      expect(remediation).not.toContain("Raise max_ranges");
+      expect(remediation).not.toContain("max_ranges budget");
       const smaller = await service.inspect({ path, limit: 200 });
       expect(smaller.ok).toBe(true);
     } finally {
@@ -140,6 +173,7 @@ describe("ELF unwind range budgets", () => {
         _tag: "AnalysisResourceConstraintError",
         resource: "capacity",
         reportedLimits: { max_ranges: 1 },
+        limit: { parameter: "max_ranges", effective_value: 1, maximum: 65536 },
         cause: {
           failure: {
             kind: "limit",

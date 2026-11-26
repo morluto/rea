@@ -9,7 +9,6 @@ import { executeWithNativeSymbolSelection } from "../application/NativeSymbolSel
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
-  RETAINED_SUMMARY_VIEW_TOOL,
   retainedSummaryDelivery,
   withoutDeliveryDetail,
 } from "./retainedSummaryDelivery.js";
@@ -18,7 +17,6 @@ import type {
   AnalysisOperationPort,
 } from "../ports/AnalysisProvider.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
-import { declaresSizeAwareDetail } from "../contracts/analysisDetail.js";
 import { ok } from "../domain/result.js";
 import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -82,11 +80,7 @@ export const createProviderOperationToolHandler =
     const delivery =
       contract.retainedSummary === undefined
         ? undefined
-        : retainedSummaryDelivery(
-            contract.name,
-            dependencies,
-            declaresSizeAwareDetail(contract.inputSchema),
-          );
+        : retainedSummaryDelivery(contract.name, dependencies);
     return async (
       input: unknown,
       context: ServerContext,
@@ -170,11 +164,8 @@ export const createProviderOperationToolHandler =
               server.delivery.toCallToolResult(evidence, contract),
             );
           const projected =
-            delivery?.projectEvidence(
-              resolved,
-              evidence.value,
-              server.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
-            ) ?? ok(evidence.value);
+            delivery?.projectEvidence(resolved, evidence.value) ??
+            ok(evidence.value);
           if (!projected.ok)
             return progress.complete(
               server.delivery.toCallToolResult(projected, contract),
@@ -185,6 +176,8 @@ export const createProviderOperationToolHandler =
               projected.value,
               contract,
               recorded,
+              undefined,
+              dependencies.recordEvidence,
             ),
           );
         },

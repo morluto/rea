@@ -18,6 +18,28 @@ import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { cliPublicationInvocation } from "./cliEvidencePublication.js";
+import { renewRetainedEvidence } from "./cliEvidenceRetention.js";
+
+/** The Evidence files a successful view read: its file source and bundle. */
+const renewReadRetainedEvidence = async (
+  document: unknown,
+  bundlePath: string | undefined,
+): Promise<void> => {
+  const { retention } = cliPublicationInvocation();
+  const source =
+    typeof document === "object" && document !== null
+      ? (document as { readonly source?: unknown }).source
+      : undefined;
+  const sourcePath =
+    typeof source === "object" &&
+    source !== null &&
+    (source as { readonly kind?: unknown }).kind === "evidence-file"
+      ? (source as { readonly path?: unknown }).path
+      : undefined;
+  for (const path of [sourcePath, bundlePath])
+    if (typeof path === "string") await renewRetainedEvidence(path, retention);
+};
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -116,6 +138,8 @@ export const registerAnalysisViewCommands = (
         operation,
         signal,
       );
+      // Reading a retained record renews its age in the private cache.
+      if (result.ok) await renewReadRetainedEvidence(document, bundlePath);
       // Preserve the inline command's existing error label without copying
       // the authenticated completed Evidence or its partial observation.
       return result.ok

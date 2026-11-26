@@ -536,13 +536,18 @@ describe("MCP JSON Schema validity", () => {
     const comparison = byName.get("compare_web_captures")?.inputSchema;
     for (const side of ["before", "after"])
       expect(comparison).toHaveProperty(
-        ["properties", side, "properties", "inspection"],
-        {
-          type: "object",
-          description: expect.stringContaining(
-            "complete canonical observation",
-          ),
-        },
+        ["properties", side, "properties", "inspection", "anyOf"],
+        [
+          expect.objectContaining({
+            required: ["kind", "evidence_id"],
+          }),
+          {
+            type: "object",
+            description: expect.stringContaining(
+              "complete canonical observation",
+            ),
+          },
+        ],
       );
     for (const contract of TOOL_CONTRACTS) {
       const tool = byName.get(contract.name);

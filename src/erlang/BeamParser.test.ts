@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+  ERLANG_BEAM_BUDGETS,
   inspectErlangBeamInputSchema,
 } from "../domain/erlang/beam.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
@@ -24,6 +24,8 @@ const beamFailure = (kind: "malformed" | "truncated", detail: string) =>
     failure: expect.objectContaining({ kind, format: "beam", detail }),
   });
 
+const ERLANG_BEAM_TABLE_ROWS_DEFAULT =
+  ERLANG_BEAM_BUDGETS.max_table_rows.default_value;
 const defaults = inspectErlangBeamInputSchema.parse({
   path: "/artifacts/app.beam",
 });
@@ -395,8 +397,8 @@ it.each([
 });
 
 it("checks aggregate table capacity after each table is framed", async () => {
-  const below = Math.floor(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS / 2);
-  const overflow = MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS - below * 2 + 1;
+  const below = Math.floor(ERLANG_BEAM_TABLE_ROWS_DEFAULT / 2);
+  const overflow = ERLANG_BEAM_TABLE_ROWS_DEFAULT - below * 2 + 1;
   await expect(
     parse(
       erlangBeamRowsFixture([
@@ -411,16 +413,14 @@ it("checks aggregate table capacity after each table is framed", async () => {
         kind: "limit",
         limit: {
           name: "max_table_rows",
-          maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
-          required: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1,
+          maximum: ERLANG_BEAM_TABLE_ROWS_DEFAULT,
+          required: ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1,
         },
       }),
     }),
   );
-  const complete = Buffer.alloc(
-    4 + (MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1) * 12,
-  );
-  complete.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
+  const complete = Buffer.alloc(4 + (ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1) * 12);
+  complete.writeUInt32BE(ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1);
   await expect(
     parse(
       erlangBeamChunksFixture([
@@ -435,7 +435,7 @@ it("checks aggregate table capacity after each table is framed", async () => {
     ["FunT", "lambda"],
   ] as const) {
     const count = Buffer.alloc(4);
-    count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
+    count.writeUInt32BE(ERLANG_BEAM_TABLE_ROWS_DEFAULT + 1);
     await expect(
       parse(erlangBeamChunksFixture([[chunk, count]])),
     ).rejects.toThrow(

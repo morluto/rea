@@ -8,9 +8,29 @@ import {
 } from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { maxStructureBytesSchema } from "./nativeStructureBudget.js";
+import {
+  parameterBudgetLimit,
+  parameterBudgetSchema,
+  type ParameterBudget,
+} from "../parameterBudget.js";
 
 /** Hard ceiling on the caller-selected input read budget. */
 export const MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES = 536870912;
+/** `max_file_bytes` of `inspect_native_initializers`. */
+export const NATIVE_INITIALIZERS_FILE_BYTES = {
+  minimum: 64,
+  maximum: MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES,
+  default_value: 67108864,
+  unit: "bytes",
+} as const satisfies ParameterBudget;
+/** The `max_file_bytes` control that refused an image. */
+export const nativeInitializersFileLimit = (effectiveValue: number) =>
+  parameterBudgetLimit(
+    "max_file_bytes",
+    NATIVE_INITIALIZERS_FILE_BYTES,
+    effectiveValue,
+  );
 /** Slots collected before the inventory is reported incomplete. */
 export const MAX_NATIVE_INITIALIZER_ENTRIES = 65536;
 /** Default page size for returned entries. */
@@ -67,13 +87,10 @@ export const inspectNativeInitializersInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF or Mach-O image",
   ),
-  max_file_bytes: z
-    .number()
-    .int()
-    .min(64)
-    .max(MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES)
-    .default(67108864)
-    .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
+  max_structure_bytes: maxStructureBytesSchema,
+  max_file_bytes: parameterBudgetSchema(
+    NATIVE_INITIALIZERS_FILE_BYTES,
+  ).describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   offset: z
     .number()
     .int()

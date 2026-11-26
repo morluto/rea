@@ -188,12 +188,19 @@ it.each([
               header: {
                 rangeIssues: expect.arrayContaining([
                   expect.objectContaining({
-                    reason: rangeReason,
+                    kind: "malformed",
+                    format: "macho",
+                    detail: rangeReason,
                   }),
                 ]),
               },
             }
-          : { kind: "issue", reason: JVM_CLASS_IDENTITY_LIMIT_REASON },
+          : {
+              kind: "issue",
+              failure: expect.objectContaining({
+                detail: JVM_CLASS_IDENTITY_LIMIT_REASON,
+              }),
+            },
       );
     } finally {
       await handle.close();

@@ -14,6 +14,7 @@ import { ok } from "../../../src/domain/result.js";
 import type { ProviderRejectionCode } from "../../../src/domain/providerSelection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { createFixtureProviderIdentity } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
@@ -28,11 +29,7 @@ afterEach(async () => {
   directory = undefined;
 });
 
-const providerIdentity = {
-  id: "fixture",
-  name: "Fixture analysis provider",
-  version: "1",
-};
+const providerIdentity = createFixtureProviderIdentity();
 const effects = {
   mutatesArtifact: false,
   launchesProcess: false,

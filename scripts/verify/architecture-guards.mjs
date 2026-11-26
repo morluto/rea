@@ -8,9 +8,11 @@ import {
   reconcileBaselineFile,
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
+import { adhocCompletenessTernaryCount } from "./completeness-ternary-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { usesRetiredTargetFailureVocabulary } from "./retired-target-failure-vocabulary.mjs";
 import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
@@ -1076,6 +1078,19 @@ checkCounted(
   [],
 );
 
+// Completeness is a derived claim built monotonically from examined input.
+// Ad-hoc `? "complete" :` / `: "complete"` ternaries drop newly added omission
+// or trailing-byte checks; use CoverageAccumulator / joinCoverageStatus in
+// src/domain/coverageAccumulator.ts instead. Existing sites are ratcheted here
+// so the count can only shrink.
+checkCounted(
+  'ad-hoc "complete" ternary in src/domain (use CoverageAccumulator or joinCoverageStatus from src/domain/coverageAccumulator)',
+  "adhoc-completeness-ternary",
+  files.filter((file) => file.path.startsWith("src/domain/")),
+  adhocCompletenessTernaryCount,
+  ["src/domain/coverage.ts", "src/domain/coverageAccumulator.ts"],
+);
+
 // Scripts covered by tsconfig.scripts.json declare and check their types in
 // JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
 // creates a second, unchecked type source that hides signature drift.
@@ -1083,6 +1098,48 @@ const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
 if (siblingDeclarationFiles.length > 0)
   failures.push(
     `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
+
+const listVocabularyFiles = async (dir, extensions) => {
+  const output = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.name === "node_modules") continue;
+    if (entry.isDirectory())
+      output.push(...(await listVocabularyFiles(path, extensions)));
+    else if (extensions.some((extension) => entry.name.endsWith(extension)))
+      output.push(path);
+  }
+  return output;
+};
+const vocabularyGuardPath =
+  "scripts/verify/retired-target-failure-vocabulary.mjs";
+const vocabularyGuardTestPath =
+  "tests/evaluation/retiredTargetFailureVocabulary.test.ts";
+const vocabularyFiles = await Promise.all(
+  [
+    ...(await listVocabularyFiles(join(root, "src"), [".ts", ".mts", ".py"])),
+    ...(await listVocabularyFiles(join(root, "tests"), [".ts", ".mjs", ".py"])),
+    ...(await listVocabularyFiles(join(root, "scripts"), [
+      ".mjs",
+      ".ts",
+      ".py",
+    ])),
+    ...(await listVocabularyFiles(join(root, "bridge"), [".py"])),
+  ].map(async (path) => ({
+    path: relative(root, path).split(sep).join("/"),
+    content: await readFile(path, "utf8"),
+  })),
+);
+const retiredVocabulary = vocabularyFiles.filter(
+  ({ path, content }) =>
+    path !== vocabularyGuardPath &&
+    path !== vocabularyGuardTestPath &&
+    usesRetiredTargetFailureVocabulary(content),
+);
+if (retiredVocabulary.length > 0)
+  failures.push(
+    `retired target-failure vocabulary (raise a TargetFailure kind instead; see docs/reference/target-failures.md):\n${retiredVocabulary.map(({ path }) => `  ${path}`).join("\n")}`,
   );
 
 for (const key of baselineTexts.keys())
