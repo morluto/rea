@@ -24,6 +24,7 @@ import {
 import { isCallerOnlyIncompleteCoverage } from "./functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { appendAll } from "./appendAll.js";
+import { CitedPathParts, snapshotLinks } from "./callPathCitations.js";
 import { sameTargetCoordinates } from "./targetIdentity.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
@@ -466,6 +467,7 @@ const enumeratePaths = ({
   // each measured cited path excludes the array around it.
   let retainedBytes = 2;
   let limitedByBytes = false;
+  const parts = new CitedPathParts(snapshots);
   const path = [start];
   const neighbors = new Map<string, readonly string[]>();
   const frame = (node: string): EnumerationFrame => {
@@ -489,11 +491,10 @@ const enumeratePaths = ({
     const current = pending.at(-1);
     if (current === undefined) break;
     if (path.at(-1) === goal) {
-      // Measure the cited path itself, so the budget follows its owner's
-      // representation. The first shortest path is linear in the supplied
-      // Evidence and is always returned; the budget bounds the paths after it.
-      const cited = citePath(path, snapshots);
-      const citedBytes = Buffer.byteLength(JSON.stringify(cited));
+      // Measure from cached parts before assembling, so a rejected path
+      // allocates no representation. The first shortest path is linear in the
+      // supplied Evidence and is always returned; the budget bounds the rest.
+      const citedBytes = parts.measure(path);
       const separatorBytes = output.length === 0 ? 0 : 1;
       // `retainedBytes` holds the opening bracket and every cited path, so the
       // budget left for this path and its separator also has to keep room for the
@@ -505,7 +506,7 @@ const enumeratePaths = ({
         limitedByBytes = true;
         break;
       }
-      output.push(cited);
+      output.push(parts.assemble(path));
       retainedBytes += citedBytes + separatorBytes;
       pending.pop();
       path.pop();
@@ -531,51 +532,6 @@ interface EnumerationFrame {
   readonly neighbors: readonly string[];
   nextIndex: number;
 }
-
-const citePath = (
-  addresses: readonly string[],
-  snapshots: ReadonlyMap<string, FunctionSnapshot>,
-): OutputCallPath => {
-  const edges = addresses.slice(0, -1).map((source, index) => {
-    const target = addresses[index + 1];
-    if (target === undefined)
-      throw new TypeError("Call path has an invalid edge");
-    return {
-      source,
-      target,
-      evidence_links: snapshotLinks(snapshots.get(source)),
-    };
-  });
-  const nodes = addresses.map((address, index) => {
-    const snapshot = snapshots.get(address);
-    const supporting =
-      snapshot ??
-      (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
-    return {
-      address,
-      name: snapshot?.dossier.procedure.name ?? null,
-      evidence_links: snapshotLinks(supporting),
-    };
-  });
-  return {
-    hops: edges.length,
-    nodes,
-    edges,
-    evidence_links: [
-      ...new Set(
-        edges
-          .flatMap(({ evidence_links: links }) => links)
-          .concat(nodes.flatMap(({ evidence_links: links }) => links)),
-      ),
-    ],
-  };
-};
-
-const snapshotLinks = (snapshot: FunctionSnapshot | undefined): string[] => {
-  if (snapshot === undefined)
-    throw new TypeError("Every call-path claim requires supporting Evidence");
-  return [snapshot.evidence.evidence_id];
-};
 
 const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>
   [

@@ -1106,6 +1106,13 @@ describe("call path representation budget", () => {
     expect(Buffer.byteLength(JSON.stringify(result.paths))).toBeLessThanOrEqual(
       CALL_PATH_REPRESENTATION_BUDGET_BYTES,
     );
+    // Every lattice path serializes to the same size, so exact accounting
+    // stops only when one more path and its separator would not fit.
+    const used = Buffer.byteLength(JSON.stringify(result.paths));
+    const onePath = Buffer.byteLength(JSON.stringify(result.paths[0]));
+    expect(CALL_PATH_REPRESENTATION_BUDGET_BYTES - used).toBeLessThan(
+      onePath + 1,
+    );
   });
 
   it("returns the first shortest path and bounds the paths after it", () => {
