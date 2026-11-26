@@ -263,9 +263,13 @@ static void verifyPrivate(HANDLE handle, const std::wstring& path, bool root) {
                       (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)),
             "Private DACL contains unsupported rights or ACE type", path, ERROR_ACCESS_DENIED);
     PSID sid = const_cast<DWORD*>(&ace->SidStart);
-    if (EqualSid(sid, expected.userSid())) user = true;
-    else if (EqualSid(sid, expected.system.data())) system = true;
-    else throw Failure("Private DACL permits an unrelated principal", path, ERROR_ACCESS_DENIED);
+    // The process user can be SYSTEM. That one ACE meets both trustee checks.
+    const bool isUser = EqualSid(sid, expected.userSid()) == TRUE;
+    const bool isSystem = EqualSid(sid, expected.system.data()) == TRUE;
+    if (!isUser && !isSystem)
+      throw Failure("Private DACL permits an unrelated principal", path, ERROR_ACCESS_DENIED);
+    if (isUser) user = true;
+    if (isSystem) system = true;
   }
   require(user && system, "Private DACL must allow only current user and SYSTEM", path, ERROR_ACCESS_DENIED);
 }

@@ -670,7 +670,7 @@ export class ApktoolProvider {
       const packageName =
         manifest === null || manifestRead.truncated
           ? null
-          : parseManifestPackage(manifest);
+          : parseManifestPackage(manifest, metadata.packageName);
       completedDecode.metadata.package_name = packageName;
       stoppedAt = "inventory";
       const inventory = await countDecodedFiles(
