@@ -1,5 +1,9 @@
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
+import {
+  DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
+  type McpToolsListPageBudget,
+} from "../config/mcpToolsListPageBudget.js";
 import type {
   Implementation,
   Icon,
@@ -350,6 +354,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       | ReadonlySet<string>
       | undefined = undefined,
     recordedTools?: ReadonlySet<string>,
+    readonly toolsListPageBudget: McpToolsListPageBudget = DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -590,6 +595,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         this.presentation.output,
         this.maximumInputElements,
         this.evidenceReferenceAlternatives,
+        this.toolsListPageBudget,
         () => this.advertisedToolCatalog(),
       ),
     );
