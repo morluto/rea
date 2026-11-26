@@ -112,16 +112,24 @@ const mavenGradleMetadataFailure = (
         recognise: (failure) => {
           if (!isParseLimit(failure, MAVEN_GRADLE_METADATA_FORMAT))
             return undefined;
-          const { name, maximum } = failure.failure.limit;
+          const { name, maximum, required } = failure.failure.limit;
           const field = REPORT_LIMIT_FIELDS.find((field) => field === name);
+          const limit =
+            field === undefined
+              ? undefined
+              : mavenGradleReportLimit(field, maximum);
           return parseLimitConstraint(OPERATION, "memory", failure, {
             path: input.path,
             retryable: false,
-            ...(field === undefined
+            ...(limit === undefined
               ? {}
               : {
-                  limit: mavenGradleReportLimit(field, maximum),
-                  remediationAction: `Pass a larger report_limits.${field} on the next call for the same document; no restart is required.`,
+                  limit,
+                  remediationAction:
+                    maximum < limit.maximum &&
+                    (required === undefined || required <= limit.maximum)
+                      ? `Pass a larger ${limit.parameter}${required === undefined ? "" : ` (at least ${String(required)})`} on the next call for the same document; no restart is required.`
+                      : `${limit.parameter} cannot exceed ${String(limit.maximum)}, which does not admit this document; select a document within that bound.`,
                 }),
           });
         },

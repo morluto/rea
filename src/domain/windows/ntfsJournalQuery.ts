@@ -52,7 +52,7 @@ export const ntfsJournalInputSchema = z.strictObject({
     .int()
     .min(NTFS_JOURNAL_FILE_BYTES.minimum)
     .max(NTFS_JOURNAL_FILE_BYTES.maximum)
-    .default(NTFS_JOURNAL_FILE_BYTES.default_value)
+    .optional()
     .describe(
       `Bytes read into memory from each of the MFT and journal acquisitions (default ${String(NTFS_JOURNAL_FILE_BYTES.default_value)}); the whole acquisition is read, independent of page size.`,
     ),
