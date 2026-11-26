@@ -11,7 +11,6 @@ import type {
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   BinaryResourceFailure,
   binaryResourceCeiling,
@@ -19,7 +18,6 @@ import {
 } from "../../domain/binaryContainer.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
-import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
   readonly path: string;
@@ -74,14 +72,6 @@ export const projectPeBinaryFailure = <Limit extends string>(
       fileSize: (failure) =>
         artifactFileCeilingConstraint(operation, failure, options.fileCeiling, {
           max_file_bytes: input.max_file_bytes,
-        }),
-      unclassified: (failure) =>
-        new ProviderAdapterError(providerId, operation, {
-          cause: failure,
-          diagnostics: {
-            path: input.path,
-            reason: errorMessage(failure),
-          },
         }),
     }),
   );

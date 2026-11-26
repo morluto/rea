@@ -857,11 +857,11 @@ it("rejects active capture before launch when EnableNodeCliInspectArguments fuse
   if (result.ok) throw new Error("Expected capture to fail");
   expect(launchSpy).not.toHaveBeenCalled();
   expect(result.error).toMatchObject({
-    _tag: "AnalysisUnsupportedTargetError",
+    _tag: "AnalysisTargetFailureError",
     operation: "capture_electron_scenario",
     path: disabledBinary,
     message: expect.stringContaining("EnableNodeCliInspectArguments"),
-    remediationAction: expect.stringContaining("inspect_electron_page"),
+    related: { operations: ["inspect_electron_page"] },
   });
 });
 

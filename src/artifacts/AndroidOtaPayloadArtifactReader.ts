@@ -13,6 +13,8 @@ import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
+  malformedArtifact,
+  truncatedArtifact,
   assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
@@ -137,6 +139,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         blob.set(
           key,
           await readArtifactFileBytes(
+            "android-ota-payload",
             handle,
             payload.header.blobOffset + operation.dataOffset,
             operation.dataLength,
@@ -206,6 +209,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const headerBytes = await readArtifactFileBytes(
+      "android-ota-payload",
       handle,
       0,
       Math.min(initial.size, ANDROID_OTA_HEADER_V2_BYTES),
@@ -216,6 +220,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     if (!header.ok) throw parseFailure(header.error);
     const { manifestOffset, metadataPrefixEnd } = header.value;
     const metadata = await readArtifactFileBytes(
+      "android-ota-payload",
       handle,
       manifestOffset,
       metadataPrefixEnd - manifestOffset,
@@ -233,6 +238,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       signatureRange === null
         ? undefined
         : await readArtifactFileBytes(
+            "android-ota-payload",
             handle,
             signatureRange.offset,
             signatureRange.bytes,
@@ -296,15 +302,13 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
   }
 }
 
+const FORMAT = "android-ota-payload";
+
 const formatFailure = (
   detail: string,
   options?: ErrorOptions,
 ): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "format",
-    `${LABEL} is malformed: ${detail}`,
-    options,
-  );
+  malformedArtifact(FORMAT, `${LABEL} is malformed: ${detail}`, options);
 
 const parseFailure = (
   failure: AndroidOtaPayloadParseError,
@@ -320,9 +324,7 @@ const parseFailure = (
         cause: failure,
       });
     case "truncated":
-      return new ArtifactReaderFailure("format", failure.message, {
-        cause: failure,
-      });
+      return truncatedArtifact(FORMAT, failure.message, { cause: failure });
     case "malformed":
       return formatFailure(failure.message, { cause: failure });
   }

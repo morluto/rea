@@ -61,7 +61,7 @@ else if (${JSON.stringify(mode)} === 'invalid-catalog-stdout' && process.argv.in
 else if (${JSON.stringify(mode)} === 'invalid-help-stdout' && process.argv.includes('--show')) process.stdout.write(Buffer.concat([Buffer.from('ID: uart\\nOptions:\\n'), Buffer.from([0xfe])]));
 else if (${JSON.stringify(mode)} === 'malformed-copy') { chmodSync(snapshotName, 0o600); writeFileSync(snapshotName, 'changed'); }
 else if (${JSON.stringify(mode)} === 'oversized-copy') { chmodSync(snapshotName, 0o600); truncateSync(snapshotName, 32 * 1024 * 1024 + 1); }
-else if (${JSON.stringify(mode)} === 'line-budget') process.stdout.write('ID: uart' + '\\n'.repeat(65536));
+else if (${JSON.stringify(mode)} === 'long-help') process.stdout.write('ID: uart' + '\\n'.repeat(65540));
 else if (${JSON.stringify(mode)} === 'overflow') process.stdout.write('x'.repeat(5 * 1024 * 1024));
 else if (${JSON.stringify(mode)} === 'wait') { console.log('ready'); setInterval(() => {}, 1000); }
 else if (${JSON.stringify(mode)} === 'many') process.stdout.write(Array.from({length:90},(_,i)=>'line '+(i+1)+'\\r\\n').join(''));
@@ -1358,56 +1358,82 @@ it("attributes discovery admission failures to discovery while sharing the decod
   });
 });
 
-it.each([
-  "bad-version",
-  "nonzero",
-  "overflow",
-  "line-budget",
-  "wait",
-  "oversized-tool",
-])("preserves discovery failure diagnostics: %s", async (mode) => {
-  const f = await fixture(mode);
-  const result = await f.service.inspectDecoders(
-    {},
-    { signal: f.controller.signal },
-  );
-  if (result.ok) throw new Error("Expected failure");
-  expect(result.error).toMatchObject({
-    operation: "inspect_signal_decoders",
+it.each(["bad-version", "nonzero", "overflow", "wait", "oversized-tool"])(
+  "preserves discovery failure diagnostics: %s",
+  async (mode) => {
+    const f = await fixture(mode);
+    const result = await f.service.inspectDecoders(
+      {},
+      { signal: f.controller.signal },
+    );
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error).toMatchObject({
+      operation: "inspect_signal_decoders",
+    });
+    if (mode === "bad-version")
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: "sigrok-cli 0.7.1\n",
+        stderr: "version warning\n",
+      });
+    if (mode === "overflow") {
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      if (!(result.error instanceof AnalysisResourceConstraintError))
+        throw new Error("Expected command-output allowance refusal");
+      expect(result.error).toMatchObject({
+        resource: "memory",
+        reportedLimits: { output_bytes: 4194304 },
+        retryable: false,
+      });
+      expect(projectAnalysisError(result.error).details?.limit).toEqual({
+        control_kind: "parameter",
+        parameter: "producer_limits.output_bytes",
+        effective_value: 4194304,
+        unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: 4194304,
+        applies_at: "next_call",
+      });
+      expect(analysisErrorRemediationAction(result.error)).toContain(
+        "producer_limits.output_bytes",
+      );
+      expect(analysisErrorRemediationAction(result.error)).not.toMatch(
+        /Review the reported worker memory limits/u,
+      );
+    }
+  },
+);
+
+it("pages help output longer than one page record budget instead of refusing it", async () => {
+  const f = await fixture("long-help");
+  const result = await f.service.inspectDecoders({
+    decoder: "uart",
+    limit: null,
   });
-  if (mode === "line-budget") {
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "memory",
-      reason: "Decoder discovery exceeds the 65,536-line representation budget",
-      reportedLimits: { boundary: "line_budget", maximum: 65536 },
-      fixedAllowance: { kind: "capture" },
-    });
-    expect(result.error.capturedOutput?.stdout).toBe(
-      "ID: uart" + "\n".repeat(65536),
-    );
-  }
-  if (mode === "bad-version")
-    expect(result.error.capturedOutput).toMatchObject({
-      stdout: "sigrok-cli 0.7.1\n",
-      stderr: "version warning\n",
-    });
-  if (mode === "overflow") {
-    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(result.error instanceof AnalysisResourceConstraintError))
-      throw new Error("Expected command-output allowance refusal");
-    expect(result.error).toMatchObject({
-      resource: "memory",
-      reportedLimits: { output_bytes: 4194304 },
-      retryable: false,
-    });
-    expect(analysisErrorRemediationAction(result.error)).toContain(
-      "producer_limits.output_bytes",
-    );
-    expect(analysisErrorRemediationAction(result.error)).not.toMatch(
-      /Review the reported worker memory limits/u,
-    );
-  }
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    output_window: {
+      unit: "help-lines",
+      examined: 65540,
+      returned: 65536,
+      has_more: true,
+      record_budget_reached: true,
+    },
+  });
+  const later = await f.service.inspectDecoders({
+    decoder: "uart",
+    offset: 65536,
+    limit: null,
+  });
+  if (!later.ok) throw later.error;
+  expect(later.value.normalized_result).toMatchObject({
+    output_window: {
+      returned: 4,
+      has_more: false,
+      record_budget_reached: false,
+    },
+  });
+  await f.service.close();
 });
 
 it("retains completed discovery when cleanup fails, then retries before accepting work", async () => {

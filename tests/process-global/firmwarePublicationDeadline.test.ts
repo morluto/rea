@@ -12,10 +12,8 @@ import { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js"
 import { finishAnalysisCommand } from "../../src/cli/finishAnalysisCommand.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
 import { FIRMWARE_LIMITS } from "../../src/firmware/FirmwareRelease.js";
-import {
-  firmwareFixture,
-  assertFirmwareCleanup,
-} from "../fixtures/firmware/provider.js";
+import { expectProviderLaunchCleanup } from "../support/process/expectProviderLaunchCleanup.js";
+import { firmwareFixture } from "../fixtures/firmware/provider.js";
 
 const test = it.skipIf(process.platform !== "linux" || process.arch !== "x64");
 afterEach(() => vi.restoreAllMocks());
@@ -107,7 +105,7 @@ test("charges inspection workspace cleanup to its selectable analysis budget, wi
     remediation: { action: expect.stringContaining("analysis_timeout_ms") },
   });
   await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 test("allows publication after the analysis phase expires", async () => {
@@ -142,7 +140,7 @@ test("allows publication after the analysis phase expires", async () => {
   );
   expect(phase.budgets).toEqual([120_000, 120_000]);
   await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 test.each(["signal", "clock"] as const)(
@@ -178,7 +176,7 @@ test.each(["signal", "clock"] as const)(
       code: "ENOENT",
     });
     await fixture.close();
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -246,7 +244,7 @@ test("keeps each queued request's independent analysis and publication budgets",
       await fixture.close();
     }
   }
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 // A selected analysis_timeout_ms governs the owned command, not the default:
@@ -288,7 +286,7 @@ test("uses a selected analysis deadline above the default inside an owned comman
     ),
   ).toBe(true);
   await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
+  await expectProviderLaunchCleanup(fixture.launches);
 });
 
 test.each([false, true])(
@@ -369,7 +367,7 @@ test.each([false, true])(
       details: { timeout_ms: 1234 },
     });
     await fixture.close();
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -449,7 +447,7 @@ test.each(["analysis", "clock", "caller", "prior-failure"] as const)(
     await fixture.close();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(projectAnalysisError(result.error).code).toBe(expected);
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -531,7 +529,7 @@ test.each(["none", "caller", "publication", "clock"] as const)(
       });
     }
     await fixture.close();
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );
 
@@ -600,6 +598,6 @@ test.each([
     blocked = false;
     await fixture.close();
     expect(result.error.cleanupIncomplete).toBe(false);
-    await assertFirmwareCleanup(fixture.launches);
+    await expectProviderLaunchCleanup(fixture.launches);
   },
 );

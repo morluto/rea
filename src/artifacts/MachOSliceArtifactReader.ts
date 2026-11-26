@@ -138,7 +138,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     const parsed = parseLipoOutputResult(captured.value.stdout, this.path);
     if (!parsed.ok)
       throw new ArtifactReaderFailure(
-        parsed.error instanceof LipoFieldRetentionError ? "limit" : "format",
+        parsed.error instanceof LipoFieldRetentionError ? "limit" : "io",
         `lipo did not produce readable architecture records: ${parsed.error.message}`,
         {
           cause: parsed.error,
@@ -156,23 +156,31 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     );
     await this.#source.readSelectedPath();
     this.#assertOpen(signal);
-    if (structural.status === "malformed")
+    if (
+      structural.status === "failed" &&
+      structural.failure.kind !== "unsupported"
+    )
       throw new ArtifactReaderFailure(
         "integrity",
-        `Mach-O structural slice index is malformed: ${structural.reason}`,
-        { integrityCheck: "layout-consistency" },
+        `Mach-O structural slice index is ${structural.failure.kind}: ${structural.failure.detail}`,
+        {
+          integrityCheck:
+            structural.failure.kind === "changed"
+              ? "read-coverage"
+              : "layout-consistency",
+        },
       );
     // A valid universal binary can hold slices REA cannot index, such as
     // big-endian PowerPC. lipo's own ranges still inventory every slice.
     if (
-      structural.status === "unsupported" &&
+      structural.status === "failed" &&
       architectures.some(
         ({ file_offset, size }) => file_offset === null || size === null,
       )
     )
       throw new ArtifactReaderFailure(
         "unavailable",
-        `Mach-O structural slice index is unsupported: ${structural.reason}`,
+        `Mach-O structural slice index is unsupported: ${structural.failure.detail}`,
       );
     // lipo is an independent witness of the FAT table. Under
     // record-and-continue a disagreement is recorded and REA's own FAT parse,
@@ -312,9 +320,9 @@ export class MachOSliceArtifactReader implements ArtifactReader {
           ? [
               "Structural Mach-O facts were unavailable; slice range is based on lipo output.",
             ]
-          : structural.status === "unsupported"
+          : structural.status === "failed"
             ? [
-                `Structural Mach-O facts were unsupported (${structural.reason}); slice range is based on lipo output.`,
+                `Structural Mach-O facts were unsupported (${structural.failure.detail}); slice range is based on lipo output.`,
               ]
             : []),
         ...(architecture.file_offset === null || architecture.size === null

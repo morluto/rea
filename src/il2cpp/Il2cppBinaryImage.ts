@@ -190,7 +190,7 @@ export function* openImageSteps(
     // container's architecture names no CPU family this reader decodes.
     if (!selected.ok)
       throw new Il2cppBinaryFormatFailure(
-        selected.error.kind === "format" &&
+        selected.error.kind === "target" &&
           selected.error.failure.kind !== "unsupported"
           ? "malformed-container"
           : "unsupported-container",

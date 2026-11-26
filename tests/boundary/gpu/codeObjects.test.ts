@@ -1680,7 +1680,7 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisMalformedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 
@@ -1719,14 +1719,14 @@ it("does not recognize a CCOB signature after its first byte is corrupted", asyn
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("requires the PTX version directive before any module content", async () => {
   const result = await inspect(Buffer.from(`unexpected-prefix ${ptxFixture}`));
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("retains an embedded CCOB with a corrupted signature as unsupported", async () => {
@@ -1780,7 +1780,7 @@ it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", asyn
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
+    error: { _tag: "AnalysisTargetFailureError" },
   });
 });
 it("preserves the PE layout refusal at the GPU provider boundary", async () => {
@@ -1788,7 +1788,7 @@ it("preserves the PE layout refusal at the GPU provider boundary", async () => {
   expect(result).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisUnsupportedTargetError",
+      _tag: "AnalysisTargetFailureError",
       message: expect.stringContaining("overlapping PE header"),
     },
   });
@@ -1955,7 +1955,7 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected malformed directory");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
     });
   }
   const framed = Buffer.alloc(32 + 65537 * 25);
@@ -2013,7 +2013,7 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected a malformed bundle directory");
     expect(result.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
+      _tag: "AnalysisTargetFailureError",
     });
   }
 });

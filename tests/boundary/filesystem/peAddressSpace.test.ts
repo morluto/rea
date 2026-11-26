@@ -1,5 +1,3 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics/binaryHardening.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
@@ -15,14 +13,10 @@ import { peLoadConfigSchema } from "../../../src/domain/native/peLoadConfig.js";
 import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
 import { peLoadConfigImage } from "../../../src/native/pe/PeLoadConfig.fixture.js";
 import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createTestTempFile } from "../../fixtures/temporaryDirectory.js";
 
-const write = async (name: string, bytes: Buffer): Promise<string> => {
-  const root = await createTestTempDirectory("rea-pe-address-space-");
-  const path = join(root, name);
-  await writeFile(path, bytes);
-  return path;
-};
+const write = (name: string, bytes: Buffer): Promise<string> =>
+  createTestTempFile("rea-pe-address-space-", name, bytes);
 
 const normalized = async <T>(
   result: Promise<
