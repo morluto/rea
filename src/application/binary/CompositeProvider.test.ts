@@ -430,3 +430,4 @@ it.each([1, 2])(
     for (const child of children) expect(child.close).toHaveBeenCalledTimes(3);
   },
 );
+

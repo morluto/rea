@@ -19,6 +19,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { err, ok } from "../../domain/result.js";
 import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
@@ -582,6 +583,32 @@ it("retries only unresolved prerequisite and native owners across mixed cleanup 
     denyChild = false;
     await client.close();
   }
+});
+
+it("keeps a non-cleanup close failure primary once its owner confirmed release", async () => {
+  const released = new AnalysisCleanupRelease();
+  released.confirm();
+  const exportFailure = released.bind(
+    new ProviderAdapterError(identity.id, "diagnostic_export"),
+  );
+  let closes = 0;
+  const client = new DeferredAnalysisClient(
+    async () =>
+      child(async () => {
+        closes += 1;
+        return err(exportFailure);
+      }),
+    identity.id,
+  );
+  expect((await client.execute("analyze_function", {})).ok).toBe(true);
+  const closed = await client.close();
+  if (closed.ok) throw new Error("Expected the export failure");
+  expect(closed.error).toBe(exportFailure);
+  expect(closed.error.cleanupIncomplete).toBe(false);
+  expect(closed.error.cleanupResources).toEqual([]);
+  // Reported once: a later close succeeds without closing the child again.
+  expect((await client.close()).ok).toBe(true);
+  expect(closes).toBe(1);
 });
 
 it("settles deferred client close failure when the underlying owned resource lease releases", async () => {

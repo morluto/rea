@@ -259,6 +259,8 @@ export interface ProviderProcessSupervisorOptions {
    * stream's latest, where a failing command's last words are.
    */
   readonly diagnosticRetention?: "head" | "tail";
+  /** Observe raw output before the diagnostic retention budget is applied. */
+  readonly onOutput?: (stream: "stdout" | "stderr", bytes: Buffer) => void;
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
   /** Wake a waiter when a live process owner first observes a memory refusal. */
   readonly onMemoryLimit?: () => void;
@@ -1087,6 +1089,7 @@ export class ProviderProcessSupervisor {
     chunk: Buffer | string,
   ): void {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.#options.onOutput?.(stream, bytes);
     if (stream === "stdout") {
       this.#stdoutMarker?.scan(bytes, this.#stdoutObservedBytes);
       this.#stdoutObservedBytes += bytes.byteLength;

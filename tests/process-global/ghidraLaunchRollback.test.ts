@@ -362,3 +362,54 @@ it.skipIf(process.platform === "win32").each([null, "stop after spawn"])(
     });
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "client preserves an earlier manifest failure when the final caller cancels during rollback",
+  async () => {
+    const controller = new AbortController();
+    const { launcher } = await fixture(async () => {
+      controller.abort(null);
+      return incomplete;
+    });
+    const target = await readFile(ghidraFixturePath);
+    const client = new GhidraClient({
+      launcher,
+      targetPath: ghidraFixturePath,
+      targetSha256: createHash("sha256").update(target).digest("hex"),
+      providerVersion: "test",
+      profileDigest: "b".repeat(64),
+      startupTimeoutMs: 5000,
+    });
+    clients.push(client);
+    const result = await client.start(controller.signal);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "start", cleanupFailure: { cleanupIncomplete: true } },
+    });
+    if (result.ok) throw new Error("Expected original startup failure");
+    expect(JSON.stringify(result.error.diagnostics)).toContain(
+      fault.failure.message,
+    );
+    denyCleanup = false;
+    expect(await client.close()).toMatchObject({ ok: true });
+    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the log coordinates of a started launch whose rollback succeeded",
+  async () => {
+    denyCleanup = false;
+    const { launcher, session } = await fixture(async () => incomplete);
+    const result = await launcher.launch(session, {
+      resourceScope: createTestArtifactResourceScope(),
+    });
+    if (result.ok || !(result.error instanceof GhidraLaunchError))
+      throw new Error("Expected launch failure");
+    expect(result.error.partialLaunch).toBeUndefined();
+    expect(result.error.logPaths).toEqual({
+      ghidraLogPath: join(session.runtimeRoot, "ghidra.log"),
+      scriptLogPath: join(session.runtimeRoot, "script.log"),
+    });
+  },
+);

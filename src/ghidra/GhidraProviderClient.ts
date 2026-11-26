@@ -676,6 +676,9 @@ export const createGhidraProviderClient = (input: {
   );
   if (!startupTimeout.ok) return startupTimeout;
   const client = clientFactory({
+    ...(config.ghidraDiagnosticsDir === undefined
+      ? {}
+      : { diagnosticsDir: config.ghidraDiagnosticsDir }),
     ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: startupTimeout.value,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
