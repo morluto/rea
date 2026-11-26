@@ -1232,6 +1232,53 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("retains completed rule identity when a buffered trailing include exceeds max_file_bytes during finish", async () => {
+    const { root, sample, args, service } = await fixture("resolve");
+    const longDir = join(root, "nested-rule-directory".repeat(3));
+    await mkdir(longDir, { recursive: true });
+    const trailingTail = "trailing-unterminated-include-path";
+    const ruleText = `include "a.yar"\ninclude "${trailingTail}`;
+    const rulePath = join(longDir, "main.yar");
+    await writeFile(rulePath, ruleText);
+    const pushedBytes = Buffer.byteLength(
+      `include "${longDir}/a.yar"\ninclude "`,
+    );
+    const maxFileBytes = pushedBytes;
+    expect(Buffer.byteLength(ruleText)).toBeLessThanOrEqual(maxFileBytes);
+    expect(pushedBytes + Buffer.byteLength(trailingTail)).toBeGreaterThan(
+      maxFileBytes,
+    );
+    const result = await service.inspect({
+      path: sample,
+      rule_paths: [rulePath],
+      max_file_bytes: maxFileBytes,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      limit: expect.objectContaining({
+        control_kind: "parameter",
+        parameter: "max_file_bytes",
+        effective_value: maxFileBytes,
+      }),
+    });
+    const expectedObservation = {
+      kind: "file-snapshot-hash",
+      path: rulePath,
+      sha256: createHash("sha256").update(ruleText).digest("hex"),
+      bytes: Buffer.byteLength(ruleText),
+    };
+    expect(result.error.partialObservation).toEqual(expectedObservation);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        partial_observation: expectedObservation,
+      },
+    });
+    await expect(readFile(args)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses matches when the scanned file changes during the scan", async () => {
     const { sample, rule, service } = await fixture("mutate");
     const result = await service.inspect({ path: sample, rule_paths: [rule] });

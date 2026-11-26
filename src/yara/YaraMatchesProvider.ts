@@ -783,12 +783,12 @@ export class YaraMatchesProvider implements YaraMatchesPort {
             );
           },
         });
-        if (transform !== undefined) await writeChunk(transform.finish());
         onIdentity?.({
           path: sourcePath,
           sha256: streamed.sha256,
           bytes: streamed.size,
         });
+        if (transform !== undefined) await writeChunk(transform.finish());
         const state = await dest.stat({ bigint: true });
         return {
           callerPath: sourcePath,
