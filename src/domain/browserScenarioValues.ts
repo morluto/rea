@@ -109,14 +109,32 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
 /** Characters an HTTP field value may carry: visible ASCII, space, tab and obs-text. */
 export const HEADER_FIELD_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/u;
 
-const settableRequestHeader = (name: string): boolean => {
-  const lower = name.toLowerCase();
-  return (
-    !FORBIDDEN_REQUEST_HEADERS.has(lower) &&
-    !lower.startsWith("proxy-") &&
-    !lower.startsWith("sec-")
+/**
+ * ASCII case-insensitive spelling of a lowercase header token, built from
+ * character classes so RE2 clients compile it. Header tokens here use only
+ * letters, digits and `-`, none of which needs escaping.
+ */
+const asciiCaseInsensitive = (token: string): string => {
+  if (!/^[a-z0-9-]+$/u.test(token))
+    throw new Error(`Unexpected request header token: ${token}`);
+  return token.replace(
+    /[a-z]/gu,
+    (letter) => `[${letter}${letter.toUpperCase()}]`,
   );
 };
+
+/**
+ * Header names a page's fetch cannot set: the forbidden names exactly, and any
+ * `Proxy-` or `Sec-` prefix. One pattern decides both the request check and
+ * the advertised `not` constraint. It needs no lookahead, which Go's RE2 lacks.
+ */
+const UNSETTABLE_REQUEST_HEADER = new RegExp(
+  `^(?:${[...FORBIDDEN_REQUEST_HEADERS].map(asciiCaseInsensitive).join("|")})$|^(?:${asciiCaseInsensitive("proxy-")}|${asciiCaseInsensitive("sec-")})`,
+  "u",
+);
+
+const settableRequestHeader = (name: string): boolean =>
+  !UNSETTABLE_REQUEST_HEADER.test(name);
 
 /** A header value a request step reads from the page as it runs; it is redacted like a declared secret. */
 const browserScenarioPageValueSchemas = [
@@ -238,7 +256,9 @@ const requestHeaderSchema = z.strictObject({
     .regex(/^[!#$%&'*+.^_`\x7C~0-9A-Za-z\x2D]+$/u)
     .refine(settableRequestHeader, {
       message: "A page's fetch cannot set this header",
-    }),
+    })
+    // A `.refine` is invisible to a client validating against `tools/list`.
+    .meta({ not: { pattern: UNSETTABLE_REQUEST_HEADER.source } }),
   value: z.discriminatedUnion("source", [
     ...browserScenarioValueSchema.options,
     ...browserScenarioPageValueSchemas,
