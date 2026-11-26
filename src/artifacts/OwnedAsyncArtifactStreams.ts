@@ -9,6 +9,60 @@ import {
 /** Bound concurrent file ranges, gzip inflaters, and UnityFS block buffers per reader. */
 const MAX_MEMBER_STREAMS = 4;
 
+/**
+ * Stream an iterator's chunks and retire the stream on cancellation, including
+ * while backpressure leaves the iterator unread. An outstanding iterator read
+ * owns its failure; a successful read observes cancellation before yielding.
+ */
+export const cancellableArtifactChunks = (
+  chunks: AsyncIterable<Buffer>,
+  {
+    signal,
+    cancellationFailure,
+    highWaterMark,
+  }: {
+    readonly signal: AbortSignal | undefined;
+    readonly cancellationFailure: (reason: unknown) => Error;
+    readonly highWaterMark?: number;
+  },
+): Readable => {
+  let pending = false;
+  const cancelled = (): Error => cancellationFailure(signal?.reason);
+  const tracked = async function* (): AsyncGenerator<Buffer> {
+    const iterator = chunks[Symbol.asyncIterator]();
+    try {
+      while (true) {
+        pending = true;
+        let next: IteratorResult<Buffer>;
+        try {
+          next = await iterator.next();
+        } catch (cause) {
+          if (artifactReadCancelledBy(cause, signal)) throw cancelled();
+          throw cause;
+        } finally {
+          pending = false;
+        }
+        if (signal?.aborted) throw cancelled();
+        if (next.done) return;
+        yield next.value;
+      }
+    } finally {
+      await iterator.return?.();
+    }
+  };
+  const output = Readable.from(tracked(), {
+    objectMode: false,
+    ...(highWaterMark === undefined ? {} : { highWaterMark }),
+  });
+  const onAbort = (): void => {
+    if (!pending && !output.destroyed) output.destroy(cancelled());
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  output.once("close", () => signal?.removeEventListener("abort", onAbort));
+  if (signal?.aborted === true) onAbort();
+  return output;
+};
+
 /** Keeps a reader's member iterators owned through every pending read and stream close. */
 export class OwnedAsyncArtifactStreams {
   readonly #streams = new Map<Readable, AbortController>();
@@ -31,52 +85,25 @@ export class OwnedAsyncArtifactStreams {
       );
     const controller = new AbortController();
     const chunks = readChunks(controller.signal);
-    let pending = false;
-    const cancelled = (): ArtifactReaderFailure =>
-      new ArtifactReaderFailure(
-        "cancelled",
-        `${this.label} member read cancelled`,
-        {
-          cause: signal?.reason,
-        },
-      );
-    const tracked = async function* (): AsyncGenerator<Buffer> {
-      const iterator = chunks[Symbol.asyncIterator]();
-      try {
-        while (true) {
-          pending = true;
-          let next: IteratorResult<Buffer>;
-          try {
-            next = await iterator.next();
-          } catch (cause) {
-            if (artifactReadCancelledBy(cause, signal)) throw cancelled();
-            throw cause;
-          } finally {
-            pending = false;
-          }
-          if (signal?.aborted) throw cancelled();
-          if (next.done) return;
-          yield next.value;
-        }
-      } finally {
-        await iterator.return?.();
-      }
-    };
-    const output = Readable.from(tracked(), {
-      objectMode: false,
+    // Abort the member's reads before the stream retires its iterator.
+    const abortChunks = (): void => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abortChunks, { once: true });
+    if (signal?.aborted === true) abortChunks();
+    const output = cancellableArtifactChunks(chunks, {
+      signal,
+      cancellationFailure: (reason) =>
+        new ArtifactReaderFailure(
+          "cancelled",
+          `${this.label} member read cancelled`,
+          { cause: reason },
+        ),
       highWaterMark: this.highWaterMark,
     });
-    const onAbort = (): void => {
-      controller.abort(signal?.reason);
-      // An outstanding iterator read owns its failure; a successful read will
-      // observe cancellation before yielding its next chunk.
-      if (!pending) output.destroy(cancelled());
-    };
     output.on("error", () => undefined);
     this.#streams.set(output, controller);
     const completion = new Promise<void>((resolve) => {
       output.once("close", () => {
-        signal?.removeEventListener("abort", onAbort);
+        signal?.removeEventListener("abort", abortChunks);
         this.#streams.delete(output);
         resolve();
       });
@@ -91,8 +118,6 @@ export class OwnedAsyncArtifactStreams {
             : new Error(`${this.label} stream ownership failed`, { cause }),
         );
       });
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted === true) onAbort();
     return output;
   }
 

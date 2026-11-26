@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { registrationChildEnvironment } from "../../tests/support/cli/registrationEnvironment.js";
 import { createTestProcessRegistry } from "../../tests/support/process/processFixture.js";
 import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
+import { supportedClients } from "./SupportedClients.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 const selectAgent = async (agent: string) => {
@@ -620,6 +621,63 @@ it.each([
     ok: false,
     error: { message: expect.stringContaining("FX_HOME") },
   });
+});
+
+it.each([
+  {
+    name: "default",
+    env: {},
+    configPath: "C:\\Users\\alice\\.fx\\mcp.json",
+    markerPath: "C:\\Users\\alice\\.fx",
+  },
+  {
+    name: "trailing backslash",
+    env: { FX_HOME: "C:\\Users\\alice\\profile\\" },
+    configPath: "C:\\Users\\alice\\profile\\mcp.json",
+    markerPath: "C:\\Users\\alice\\profile",
+  },
+  {
+    name: "trailing forward slash",
+    env: { FX_HOME: "C:/Users/alice/profile/" },
+    configPath: "C:\\Users\\alice\\profile\\mcp.json",
+    markerPath: "C:\\Users\\alice\\profile",
+  },
+])(
+  "resolves Windows fx profile paths cleanly ($name)",
+  ({ env, configPath, markerPath }) => {
+    const [client] = supportedClients(
+      "C:\\Users\\alice",
+      "win32",
+      env,
+      {},
+      "fx",
+    );
+    expect(client).toMatchObject({
+      name: "fx",
+      configPath,
+      markerPath,
+    });
+    expect(client?.configPathError).toBeUndefined();
+  },
+);
+
+it.each([
+  "C:\\Users\\alice\\",
+  "C:/Users/alice/",
+  "C:\\Users\\\\alice\\",
+  "C:\\",
+  "D:\\\\",
+  "\\\\server\\share\\",
+  "C:\\Users\\alice\\.",
+])("refuses Windows FX_HOME %s for root and home aliases", (value) => {
+  const [client] = supportedClients(
+    "C:\\Users\\alice",
+    "win32",
+    { FX_HOME: value },
+    {},
+    "fx",
+  );
+  expect(client?.configPathError).toContain("FX_HOME");
 });
 
 it.each([

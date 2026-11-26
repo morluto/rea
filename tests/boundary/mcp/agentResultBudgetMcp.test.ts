@@ -9,10 +9,6 @@ import {
   DEFAULT_AGENT_RESULT_BUDGET_BYTES,
   MINIMUM_AGENT_RESULT_BUDGET_BYTES,
 } from "../../../src/domain/analysisResourceLimits.js";
-import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
-import { ok } from "../../../src/domain/result.js";
-import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
-import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
 import {
   AGENT_RESULT_BUDGET_SETTING,
   EVIDENCE_OUTPUT_PLACEHOLDER,
@@ -27,6 +23,7 @@ import { inspectAnalysisView } from "../../../src/application/analysisView/Analy
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectBudgetedLayout } from "./budgetedLayout.js";
 
 const connect = async () => {
   const session = createTestBinarySession(() => {
@@ -343,46 +340,9 @@ it("delivers complete Evidence that fits, and follows a runtime budget override"
 });
 
 it("budgets tools whose SDK schema defers validation to the application", async () => {
-  const fixture = analysisViewLayoutFixture();
-  // Enough symbol rows to exceed the smallest budget.
-  const layout = {
-    ...fixture,
-    symbols: [
-      ...fixture.symbols,
-      ...Array.from({ length: 16 }, (_, index) => ({
-        ...fixture.symbols[0]!,
-        entry_index: fixture.symbols.length + index,
-      })),
-    ],
-  };
-  const session = createTestBinarySession(() => {
-    throw new Error("Layout inspection must not start a deep provider");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    {
-      binaryLayout: new BinaryLayoutService({
-        inspectAndClose(input, options) {
-          return this.inspect(input, options);
-        },
-        identity: BINARY_LAYOUT_TEST_PROVIDER,
-        inspect: () => Promise.resolve(ok(layout)),
-      }),
-    },
+  const { client, target } = await connectBudgetedLayout(
+    "agent-result-budget-layout",
   );
-  const client = new Client(
-    { name: "agent-result-budget-layout", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const lowered = await client.callTool({
     name: "update_analysis_settings",
     arguments: {
@@ -396,7 +356,6 @@ it("budgets tools whose SDK schema defers validation to the application", async 
     },
   });
   expect(lowered.isError).not.toBe(true);
-  const target = { path: layout.artifact.path };
   const complete = await client.callTool({
     name: "inspect_binary_layout",
     arguments: { ...target, detail: "complete" },
@@ -418,7 +377,7 @@ it("budgets tools whose SDK schema defers validation to the application", async 
   });
 });
 
-it("writes nothing for CLI overflow without --evidence_output and names both rerun commands", async () => {
+it("writes nothing for CLI overflow with --no-retain and names both rerun commands", async () => {
   const input = await entropyTarget(1024 * 1024);
   // Every location a spill could use is a fresh, empty directory.
   const home = await createTestTempDirectory("rea-agent-budget-home-");
@@ -437,6 +396,7 @@ it("writes nothing for CLI overflow without --evidence_output and names both rer
     "--block-size",
     "256",
     "--json",
+    "--no-retain",
   ];
   let stdout = "";
   let exitCode = 0;

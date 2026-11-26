@@ -1,3 +1,4 @@
+import { analysisViewPageFields } from "./analysisViewPageFields.js";
 import { appendToMapList } from "../appendToMapList.js";
 import {
   analysisViewInputError,
@@ -25,11 +26,7 @@ import { evidenceFileTarget } from "../evidence.js";
 
 const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
-const pageShape = {
-  kind: z.literal("pcap"),
-  offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().default(64),
-};
+const pageShape = analysisViewPageFields("pcap");
 export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
   z.strictObject({
     ...pageShape,

@@ -20,10 +20,6 @@ import {
 } from "../../support/cli/cliCommandSessionFrames.mjs";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
-import {
-  COMPLETE_DETAIL,
-  completeApplicationAnalysis,
-} from "../../support/completeDetail.js";
 
 // Inert process models exercise escalation without waiting for real I/O.
 const MOCK_SHUTDOWN_GRACE_MS = 1;
@@ -890,7 +886,7 @@ test("keeps a malformed JSON command's failure status and serves the next comman
     "app.mjs": "export function current() { return 1; }\n",
   });
   const recovered = await session.run(
-    command(completeApplicationAnalysis(root), environment),
+    command(["analyze-javascript-application", root, "--json"], environment),
   );
   expect(recovered.exitCode, recovered.stderr).toBe(0);
   expect(recovered.json).toMatchObject({
@@ -932,7 +928,7 @@ test("closes the real JavaScript CLI worker through its resource cleanup", async
     "app.mjs": "export function current() { return 1; }\n",
   });
   const analyzed = await session.run(
-    command(completeApplicationAnalysis(root), {
+    command(["analyze-javascript-application", root, "--json"], {
       PATH: process.env.PATH ?? "",
       REA_LOG_LEVEL: "silent",
     }),
@@ -959,7 +955,6 @@ const normalized = (result: CliResult) =>
 
 const analyzeArguments = (root: string): readonly string[] => [
   "analyze-javascript-application",
-  ...COMPLETE_DETAIL,
   root,
   "--format",
   "json",

@@ -428,7 +428,8 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
   `--max-output-files`). Exceeding either selected staging budget returns a
-  nonretryable resource constraint naming the selected limit. Depth defaults to
+  nonretryable resource constraint whose `details.limit` names the field, its
+  effective value, range and default. Depth defaults to
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
@@ -519,6 +520,14 @@ file for its address regions, declared start address and record facts, then
 portable and requires no external tool. See
 [Intel HEX and S-record images](../../hex-records.md).
 
+## Inspect uClinux bFLT flat executables
+
+`inspect-artifact` / `extract-artifact` recognize a uClinux flat executable by
+its `bFLT` magic and report the 64-byte header without running it or applying
+its relocations. Text, data and the relocation table are extractable; gzip and
+gzdata bodies are inflated under `artifact_limits.expanded_bytes`. The header
+does not name a CPU. See [uClinux bFLT flat executables](../../bflt-executables.md).
+
 ## Inspect U-Boot legacy uImages
 
 `inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
@@ -541,6 +550,15 @@ verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
 extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
+
+## Expand Android sparse images
+
+`inspect-artifact` / `extract-artifact` recognize an Android sparse image
+(`0xED26FF3A`) by magic, record its header and chunk counts, and expand it to
+one `image.raw` child offline. RAW chunks are copied, FILL chunks repeated and
+DONT_CARE chunks written as zeros; stored checksums are not verified. The
+expanded child is classified again, so a sparse-wrapped boot image continues
+to the Android boot image reader. See [Android sparse images](android-sparse-image.md).
 
 ## Inspect UF2 and DfuSe images
 

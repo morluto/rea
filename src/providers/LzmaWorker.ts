@@ -189,12 +189,18 @@ const decodeStreamPayload = (
     };
   } catch (cause: unknown) {
     const failure = parseFailureFromCause(cause);
+    // lzma-purejs reports a rejected stream with these literal strings.
+    const codecRejectedInput =
+      cause === "Incorrect stream properties" ||
+      cause === "Error in data stream";
     return {
       reply: {
         ok: false,
         reason:
           failure === undefined
-            ? "decoder"
+            ? codecRejectedInput
+              ? "malformed"
+              : "decoder"
             : failure.kind === "limit"
               ? "output-limit"
               : "malformed",

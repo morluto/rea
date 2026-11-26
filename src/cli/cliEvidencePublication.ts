@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { CliEvidenceRetention } from "./cliEvidenceRetention.js";
 
 export interface PublishedEvidenceReceipt {
   readonly path?: string;
@@ -18,6 +19,12 @@ export interface CliPublicationInvocation {
   readonly agentBudgetSeed?: string | undefined;
   /** Whether the caller selected specific output fields with `--filter-output`. */
   readonly hasFilterOutput?: boolean | undefined;
+  /**
+   * Where an over-budget result without --evidence_output is kept, from the
+   * environment this invocation captured; undefined retains nothing
+   * (--no-retain, or the setting is 0).
+   */
+  readonly retention?: CliEvidenceRetention | undefined;
 }
 
 /** Keep publication state in the invocation that owns delivery and formatting. */
@@ -36,6 +43,12 @@ export const recordCliEvidencePublication = (
 ): void => {
   const context = publication.getStore();
   if (context !== undefined) context.receipt = receipt;
+};
+
+/** Withdraw this invocation's receipt when the file it named was discarded. */
+export const clearCliEvidencePublication = (): void => {
+  const context = publication.getStore();
+  if (context !== undefined) delete context.receipt;
 };
 
 /** Snapshot a receipt for output recovery after the invocation context ends. */

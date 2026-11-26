@@ -19,6 +19,8 @@ import {
   tarEntryMetadataSchema,
 } from "./formatMetadata/packageAndGameMetadata.js";
 import {
+  bfltMetadataSchema,
+  bfltSegmentMetadataSchema,
   dfuSeElementMetadataSchema,
   dfuSeMetadataSchema,
   espFlashImageMetadataSchema,
@@ -40,6 +42,7 @@ import {
   androidBootImageMetadataSchema,
   androidOtaPartitionMetadataSchema,
   androidOtaPayloadMetadataSchema,
+  androidSparseImageMetadataSchema,
   iso9660EntryMetadataSchema,
   iso9660MetadataSchema,
   ntfsMftMetadataSchema,
@@ -76,6 +79,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   uImageEntryMetadataSchema,
   androidOtaPayloadMetadataSchema,
   androidOtaPartitionMetadataSchema,
+  androidSparseImageMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
@@ -84,6 +88,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   ntfsMftMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
+  bfltMetadataSchema,
+  bfltSegmentMetadataSchema,
   espFlashImageMetadataSchema,
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,
@@ -255,6 +261,10 @@ const declarationsByKind: {
     notCompared:
       "name and index restate the entry's path; reconstructed partition bytes are compared by content when they are extractable.",
   },
+  "android-sparse-image": {
+    notCompared:
+      "Its header and chunk facts come from the image's own bytes, which content comparison covers. Checksums are recorded, not verified.",
+  },
   "esp-image": {
     notCompared:
       "Its fields come from the image's own bytes, which content comparison covers.",
@@ -295,6 +305,14 @@ const declarationsByKind: {
       alternate_setting: metadata.alternate_setting,
       target_name: metadata.target_name,
     }),
+  },
+  bflt: {
+    notCompared:
+      "Its fields come from the file's own 64-byte header and relocation table, which content comparison covers.",
+  },
+  "bflt-segment": {
+    notCompared:
+      "Its segment name is in its path and its offset and length are layout; content comparison covers its bytes.",
   },
   "esp-flash-image": {
     notCompared:

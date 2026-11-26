@@ -1,4 +1,3 @@
-import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -74,7 +73,7 @@ it("preserves the completed file identity when MFT interpretation fails", async 
   }
 });
 
-it("refuses an oversized acquisition as a fixed ceiling, not host memory", async () => {
+it("refuses an oversized acquisition at max_file_bytes, not host memory", async () => {
   const resources = new ArtifactResourceScope();
   const directory = await createTestTempDirectory("rea-ntfs-oversized-");
   const mftPath = join(directory, "mft");
@@ -92,18 +91,20 @@ it("refuses an oversized acquisition as a fixed ceiling, not host memory", async
       code: "resource_constraint",
       retryable: false,
       details: {
-        refusal: {
-          kind: "fixed_ceiling",
-          allowance: "The NTFS journal file allowance",
-          limit: 64 * 1024 * 1024,
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_file_bytes",
+          effective_value: 64 * 1024 * 1024,
           unit: "bytes",
         },
       },
     });
-    // Recovery comes from the fixed-allowance owner, not host-memory advice.
-    expect(projected.remediation.action).toContain(
-      fixedAllowanceRemediation("The NTFS journal file allowance", "input"),
-    );
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "adjustable_budget",
+      control: "max_file_bytes",
+    });
+    // Recovery names the per-call control, not host-memory advice.
+    expect(projected.remediation.action).toContain("max_file_bytes");
   } finally {
     await resources.close();
   }

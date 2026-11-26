@@ -14,7 +14,9 @@ import {
   ISO9660_RECOGNITION_BYTES,
 } from "./iso9660/iso9660Structures.js";
 import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
+import { recognizeAndroidSparseImage } from "./firmware/androidSparseImage.js";
 import { hasUImageMagic } from "./uimageFormat.js";
+import { hasBfltMagic } from "./bfltExecutable.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
 import { hasWindowsShortcutHeader } from "./windows/windowsShortcutHeader.js";
@@ -51,11 +53,13 @@ export type RecognizedArtifactFormat = Extract<
   | "uimage"
   | "android-boot-image"
   | "android-ota-payload"
+  | "android-sparse-image"
   | "iso9660"
   | "intel-hex"
   | "srec"
   | "uf2"
   | "dfuse"
+  | "bflt"
   | "esp-flash-image"
   | "esp-image"
   | "fit"
@@ -183,10 +187,22 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
           };
     },
     ({ prefix }) => {
+      const sparse = recognizeAndroidSparseImage(prefix);
+      if (sparse === undefined) return undefined;
+      return sparse.state === "recognized"
+        ? { state: "recognized", format: "android-sparse-image" }
+        : {
+            state: "refused",
+            format: "android-sparse-image",
+            reason: sparse.reason,
+          };
+    },
+    ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);
       return format === undefined ? undefined : { state: "recognized", format };
     },
     when("uf2", hasUf2Block),
+    when("bflt", hasBfltMagic),
     ({ prefix, suffix, fileSize }) => {
       if (!hasDfuSePrefix(prefix)) return undefined;
       if (suffix === undefined)

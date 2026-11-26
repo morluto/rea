@@ -99,11 +99,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        fixedAllowance: {
-          name: "The wxapkg member table allowance",
-          kind: "parser",
-          limit: 16 * 1024 * 1024,
-          unit: "bytes",
+        readerLimit: {
+          parameter: "artifact_limits.wxapkg.table_bytes",
+          effective_value: 16 * 1024 * 1024,
+          // The declared index length less its four-byte file count.
+          required_value: 17 * 1024 * 1024 - 4,
+          can_increase: true,
         },
       });
       expect(reads).toHaveBeenCalledTimes(1); // bounded header only
@@ -140,8 +141,9 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
-        fixedAllowance: {
-          name: "The wxapkg directory representation allowance",
+        readerLimit: {
+          parameter: "artifact_limits.wxapkg.directory_bytes",
+          effective_value: 64 * 1024 * 1024,
           unit: "bytes",
         },
       });
@@ -163,7 +165,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
     try {
       await expect(collectEntries(reader)).rejects.toMatchObject({
         reason: "limit",
-        message: expect.stringContaining("wxapkg members declare"),
+        readerLimit: {
+          parameter: "artifact_limits.expanded_bytes",
+          // 500 times the encoded package size when no value is selected.
+          effective_value: expect.any(Number),
+          can_increase: true,
+        },
       });
     } finally {
       await reader.close();

@@ -927,6 +927,11 @@ it("reports a projection above SQLite's result-column capacity as capacity, not 
         selected_result_columns: engineColumnLimit + 1,
         engine_result_column_limit: engineColumnLimit,
       },
+      refusal: expect.objectContaining({
+        allowance: "SQLite's result-column limit for this connection",
+        limit: engineColumnLimit,
+        unit: "columns",
+      }),
     },
   });
   expect(JSON.stringify(projection)).not.toContain("invalid_format");

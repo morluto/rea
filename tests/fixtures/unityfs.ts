@@ -1,5 +1,6 @@
 /** Synthetic UnityFS (AssetBundle) builders for reader tests. */
 import { createRequire } from "node:module";
+import { lz4LiteralBlock } from "./lz4LiteralBlock.js";
 
 const { compressFile } = createRequire(import.meta.url)("lzma-purejs") as {
   compressFile(input: Buffer): Uint8Array;
@@ -38,20 +39,6 @@ const cstring = (value: string): Buffer =>
   Buffer.concat([utf8(value), Buffer.alloc(1)]);
 
 const align16 = (value: number): number => (value + 15) & ~15;
-
-/** One final LZ4 literal sequence; separate sequences require intervening matches. */
-const lz4LiteralBlock = (data: Buffer): Buffer => {
-  const head = [Math.min(data.length, 15) << 4];
-  if (data.length >= 15) {
-    let extra = data.length - 15;
-    while (extra >= 255) {
-      head.push(255);
-      extra -= 255;
-    }
-    head.push(extra);
-  }
-  return Buffer.concat([Buffer.from(head), data]);
-};
 
 const maybeCompress = (data: Buffer, compression: number): Buffer =>
   compression === 1

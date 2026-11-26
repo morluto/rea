@@ -109,11 +109,16 @@ describe("UnityFS through the shared LZMA subprocess", () => {
     const context = { resources, workerModulePath };
     const invalid = Buffer.from(raw);
     invalid[0] = 255;
+    const corrupt = Buffer.from(raw);
+    corrupt[6] = 255; // Keep the header valid and corrupt the range coder state.
     const oversized = Buffer.from(raw);
     oversized.writeUInt32LE(128 * 1024 * 1024, 1);
     try {
       await expect(
         decodeUnityFsBlock(1, invalid, 3, context),
+      ).rejects.toMatchObject({ reason: "malformed" });
+      await expect(
+        decodeUnityFsBlock(1, corrupt, 3, context),
       ).rejects.toMatchObject({ reason: "malformed" });
       await expect(
         decodeUnityFsBlock(1, oversized, 3, context),

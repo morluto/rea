@@ -99,6 +99,16 @@ it("returns typed limit and framing refusals through stdio without losing the ne
         "range coder byte must be zero",
       ],
       [
+        "invalid coded data after a valid header",
+        Buffer.from(
+          "5d00100000030000000000000000ff9888a44a8e9ffff6638000",
+          "hex",
+        ),
+        1024,
+        "malformed",
+        "Error in data stream",
+      ],
+      [
         "oversized dictionary",
         dictionary,
         1024,

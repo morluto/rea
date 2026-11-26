@@ -100,6 +100,7 @@ export type {
 export {
   imageFileSizeRemediation,
   closeArtifactResources,
+  artifactFileCleanupError,
   projectArtifactCloseFailure,
   withArtifactCleanupFailure,
   artifactFileCancellationError,

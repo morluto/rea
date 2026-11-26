@@ -11,10 +11,7 @@ import {
 } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import {
-  pcapProducerLimit,
-  pcapProducerLimitRecovery,
-} from "../domain/pcap/pcapAnalysis.js";
+import { pcapProducerLimit } from "../domain/pcap/pcapAnalysis.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -324,13 +321,7 @@ export const runPcapCommand = async (options: {
               ),
             }
           : {
-              recovery: {
-                retryable: false,
-                remediationAction: pcapProducerLimitRecovery(
-                  "output_bytes",
-                  limits.maxOutputBytes,
-                ),
-              },
+              recovery: { retryable: false },
               limit: pcapProducerLimit("output_bytes", limits.maxOutputBytes),
             }),
       },

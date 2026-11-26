@@ -7,7 +7,6 @@ import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   createRizinCommandEvidence,
   createRizinCommandTimeoutEvidence,
-  MAX_COMMAND_FRAMES,
   MAX_FRAME_BYTES,
   MAX_QUEUED_FRAME_BYTES,
   MAX_QUEUED_FRAMES,
@@ -24,7 +23,6 @@ import {
   decodeRizinFrameBytes,
   hasUnclaimedRizinFrames,
   rizinCancellationReason,
-  RizinFrameTimeoutError,
   RizinProcessExitError,
   waitForCommandFrames,
   waitForFrame,
@@ -55,7 +53,6 @@ import {
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
-  isAborted,
 } from "../domain/analysisErrorCore.js";
 import {
   RIZIN_DEBUG_SESSION_TOOLS,
@@ -94,6 +91,7 @@ import {
   readLinuxProcessStartTime,
   verifyOwnedInferiorsEnded,
   type OwnedInferiorIdentity,
+  OwnedDebuggerDetachFailure,
   type OwnedDebuggerDetachResult,
 } from "../process/ownedDebuggerSession.js";
 import { OwnedDebuggerSessionRegistry } from "../process/OwnedDebuggerSessionRegistry.js";
@@ -1326,6 +1324,14 @@ export class RizinDebugSessionManager {
   ): Promise<OwnedDebuggerDetachResult> {
     if (session.exited)
       throw new Error("Rizin exited before inferior detach could be verified.");
+    // Waiting behind an active command would wait on the stop that ends it,
+    // and a detach left queued would run after cleanup already reported.
+    // Like GDB, report the inferior state as unknown instead.
+    if (session.pendingCommandCount > 0)
+      throw new OwnedDebuggerDetachFailure(
+        "inferior-state-unknown",
+        "A Rizin command is still running; inferior state is unknown.",
+      );
     const previous = session.commandTail;
     let release!: () => void;
     session.commandTail = new Promise<void>((resolve) => (release = resolve));
