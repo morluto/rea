@@ -88,6 +88,56 @@ describe("createYaraIncludeRewriter", () => {
     expect(output.split("\n")).toHaveLength(input.split("\n").length);
   });
 
+  it("preserves regex arguments to module functions and distinguishes division from regex literals", () => {
+    const input = [
+      'import "pe"',
+      "rule ModuleRegex {",
+      "  condition:",
+      '    pe.exports(/include "common.yar"/) and',
+      '    pe.imports("kernel32.dll", /include "second.yar"/) and',
+      '    pe.exports(/* comment */ /include "after_comment.yar"/) and',
+      "    (filesize / 2) > 0 and",
+      "    pe.sections[0].raw_data_size / 2 > 0 and",
+      "    filesize / 2 + 10 / 2 > 0 and",
+      '    not /include "after_not.yar"/',
+      "}",
+      'include "real.yar"',
+    ].join("\n");
+    const whole = rewrite(input, "/rules/main.yar", "linux").toString("utf8");
+    const streamed = rewrite(input, "/rules/main.yar", "linux", 1).toString(
+      "utf8",
+    );
+    expect(streamed).toBe(whole);
+    expect(whole).toContain('pe.exports(/include "common.yar"/)');
+    expect(whole).toContain(
+      'pe.imports("kernel32.dll", /include "second.yar"/)',
+    );
+    expect(whole).toContain(
+      'pe.exports(/* comment */ /include "after_comment.yar"/)',
+    );
+    expect(whole).toContain("(filesize / 2) > 0");
+    expect(whole).toContain("pe.sections[0].raw_data_size / 2 > 0");
+    expect(whole).toContain("filesize / 2 + 10 / 2 > 0");
+    expect(whole).toContain('not /include "after_not.yar"/');
+    expect(whole).toContain('include "/rules/real.yar"');
+    expect(whole.split("\n")).toHaveLength(input.split("\n").length);
+  });
+
+  it("only rewrites top-level include directives outside rule bodies", () => {
+    const input = [
+      "rule Body {",
+      "  strings:",
+      "    $h = { 4D 5A }",
+      "  condition:",
+      '    $h and pe.exports(/include "inside_rule.yar"/)',
+      "}",
+      'include "top_level.yar"',
+    ].join("\n");
+    const output = rewrite(input, "/rules/main.yar", "linux").toString("utf8");
+    expect(output).toContain('pe.exports(/include "inside_rule.yar"/)');
+    expect(output).toContain('include "/rules/top_level.yar"');
+  });
+
   it("produces identical output across 1-byte chunk boundaries and preserves non-UTF-8 bytes", () => {
     const prefix = Buffer.from("// ", "utf8");
     const rawBytes = Buffer.from([0xff, 0xfe, 0x80]);

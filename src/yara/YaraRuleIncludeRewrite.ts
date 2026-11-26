@@ -32,6 +32,27 @@ const isWhitespace = (byte: number): boolean =>
   byte === 0x0c ||
   byte === 0x0b;
 
+/**
+ * YARA keywords that act as operators or expression prefixes, so a following
+ * `/` begins a regex literal rather than numeric division.
+ */
+const REGEX_INTRO_KEYWORDS = new Set([
+  "matches",
+  "contains",
+  "icontains",
+  "startswith",
+  "istartswith",
+  "endswith",
+  "iendswith",
+  "iequals",
+  "and",
+  "or",
+  "not",
+  "defined",
+  "in",
+  "at",
+]);
+
 /** Streaming byte-preserving rewriter for relative YARA `include "..."` directives. */
 export interface YaraIncludeRewriter {
   push(chunk: Buffer): Buffer;
@@ -56,7 +77,8 @@ export const createYaraIncludeRewriter = (
   let state: LexState = "code";
   let ident = "";
   let identOverflow = false;
-  let prevTokenWasRegexIntro = false;
+  let braceDepth = 0;
+  let canStartRegex = true;
   let includePathBytes: number[] = [];
 
   const rewritePath = (rawBytes: readonly number[]): Buffer => {
@@ -86,13 +108,13 @@ export const createYaraIncludeRewriter = (
           const word = identOverflow ? "" : ident;
           ident = "";
           identOverflow = false;
-          if (word === "include" && isHorizSpace(byte)) {
+          if (braceDepth === 0 && word === "include" && isHorizSpace(byte)) {
             emit(byte);
-            prevTokenWasRegexIntro = false;
+            canStartRegex = false;
             state = "include_ws";
             return;
           }
-          prevTokenWasRegexIntro = word === "matches";
+          canStartRegex = REGEX_INTRO_KEYWORDS.has(word);
         }
         if (isIdentChar(byte)) {
           emit(byte);
@@ -109,17 +131,29 @@ export const createYaraIncludeRewriter = (
         }
         if (byte === 0x22) {
           emit(byte);
-          prevTokenWasRegexIntro = false;
+          canStartRegex = false;
           state = "string";
           return;
         }
-        if (byte === 0x3d) {
+        if (byte === 0x7b) {
+          braceDepth += 1;
+          canStartRegex = true;
           emit(byte);
-          prevTokenWasRegexIntro = true;
+          return;
+        }
+        if (byte === 0x7d) {
+          if (braceDepth > 0) braceDepth -= 1;
+          canStartRegex = true;
+          emit(byte);
           return;
         }
         emit(byte);
-        if (!isWhitespace(byte)) prevTokenWasRegexIntro = false;
+        if (!isWhitespace(byte)) {
+          // `)` (0x29) and `]` (0x5d) end a value expression, so a following
+          // `/` is numeric division; other punctuation (such as `(`, `,`, `=`,
+          // operators) can precede a regex literal.
+          canStartRegex = byte !== 0x29 && byte !== 0x5d;
+        }
       };
 
       for (const byte of chunk) {
@@ -134,14 +168,14 @@ export const createYaraIncludeRewriter = (
             } else if (byte === 0x2a) {
               emit(byte);
               state = "block_comment";
-            } else if (prevTokenWasRegexIntro) {
-              prevTokenWasRegexIntro = false;
+            } else if (canStartRegex) {
+              canStartRegex = false;
               emit(byte);
               if (byte === 0x5c) state = "regex_escape";
               else if (byte === 0x0a) state = "code";
               else state = "regex";
             } else {
-              prevTokenWasRegexIntro = false;
+              canStartRegex = true;
               state = "code";
               processCodeByte(byte);
             }

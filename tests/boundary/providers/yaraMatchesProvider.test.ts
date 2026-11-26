@@ -610,6 +610,124 @@ describe("inspect_yara_matches with a yara stand-in", () => {
     ]);
   });
 
+  it("retains completed Evidence when yara process cleanup fails and retries cleanup on close", async () => {
+    const { command, sample, rule } = await fixture("match");
+    let cleanupAttempts = 0;
+    const launcher: YaraLauncher = async (spawn) => {
+      const launched = await interpreterLauncher(spawn);
+      return {
+        ...launched,
+        cleanup: async () => {
+          cleanupAttempts += 1;
+          if (cleanupAttempts === 1) {
+            return {
+              cleaned: false,
+              reason: "injected yara process cleanup failure",
+            };
+          }
+          return cleanupOwnedProcessGroup(launched.ownership);
+        },
+      };
+    };
+    const service = stubService(
+      command,
+      { ...process.env, YARA_STUB_MODE: "match" },
+      launcher,
+    );
+    const first = await service.inspect({ path: sample, rule_paths: [rule] });
+    expect(first.ok).toBe(false);
+    if (first.ok) return;
+    expect(first.error.cleanupIncomplete).toBe(true);
+    const partialEvidence = first.error.partialObservation as {
+      normalized_result?: unknown;
+      operation?: string;
+    };
+    expect(partialEvidence?.operation).toBe("inspect_yara_matches");
+    const retainedReport = yaraMatchesSchema.parse(
+      partialEvidence?.normalized_result,
+    );
+    expect(retainedReport.matches.map((match) => match.rule)).toEqual([
+      "Packed",
+      "Plain",
+    ]);
+    await expect(service.close()).resolves.toBeUndefined();
+    expect(cleanupAttempts).toBe(2);
+    expect(first.error.cleanupIncomplete).toBe(false);
+  });
+
+  it("retains completed Evidence when cancelled during yara process cleanup", async () => {
+    const { command, sample, rule } = await fixture("match");
+    const controller = new AbortController();
+    const launcher: YaraLauncher = async (spawn) => {
+      const launched = await interpreterLauncher(spawn);
+      return {
+        ...launched,
+        cleanup: async () => {
+          controller.abort("cancelled during process cleanup");
+          return cleanupOwnedProcessGroup(launched.ownership);
+        },
+      };
+    };
+    const service = stubService(
+      command,
+      { ...process.env, YARA_STUB_MODE: "match" },
+      launcher,
+    );
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cleanupIncomplete).toBe(false);
+    const partialEvidence = result.error.partialObservation as {
+      normalized_result?: unknown;
+      operation?: string;
+    };
+    expect(partialEvidence?.operation).toBe("inspect_yara_matches");
+    const retainedReport = yaraMatchesSchema.parse(
+      partialEvidence?.normalized_result,
+    );
+    expect(retainedReport.matches.map((match) => match.rule)).toEqual([
+      "Packed",
+      "Plain",
+    ]);
+  });
+
+  it("does not retain unverified matches on process cleanup cancellation when a rule snapshot changed", async () => {
+    const { command, sample, rule } = await fixture("mutate-rule");
+    const controller = new AbortController();
+    const launcher: YaraLauncher = async (spawn) => {
+      const launched = await interpreterLauncher(spawn);
+      return {
+        ...launched,
+        cleanup: async () => {
+          controller.abort("cancelled during process cleanup");
+          return cleanupOwnedProcessGroup(launched.ownership);
+        },
+      };
+    };
+    const service = stubService(
+      command,
+      { ...process.env, YARA_STUB_MODE: "mutate-rule" },
+      launcher,
+    );
+    const result = await service.inspect(
+      { path: sample, rule_paths: [rule] },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: sample,
+      sha256: createHash("sha256").update(SAMPLE).digest("hex"),
+      bytes: SAMPLE.length,
+    });
+  });
+
   it("closes staged file handles before removing the snapshot root and retries in order", async () => {
     const { command, sample, rule } = await fixture("match");
     const events: string[] = [];

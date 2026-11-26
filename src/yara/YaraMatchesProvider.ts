@@ -72,6 +72,7 @@ import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
@@ -418,6 +419,39 @@ interface CompletedScan {
   readonly warnings: readonly string[];
 }
 
+const buildYaraMatchesReport = (
+  input: InspectYaraMatchesInput,
+  staged: StagedScanInputs,
+  settings: YaraScanSettings,
+  maxFileBytes: number,
+  scan: CompletedScan,
+): YaraMatches => ({
+  artifact: {
+    path: input.path,
+    sha256: staged.target.sha256,
+    bytes: staged.target.bytes,
+  },
+  rule_files: staged.rules.map((rule) => ({
+    path: rule.callerPath,
+    sha256: rule.sha256,
+    bytes: rule.bytes,
+  })),
+  fast_scan: input.fast_scan === true,
+  matches: [...scan.parsed.matches],
+  coverage: {
+    status:
+      scan.parsed.listedStringMatches < scan.parsed.stringMatches
+        ? "partial"
+        : "complete",
+    matched_rules: scan.parsed.matches.length,
+    string_matches: scan.parsed.stringMatches,
+    listed_string_matches: scan.parsed.listedStringMatches,
+  },
+  limits: { ...settings, max_file_bytes: maxFileBytes },
+  warnings: [...scan.warnings],
+  limitations: limitations(input, scan.parsed, settings),
+});
+
 const limitations = (
   input: InspectYaraMatchesInput,
   parsed: YaraParsedMatches,
@@ -568,6 +602,27 @@ export class YaraMatchesProvider implements YaraMatchesPort {
         // child cleanup first and root removal second.
         if (snapshot.hasPendingFiles) {
           this.#resources.retain(scanOwner);
+          if (
+            outcome.kind === "failed" &&
+            outcome.cause instanceof AnalysisError &&
+            outcome.cause.cleanupIncomplete
+          ) {
+            const scanCleanup = new ProviderCleanupError(
+              PROVIDER_ID,
+              [snapshot.path],
+              {
+                reason: `Snapshot directory ${snapshot.path} remains owned until child handles close`,
+              },
+              { operation: OPERATION },
+            );
+            scanCleanup.bindCleanupResourceOwner(scanLease);
+            scanLease.bindCleanupError(scanCleanup);
+            throw analysisErrorWithCleanupDependencies(
+              outcome.cause,
+              scanCleanup,
+              OPERATION,
+            );
+          }
           throw this.#resources.cleanupFailure(
             cleanupOutcome(),
             [
@@ -732,52 +787,64 @@ export class YaraMatchesProvider implements YaraMatchesPort {
       rules: stagedRules,
       fastScan: input.fast_scan === true,
     };
-    const { parsed, warnings } = await this.#scan(
-      command,
-      staged,
-      settings,
-      snapshot.files,
-      signal,
-    );
-    // Verify that neither the target snapshot nor any rule snapshot was
-    // modified while yara ran before attributing matches to their digests.
-    setPhase(targetPhase);
-    await assertStableArtifactState(
-      stagedTarget.snapshotPath,
-      stagedTarget.state,
-      signal,
-    );
-    for (const [index, rule] of stagedRules.entries()) {
-      setPhase(rulePhase(index, rule.callerPath));
-      await assertStableArtifactState(rule.snapshotPath, rule.state, signal);
-    }
-    assertArtifactReadActive(signal);
-    return {
-      artifact: {
-        path: input.path,
-        sha256: stagedTarget.sha256,
-        bytes: stagedTarget.bytes,
-      },
-      rule_files: stagedRules.map((rule) => ({
-        path: rule.callerPath,
-        sha256: rule.sha256,
-        bytes: rule.bytes,
-      })),
-      fast_scan: input.fast_scan === true,
-      matches: [...parsed.matches],
-      coverage: {
-        status:
-          parsed.listedStringMatches < parsed.stringMatches
-            ? "partial"
-            : "complete",
-        matched_rules: parsed.matches.length,
-        string_matches: parsed.stringMatches,
-        listed_string_matches: parsed.listedStringMatches,
-      },
-      limits: { ...settings, max_file_bytes: maxFileBytes },
-      warnings: [...warnings],
-      limitations: limitations(input, parsed, settings),
+    const verifySnapshots = async (
+      checkSignal: AbortSignal | undefined,
+      trackPhase: boolean,
+    ): Promise<void> => {
+      // Verify that neither the target snapshot nor any rule snapshot was
+      // modified while yara ran before attributing matches to their digests.
+      if (trackPhase) setPhase(targetPhase);
+      await assertStableArtifactState(
+        stagedTarget.snapshotPath,
+        stagedTarget.state,
+        checkSignal,
+      );
+      for (const [index, rule] of stagedRules.entries()) {
+        if (trackPhase) setPhase(rulePhase(index, rule.callerPath));
+        await assertStableArtifactState(
+          rule.snapshotPath,
+          rule.state,
+          checkSignal,
+        );
+      }
     };
+    let observedScan: CompletedScan | undefined;
+    let scan: CompletedScan;
+    try {
+      scan = await this.#scan(
+        command,
+        staged,
+        settings,
+        snapshot.files,
+        signal,
+        (completed) => {
+          observedScan = completed;
+        },
+      );
+    } catch (cause: unknown) {
+      if (observedScan !== undefined && cause instanceof AnalysisError) {
+        try {
+          await verifySnapshots(undefined, false);
+          cause.retainPartialObservation(
+            buildYaraMatchesReport(
+              input,
+              staged,
+              settings,
+              maxFileBytes,
+              observedScan,
+            ),
+          );
+        } catch {
+          // Keep file checks before presenting matches as a verified report:
+          // if a snapshot changed or could not be re-verified, leave only the
+          // scanned file's snapshot hash on the primary failure.
+        }
+      }
+      throw cause;
+    }
+    await verifySnapshots(signal, true);
+    assertArtifactReadActive(signal);
+    return buildYaraMatchesReport(input, staged, settings, maxFileBytes, scan);
   }
 
   async #scan(
@@ -786,6 +853,7 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     settings: YaraScanSettings,
     scanResources: ArtifactResourceScope,
     signal: AbortSignal | undefined,
+    onCompleted?: (scan: CompletedScan) => void,
   ): Promise<CompletedScan> {
     const parser = new YaraMatchOutputParser(
       staged.target.snapshotPath,
@@ -795,6 +863,30 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     const maxOutputBytes = settings.max_output_bytes.value;
     const platform = this.options.platform ?? HOST_PLATFORM.platform;
     const pathApi = platform === "win32" ? win32 : posix;
+    let completed: Result<CompletedScan, AnalysisOutputError> | undefined;
+    const finalize = (
+      observedSnapshot: ProviderProcessSnapshot,
+    ): Result<CompletedScan, AnalysisOutputError> => {
+      const parsed = parser.finish();
+      if (!parsed.ok)
+        return err(
+          new AnalysisOutputError(
+            OPERATION,
+            `yara stdout line ${String(parsed.error.line)} is not a documented match line: ${parsed.error.reason}.`,
+            { capturedOutput: capturedProviderOutput(observedSnapshot) },
+          ),
+        );
+      const diagnostics = parseYaraDiagnostics(
+        observedSnapshot.stderr.text,
+        staged.target.snapshotPath,
+      );
+      return ok({
+        parsed: parsed.value,
+        warnings: [...diagnostics.warnings, ...diagnostics.unrecognized].map(
+          (line) => restoreCallerPaths(line, staged),
+        ),
+      });
+    };
     let snapshot: ProviderProcessSnapshot;
     try {
       // Ownership preparation has its own deadline; it does not spend yara's.
@@ -817,6 +909,10 @@ export class YaraMatchesProvider implements YaraMatchesPort {
           diagnosticBytes: maxOutputBytes,
           stdout: yaraMatchOutputSink(parser),
           maxStdoutBytes: maxOutputBytes,
+          observeCompleted: (observed) => {
+            completed = finalize(observed);
+            if (completed.ok) onCompleted?.(completed.value);
+          },
         },
         {
           ...(signal === undefined ? {} : { signal }),
@@ -828,23 +924,9 @@ export class YaraMatchesProvider implements YaraMatchesPort {
     } catch (cause: unknown) {
       throw yaraCommandFailure(cause, context, scanResources);
     }
-    const parsed = parser.finish();
-    if (!parsed.ok)
-      throw new AnalysisOutputError(
-        OPERATION,
-        `yara stdout line ${String(parsed.error.line)} is not a documented match line: ${parsed.error.reason}.`,
-        { capturedOutput: capturedProviderOutput(snapshot) },
-      );
-    const diagnostics = parseYaraDiagnostics(
-      snapshot.stderr.text,
-      staged.target.snapshotPath,
-    );
-    return {
-      parsed: parsed.value,
-      warnings: [...diagnostics.warnings, ...diagnostics.unrecognized].map(
-        (line) => restoreCallerPaths(line, staged),
-      ),
-    };
+    const result = completed ?? finalize(snapshot);
+    if (!result.ok) throw result.error;
+    return result.value;
   }
 
   #failure(
