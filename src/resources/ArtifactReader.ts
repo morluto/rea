@@ -282,6 +282,7 @@ export interface ArtifactReader {
     | "bflt"
     | "esp-flash-image"
     | "fit"
+    | "qualcomm-mbn"
     | "ntfs-mft"
     | "pkg"
     | "file";

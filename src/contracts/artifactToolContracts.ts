@@ -65,11 +65,16 @@ export const artifactExtractionInputSchema = z.strictObject({
     .describe(
       "Exact regular-file or slice occurrence IDs from the current inventory. Omit to extract all regular entries exposed by the active reader. Directories, links, the root and members inside nested archives cannot be selected.",
     ),
+  detail: analysisDetailSchema,
 });
 
-/** Provider input after the adapter has supplied the optional destination. */
-export const artifactExtractionExecutionSchema =
-  artifactExtractionInputSchema.extend({
+/**
+ * Provider input after the adapter has supplied the optional destination;
+ * delivery detail never reaches the provider.
+ */
+export const artifactExtractionExecutionSchema = artifactExtractionInputSchema
+  .omit({ detail: true })
+  .extend({
     output_root: artifactExtractionInputSchema.shape.output_root.unwrap(),
   });
 
@@ -135,8 +140,9 @@ export const ARTIFACT_TOOL_CONTRACTS = [
       launchesProcess: true,
       idempotent: false,
     }),
-    "Write all or selected regular files from the active supported archive to an absent absolute output_root, or a fresh temporary directory if omitted. Use exact inventory occurrence_ids to select files. Returns IDs and actual output paths; successful files persist. Nested archives are copied, not recursively unpacked. Never overwrites; rejects traversal/symlink escapes and verifies cleanup. Full-input integrity checks still apply: mismatches fail unless record-and-continue retains explicitly untrusted contradictions. DMG extraction is unavailable; use a caller-managed read-only mount on macOS.",
+    "Write all or selected regular files from the active supported archive to an absent absolute output_root, or a fresh temporary directory if omitted. Use exact inventory occurrence_ids to select files. Returns IDs and actual output paths; successful files persist. A large extraction's written-file list is retained behind its summary, which inspect_analysis_view kind artifact-extraction pages by exact path, glob or artifact ID. Nested archives are copied, not recursively unpacked. Never overwrites; rejects traversal/symlink escapes and verifies cleanup. Full-input integrity checks still apply: mismatches fail unless record-and-continue retains explicitly untrusted contradictions. DMG extraction is unavailable; use a caller-managed read-only mount on macOS.",
     artifactExtractionInputSchema,
+    { evidenceParameters: "omit-detail" },
   ),
   artifact(
     "decode_interface_builder",
