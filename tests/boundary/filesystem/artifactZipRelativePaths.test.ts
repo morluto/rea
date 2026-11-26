@@ -34,6 +34,8 @@ it("retains distinct occurrences when ZIP paths normalize to the same child", as
   expect(inventory.limitations).toContain(
     "1 ZIP member name(s) have a leading current-directory prefix (./) omitted from their logical paths; each occurrence's source_path keeps the recorded name.",
   );
+  // A normalized name is not a coverage gap: every byte is still accounted for.
+  expect(inventory.coverage.status).toBe("complete");
 });
 
 it.each([".", "././."])(
