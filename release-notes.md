@@ -553,6 +553,7 @@
 * **web:** retain CDP scope and request identity during session preparation ([#13188](https://github.com/morluto/rea/issues/13188)) ([5c39019](https://github.com/morluto/rea/commit/5c390198f78f0b867f7e00a6d3830b089dbf80bd))
 * **web:** retain Chromium navigation kind in session evidence ([#13194](https://github.com/morluto/rea/issues/13194)) ([9230f69](https://github.com/morluto/rea/commit/9230f698b34f34c683449fbe34f87fbbbfe34324))
 * **website:** format the favicon link ([#13222](https://github.com/morluto/rea/issues/13222)) ([ff04f31](https://github.com/morluto/rea/commit/ff04f31a4af0c200f05863479c6dce20375fb4f8))
+* **website:** honor validators and restore the implicit design system ([#14768](https://github.com/morluto/rea/issues/14768)) ([188e2bd](https://github.com/morluto/rea/commit/188e2bd684b1e3be64e5d1332b0db6b19ffb9ea2))
 * **website:** improve page loading, image labels, and legacy redirects ([e1c37d6](https://github.com/morluto/rea/commit/e1c37d68a4e44fa2cd3311e49e3980692bc65c00))
 * **website:** match social preview accents to REA blue ([753321d](https://github.com/morluto/rea/commit/753321dda66d840c58008119a9e6852cd7c64f25))
 * **website:** refresh favicon links and serve a root icon ([b33b674](https://github.com/morluto/rea/commit/b33b6743d9bab514c7131d31e5b28ef645bb59ab))
