@@ -191,6 +191,7 @@ import {
 } from "./webNetworkCaptureView.js";
 
 import {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -318,6 +319,7 @@ import {
 } from "./summarySchemas/webSourceLocationSummarySchemas.js";
 
 export {
+  androidClassPageViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidComponentSummaryViewResultSchema,
   androidComponentsViewResultSchema,
@@ -1007,6 +1009,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   androidPackageViewResultSchema,
   androidJniPageViewResultSchema,
   androidReferencesPageViewResultSchema,
+  androidClassPageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,
