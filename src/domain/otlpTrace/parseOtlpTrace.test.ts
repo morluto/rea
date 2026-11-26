@@ -426,6 +426,20 @@ describe("parseOtlpTrace damaged service names", () => {
     expect(report.resources[0]).toMatchObject({ service_name: "checkout" });
     expect(report.resources[0]!.attributes).toEqual([]);
   });
+
+  it("reads a string service.name that a damaged entry precedes", () => {
+    // The string entry is the only one dropped from the attribute list, so
+    // stopping at a non-string entry would report null and lose the name.
+    const document = envelope([span({})]) as {
+      resourceSpans: { resource: { attributes: unknown[] } }[];
+    };
+    document.resourceSpans[0]!.resource.attributes = [
+      { key: "service.name", value: { boolValue: false } },
+      { key: "service.name", value: { stringValue: "billing" } },
+    ];
+    const report = parse(document);
+    expect(report.resources[0]).toMatchObject({ service_name: "billing" });
+  });
 });
 
 describe("parseOtlpTrace defaults and signed integers", () => {

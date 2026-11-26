@@ -550,18 +550,25 @@ const resourceAttributes = (
   };
 };
 
-const isStringServiceName = (entry: Json): boolean =>
+const stringServiceName = (entry: Json): string | undefined =>
   isRecord(entry) &&
   isRecord(entry.value) &&
-  typeof entry.value.stringValue === "string";
+  typeof entry.value.stringValue === "string"
+    ? entry.value.stringValue
+    : undefined;
+
+const isStringServiceName = (entry: Json): boolean =>
+  stringServiceName(entry) !== undefined;
 
 const resourceServiceName = (resource: Json): string | null => {
   if (!isRecord(resource) || !Array.isArray(resource.attributes)) return null;
-  for (const entry of resource.attributes)
-    if (isServiceName(entry) && isRecord(entry) && isRecord(entry.value)) {
-      const value = entry.value.stringValue;
-      return typeof value === "string" ? value : null;
-    }
+  // The first string wins on purpose: `resourceAttributes` drops only string
+  // service.name entries, so selecting any non-string entry here would report
+  // null while a later string was filtered out and lost with nothing to say so.
+  for (const entry of resource.attributes) {
+    const name = stringServiceName(entry);
+    if (name !== undefined) return name;
+  }
   return null;
 };
 
